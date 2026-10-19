@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — Builder phase 6: W engines in 3-D, and a W with no angle
+
+- A W designed with no bank angle had every bank at 0 deg: four cylinders stacked per row. The phase 4 W16 figures were that engine. Rule now: banks spread over 120 deg (at most 90 between neighbours; 3 banks 60 deg, 4 banks 40 deg); two banks at one angle are refused. Corrected W16: physics-only 0.533 (stacked 0.537, so cost is per cylinder, not geometry), still INVALID with audio; idle 901 / 900 rpm.
+- 3-D view: banks > 2 were drawn as a radial. Now bank by bank, banks next in angle interleaved half a pitch. Measured with SceneExport (`--catalog-root`, new) and RouteCheck, one change at a time on the W16: stacked banks 213 duct clashes / 236 through the engine; angles fixed 58 / 70; plus the W drawing 15 / 8. Deepest liner overlap 96 -> 57 -> 30 mm (V12 design: 29). Catalogue and 15 rebuilt designs: totals identical before/after (9/4/0/48/7, 16/7/6/40/13).
+- Not measured: the view in the app (screen access declined; front/side projections of the exported meshes only), a W's exhaust stubs from the inner banks (they point at the outer head).
+
 ## 2026-10-19 — Builder phase 4: spark advance, real-time check, idle
 
 - Advance: DynoSweep `--advance-offset` -6/-3/0/+3/+6/+9 deg on the 15 rebuilt designs, `--step 1000`. Most still gain at +9 (2JZ, EJ25, CP3/4, Hayabusa, I5, flat six: +2 to +9 %); K20A, Harley, RD350 peak at -3..+3; the TDI ignores it. No MBT auto-calibration: designs already exceed the maker's power (2JZ 312 vs 206 kW, flat six 289 vs 200) and nothing here limits advance by knock, so "best torque" would walk away from the datasheets.

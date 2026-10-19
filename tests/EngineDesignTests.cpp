@@ -231,6 +231,19 @@ void everyLayoutDesigns() {
     evenlySpaced(*bugatti.config);
     require(w.config->forcedInduction.enabled && w.config->forcedInduction.turbochargerCount == 4U, "quad turbo");
     evenlySpaced(*w.config);
+    auto noAngle = w16;
+    noAngle.bankAngleDegrees = 0.0;
+    noAngle.bankAnglesDegrees.clear();
+    const auto spread = designed(noAngle);
+    require(spread.config.has_value(), "a W with no angle given designs");
+    std::vector<double> spreadAngles;
+    for (const auto& bank : spread.config->banks) spreadAngles.push_back(bank.angleDegrees);
+    require(spreadAngles == std::vector<double> { -60.0, -20.0, 20.0, 60.0 },
+        "with its banks spread over 120 deg, not stacked at 0 deg");
+    noAngle.bankAnglesDegrees = { -30.0, 10.0, 10.0, 30.0 };
+    const auto stacked = designEngine(noAngle, parts());
+    require(!stacked.config && stacked.error.find("same angle") != std::string::npos,
+        "two banks at one angle are refused");
 
     EngineSpec radial;
     radial.name = "Radial Nine";

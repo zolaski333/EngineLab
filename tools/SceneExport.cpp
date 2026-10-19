@@ -2,6 +2,7 @@
 // laid-out geometry outside the app (a three.js page, a script).
 //
 //   EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]
+//                        [--catalog-root <directory>]
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
@@ -152,17 +153,20 @@ int main(int argc, char** argv) {
     std::filesystem::path outDirectory;
     std::string filter;
     double crank = 0.0;
+    std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string_view key = argv[i];
         if (key == "--out") outDirectory = argv[i + 1];
         else if (key == "--filter") filter = argv[i + 1];
         else if (key == "--crank") crank = std::stod(argv[i + 1]);
+        else if (key == "--catalog-root") catalogRoot = argv[i + 1];
     }
     if (outDirectory.empty()) {
-        std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]\n";
+        std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]"
+                     " [--catalog-root <directory>]\n";
         return 2;
     }
-    const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
+    const auto catalogue = loadEngineCatalog(catalogRoot);
     if (!catalogue.errors.empty()) {
         std::cerr << "catalogue errors\n";
         return 1;

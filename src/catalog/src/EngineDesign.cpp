@@ -308,12 +308,24 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         config.octaneRating = derive("octane_rating", "Octane", "RON", profile.octane, "the use's");
 
         // Crank: banks, rows, firing order.
+        // A W with no angles given spreads its banks over 120 deg (a broad-arrow
+        // three at 60 deg); without this every bank stood at 0 deg, one on
+        // another (journal 2026-10-19).
+        const auto evenW = spec.layout == EngineLayout::custom && spec.bankAnglesDegrees.empty();
+        const auto wSpacing = std::min(90.0, 120.0 / static_cast<double>(spec.bankCount > 1 ? spec.bankCount - 1 : 1));
         const auto banks = bankAngles(spec.layout,
             count, spec.bankCount, spec.layout == EngineLayout::vLayout
                 ? derive("bank_angle_deg", "Bank angle", "deg", spec.bankAngleDegrees > 0.0 ? spec.bankAngleDegrees
                     : 90.0, spec.bankAngleDegrees > 0.0 ? "given" : "90 deg")
+                : evenW ? derive("bank_angle_deg", "Angle between banks", "deg",
+                    spec.bankAngleDegrees > 0.0 ? spec.bankAngleDegrees : wSpacing,
+                    spec.bankAngleDegrees > 0.0 ? "given" : "120 deg shared between the banks, at most 90")
                 : spec.bankAngleDegrees, spec.bankAnglesDegrees);
-        config.bankAngleDegrees = spec.layout == EngineLayout::vLayout ? banks[1] - banks[0]
+        for (std::size_t a = 0; a < banks.size(); ++a)
+            for (std::size_t b = a + 1; b < banks.size(); ++b)
+                if (spec.layout != EngineLayout::radial && std::abs(banks[a] - banks[b]) < 1.0)
+                    throw std::invalid_argument("Two banks stand at the same angle");
+        config.bankAngleDegrees = spec.layout == EngineLayout::vLayout || (evenW && banks.size() > 1) ? banks[1] - banks[0]
             : spec.layout == EngineLayout::flat ? 180.0 : spec.bankAngleDegrees;
         const auto radial = spec.layout == EngineLayout::radial;
         const auto bankCount = static_cast<std::uint32_t>(banks.size());

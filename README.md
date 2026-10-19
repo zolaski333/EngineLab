@@ -129,9 +129,13 @@ factor is shown in the diagnostics.
   runs — exhaust sizes, bore, stroke and rods, cams, flywheel, injectors,
   turbo, gearbox, the air. An **A/B** button keeps two versions of the engine
   to switch between by ear.
-- **New engine…** builds an engine from any running one: another bore,
-  stroke, compression, redline or aspiration, with injectors, throttles and
-  clutch resized to match.
+- **New engine…** designs an engine from nothing: four- or two-stroke, petrol
+  or diesel, inline, V, flat, W or radial, any number of cylinders, a bore and
+  stroke or a displacement, natural or boosted. Every other value (redline,
+  cams, pipes, crank and firing order, gearing…) follows from rules fitted to
+  real engines, each shown with its rule; *Advanced* sets any of them by hand.
+  The design is run for a few seconds first, to check that this computer keeps
+  it in real time.
 - **ECU tuner**: AFR, spark and boost tables, edited cell by cell or in blocks
   with undo, plus the rev limit, launch control and knock retard, applied live
   through a transactional snapshot — the engine keeps running and keeps its
@@ -297,7 +301,12 @@ holds the working rules, build notes and verified traps of this repository.
 - 0-D cylinder chambers and low-band quasi-1-D networks — this is not 3-D CFD;
 - audible propagation is linear and plane: transverse modes, 3-D bends and the
   mean-flow correction of radiation are not resolved;
-- at most eight audio exhaust paths and 32 cylinders;
+- at most eight audio exhaust paths and 32 cylinders; physics time grows with
+  cylinders and engine speed, so on the reference machine a 12-cylinder sport
+  car is at the real-time limit and a W16 at half of it;
+- a designed engine has a template ignition curve (not calibrated to best
+  torque), the default voicing, and has been compared with its maker's
+  figures only for the 15 catalogue engines rebuilt from their datasheets;
 - the exhaust designer has no drag-and-drop, no undo/redo and no IR picker —
   the IR stays editable in JSON/YAML;
 - structural modes stay estimated per engine family until sourced measurements

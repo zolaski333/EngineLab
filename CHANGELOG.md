@@ -19,6 +19,9 @@ file formats, always with an in-memory migration).
   computer keeps it in real time, and asks first if it would not.
 - `EngineLabDynoSweepHarness --advance-offset deg` shifts the whole ignition
   curve, to see how far an engine is from its best-torque timing.
+- The 3-D view draws engines with more than two banks (a W16, a broad-arrow
+  W12) as W engines, bank by bank, instead of as radials.
+- `EngineLabSceneExport --catalog-root` exports another catalogue folder.
 
 ### Removed
 

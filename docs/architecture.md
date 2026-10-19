@@ -389,7 +389,11 @@ Every moving part is placed with `evaluateCylinderKinematics()`, the function
 the simulator uses, so inline, V, flat, radial and articulated-rod engines are
 drawn as they are simulated. `EngineLab.EngineModel3D` checks every catalogue
 engine at 72 angles: rods keep their length, wrist pins stay on the cylinder
-axis, crowns stay below the deck.
+axis, crowns stay below the deck. More than two banks (a W) are drawn bank by
+bank like a V, a head per bank, banks next in angle interleaved half a pitch
+along the crank as a VR's are; only a radial is drawn as one. On a designed
+W16 (`EngineLabSceneExport --catalog-root`) that took duct clashes from 58 to
+15 and ducts through the engine from 70 to 8 (journal 2026-10-19).
 
 Threads:
 
