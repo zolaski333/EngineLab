@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — Catalogue Vs: the LS3 and the Merlin share no pin either
+
+- Catalogue V8 and V12 cylinders are generated: TDC from the firing order, odd ids on the -half bank. A row shares a pin only if its two TDCs differ by the bank angle (mod 360). Checked by hand from the files, not changed.
+- LS3 (1-8-7-2-6-5-4-3): rows differ by 270, so pins pair 1-8, 3-6, 4-5, 2-7 across rows. With odd ids on the +45 bank every row shares (pins 315/225/45/135, the cross-plane): the GM order assumes the other rotation sense. That fix moves no TDC, but swaps the cylinders' stereo pan.
+- Merlin (1-8-5-10-3-7-6-11-2-9-4-12): no bank side shares a pin; the real order 1A 6B 4A 3B 2A 5B 6A 1B 3A 4B 5A 2B with A odd, B even is 1-12-7-6-3-10-11-2-5-8-9-4, which shares all six. That fix changes the firing sequence over its 12 stubs.
+- Both are sound changes to catalogue engines: left for the owner. Big Twin (explicit pins): shared, right.
+
 ## 2026-10-19 — V cranks: one pin per row
 
 - Owner report: a designed V gives each piston its own crank pin. Measured (SceneExport, throws drawn): V2 90/45 2, V4 4, V6 60/90 6, V8 4 (by luck), V10 72 7, V12 60 5. The even-firing search placed pins freely.
