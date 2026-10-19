@@ -27,6 +27,14 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- A designed V or W engine shares one crank pin between the cylinders of a
+  row, as real ones do; each had its own pin. A 90 deg V-twin now fires
+  270-450 and a 45 deg one 315-405. Where a shared pin cannot fire six
+  cylinders or more evenly (a 60 or 90 deg V6), the pins are split by the
+  least angle that does. *Advanced* > *Crank pins* (`crank_pins` in a design
+  file) forces shared pins or one per cylinder.
+- The 3-D view drew two neighbouring crank throws pointing the same way as
+  one (a V12's middle pair, a boxer four's).
 - Small engines (50-250 cc) can be designed: the values the rules gave
   under the simulator's limits (flywheel, final drive, plenum, piston,
   throttle) are held at the limit, each saying so. A refused engine now names

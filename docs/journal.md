@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — V cranks: one pin per row
+
+- Owner report: a designed V gives each piston its own crank pin. Measured (SceneExport, throws drawn): V2 90/45 2, V4 4, V6 60/90 6, V8 4 (by luck), V10 72 7, V12 60 5. The even-firing search placed pins freely.
+- Fix: a V's or W's row shares a pin (`rowPinCrank()`, every pin set on a 360/rows grid, evenest then best balanced). After: V2 1 (270-450, 315-405), V4 2 (90-180-270-180), V8 4, V10 5, V12 6, all even. 60/90 deg V6 and W16: shared cannot fire evenly, so split pins (60, 30, 5 deg), as the real even-firing V6s; `crank_pins: shared` gives the odd-fire V6 (90-150).
+- 3-D view: neighbouring rows with pins alike were merged into one throw (the V12's 6th); now only within a row. Catalogue: EJ25 3 -> 4 throws (right), LS3 7 -> 8, Merlin 11 -> 12: their own data pairs no cylinders on a pin (next entry).
+- 8 V designs: idle on target (V4 1,392 for 1,300), designer probe passes except the 6 L V12 at 0.99. Back to back with the old binary, 3 runs each: V12 1.005-1.030 old, 0.993-1.013 new, I6 control 1.74-1.81 both: borderline before, not caused.
+- Not measured: the sound of the V-twins now firing 270-450 (designed engines only; the catalogue's are unchanged).
+
 ## 2026-10-19 — Small engines: refused, then idling high
 
 - Owner report: a 200 cc single cannot be designed. 31 designs (singles 50-250 cc x 5 uses, small twins/four, 2T, diesel): 29 refused, all with the generic validator line. The validator now names the value: final drive 8.0-20.2 over the limit of 8 (a motorcycle's ratio includes the primary: ~10 on a 125), inertia 0.002-0.009 under 0.01; under 0.1 L also plenum, piston mass (< 50 g), throttle (< 15 mm), and 50 cc failed a 0.05 L check by round-off.

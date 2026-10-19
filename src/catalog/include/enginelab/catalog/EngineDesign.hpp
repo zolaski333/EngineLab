@@ -21,6 +21,20 @@ enum class EngineUse : std::uint8_t {
 
 enum class Induction : std::uint8_t { natural, turbocharged, supercharged };
 
+/** How the cylinders of one row of a V or a W meet the crank. Inline, flat
+ *  and radial engines are not concerned. */
+enum class CrankPins : std::uint8_t {
+    /** Shared when that fires evenly, or on four cylinders or fewer (a 90 deg
+     *  V-twin's 270-450, as the real ones); otherwise split pins, offset the
+     *  least that fires evenly (a 90 deg V6's 30 deg); otherwise one pin per
+     *  cylinder. */
+    automatic,
+    /** One pin per row, firing as evenly as that allows. */
+    shared,
+    /** One pin per cylinder: the best balanced even-firing crank. */
+    separate
+};
+
 /**
  * The short description an engine is designed from, with no base engine.
  * A zero or empty field is derived. Bore and stroke, or the displacement, are
@@ -58,6 +72,8 @@ struct EngineSpec final {
     /** Top dead centre of each cylinder (id order), crank degrees, for an
      *  uneven-firing crank such as a 270 deg twin; empty fires evenly. */
     std::vector<double> crankOffsetsDegrees;
+    /** A V's or a W's crank pins, when crankOffsetsDegrees is empty. */
+    CrankPins crankPins { CrankPins::automatic };
     /** Values set by hand, by DesignValue key. They win over the derived ones,
      *  and what is derived from them follows. An unknown key is an error. */
     std::map<std::string, double> overrides;
@@ -104,5 +120,7 @@ struct DesignedEngine final {
 
 [[nodiscard]] const char* engineUseName(EngineUse) noexcept;
 [[nodiscard]] std::optional<EngineUse> parseEngineUse(std::string_view) noexcept;
+[[nodiscard]] const char* crankPinsName(CrankPins) noexcept;
+[[nodiscard]] std::optional<CrankPins> parseCrankPins(std::string_view) noexcept;
 
 } // namespace enginelab

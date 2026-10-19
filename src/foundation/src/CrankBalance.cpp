@@ -77,6 +77,45 @@ void placeFirings(std::vector<BalanceCylinder>& cylinders, const std::vector<std
     return a.order < b.order;
 }
 
+/** The evener crank first, then as better(). */
+[[nodiscard]] bool betterCrank(const RowPinCrank& a, const RowPinCrank& b) {
+    const auto unevenA = std::round(a.unevennessDegrees * 1000.0);
+    const auto unevenB = std::round(b.unevennessDegrees * 1000.0);
+    if (unevenA != unevenB) return unevenA < unevenB;
+    const auto scoreA = std::round(score(a.balance) * 1000.0);
+    const auto scoreB = std::round(score(b.balance) * 1000.0);
+    if (scoreA != scoreB) return scoreA < scoreB;
+    if (a.adjacentFirings != b.adjacentFirings) return a.adjacentFirings < b.adjacentFirings;
+    return a.order < b.order;
+}
+
+/** Distinct values, ascending. */
+[[nodiscard]] std::vector<double> distinct(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end(),
+        [](double a, double b) { return std::abs(a - b) < 1.0e-9; }), values.end());
+    return values;
+}
+
+[[nodiscard]] std::size_t rankOf(const std::vector<double>& values, double value) {
+    std::size_t index = 0;
+    while (index + 1 < values.size() && values[index] < value - 1.0e-9) ++index;
+    return index;
+}
+
+/** An even-firing crank's top dead centres fall, modulo a turn, on multiples
+ *  of `step`, `perSlot` of them on each (two on a four-stroke with an even
+ *  count: one a turn after the other). */
+struct EvenSlots final {
+    std::size_t perSlot { 1 };
+    double step { 360.0 };
+};
+
+[[nodiscard]] EvenSlots evenSlots(std::size_t count, double cycleDegrees) {
+    const auto perSlot = cycleDegrees > 360.5 && count % 2 == 0 ? std::size_t { 2 } : std::size_t { 1 };
+    return { perSlot, 360.0 * static_cast<double>(perSlot) / static_cast<double>(count) };
+}
+
 } // namespace
 
 std::vector<BalanceCylinder> balanceCylinders(const EngineConfig& config) {
@@ -181,6 +220,149 @@ std::vector<FiringOrderCandidate> evenFiringOrders(
     std::sort(candidates.begin(), candidates.end(), better);
     if (candidates.size() > maxCandidates) candidates.resize(maxCandidates);
     return candidates;
+}
+
+std::optional<RowPinCrank> rowPinCrank(const std::vector<BalanceCylinder>& cylinders, double cycleDegrees,
+    double splitDegrees, const std::vector<std::uint32_t>& firingOrder, bool evenOnly) {
+    const auto count = cylinders.size();
+    if (count == 0) return std::nullopt;
+    std::vector<double> positions;
+    std::vector<double> banks;
+    for (const auto& cylinder : cylinders) {
+        positions.push_back(cylinder.axialPitches);
+        banks.push_back(cylinder.bankDegrees);
+    }
+    positions = distinct(std::move(positions));
+    banks = distinct(std::move(banks));
+    const auto rows = positions.size();
+    if (std::pow(static_cast<double>(rows), static_cast<double>(rows - 1)) > 200'000.0) return std::nullopt;
+    // Where each cylinder's top dead centre falls, modulo a turn, with its
+    // row's pin at zero: its bore, and its bank's lead on a split pin.
+    std::vector<std::size_t> row(count);
+    std::vector<double> lead(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        row[index] = rankOf(positions, cylinders[index].axialPitches);
+        lead[index] = cylinders[index].bankDegrees
+            + splitDegrees * static_cast<double>(rankOf(banks, cylinders[index].bankDegrees));
+    }
+    const auto grid = 360.0 / static_cast<double>(rows);
+    const auto fourStroke = cycleDegrees > 360.5;
+    const auto interval = cycleDegrees / static_cast<double>(count);
+
+    std::optional<RowPinCrank> best;
+    auto working = cylinders;
+    std::vector<double> sorted(count);
+    const auto consider = [&](std::vector<double> tdc) {
+        std::vector<std::uint32_t> order(count);
+        std::iota(order.begin(), order.end(), 1U);
+        std::stable_sort(order.begin(), order.end(), [&tdc](auto a, auto b) { return tdc[a - 1] < tdc[b - 1]; });
+        if (!firingOrder.empty() && order != firingOrder) return;
+        auto low = cycleDegrees;
+        auto high = 0.0;
+        for (std::size_t position = 0; position < count; ++position) {
+            const auto next = position + 1 < count ? tdc[order[position + 1] - 1] : cycleDegrees;
+            const auto gap = next - tdc[order[position] - 1];
+            low = std::min(low, gap);
+            high = std::max(high, gap);
+        }
+        if (best && std::round((high - low) * 1000.0) > std::round(best->unevennessDegrees * 1000.0)) return;
+        RowPinCrank candidate;
+        for (std::size_t index = 0; index < count; ++index) working[index].tdcDegrees = tdc[index];
+        candidate.balance = analyseCrankBalance(working, cycleDegrees);
+        candidate.adjacentFirings = adjacentFirings(working, order);
+        candidate.unevennessDegrees = high - low;
+        candidate.splitDegrees = splitDegrees;
+        candidate.tdcDegrees = std::move(tdc);
+        candidate.order = std::move(order);
+        if (!best || betterCrank(candidate, *best)) best = std::move(candidate);
+    };
+    // Every set of pins, the first row's at zero.
+    std::vector<double> phase(count);
+    const auto forEachPinSet = [&](const auto& visit) {
+        std::vector<std::size_t> digits(rows, 0);
+        for (;;) {
+            const auto first = static_cast<double>(digits[row[0]]) * grid + lead[0];
+            for (std::size_t index = 0; index < count; ++index) {
+                phase[index] = wrapped(static_cast<double>(digits[row[index]]) * grid + lead[index] - first, 360.0);
+                if (phase[index] > 360.0 - 1.0e-6) phase[index] = 0.0;
+            }
+            visit();
+            std::size_t place = 1;
+            while (place < rows && ++digits[place] == rows) digits[place++] = 0;
+            if (place >= rows) break;
+        }
+    };
+
+    const auto slots = evenSlots(count, cycleDegrees);
+    const auto slotCount = count / slots.perSlot;
+    forEachPinSet([&] {
+        std::vector<std::vector<std::size_t>> slot(slotCount);
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto at = phase[index] / slots.step;
+            if (std::abs(at - std::round(at)) > 1.0e-6) return;
+            auto& members = slot[static_cast<std::size_t>(std::lround(at)) % slotCount];
+            members.push_back(index);
+            if (members.size() > slots.perSlot) return;
+        }
+        if (slots.perSlot == 1) {
+            // Odd count: each top dead centre is the one of its two turns
+            // that falls on an even-firing angle.
+            auto tdc = phase;
+            for (auto& angle : tdc) {
+                const auto at = angle / interval;
+                if (fourStroke && std::abs(at - std::round(at)) > 1.0e-6) angle += 360.0;
+            }
+            consider(std::move(tdc));
+            return;
+        }
+        for (std::uint32_t mask = 0; mask < (1U << slotCount); ++mask) {
+            std::vector<double> tdc(count);
+            for (std::size_t index = 0; index < slotCount; ++index) {
+                const auto later = (mask >> index) & 1U;
+                tdc[slot[index][0]] = phase[slot[index][0]] + (later != 0U ? 360.0 : 0.0);
+                tdc[slot[index][1]] = phase[slot[index][1]] + (later != 0U ? 0.0 : 360.0);
+            }
+            if (tdc[0] < 1.0) consider(std::move(tdc));
+        }
+    });
+    if (best || evenOnly || (fourStroke && count > 10)) return best;
+
+    forEachPinSet([&] {
+        const auto variants = fourStroke ? 1U << (count - 1) : 1U;
+        for (std::uint32_t mask = 0; mask < variants; ++mask) {
+            auto tdc = phase;
+            for (std::size_t index = 1; index < count; ++index)
+                if (((mask >> (index - 1)) & 1U) != 0U) tdc[index] += 360.0;
+            consider(std::move(tdc));
+        }
+    });
+    return best;
+}
+
+std::optional<RowPinCrank> splitPinCrank(
+    const std::vector<BalanceCylinder>& cylinders, double cycleDegrees, const std::vector<std::uint32_t>& firingOrder) {
+    std::vector<double> banks;
+    for (const auto& cylinder : cylinders) banks.push_back(cylinder.bankDegrees);
+    banks = distinct(std::move(banks));
+    if (banks.size() < 2) return std::nullopt;
+    // The splits that bring the second bank onto the first's even-firing
+    // angles, the least first (a 90 deg V6: +-30, then +-90...).
+    const auto step = evenSlots(cylinders.size(), cycleDegrees).step;
+    std::vector<double> splits;
+    for (int multiple = 0; static_cast<double>(multiple) * step < 360.0 - 1.0e-9; ++multiple) {
+        const auto split = std::remainder(static_cast<double>(multiple) * step - (banks[1] - banks[0]), 360.0);
+        if (std::abs(split) > 1.0e-6) splits.push_back(split);
+    }
+    std::sort(splits.begin(), splits.end(), [](double a, double b) {
+        return std::abs(std::abs(a) - std::abs(b)) > 1.0e-9 ? std::abs(a) < std::abs(b) : a > b;
+    });
+    std::optional<RowPinCrank> best;
+    for (const auto split : splits) {
+        if (best && std::abs(split) > std::abs(best->splitDegrees) + 1.0e-9) break;
+        auto crank = rowPinCrank(cylinders, cycleDegrees, split, firingOrder, true);
+        if (crank && (!best || betterCrank(*crank, *best))) best = std::move(crank);
+    }
+    return best;
 }
 
 std::vector<FiringOrderCandidate> inlineFiringOrders(

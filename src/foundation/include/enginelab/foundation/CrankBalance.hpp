@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace enginelab {
@@ -73,6 +74,41 @@ struct FiringOrderCandidate final {
  */
 [[nodiscard]] std::vector<FiringOrderCandidate> evenFiringOrders(
     const std::vector<BalanceCylinder>& cylinders, double cycleDegrees, std::size_t maxCandidates);
+
+/** A crank whose cylinders of one row share their pins. */
+struct RowPinCrank final {
+    /** Top dead centre of each cylinder (the order given), cylinder 1 at 0. */
+    std::vector<double> tdcDegrees;
+    /** Cylinder ids in firing order, starting with 1. */
+    std::vector<std::uint32_t> order;
+    CrankBalance balance;
+    std::uint32_t adjacentFirings { 0 };
+    /** Longest firing interval less the shortest: zero fires evenly. */
+    double unevennessDegrees { 0.0 };
+    /** How far each bank's pin leads the first bank's in a row (banks ranked
+     *  by angle): zero when the row shares one pin. */
+    double splitDegrees { 0.0 };
+};
+
+/**
+ * The best crank whose cylinders of one row (equal axialPitches) share one pin
+ * (`splitDegrees` zero), or whose pins are split, each bank's leading the
+ * first bank's by that much times its rank. Rows' pins lie on a 360 / rows
+ * grid, every set tried (none above 200,000 sets: empty). Ranked by
+ * unevenness, then as evenFiringOrders(). `firingOrder`, when given, is the
+ * only order kept. With `evenOnly`, or above 10 cylinders on a four-stroke,
+ * only even-firing cranks are sought. Empty when there is none.
+ */
+[[nodiscard]] std::optional<RowPinCrank> rowPinCrank(const std::vector<BalanceCylinder>& cylinders,
+    double cycleDegrees, double splitDegrees, const std::vector<std::uint32_t>& firingOrder, bool evenOnly);
+
+/**
+ * The even-firing crank with split pins (rowPinCrank()) whose split is the
+ * least, shared pins excluded. Splits tried: those that bring the banks onto
+ * the even-firing angles. Empty when there is none.
+ */
+[[nodiscard]] std::optional<RowPinCrank> splitPinCrank(const std::vector<BalanceCylinder>& cylinders,
+    double cycleDegrees, const std::vector<std::uint32_t>& firingOrder);
 
 /** evenFiringOrders() for `cylinderCount` inline cylinders one pitch apart. */
 [[nodiscard]] std::vector<FiringOrderCandidate> inlineFiringOrders(

@@ -120,6 +120,17 @@ template <typename T>
     return found->second;
 }
 
+/** Firing intervals as "270-450", or "every 90 deg" when even. */
+[[nodiscard]] std::string intervalsText(const CrankBalance& balance) {
+    const auto& intervals = balance.firingIntervalsDegrees;
+    if (intervals.empty()) return {};
+    const auto [low, high] = std::minmax_element(intervals.begin(), intervals.end());
+    if (*high - *low < 1.0e-6) return "every " + format(*low) + " deg";
+    std::string text;
+    for (const auto interval : intervals) text += (text.empty() ? "" : "-") + format(interval);
+    return text + " deg";
+}
+
 /** Bank angle of each cylinder (id order) and its row along the crank. */
 struct CylinderPlace final {
     double bankDegrees { 0.0 };
@@ -215,6 +226,21 @@ std::optional<EngineUse> parseEngineUse(std::string_view name) noexcept {
     for (const auto use : { EngineUse::roadCar, EngineUse::sportCar, EngineUse::roadMotorcycle,
              EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle, EngineUse::aircraft })
         if (name == engineUseName(use)) return use;
+    return std::nullopt;
+}
+
+const char* crankPinsName(CrankPins pins) noexcept {
+    switch (pins) {
+    case CrankPins::automatic: return "automatic";
+    case CrankPins::shared: return "shared";
+    case CrankPins::separate: return "separate";
+    }
+    return "automatic";
+}
+
+std::optional<CrankPins> parseCrankPins(std::string_view name) noexcept {
+    for (const auto pins : { CrankPins::automatic, CrankPins::shared, CrankPins::separate })
+        if (name == crankPinsName(pins)) return pins;
     return std::nullopt;
 }
 
@@ -355,6 +381,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         const auto cycleDegrees = cycleDegreesOf(spec.cycle);
         std::vector<double> tdc(count, 0.0);
         std::vector<std::uint32_t> order = spec.firingOrder;
+        const auto rowed = (spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::custom)
+            && spec.crankPins != CrankPins::separate;
+        std::optional<RowPinCrank> crank;
+        std::string pinRule = radial ? "one throw, a master rod and articulated rods"
+            : !spec.crankOffsetsDegrees.empty() ? "the cylinders whose offsets put them on one pin share it"
+            : spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::custom
+            ? "one per cylinder: as asked" : "one per cylinder";
         if (!spec.crankOffsetsDegrees.empty()) {
             if (spec.crankOffsetsDegrees.size() != count)
                 throw std::invalid_argument("Give one crank offset per cylinder");
@@ -378,6 +411,32 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 std::stable_sort(order.begin(), order.end(),
                     [&tdc](auto a, auto b) { return tdc[a - 1] < tdc[b - 1]; });
             } else {
+                // A V's or a W's cylinders of a row share a pin, as on the
+                // real engines (the owner's report, 2026-10-19): each had its
+                // own, placed for even firing.
+                if (rowed) {
+                    const auto shared = rowPinCrank(geometry, cycleDegrees, 0.0, order, false);
+                    if (shared && (shared->unevennessDegrees < 1.0e-6 || spec.crankPins == CrankPins::shared
+                            || count <= 4)) {
+                        crank = shared;
+                        pinRule = "one per row, shared by the banks";
+                    } else if (spec.crankPins == CrankPins::automatic) {
+                        crank = splitPinCrank(geometry, cycleDegrees, order);
+                        if (crank)
+                            pinRule = "split by " + format(std::abs(crank->splitDegrees)) + " deg in each row: "
+                                + (shared ? "one shared pin per row fires " + intervalsText(shared->balance)
+                                          : std::string(order.empty() ? "no shared pin fires evenly"
+                                                                      : "no shared pin gives this firing order"));
+                    }
+                    if (!crank)
+                        pinRule = std::string("one per cylinder: ") + (spec.crankPins == CrankPins::separate
+                            ? "as asked" : !order.empty() ? "no shared or split pin gives this firing order"
+                            : "no shared or split pin fires evenly");
+                }
+                if (crank) {
+                    tdc = crank->tdcDegrees;
+                    order = crank->order;
+                }
                 if (order.empty()) order = evenFiringOrders(geometry, cycleDegrees, 1).front().order;
                 auto sorted = order;
                 std::sort(sorted.begin(), sorted.end());
@@ -386,8 +445,9 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                         throw std::invalid_argument("The firing order must name every cylinder once");
                 if (order.size() != count)
                     throw std::invalid_argument("The firing order must name every cylinder once");
-                for (std::size_t position = 0; position < order.size(); ++position)
-                    tdc[order[position] - 1] = static_cast<double>(position) * cycleDegrees / countD;
+                if (!crank)
+                    for (std::size_t position = 0; position < order.size(); ++position)
+                        tdc[order[position] - 1] = static_cast<double>(position) * cycleDegrees / countD;
             }
         }
         config.firingOrder = order;
@@ -439,7 +499,35 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             }
             config.cylinders.push_back(cylinder);
         }
-        if (radial) config.crankJournals = { { 1, 0.0, 0.5 * stroke, 1 } };
+        if (radial) {
+            config.crankJournals = { { 1, 0.0, 0.5 * stroke, 1 } };
+        } else {
+            // Cylinders of one row whose pins point the same way share it.
+            std::vector<CrankJournalConfig> journals;
+            std::vector<double> journalRows;
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const auto pin = std::fmod(std::fmod(tdc[index] - places[index].bankDegrees, 360.0) + 360.0, 360.0);
+                std::size_t found = 0;
+                while (found < journals.size()
+                        && !(journalRows[found] == places[index].row
+                            && std::abs(std::remainder(journals[found].angleDegrees - pin, 360.0)) < 1.0e-6))
+                    ++found;
+                if (found == journals.size()) {
+                    journals.push_back({ static_cast<std::uint32_t>(found + 1), pin < 360.0 - 1.0e-9 ? pin : 0.0,
+                        0.5 * stroke, 0 });
+                    journalRows.push_back(places[index].row);
+                }
+                config.cylinders[index].crankJournalId = journals[found].id;
+            }
+            if (journals.size() < count) {
+                config.crankJournals = std::move(journals);
+            } else {
+                for (auto& cylinder : config.cylinders) cylinder.crankJournalId = 0;
+            }
+        }
+        designed.values.push_back({ "crank_pins", "Crank pins", "",
+            radial ? 1.0 : static_cast<double>(config.crankJournals.empty() ? count : config.crankJournals.size()),
+            false, pinRule + "; fires " + intervalsText(analyseCrankBalance(config)), false });
 
         // Intake.
         auto& intake = config.intake;
