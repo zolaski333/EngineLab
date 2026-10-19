@@ -22,6 +22,15 @@ file formats, always with an in-memory migration).
 - The 3-D view draws engines with more than two banks (a W16, a broad-arrow
   W12) as W engines, bank by bank, instead of as radials.
 - `EngineLabSceneExport --catalog-root` exports another catalogue folder.
+- `EngineLabRealtimeBudgetHarness --designer-probe` runs the designer's
+  real-time check on each engine.
+
+### Fixed
+
+- The designer's real-time check no longer fails single-cylinder engines,
+  whose speed swings within each cycle, nor engines the dyno cannot pull up to
+  the measuring speed (it measures where they settle). When the check cannot
+  finish, the box says so instead of "Not real time".
 
 ### Removed
 

@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — The designer's real-time check failed engines that run fine
+
+- Owner report: some designs fail "the 5,000 rpm test" yet run well. New `EngineLabRealtimeBudgetHarness --designer-probe` runs the designer's own check. Before: 3/3 singles (450-650 cc) and the Merlin and the radial (catalogue) "did not hold" in 30 s; 14 other designs and 15 catalogue engines passed.
+- Singles: held on the mean (5,000 rpm), but one polled sample swings 4,711-5,436 rpm (trace at 2 deg: +3.7 / -5.7 % on the 500 cc); the check wanted every sample within 3 % for 0.5 s. A test-binary single passed by poll timing, so the regression test is a synthetic +-5 % ripple (fails on the old rule).
+- Merlin, radial: the dyno cannot pull a full-load engine up to 95 % of the limiter; they settle 5 % short (2,900 / 3,040, 2,151 / 2,280 rpm).
+- Rule now: mean speed (1/3 s filter, as the harness) within 3 % for 0.5 s, or settled (< 0.5 % in 1 s) within 15 %, measured where it settled. After: 17/17 designs and 17/17 catalogue engines measured in 1.9-4.4 s; factors as before within run-to-run noise.
+- Not measured: the check from the app with the 3-D view and audio running.
+
 ## 2026-10-19 — Builder phase 6: W engines in 3-D, and a W with no angle
 
 - A W designed with no bank angle had every bank at 0 deg: four cylinders stacked per row. The phase 4 W16 figures were that engine. Rule now: banks spread over 120 deg (at most 90 between neighbours; 3 banks 60 deg, 4 banks 40 deg); two banks at one angle are refused. Corrected W16: physics-only 0.533 (stacked 0.537, so cost is per cylinder, not geometry), still INVALID with audio; idle 901 / 900 rpm.

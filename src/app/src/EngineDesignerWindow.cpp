@@ -476,7 +476,8 @@ private:
         probing_ = false;
         if (pauseLive_) pauseLive_(livePausedBefore_);
         build_.setEnabled(designed_.config.has_value());
-        const auto rpm = juce::String(juce::roundToInt(capacity.holdRpm));
+        const auto rpm = juce::String(juce::roundToInt(capacity.measuredRpm > 0.0 ? capacity.measuredRpm
+                                                                                     : capacity.holdRpm));
         if (capacity.error.empty() && capacity.factor >= realtimeCapacityMargin) {
             if (buildCallback_(config)) close_();
             return;
@@ -493,7 +494,8 @@ private:
         status_.setColour(juce::Label::textColourId, ui::colours::critical);
         status_.setText(message, juce::dontSendNotification);
         auto safe = juce::Component::SafePointer<DesignerContent>(this);
-        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, utf8("Not real time"), message,
+        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon,
+            utf8(capacity.error.empty() ? "Not real time" : "Real time not checked"), message,
             utf8("Build anyway"), utf8("Back"), this,
             juce::ModalCallbackFunction::create([safe, config = std::move(config)](int result) {
                 if (safe && result == 1 && safe->buildCallback_(config)) safe->close_();

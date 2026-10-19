@@ -432,6 +432,37 @@ void realtimeIsChecked() {
         "at the catalogue's measuring speed");
     const std::atomic<bool> cancelled { true };
     require(measureRealtimeCapacity(config, 1.0, 60.0, &cancelled).error == "cancelled", "and can be cancelled");
+
+    // A single's speed swings some +4 / -6 % within each cycle at 5,000 rpm
+    // on the dyno: the hold is judged on the mean speed, not on one sample.
+    const auto heldAfter = [](auto speedAt) {
+        RealtimeHoldJudge judge(5'000.0);
+        for (auto t = 0.0; t < 10.0; t += 0.0117)
+            if (judge.add(t, speedAt(t))) return t;
+        return -1.0;
+    };
+    const auto rippling = heldAfter([](double t) { return 5'000.0 + 250.0 * std::sin(2.0 * 3.14159265 * 41.7 * t); });
+    std::cout << "  a +-5 % rippling 5,000 rpm is held after " << rippling << " s\n";
+    require(rippling > 0.0 && rippling < 1.5, "a speed rippling +-5 % about the target is held");
+    require(heldAfter([](double) { return 4'700.0; }) >= 1.0, "a speed settled 6 % short is taken, after a second");
+    require(heldAfter([](double) { return 3'000.0; }) < 0.0, "one 40 % short is not");
+    const auto ramp = heldAfter([](double t) { return std::min(5'000.0, 1'000.0 + 2'000.0 * t); });
+    require(ramp > 2.0, "nor a ramp before it arrives");
+    const auto slowRamp = heldAfter([](double t) { return std::min(4'500.0, 3'000.0 + 400.0 * t); });
+    std::cout << "  slow climb held after " << slowRamp << " s\n";
+    require(slowRamp > 3.75, "nor a slow climb before it levels off");
+
+    EngineSpec single;
+    single.name = "Single";
+    single.use = EngineUse::roadMotorcycle;
+    single.cylinderCount = 1;
+    single.displacementLitres = 0.5;
+    const auto thumper = designCatalogueEngine(single, ENGINELAB_CATALOG_ROOT);
+    require(thumper.config.has_value(), "a 500 cc single designs");
+    const auto singleCapacity = measureRealtimeCapacity(*thumper.config, 1.0, 30.0);
+    std::cout << "  designed single: physics at " << singleCapacity.factor << " x real time"
+              << (singleCapacity.error.empty() ? "" : " (" + singleCapacity.error + ")") << '\n';
+    require(singleCapacity.error.empty() && singleCapacity.factor > 0.0, "a single holds its measuring speed");
 }
 
 } // namespace
