@@ -1,4 +1,4 @@
-add_library(EngineLabCatalog STATIC src/EngineCatalog.cpp src/SavedEngines.cpp)
+add_library(EngineLabCatalog STATIC src/EngineCatalog.cpp src/EngineDesign.cpp src/SavedEngines.cpp)
 add_library(EngineLab::Catalog ALIAS EngineLabCatalog)
 target_include_directories(EngineLabCatalog PUBLIC include)
 target_link_libraries(EngineLabCatalog PUBLIC EngineLab::Foundation EngineLab::Serialization EngineLab::Calibration

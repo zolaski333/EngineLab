@@ -560,6 +560,9 @@ int main(int argc, char** argv) {
     auto boostHoldMargin = -1.0;
     // Fits sizedTurbocharger() to every engine without forced induction.
     auto addTurbo = false;
+    // Degrees added to the whole ignition curve: how far it is from the best
+    // torque (journal 2026-10-19).
+    auto advanceOffset = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -573,12 +576,14 @@ int main(int argc, char** argv) {
         else if (argument == "--boost-hold-margin" && index + 1 < argc)
             boostHoldMargin = std::stod(argv[++index]);
         else if (argument == "--add-turbo") addTurbo = true;
+        else if (argument == "--advance-offset" && index + 1 < argc)
+            advanceOffset = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
                          " [--reference-file csv] [--schema-only]"
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
-                         " [--add-turbo]\n";
+                         " [--add-turbo] [--advance-offset deg]\n";
             return EXIT_FAILURE;
         }
     }
@@ -624,6 +629,8 @@ int main(int argc, char** argv) {
     if (addTurbo)
         for (auto& engine : engines)
             if (!engine.forcedInduction.enabled) engine = enginelab::withTurbocharger(engine);
+    for (auto& engine : engines)
+        for (auto& sample : engine.ignition.timingCurve) sample.advanceDegrees += advanceOffset;
 
     auto boostHeld = true;
     for (const auto& engine : engines) {

@@ -1,0 +1,42 @@
+schema_version: 5
+family: torture
+# Torture engine: 1,250 cc boxer twin, even 360 deg firing.
+engine:
+  name: Torture Flat Twin 1250
+  layout: flat
+  bank_angle_deg: 180
+  cylinder_count: 2
+  firing_order: [1, 2]
+  idle_rpm: 1100
+  redline_rpm: 9000
+  rotating_inertia_kg_m2: 0.08
+  friction_coefficient: 0.10
+  octane_rating: 95
+  plenum_volume_l: 1.2
+  throttle_diameter_mm: 52
+  intake:
+    plenum_volume_l: 1.2
+    throttle_diameter_mm: 52
+    throttle_count: 2
+    runner_length_mm: 250
+    runner_diameter_mm: 45
+    idle_bypass_area_mm2: 14
+  ignition:
+    rev_limit_rpm: 9200
+    timing_curve:
+      - { rpm: 0, advance_deg: 8 }
+      - { rpm: 3000, advance_deg: 24 }
+      - { rpm: 6000, advance_deg: 32 }
+      - { rpm: 9200, advance_deg: 30 }
+  uses:
+    injection: high_flow_port
+    camshafts: street_mild
+    exhaust: short_v_twin
+    transmission: motorcycle_6_speed_quickshifter
+    vehicle: motorcycle
+  cylinder_template:
+    bore_mm: 102.5
+    stroke_mm: 76.0
+    connecting_rod_mm: 130.0
+    piston_mass_g: 450
+    compression_ratio: 12.5

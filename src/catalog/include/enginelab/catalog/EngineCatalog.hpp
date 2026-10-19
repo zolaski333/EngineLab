@@ -2,11 +2,34 @@
 
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace enginelab {
+
+/** The shared parts under `parts/`: family estimates an engine file names
+ *  under `uses:`. */
+struct PartsLibrary final {
+    std::map<std::string, FuelConfig> fuels;
+    std::map<std::string, InjectionConfig> injections;
+    std::map<std::string, CamshaftConfig> camshafts;
+    std::map<std::string, ExhaustConfig> exhausts;
+    std::map<std::string, TransmissionConfig> transmissions;
+    std::map<std::string, VehicleConfig> vehicles;
+};
+
+/** Reads `<root>/parts/*.yaml`; throws on a malformed file. */
+[[nodiscard]] PartsLibrary loadPartsLibrary(const std::filesystem::path& rootDirectory);
+
+/**
+ * Gives a path with no graph the one its scalar geometry describes: one
+ * primary per cylinder, a collector, the mid pipe and silencer, an outlet
+ * (independent stacks for `aircraft_manifold`). `presetKey` is the exhaust
+ * part the geometry came from, or empty.
+ */
+void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey);
 
 struct EngineCatalogEntry final {
     EngineConfig config;

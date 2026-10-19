@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <numeric>
 #include <stdexcept>
 #include <utility>
 
@@ -111,7 +112,7 @@ EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
     if (config_.cylinders.empty() || config_.cylinders.size() > 32U)
         throw std::invalid_argument("the 3D view supports 1 to 32 cylinders");
     reference_ = buildEngineKinematicsReference(config_);
-    radialLike_ = config_.layout == EngineLayout::radial || config_.banks.size() > 2U;
+    radialLike_ = config_.layout == EngineLayout::radial;
     float bore = 0.0F;
     for (const auto& cylinder : config_.cylinders) bore = std::max(bore, static_cast<float>(cylinder.boreMm));
     pitch_ = bore * 1.25F;
@@ -142,6 +143,19 @@ void EngineModel3D::buildCylinders() {
     const auto count = config_.cylinders.size();
     std::vector<float> station(count), shift(count);
     float lastStation = 0.0F;
+    // More than two banks (a W): banks next to each other in angle are only
+    // 15-30 deg apart, so their cylinders interleave along the crank, half a
+    // pitch apart, as a VR's do.
+    std::vector<float> bankShift(config_.banks.size(), 0.0F);
+    if (config_.banks.size() > 2U && !radialLike_) {
+        std::vector<std::size_t> byAngle(config_.banks.size());
+        std::iota(byAngle.begin(), byAngle.end(), std::size_t { 0 });
+        std::sort(byAngle.begin(), byAngle.end(), [this](std::size_t a, std::size_t b) {
+            return config_.banks[a].angleDegrees < config_.banks[b].angleDegrees;
+        });
+        for (std::size_t rank = 0; rank < byAngle.size(); ++rank)
+            bankShift[byAngle[rank]] = (rank % 2U == 0U ? -0.25F : 0.25F) * pitch_;
+    }
     for (std::size_t i = 0; i < count; ++i) {
         const auto& cylinder = config_.cylinders[i];
         const auto* bank = bankFor(config_, cylinder);
@@ -159,6 +173,8 @@ void EngineModel3D::buildCylinders() {
         // as their rods do on a shared pin.
         if (config_.banks.size() == 2U && !radialLike_)
             shift[i] = (bankIndex == 0 ? -0.28F : 0.28F) * static_cast<float>(cylinder.boreMm);
+        else if (bank != nullptr && bankIndex < bankShift.size())
+            shift[i] = bankShift[bankIndex];
     }
 
     for (std::size_t i = 0; i < count; ++i) {

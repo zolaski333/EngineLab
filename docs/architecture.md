@@ -183,19 +183,37 @@ them back when they are there.
 
 ### New engine
 
-*New engine…* (the menu) builds an engine from a base one that runs (the
-running engine or any listed one) and a recipe: name, bore, stroke,
-compression ratio, redline and aspiration (the base's, natural, or a
-turbocharger sized for the new engine shared over 1-4 identical units).
-`buildEngine()` (`EngineBuilder.hpp`) applies it: bore and stroke through
-`resizeCylinders()`, pistons and rods scaled as similar parts, the rev
-limiter's margin and the ignition curve stretched with the redline, and what
-feeds the air kept in the base's proportions to the new air flow (injector
-flow, throttle bores at the same air speed, plenums, a diesel's fuel limit,
-clutch capacity). The layout, heads, camshafts, exhaust and gearbox stay the
-base's. The result is validated, saved under *My engines* and run.
-`EngineLab.EngineBuilder` checks the recipe and that a 20 % stroker makes
-its share more torque on the same mixture without saturating its injectors.
+*New engine…* (the menu) designs an engine from nothing: no base engine.
+`designEngine()` (`catalog/EngineDesign.hpp`) takes an `EngineSpec` (cycle,
+fuel, use, layout, cylinder count, banks, bore and stroke or a displacement,
+induction and boost) and derives everything else by rules fitted to the
+catalogue engines, which were authored from their makers' figures: redline
+from the use's mean piston speed, rods, pistons, compression, cams, intake and
+exhaust sizes for the peak-power speed, plenum, throttles, injectors, ignition
+template, gearing for the top speed the estimated power reaches. Each value is
+returned as a `DesignValue` with its rule; any can be set by key
+(`overrides`), and what derives from it follows.
+
+The crank: banks at the layout's angles (a W's as given), cylinders shared
+over them in id order, a firing order searched for the best balance
+(`evenFiringOrders()`, `CrankBalance.hpp`) unless one is given, or crank
+offsets for an uneven crank (a 270 deg twin). A radial fires from its single
+throw. A two-stroke gets one expansion chamber per cylinder, tuned to its
+peak-power speed. Silencers, gearboxes and vehicles come from the family parts
+(`parts/`); a designed engine has the default voicing only.
+
+An engine file may hold `design:` (the spec, same keys) instead of `engine:`;
+the catalogue loads it through the same function, so every harness runs a
+designed engine. The window (`EngineDesignerWindow`) shows the derived values
+and their rules as the spec changes; *Advanced* adds firing order, crank
+offsets, W bank angles and setting any value by hand. *Build and run* first
+runs the design off-screen for a few seconds with the live engine paused
+(`measureRealtimeCapacity()`, `runtime/RealtimeCapacityProbe.hpp`: the
+physics-only factor at the realtime harness's speed) and asks before building
+below `realtimeCapacityMargin` (1.14: the sound and the 3-D view cost 3-12 %
+on top). Cost grows with cylinders and speed: a 12-cylinder sport car is at
+the limit on the reference machine, a quad-turbo W16 at half. Then it saves the
+engine under *My engines*. `EngineLab.EngineDesign` checks it.
 
 ### Live exhaust changes
 
@@ -371,7 +389,11 @@ Every moving part is placed with `evaluateCylinderKinematics()`, the function
 the simulator uses, so inline, V, flat, radial and articulated-rod engines are
 drawn as they are simulated. `EngineLab.EngineModel3D` checks every catalogue
 engine at 72 angles: rods keep their length, wrist pins stay on the cylinder
-axis, crowns stay below the deck.
+axis, crowns stay below the deck. More than two banks (a W) are drawn bank by
+bank like a V, a head per bank, banks next in angle interleaved half a pitch
+along the crank as a VR's are; only a radial is drawn as one. On a designed
+W16 (`EngineLabSceneExport --catalog-root`) that took duct clashes from 58 to
+15 and ducts through the engine from 70 to 8 (journal 2026-10-19).
 
 Threads:
 

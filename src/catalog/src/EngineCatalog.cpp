@@ -1,4 +1,5 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <cctype>
@@ -705,15 +706,6 @@ template <typename T>
     return value;
 }
 
-struct PartsLibrary final {
-    std::map<std::string, FuelConfig> fuels;
-    std::map<std::string, InjectionConfig> injections;
-    std::map<std::string, CamshaftConfig> camshafts;
-    std::map<std::string, ExhaustConfig> exhausts;
-    std::map<std::string, TransmissionConfig> transmissions;
-    std::map<std::string, VehicleConfig> vehicles;
-};
-
 template <typename T>
 void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, const char* key, T& target) {
     if (!uses || !uses[key]) return;
@@ -833,8 +825,53 @@ void applyCrankOffsets(EngineConfig& config) {
     }
 }
 
+[[nodiscard]] EngineSpec decodeEngineSpec(const YAML::Node& node) {
+    requireKnownKeys(node, { "name", "cycle", "fuel", "use", "layout", "cylinders", "bank_count", "bank_angle_deg",
+        "bank_angles_deg", "bore_mm", "stroke_mm", "displacement_l", "induction", "boost_pressure_ratio", "turbochargers",
+        "firing_order", "crank_offsets_deg", "overrides" }, "design");
+    EngineSpec spec;
+    spec.name = node["name"].as<std::string>();
+    const auto cycle = node["cycle"].as<std::string>("four_stroke");
+    if (cycle == "four_stroke") spec.cycle = EngineCycle::fourStroke;
+    else if (cycle == "two_stroke") spec.cycle = EngineCycle::twoStroke;
+    else throw std::runtime_error("Unknown engine cycle: " + cycle);
+    const auto fuel = node["fuel"].as<std::string>("gasoline");
+    if (fuel == "gasoline") spec.fuel = FuelType::gasoline;
+    else if (fuel == "diesel") spec.fuel = FuelType::diesel;
+    else throw std::runtime_error("Unknown fuel type: " + fuel);
+    const auto use = node["use"].as<std::string>("road_car");
+    const auto parsedUse = parseEngineUse(use);
+    if (!parsedUse) throw std::runtime_error("Unknown engine use: " + use);
+    spec.use = *parsedUse;
+    spec.layout = parseLayout(node["layout"].as<std::string>("inline"));
+    spec.cylinderCount = node["cylinders"].as<std::uint32_t>();
+    assignIfPresent(node, "bank_count", spec.bankCount);
+    assignIfPresent(node, "bank_angle_deg", spec.bankAngleDegrees);
+    assignIfPresent(node, "bank_angles_deg", spec.bankAnglesDegrees);
+    assignIfPresent(node, "bore_mm", spec.boreMm);
+    assignIfPresent(node, "stroke_mm", spec.strokeMm);
+    assignIfPresent(node, "displacement_l", spec.displacementLitres);
+    const auto induction = node["induction"].as<std::string>("natural");
+    if (induction == "natural") spec.induction = Induction::natural;
+    else if (induction == "turbocharged") spec.induction = Induction::turbocharged;
+    else if (induction == "supercharged") spec.induction = Induction::supercharged;
+    else throw std::runtime_error("Unknown induction: " + induction);
+    assignIfPresent(node, "boost_pressure_ratio", spec.boostPressureRatio);
+    assignIfPresent(node, "turbochargers", spec.turbochargerCount);
+    assignIfPresent(node, "firing_order", spec.firingOrder);
+    assignIfPresent(node, "crank_offsets_deg", spec.crankOffsetsDegrees);
+    if (const auto overrides = node["overrides"])
+        for (const auto& item : overrides) spec.overrides[item.first.as<std::string>()] = item.second.as<double>();
+    return spec;
+}
+
 [[nodiscard]] EngineConfig decodeEngineFile(const std::filesystem::path& path, const PartsLibrary& parts) {
     const auto document = YAML::LoadFile(path.string());
+    if (const auto design = document["design"]) {
+        auto designed = designEngine(decodeEngineSpec(design), parts);
+        if (!designed.config) throw std::runtime_error(designed.error);
+        return std::move(*designed.config);
+    }
     const auto engine = document["engine"];
     if (!engine) throw std::runtime_error("Missing engine node");
 
@@ -1147,6 +1184,14 @@ void applyCrankOffsets(EngineConfig& config) {
     };
 }
 } // namespace
+
+PartsLibrary loadPartsLibrary(const std::filesystem::path& rootDirectory) {
+    return loadParts(rootDirectory);
+}
+
+void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey) {
+    compileCatalogueExhaustPath(path, presetKey);
+}
 
 AudioVoicingLoadResult loadAudioVoicing(
     const std::filesystem::path& rootDirectory,

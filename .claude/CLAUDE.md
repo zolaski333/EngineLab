@@ -18,7 +18,11 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Milestone 1 — the sound of the CP2 (MT-07, Arrow exhaust).**
+**Done 2026-10-19 (owner's go): the engine builder from zero** (journal
+2026-10-18/19). Open: the designer window was never checked on screen; the
+ignition is a template (no MBT calibration: no knock limit to stop it).
+
+**Now, milestone 1 — the sound of the CP2 (MT-07, Arrow exhaust).**
 
 1. Reference recordings made by the owner, at a known engine speed
    (protocol: `docs/recording-protocol-cp2.md`).

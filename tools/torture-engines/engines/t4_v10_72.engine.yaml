@@ -1,0 +1,41 @@
+schema_version: 5
+family: torture
+# Torture engine: 4.8 L V10, 72 deg, even firing.
+engine:
+  name: Torture V10 4.8 72deg
+  layout: v
+  bank_angle_deg: 72
+  cylinder_count: 10
+  firing_order: [1, 6, 5, 10, 2, 7, 3, 8, 4, 9]
+  idle_rpm: 900
+  redline_rpm: 9000
+  rotating_inertia_kg_m2: 0.22
+  friction_coefficient: 0.12
+  octane_rating: 98
+  plenum_volume_l: 5.0
+  throttle_diameter_mm: 85
+  intake:
+    plenum_volume_l: 5.0
+    throttle_diameter_mm: 85
+    runner_length_mm: 300
+    runner_diameter_mm: 42
+    idle_bypass_area_mm2: 30
+  ignition:
+    rev_limit_rpm: 9200
+    timing_curve:
+      - { rpm: 0, advance_deg: 10 }
+      - { rpm: 3000, advance_deg: 24 }
+      - { rpm: 6000, advance_deg: 32 }
+      - { rpm: 9200, advance_deg: 32 }
+  uses:
+    injection: sequential_port
+    camshafts: sport_na
+    exhaust: equal_length_header
+    transmission: sport_6_speed
+    vehicle: jdm_gt
+  cylinder_template:
+    bore_mm: 88.0
+    stroke_mm: 79.0
+    connecting_rod_mm: 140.0
+    piston_mass_g: 380
+    compression_ratio: 12.0
