@@ -19,6 +19,10 @@
  * is therefore roughly a tenth of what it was, which is the entire reason to
  * try again.
  *
+ * Since 2026-10-20 `processCylinder` runs on it too, from eight cylinders up:
+ * the workers are already spinning between the gas dispatches, and the body is
+ * now 1.5-2.2 us per cylinder (journal 2026-10-20 for the A/B).
+ *
  * Design choices, each of which is a lesson from that failure:
  *
  *  - The calling thread is a worker. A master that only waits is one core

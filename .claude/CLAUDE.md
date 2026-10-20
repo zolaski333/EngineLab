@@ -169,7 +169,8 @@ Non-deterministic:
 Details of each measurement are in the docs archive (tag `archive/docs-2026-09`).
 
 - "Unified duct" rewrite: the 300 mm mesh carries the audible geometry (12-14 dB).
-- Fork-join per cylinder; AVX/AVX2 (dependent-division latency); exhaust CFL
+- Fork-join per cylinder with woken threads (the resident pool runs the pass
+  since 2026-10-20, journal); AVX/AVX2 (dependent-division latency); exhaust CFL
   0.9; MUSCL-Hancock. Two-stroke: 50 mm, or exhaust coupled every substep
   beyond BDC-to-transfer-close (not real time); third-order faces, one-sided
   open ends, characteristic valve, finer transfer coupling (journal 10-16).

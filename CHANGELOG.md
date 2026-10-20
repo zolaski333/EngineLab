@@ -45,6 +45,15 @@ file formats, always with an in-memory migration).
   the measuring speed (it measures where they settle). When the check cannot
   finish, the box says so instead of "Not real time".
 
+### Changed
+
+- Engines with eight cylinders or more simulate their cylinders in parallel,
+  with exactly the same result: 22-33 % more real-time headroom (a designed
+  6 L V12 at 7,500 rpm 0.71 -> 0.93, the LS3 1.17 -> 1.43, the Merlin
+  1.40 -> 1.86 on a 6-core desktop). `EngineLabRealtimeBudgetHarness
+  --inline-cylinders` (and `--serial-publish`) keep the old serial passes for
+  comparison.
+
 ### Removed
 
 - The old *New engine…* that changed the size of an existing engine: the

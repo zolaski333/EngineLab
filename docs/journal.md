@@ -5,6 +5,24 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-20 — Cylinders in parallel on the resident workers (lead 1)
+
+- Audit of `processCylinder` from 8 cylinders up (shared volumes already frozen): it writes only its cylinder's arrays, scratch and runner duct, except 4 engine-wide events (spark count, misfire count + last misfire AFR/time, "solver resolution limited"). These now go through the scratch and are applied in cylinder order after the pass. Two-strokes stay inline (reed fill per intake path); a joint manifold must give each cylinder its own runner duct (checked each step).
+- Dispatch: the existing intake pool, one more barrier per sub-step. `EngineSimulatorOptions::parallelCylinderPass` / harness `--inline-cylinders` keep it inline for A/B.
+- Bit-identity: `EngineLab.JointIntakeManifold` now also runs the Merlin and compares net torque, spark and misfire counts besides speed and pressures, every frame, 0 vs 3 workers: identical on LS3 and Merlin.
+- A/B in the same binary, `--relative-rpm 0.95 --free-run --seconds 15`, 4 alternating runs, warm-up ignored, best: designed V12 0.711 -> 0.877 (x1.23), LS3 1.171 -> 1.368 (x1.17), Merlin 1.400 -> 1.755 (x1.25), 2JZ control (6 cyl, untouched) 1.453 / 1.454. Spread within a variant <= 0.04. Machine: no build/test running; instantaneous load 2-90 % (the harness itself).
+- Then, one factor: the end-of-sub-step per-cylinder publish (state + kinematics, writes only its index) on the workers too, A/B against `--serial-publish`, same protocol: V12 0.878 -> 0.933 (x1.06), LS3 1.369 -> 1.427, Merlin 1.770 -> 1.855, 2JZ 1.455 / 1.450. Both together: x1.31 / x1.22 / x1.33 against the inline pass, near the x1.37/1.30/1.39 estimate. The designed V12 stays below 1.0 (0.93).
+- Not measured: with audio or the 3-D view; on a machine with fewer cores than this i5-10600 (6 cores, 12 threads; the pool needs at least 4 hardware threads).
+
+## 2026-10-20 — Where a big engine's physics thread goes (profile only, nothing changed)
+
+- How: rdtsc counters (temporary patch, not committed; they cost 1-3 % against the plain binary) + an unelevated stack sampler on Release with symbols; `EngineLabRealtimeBudgetHarness --relative-rpm 0.95 --free-run`, this i5-10600, idle machine, 4 alternating runs each. Factor quoted is the plain binary's best; times are the best instrumented run.
+- Designed V12 sport 6.0 L at 7,505 rpm: 0.72. Needs 24,000 sub-steps per sim s (1.88 deg each), reaches 16,900 per wall s, 59.0 us each: cylinders (`processCylinder`) 31 % (1.54 us per cylinder), exhaust network 31 %, intake runners 14 %, serial rest 24 %, incl. per-cylinder loops (end-of-step kinematics 5 %, valve-plane publish 3 %). LS3 6,270 rpm: 1.18, 42.4 us, 29/34/12/24 %. Merlin 2,900: 1.39, 77.9 us, 34/27/21/18 %, 2.19 us per cylinder: its 107 us sub-step exceeds the 100 us blow-by sub-rate, so blow-by runs every sub-step (10 % of the thread; V12 design and LS3 4 %).
+- Pool: 72,000-102,000 barriers per wall s (V12 design 1.3 intake + 3 exhaust per sub-step), 2.1-5.2 us each; the master waits 0.2-0.8 us after its own share, 2.6-5.7 % of wall. Workers 20-24 % busy and never park: already resident across sub-steps. These dispatches run at 3.1x on 4 threads (2.7x on 3); empty-dispatch floor 0.30-0.51 us (pool bench).
+- Lead 1, cylinders (and their per-cylinder loops) in parallel on these workers, at that 3.1x: V12 design x1.37 (0.72 -> ~0.99; x1.43 if ideal), LS3 x1.30 (-> ~1.5), Merlin x1.39 (-> ~1.9). In Aug 2026 a cylinder cost ~0.6 us; now 1.5-2.2. Not verified: that `processCylinder` writes only cylinder-private state.
+- Lead 2, coarse steps while valves shut and nothing burns: 25-29 % of cylinder calls, and such a call costs as much as an open one (V12 1.49 vs 1.52 us). Ceiling x1.07-1.10 at 4x coarser, x1.10-1.13 at most; x1.05 after lead 1.
+- Not measured: either lead built; with audio or the 3-D view. Tables and tools: side-session notes `physics-profile-2026-10-20.md`.
+
 ## 2026-10-19 — Catalogue Vs: the LS3 and the Merlin share no pin either
 
 - Catalogue V8 and V12 cylinders are generated: TDC from the firing order, odd ids on the -half bank. A row shares a pin only if its two TDCs differ by the bank angle (mod 360). Checked by hand from the files, not changed.
