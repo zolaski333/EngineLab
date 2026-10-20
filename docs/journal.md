@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-20 — Where a big engine's physics thread goes (profile only, nothing changed)
+
+- How: rdtsc counters (temporary patch, not committed) + an unelevated stack sampler on Release with symbols; `EngineLabRealtimeBudgetHarness --relative-rpm 0.95 --free-run`, this i5-10600. Another session's builds/ctest loaded the machine throughout (8-76 % CPU): absolute times +-7 % run to run, shares < 1 point; fastest of 3-4 runs quoted. Counter overhead not detectable against the plain binary.
+- Designed V12 sport 6.0 L at 7,505 rpm: 0.68. Needs 24,000 sub-steps per sim s (1.88 deg each), reaches 16,360 per wall s, 60.9 us each: cylinders (`processCylinder`) 32 % (1.63 us per cylinder), exhaust network 30 %, intake runners 14 %, serial rest 24 %, incl. per-cylinder loops (end-of-step kinematics 5 %, valve-plane publish 3 %). LS3 6,270 rpm: 1.13, 43.6 us, 29/33/12/25 %. Merlin 2,900: 1.29, 82.2 us, 34/27/21/19 %, 2.34 us per cylinder: its 107 us sub-step exceeds the 100 us blow-by sub-rate, so blow-by runs every sub-step (10 % of the thread; V12 design 4 %).
+- Pool: 70,000-97,000 barriers per wall s (V12 design 1.3 intake + 3 exhaust per sub-step), 2.2-5.5 us each; the master waits 0.25-0.94 us after its own share, 3-5 % of wall. Workers 20-24 % busy and never park: already resident across sub-steps. Those dispatches run at 3.17x on 4 threads; empty-dispatch floor 0.34-0.70 us (pool bench).
+- Lead 1, cylinders in parallel on these workers, ceiling: V12 design 0.68 -> 0.94 (0.98 if ideal; ~1.0 needs 6 threads), LS3 -> ~1.45, Merlin -> ~1.8. In Aug 2026 a cylinder cost ~0.6 us; now 1.6-2.3. Not verified: that `processCylinder` writes only cylinder-private state.
+- Lead 2, coarse steps while valves shut and nothing burns: 25-29 % of cylinder calls, and such a call costs as much as an open one (1.57 vs 1.60 us). Ceiling x1.08 at 4x coarser, x1.11 at most; x1.04 after lead 1.
+- Not measured: either lead built; with audio or the 3-D view; on an idle machine. Tables and tools: side-session notes `physics-profile-2026-10-20.md`.
+
 ## 2026-10-19 — Catalogue Vs: the LS3 and the Merlin share no pin either
 
 - Catalogue V8 and V12 cylinders are generated: TDC from the firing order, odd ids on the -half bank. A row shares a pin only if its two TDCs differ by the bank angle (mod 360). Checked by hand from the files, not changed.
