@@ -48,10 +48,11 @@ file formats, always with an in-memory migration).
 ### Changed
 
 - Engines with eight cylinders or more simulate their cylinders in parallel,
-  with exactly the same result: 17-25 % more real-time headroom (a designed
-  6 L V12 at 7,500 rpm 0.71 -> 0.88, the LS3 1.17 -> 1.37, the Merlin
-  1.40 -> 1.76 on a 6-core desktop). `EngineLabRealtimeBudgetHarness
-  --inline-cylinders` keeps the old serial pass for comparison.
+  with exactly the same result: 22-33 % more real-time headroom (a designed
+  6 L V12 at 7,500 rpm 0.71 -> 0.93, the LS3 1.17 -> 1.43, the Merlin
+  1.40 -> 1.86 on a 6-core desktop). `EngineLabRealtimeBudgetHarness
+  --inline-cylinders` (and `--serial-publish`) keep the old serial passes for
+  comparison.
 
 ### Removed
 

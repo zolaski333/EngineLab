@@ -45,6 +45,9 @@ struct EngineSimulatorOptions final {
      * the intake workers. Absent selects it; false keeps it inline for A/B
      * controls. The result is bit-identical either way. */
     std::optional<bool> parallelCylinderPass;
+    /** With the pass above on, also publish each cylinder's end-of-sub-step
+     * state (kinematics included) on the workers. Absent selects it. */
+    std::optional<bool> parallelCylinderPublish;
     /** Cap the spatial cells in each intake runner. Diagnostic A/Bs use this
      * to establish a convergence point without rewriting authored geometry. */
     std::optional<std::size_t> intakeMaximumCellCount;

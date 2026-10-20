@@ -153,7 +153,8 @@ namespace {
 // and the per-cylinder body grew to 1.5-2.2 us. The pass runs on it again from
 // this threshold up, measured 2026-10-20 against the inline loop in the same
 // binary (best of 4, free-run): designed V12 0.711 -> 0.877, LS3 1.171 -> 1.368,
-// Merlin 1.400 -> 1.755, 2JZ control unchanged (journal).
+// Merlin 1.400 -> 1.755, 2JZ control unchanged; publishing each cylinder's
+// end-of-sub-step state on the workers too: 0.933, 1.427, 1.855 (journal).
 constexpr std::size_t decoupledSharedVolumeCylinderThreshold = 8;
 
 // Forward intake coupling interval. With the characteristic valve boundary the
@@ -5248,7 +5249,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             std::bit_cast<std::uint64_t>(state_.angularVelocityRadPerSecond),
             std::bit_cast<std::uint64_t>(publishedAngularAcceleration),
             cylinderGeometryRevision_ };
-        for (std::size_t index = 0; index < state_.cylinderStateCount; ++index) {
+        // Writes only cylinder `index`'s published state and cached kinematics,
+        // so it runs on the workers wherever the cylinder pass did.
+        const auto publishCylinder = [&](std::size_t index) noexcept {
             const auto& cylinder = config_.cylinders[index];
             const auto phase = std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 1'440.0,
                 cylinderCycleDegrees());
@@ -5399,6 +5402,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 commandedSparkPhaseLastCycle_[index];
             cylinderState.completedIgnitionPhaseLastCycle =
                 completedIgnitionPhaseLastCycle_[index];
+        };
+        if (parallelCylinderPass && options_.parallelCylinderPublish.value_or(true)) {
+            using PublishCylinder = std::decay_t<decltype(publishCylinder)>;
+            intakeWorkerPool_->runIndices(state_.cylinderStateCount,
+                [](void* context, std::size_t index) noexcept {
+                    (*static_cast<const PublishCylinder*>(context))(index);
+                },
+                const_cast<void*>(static_cast<const void*>(&publishCylinder)));
+        } else {
+            for (std::size_t index = 0; index < state_.cylinderStateCount; ++index)
+                publishCylinder(index);
         }
         cachedKinematicsKey = publishedKinematicsKey;
         if (publishExhaustAcousticState && flushExhaustNetwork

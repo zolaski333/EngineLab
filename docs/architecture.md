@@ -64,8 +64,8 @@ plenum) stays serial in a fixed order, so the result is bit-identical
 whatever the worker count, including none
 (`EngineLab.GasDynamics` checks a reversed dispatch order). From eight
 cylinders up, where each sub-step reads a frozen copy of the shared plenum,
-the per-cylinder pass (`processCylinder`) also runs on the pool, one cylinder
-per item: it writes only that cylinder's state, and its engine-wide events
+the per-cylinder pass (`processCylinder`) and the end-of-sub-step publish of
+each cylinder's state also run on the pool, one cylinder per item: it writes only that cylinder's state, and its engine-wide events
 (spark and misfire counts) are applied in cylinder order afterwards
 (`EngineLab.JointIntakeManifold` checks 0 against 3 workers on the LS3 and the
 Merlin). Two-strokes keep it inline.

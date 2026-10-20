@@ -64,6 +64,8 @@ std::optional<bool> exhaustReconstructAcrossInterfacesOverride;
 std::optional<bool> exhaustFineCouplingWhileScavengingOverride;
 /** --inline-cylinders: keep the per-cylinder pass off the workers (A/B). */
 std::optional<bool> parallelCylinderPassOverride;
+/** --serial-publish: publish each cylinder's end-of-sub-step state inline (A/B). */
+std::optional<bool> parallelCylinderPublishOverride;
 
 using Clock = std::chrono::steady_clock;
 
@@ -567,6 +569,7 @@ private:
     simulatorOptions.exhaustFineCouplingWhileScavenging =
         exhaustFineCouplingWhileScavengingOverride;
     simulatorOptions.parallelCylinderPass = parallelCylinderPassOverride;
+    simulatorOptions.parallelCylinderPublish = parallelCylinderPublishOverride;
     simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
         exhaustCouplingSeconds;
     simulatorOptions.intakeFirstOrderTimeIntegration =
@@ -982,6 +985,8 @@ int main(int argc, char** argv) {
             exhaustFineCouplingWhileScavengingOverride = false;
         else if (argument == "--inline-cylinders")
             parallelCylinderPassOverride = false;
+        else if (argument == "--serial-publish")
+            parallelCylinderPublishOverride = false;
         else if (argument == "--exhaust-coupling-us" && index + 1 < argc)
             exhaustCouplingSeconds = std::stod(argv[++index]) * 1.0e-6;
         else if (argument == "--intake-euler")
@@ -1021,7 +1026,7 @@ int main(int argc, char** argv) {
                          "[--exhaust-cell-mm N] "
                          "[--exhaust-coupling-us N] [--exhaust-cfl C] [--exhaust-rk2|--exhaust-euler|--exhaust-hancock] "
                          "[--exhaust-interface-first-order] [--exhaust-coarse-scavenging] "
-                         "[--inline-cylinders] "
+                         "[--inline-cylinders] [--serial-publish] "
                          "[--intake-euler|--intake-rk2] "
                          "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "
