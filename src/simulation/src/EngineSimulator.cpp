@@ -148,6 +148,12 @@ namespace {
 // shared plenum is touched -- a different architecture, not a tuning of this one.
 // The removal was verified bit-identical on the LS3 (torque, IMEP, VE and
 // air_mg agree to every printed digit).
+//
+// That architecture now exists: the intake/exhaust CylinderWorkerPool is resident
+// and the per-cylinder body grew to 1.5-2.2 us. The pass runs on it again from
+// this threshold up, measured 2026-10-20 against the inline loop in the same
+// binary (best of 4, free-run): designed V12 0.711 -> 0.877, LS3 1.171 -> 1.368,
+// Merlin 1.400 -> 1.755, 2JZ control unchanged (journal).
 constexpr std::size_t decoupledSharedVolumeCylinderThreshold = 8;
 
 // Forward intake coupling interval. With the characteristic valve boundary the
@@ -399,6 +405,12 @@ struct CylinderSubstepScratch final {
     double endGasKnockLevel {};
     double releasedEnergyJoules {};
     double meteredFuelMassKg {};
+    // Engine-wide events the cylinder pass raised. They are applied to state_
+    // in cylinder order after the pass, so the pass writes nothing shared.
+    std::uint64_t commandedSparkEvents {};
+    bool misfired {};
+    double misfireAirFuelRatio {};
+    bool solverResolutionLimited {};
 };
 
 struct ParallelSubstepState final {
@@ -2171,11 +2183,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // Jacobi snapshot instead.
         //
         // This is purely a PHYSICS choice and is keyed only to cylinder count, so
-        // that an engine integrates identically on every machine. It used to also
-        // gate a per-cylinder fork-join, which has been removed: see the note on
-        // `decoupledSharedVolumeCylinderThreshold` for the measurements. Do not
-        // re-couple the two -- changing this threshold changes the shared-volume
-        // solver for real, and would move every large engine's calibration.
+        // that an engine integrates identically on every machine. The parallel
+        // cylinder pass below follows it, never the reverse: changing this
+        // threshold changes the shared-volume solver for real, and would move
+        // every large engine's calibration.
         const auto decoupleSharedVolumes =
             config_.cylinders.size() >= decoupledSharedVolumeCylinderThreshold;
         // Freeze both shared control volumes at the start of the sub-step so that
@@ -2205,6 +2216,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 physicalEndGasKnockLevel, contribution.endGasKnockLevel);
             releasedEnergyJoules += contribution.releasedEnergyJoules;
             meteredFuelMassKg += contribution.meteredFuelMassKg;
+        };
+        // Nothing in the cylinder pass reads these, so applying them after a
+        // cylinder (small engines) or after the whole pass, in cylinder order
+        // (large engines), gives the same state.
+        const auto applyCylinderEvents = [&](const CylinderSubstepScratch& contribution) noexcept {
+            state_.commandedSparkEventCount += contribution.commandedSparkEvents;
+            if (contribution.misfired) {
+                ++state_.misfireEventCount;
+                state_.lastMisfireAirFuelRatio = contribution.misfireAirFuelRatio;
+                state_.lastMisfireTimeSeconds = state_.simulationTimeSeconds;
+            }
+            if (contribution.solverResolutionLimited) state_.solverResolutionLimited = true;
         };
 
         const auto predictedAngularAcceleration = state_.netTorqueNm / rotatingInertia;
@@ -2894,7 +2917,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         injectionResult.vaporisedMoles * fuelMolarMassKg,
                         config_.injection.fuelTemperatureC + 273.15,
                         -injectionResult.chargeCoolingJoules))
-                    state_.solverResolutionLimited = true;
+                    contribution.solverResolutionLimited = true;
             }
             injectedFuelMolesThisCycle_[cylinderIndex] += injectionResult.meteredMoles;
             entrainedFuelMolesThisCycle_[cylinderIndex] +=
@@ -2933,7 +2956,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ignitionDelayRemainingSeconds_[cylinderIndex] = 0.0;
             } else if (sparkCrossed) {
                 ++commandedSparkEventsThisCycle_[cylinderIndex];
-                ++state_.commandedSparkEventCount;
+                ++contribution.commandedSparkEvents;
                 commandedSparkPhaseThisCycle_[cylinderIndex] = sparkPhase;
                 combustionCycleMultiplier_[cylinderIndex] =
                     CombustionCycleVariation::advance(
@@ -3116,9 +3139,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto randomUnit = static_cast<double>(rng) / static_cast<double>(0xffffffffU);
                 cylinderMisfires_[cylinderIndex] = randomUnit < actualMisfireProbability;
                 if (cylinderMisfires_[cylinderIndex]) {
-                    ++state_.misfireEventCount;
-                    state_.lastMisfireAirFuelRatio = mixtureAfr;
-                    state_.lastMisfireTimeSeconds = state_.simulationTimeSeconds;
+                    contribution.misfired = true;
+                    contribution.misfireAirFuelRatio = mixtureAfr;
                 }
                 const auto totalMoles = cylinderGas_[cylinderIndex].totalMoles();
                 const FlameConditions flameConditions {
@@ -3528,15 +3550,45 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             contribution.peakPistonAcceleration = std::max(
                 contribution.peakPistonAcceleration, std::abs(kinematics.pistonAccelerationMps2));
             contribution.pistonSpeed += 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0;
-            if (!decoupleSharedVolumes) accumulateContribution(contribution);
+            if (!decoupleSharedVolumes) {
+                accumulateContribution(contribution);
+                applyCylinderEvents(contribution);
+            }
         };
-        // Run inline. The body writes only cylinder-private state, so it *could*
-        // be threaded; it was, and the fork-join measured slower than this loop on
-        // every engine in the catalogue. See
-        // `decoupledSharedVolumeCylinderThreshold` above for the four measured
-        // variants before reaching for a thread pool here again.
-        for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex)
-            processCylinder(cylinderIndex);
+        // With the shared volumes frozen, the body writes only state private to
+        // its cylinder (its scratch, its own arrays, its own runner duct), so it
+        // runs on the resident intake workers. The 2026 fork-join that lost to
+        // the inline loop (see `decoupledSharedVolumeCylinderThreshold`) woke
+        // threads for ~0.6 us of work per cylinder; these workers are already
+        // spinning between the gas dispatches and the body is now 1.5-2.2 us
+        // (journal 2026-10-20). A two-stroke is kept inline: its reed fill is
+        // per intake path, not per cylinder.
+        auto parallelCylinderPass = decoupleSharedVolumes && intakeWorkerPool_ != nullptr
+            && !twoStroke && options_.parallelCylinderPass.value_or(true);
+        if (parallelCylinderPass && jointIntakeManifold()) {
+            // Port fuel lands in, and the port state is read from, the
+            // cylinder's runner duct of the joint network: it must be its own.
+            for (std::size_t first = 0; first < config_.cylinders.size() && parallelCylinderPass; ++first)
+                for (std::size_t second = first + 1; second < config_.cylinders.size(); ++second)
+                    if (&intakeDuctForCylinder(first) == &intakeDuctForCylinder(second)) {
+                        parallelCylinderPass = false;
+                        break;
+                    }
+        }
+        if (parallelCylinderPass) {
+            using ProcessCylinder = std::decay_t<decltype(processCylinder)>;
+            intakeWorkerPool_->runIndices(config_.cylinders.size(),
+                [](void* context, std::size_t index) noexcept {
+                    (*static_cast<const ProcessCylinder*>(context))(index);
+                },
+                const_cast<void*>(static_cast<const void*>(&processCylinder)));
+        } else {
+            for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex)
+                processCylinder(cylinderIndex);
+        }
+        if (decoupleSharedVolumes)
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+                applyCylinderEvents(parallelState->scratch[index]);
 
         const auto requestedIntakeCouplingSeconds = std::clamp(
             options_.intakeCouplingIntervalSeconds.value_or(jointIntakeManifold() ? 0.0 : 400.0e-6),

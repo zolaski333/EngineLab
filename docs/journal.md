@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-20 — Cylinders in parallel on the resident workers (lead 1, first half)
+
+- Audit of `processCylinder` from 8 cylinders up (shared volumes already frozen): it writes only its cylinder's arrays, scratch and runner duct, except 4 engine-wide events (spark count, misfire count + last misfire AFR/time, "solver resolution limited"). These now go through the scratch and are applied in cylinder order after the pass. Two-strokes stay inline (reed fill per intake path); a joint manifold must give each cylinder its own runner duct (checked each step).
+- Dispatch: the existing intake pool, one more barrier per sub-step. `EngineSimulatorOptions::parallelCylinderPass` / harness `--inline-cylinders` keep it inline for A/B.
+- Bit-identity: `EngineLab.JointIntakeManifold` now also runs the Merlin and compares net torque, spark and misfire counts besides speed and pressures, every frame, 0 vs 3 workers: identical on LS3 and Merlin.
+- A/B in the same binary, `--relative-rpm 0.95 --free-run --seconds 15`, 4 alternating runs, warm-up ignored, best: designed V12 0.711 -> 0.877 (x1.23), LS3 1.171 -> 1.368 (x1.17), Merlin 1.400 -> 1.755 (x1.25), 2JZ control (6 cyl, untouched) 1.453 / 1.454. Spread within a variant <= 0.04. Machine: no build/test running; instantaneous load 2-90 % (the harness itself).
+- Short of the x1.37/1.30/1.39 estimate because the per-cylinder loops in the rest of the step (kinematics, valve-plane publish) are still serial. The designed V12 is still below 1.0.
+- Not measured: with audio or the 3-D view; on a machine with fewer cores than this i5-10600 (6 cores, 12 threads; the pool needs at least 4 hardware threads).
+
 ## 2026-10-20 — Where a big engine's physics thread goes (profile only, nothing changed)
 
 - How: rdtsc counters (temporary patch, not committed; they cost 1-3 % against the plain binary) + an unelevated stack sampler on Release with symbols; `EngineLabRealtimeBudgetHarness --relative-rpm 0.95 --free-run`, this i5-10600, idle machine, 4 alternating runs each. Factor quoted is the plain binary's best; times are the best instrumented run.

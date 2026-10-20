@@ -331,8 +331,9 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
         << " workers=" << simulator->intakeWorkerCount() << " pressure_samples=" << pressureSamples
         << " probed_physical_paths=" << pathCount << " live_swap=" << liveSwap << " joint_timely=true" << '\n';
 }
-// The worker pool only spreads per-duct work inside each RK stage (exhaust and
-// joint intake alike); a fired run must not change by a single bit with it.
+// The worker pool spreads per-duct work inside each RK stage (exhaust and joint
+// intake alike) and, from eight cylinders up, the per-cylinder pass; a fired
+// run must not change by a single bit with it.
 void verifyWorkersAreInvisible(const enginelab::EngineConfig& config) {
     struct Run final {
         explicit Run(const enginelab::EngineConfig& engine)
@@ -377,7 +378,11 @@ void verifyWorkersAreInvisible(const enginelab::EngineConfig& config) {
                 && std::bit_cast<std::uint64_t>(a.manifoldPressureKpa)
                     == std::bit_cast<std::uint64_t>(b.manifoldPressureKpa)
                 && std::bit_cast<std::uint64_t>(a.exhaustBackPressureKpa)
-                    == std::bit_cast<std::uint64_t>(b.exhaustBackPressureKpa),
+                    == std::bit_cast<std::uint64_t>(b.exhaustBackPressureKpa)
+                && std::bit_cast<std::uint64_t>(a.netTorqueNm)
+                    == std::bit_cast<std::uint64_t>(b.netTorqueNm)
+                && a.commandedSparkEventCount == b.commandedSparkEventCount
+                && a.misfireEventCount == b.misfireEventCount,
             "the worker pool must leave a fired run bit-identical");
     }
     require(serial->simulator->state().rpm > 2'500.0,
@@ -400,6 +405,7 @@ int main(int argc, char** argv) {
     measure(catalogue("01_honda_k20a_like"), false, false, true);
     measure(catalogue("03_gm_ls3_like"));
     verifyWorkersAreInvisible(catalogue("03_gm_ls3_like"));
+    verifyWorkersAreInvisible(catalogue("08_merlin_v12_like"));
     measure(oneLitre());
     auto split = splitIntakes(oneLitre(), {{1, 3}, {2, 4}});
     split.name = "Two unequal intake paths with noncontiguous cylinders and live replacement";
