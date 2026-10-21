@@ -34,8 +34,10 @@ jobs:
             exit 1
           }
 
+      # --output-on-failure because a job log is the only record of a CI-only
+      # failure, and without it ctest names the test and says nothing else.
       - name: Test
-        run: ctest --preset windows-release --parallel 2
+        run: ctest --preset windows-release --parallel 2 --output-on-failure
 
       - name: Package
         run: cmake --build out/build/windows-vs2022 --config Release --target package
@@ -91,4 +93,4 @@ jobs:
       # wrapper (tests/CMakeLists.txt -> scripts/run-gui-test.sh), which is
       # what makes a contributor's bare `ctest` work locally too.
       - name: Test
-        run: ctest --preset linux-gcc-release --parallel 2
+        run: ctest --preset linux-gcc-release --parallel 2 --output-on-failure

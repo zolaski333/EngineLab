@@ -154,11 +154,29 @@ unchanged once a window manager is running.
 
 `scripts/run-gui-test.sh` is therefore what `ctest` invokes: it starts Xvfb and
 `matchbox-window-manager`, waits for `_NET_SUPPORTED` to appear on the root
-window, then runs the test. On a machine with a `DISPLAY` already set it uses
-that desktop instead, and when Xvfb or the window manager is missing it says
+window, then runs the test. When Xvfb or the window manager is missing it says
 which. Wrapping the test rather than wrapping `ctest` in CI is what keeps a
 contributor's bare `ctest` working. See
 [CONTRIBUTING.md](../CONTRIBUTING.md#linux).
+
+**It asks the display whether a window manager is there; it does not trust
+`DISPLAY`.** The first version reused an already-set `DISPLAY` on the
+assumption that a display someone had set up would be a managed desktop. The
+hosted Linux runner exports one with no window manager behind it, so CI failed
+on `EngineLab.AudioWorkshop` in 0.49 s -- the same `BadAtom`, from the same
+cause -- while every local run passed, because WSLg does run a window manager
+and hid it. The probe is `_NET_SUPPORTED` on the root window: absent on a bare
+Xvfb, present as soon as a manager claims the screen.
+
+The probe has to read xprop's **output**, not its exit status: `xprop` returns
+0 for a property that does not exist and prints `no such atom on any window`.
+Testing the status made the check answer yes on a bare server, and it is also
+why the wait for `matchbox` never actually waited. Verified on Ubuntu 24.04,
+four conditions, with a bare `Xvfb :77` standing in for the runner: `DISPLAY`
+set to that bare server passes, no `DISPLAY` at all passes, a real managed
+desktop passes and is used as-is (no nested server), and the test binary run
+straight at the bare server still fails -- which is what makes the first case
+a fix rather than a tautology.
 
 ## Not covered yet
 

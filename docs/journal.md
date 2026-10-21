@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-21 — Linux CI: the GUI wrapper trusted `DISPLAY`
+
+- The port's first CI run failed where every local run passed: `EngineLab.AudioWorkshop` in **0.49 s**, the same `BadAtom` the wrapper exists to prevent, with the other 88 of 89 green and no timeout. The cause is in the wrapper, not the test: it reused an already-set `DISPLAY`, and the hosted Linux runner exports one with **no window manager** behind it. WSLg does run one, which is exactly why the local runs all passed — the entry below says both branches were exercised, and they were, but neither was this case.
+- It now asks the display instead of trusting the variable: `_NET_SUPPORTED` on the root window, absent on a bare `Xvfb` and present once a manager claims the screen. Measured on Ubuntu 24.04, four conditions, a bare `Xvfb :77` standing in for the runner — `DISPLAY` set to it passes (0.25 s, own server started), no `DISPLAY` passes, a real managed desktop passes and is reused with no nested server (0.08 s), and the binary run straight at the bare server still **fails**, which is what makes the first a fix and not a tautology.
+- The probe has to read xprop's **output**: it exits 0 for a property that does not exist and prints `no such atom on any window`. Testing the status, as the first version did, made the check answer yes on a bare server — and is also why the wait for matchbox never waited. Not a timing bug; a shell one.
+- Both CI test steps now pass `--output-on-failure`. Without it a job log names the failing test and says nothing else, and a job log is the only record a CI-only failure leaves.
+- Not measured: whether the hosted runner's `DISPLAY` points at a live server or a dead one. The fix does not care — absent `_NET_SUPPORTED` either way — so it was not chased.
+
 ## 2026-10-21 — Linux: the port, measured
 
 - Scope: `linux-gcc-release` (GCC 13.3, Ubuntu 24.04 under WSL2, 8 CPUs) configures, builds with `-Werror` and runs the suite; `linux-clang-release` (Clang 18.1.3) does the same; CI builds and tests both platforms. Windows stays the reference and `docs/platforms.md` says what differs. Not done: no Linux archive, and the GUI has never been looked at on a real Linux screen.
