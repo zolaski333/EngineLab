@@ -186,7 +186,7 @@ file's header says which question it answers and lists its options.
 | `DriveScenarioHarness` | a driving complaint as a timeline of pedals and gears (above) |
 | `DynoCurveHarness` | torque at established points, integrated over whole cycles once the engine has settled; writes per-cycle data and a provenance file next to its CSV |
 | `DynoRuntimeCurveHarness` | the application's own dyno run, captured from the runtime's public snapshots |
-| `DynoSweepHarness` | torque and power over an engine-speed sweep, CSV export; `--advance-offset deg` shifts the whole ignition curve |
+| `DynoSweepHarness` | torque and power over an engine-speed sweep, CSV export; `--advance-offset deg` shifts the whole ignition curve. The sweep is warm-started, so each point inherits its predecessor's state: `--settle s` is what separates a curve's shape from that memory, and `--step` cannot (it moves the grid, the first point and the path at once). `--sample s` widens the averaging window, `--exhaust-cell-mm` overrides the exhaust mesh (a convergence knob, not a setting) |
 | `ExhaustFlowBench` | an authored exhaust under a steady mass flow, engine removed: is the back-pressure the pipes' or the pulses'? |
 | `ExhaustNetworkCostBench` | does the same geometry cost more solver time when authored as a designer network? |
 | `GeometrySensitivityHarness` | does an exhaust change alter the timbre (`shape`) or only the level? |

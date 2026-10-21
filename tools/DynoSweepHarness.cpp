@@ -371,7 +371,9 @@ struct SweepSummary final {
 };
 
 SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
-                         bool useWellMixedExhaustJunctions) {
+                         bool useWellMixedExhaustJunctions,
+                         double settleSeconds, double sampleSeconds,
+                         double exhaustCellLengthM) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     enginelab::SimpleEcuModel ecu;
@@ -381,6 +383,12 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     enginelab::EngineSimulatorOptions simulatorOptions;
     simulatorOptions.evolveExhaustJunctionAxialMomentum =
         !useWellMixedExhaustJunctions;
+    // A convergence knob, not a setting: an expansion chamber's cones are two
+    // or three cells at the production two-stroke mesh, and the shortest
+    // element sets the whole network's time step, so a finer mesh costs both
+    // cells and steps. Absent leaves `productionExhaustCellLengthM`.
+    if (exhaustCellLengthM > 0.0)
+        simulatorOptions.exhaustTargetCellLengthM = exhaustCellLengthM;
     enginelab::EngineSimulator simulator(
         config, ecu, physics, events, exhaust, simulatorOptions);
 
@@ -406,8 +414,12 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     SweepSummary summary;
     for (double target = startRpm; target <= maxRpm + 1.0; target += stepRpm) {
         // Longer settle for the first point (cold ramp), shorter warm-started.
-        const auto sample = holdPoint(
-            simulator, config, target, first ? 5.0 : 2.0, 1.0);
+        // The sweep is warm-started, so every point inherits its predecessor's
+        // state: `--settle` is the only knob that separates a curve's real
+        // shape from the memory each point carries. `--step` cannot do it,
+        // because it moves the grid, the first point and the path at once.
+        const auto sample = holdPoint(simulator, config, target,
+            first ? settleSeconds + 3.0 : settleSeconds, sampleSeconds);
         first = false;
         writeRow(std::cout, config, target, sample);
         summary.highestBoostPressureRatio = std::max(
@@ -561,6 +573,15 @@ int main(int argc, char** argv) {
     // Degrees added to the whole ignition curve: how far it is from the best
     // torque (journal 2026-10-19).
     auto advanceOffset = 0.0;
+    // Seconds held at each point before sampling, and the length of the sample
+    // window. The defaults are what every figure this tool has ever printed
+    // used, so leaving them alone keeps old CSVs comparable. Raise the settle
+    // to ask whether a jagged curve is the engine or the measurement; widen
+    // the sample to ask whether a mean is being taken over a drifting signal.
+    auto settleSeconds = 2.0;
+    auto sampleSeconds = 1.0;
+    // Exhaust mesh in millimetres; 0 keeps the production scale.
+    auto exhaustCellMm = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -576,14 +597,33 @@ int main(int argc, char** argv) {
         else if (argument == "--add-turbo") addTurbo = true;
         else if (argument == "--advance-offset" && index + 1 < argc)
             advanceOffset = std::stod(argv[++index]);
+        else if (argument == "--settle" && index + 1 < argc)
+            settleSeconds = std::stod(argv[++index]);
+        else if (argument == "--sample" && index + 1 < argc)
+            sampleSeconds = std::stod(argv[++index]);
+        else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
+            exhaustCellMm = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
                          " [--reference-file csv] [--schema-only]"
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
-                         " [--add-turbo] [--advance-offset deg]\n";
+                         " [--add-turbo] [--advance-offset deg]"
+                         " [--settle seconds] [--sample seconds]"
+                         " [--exhaust-cell-mm mm]\n";
             return EXIT_FAILURE;
         }
+    }
+    if (!(settleSeconds > 0.0) || !(sampleSeconds > 0.0)) {
+        std::cerr << "--settle and --sample must both be positive\n";
+        return EXIT_FAILURE;
+    }
+    // 0 means "leave the production mesh"; anything below that is a typo, and
+    // silently ignoring it would report a figure from the mesh not asked for.
+    if (exhaustCellMm < 0.0) {
+        std::cerr << "--exhaust-cell-mm must be positive, or absent for the"
+                     " production mesh\n";
+        return EXIT_FAILURE;
     }
 
     std::cout << std::fixed << std::setprecision(3);
@@ -637,7 +677,8 @@ int main(int argc, char** argv) {
             && turbo.type == enginelab::ForcedInductionType::turbocharger;
         if (boostHoldMargin >= 0.0 && !checkBoost) continue;
         const auto summary = sweepEngine(
-            engine, stepRpm, useWellMixedExhaustJunctions);
+            engine, stepRpm, useWellMixedExhaustJunctions,
+            settleSeconds, sampleSeconds, exhaustCellMm * 0.001);
         if (!checkBoost) continue;
         // The simulator's controller holds its set ratio while the gate has
         // travel; 0.06 is what it may still overshoot.
