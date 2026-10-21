@@ -181,6 +181,12 @@ Non-deterministic:
   finite plenum; refine mesh, FV time step and reservoir refresh independently.
 - **Thread barrier**: count the workers, not the items (an 8 h 52 hang already
   happened). Signature: a single core at 100 %, the others idle.
+- **`--exhaust-cell-mm` saturates at 25 mm** (`buildPhysicalExhaustNetwork`
+  clamps to [25, 600] mm; the per-duct cap then bites at 64 cells), so a finer
+  request is bit-identical. The two-stroke mesh converges near 12 mm and
+  production (100 mm) is 18 % below converged -- a real-time budget limit, not
+  a physics one. Do not read a delivery hump off `max(delivered_ve)`: it picks
+  the lugged through-flow.
 
 ## Refuted — do not propose again without new evidence
 
@@ -206,14 +212,11 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
   and sound moved. Burning a 25-55 % short-circuit at the port mouth returns
   oxygen-free gas: trapping rises while torque falls.
 - Two-stroke exhaust geometry (journal 2026-10-21): Blair's 500 m/s and the
-  designer's tuned length are right (egt 345-365 C in the tuned band gives
-  c 486-493; 940 mm tunes to 8.5k as intended), and lengthening is no fix
-  (x1.300 is +33 % overpowered). The curve's TWO humps are both the pipe's --
-  they move as 1/L, x1.088 taking 7,245/9,751 to 6,750/9,001 -- so the 8,252
-  trough between them, where the real engine peaks, is the chamber's wave
-  structure, not scavenging. Do not read a delivery hump off max(delivered_ve):
-  it selects the lugged through-flow. A transit-vs-window scavenging race is
-  monotonic in rpm by construction: +26 % at 5,752, nothing at the top.
+  designer's tuned length are right, and lengthening is no fix (x1.300 is
+  +33 % overpowered). The curve's TWO humps are both the pipe's -- they move
+  as 1/L -- so the trough between them, where the real engine peaks, is the
+  chamber's wave structure, not scavenging. A transit-vs-window scavenging
+  race is monotonic in rpm by construction: nothing at the top.
 - "Trapped residual too low": a unit error, the residual is sound.
 - Intake runners: four inertance formulations are unstable or out of phase.
   The intake charge bias was not the MUSCL limiter, the finite plenum, wall
