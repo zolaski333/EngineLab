@@ -401,34 +401,43 @@ void scavengingLawBracketsTheClassicalBounds() {
         "a closed scavenging window is perfect mixing");
 
     // Geometry for these: a 64 mm bore loops up, over and down in roughly
-    // 1.8 bores, so 0.12 m, and a transfer jet runs tens of m/s. At 116 deg of
-    // transfer and 6,000 rpm the window is 3.2 ms against a 1.5 ms transit.
+    // 1.8 bores, so 0.12 m, and a transfer jet runs tens of m/s. Transfers
+    // opening 116 deg ATDC last 2 x (180 - 116) = 128 deg, which is 3.6 ms at
+    // 6,000 rpm.
+    constexpr auto loopM = 0.12;
+    const auto windowSeconds = [](double rpm) {
+        return portOpenDurationDegrees(116.0) / (6.0 * rpm);
+    };
+    // Integrate a window at a constant jet velocity, in `steps` sub-steps,
+    // exactly as the simulator does.
+    const auto runWindow = [loopM](double jetMps, double seconds, int steps) {
+        TwoStrokeScavengeState state;
+        openScavengeWindow(state, loopM);
+        for (auto step = 0; step < steps; ++step)
+            advanceScavengeWindow(state, jetMps, seconds / steps);
+        return state;
+    };
 
     // A window the front cannot cross before the ports shut is pure
     // displacement throughout: nothing fresh escapes. A slow jet at high speed
-    // is that case: 3.0 ms of transit against a 1.6 ms window.
-    TwoStrokeScavengeState brief;
-    openScavengeWindow(brief, 116.0, 12'000.0, 0.12, 40.0);
+    // is that case: 40 m/s covers 0.053 m of the 0.12 m loop in the 1.8 ms a
+    // 12,000 rpm window lasts.
+    const auto brief = runWindow(40.0, windowSeconds(12'000.0), 64);
+    require(brief.frontProgress < 1.0,
+        "the front does not reach the port in this window");
     require(scavengeMixedFraction(brief) == 0.0,
-        "a window shorter than the transit is pure displacement");
-    advanceScavengeWindow(brief, brief.windowSeconds * 0.9);
-    require(scavengeMixedFraction(brief) == 0.0,
-        "it stays pure displacement to the end of that window");
+        "a window the front cannot cross is pure displacement throughout");
 
     // A normal window: burned gas only until the front arrives, then a
     // monotone breakdown towards mixing by the time the ports shut.
-    TwoStrokeScavengeState window;
-    openScavengeWindow(window, 116.0, 6'000.0, 0.12, 80.0);
-    require(window.windowSeconds > window.transitSeconds,
-        "the front arrives inside this window");
-    require(scavengeMixedFraction(window) == 0.0,
-        "nothing fresh escapes before the front arrives");
+    const auto full = windowSeconds(6'000.0);
+    require(scavengeMixedFraction(runWindow(80.0, full, 64)) > 0.0,
+        "the front arrives inside a 6,000 rpm window at 80 m/s");
     auto previous = 0.0;
     auto rose = 0;
     for (auto step = 1; step <= 20; ++step) {
-        TwoStrokeScavengeState probe = window;
-        advanceScavengeWindow(probe, window.windowSeconds * 0.05 * step);
-        const auto mixed = scavengeMixedFraction(probe);
+        const auto mixed =
+            scavengeMixedFraction(runWindow(80.0, full * 0.05 * step, 16));
         require(mixed >= previous - 1.0e-12,
             "the mixed fraction never falls inside a window");
         if (mixed > previous + 1.0e-9) ++rose;
@@ -438,34 +447,59 @@ void scavengingLawBracketsTheClassicalBounds() {
     require(std::abs(previous - 1.0) < 1.0e-9,
         "the window ends at perfect mixing");
 
+    // Integrating the front is what makes the model indifferent to the one
+    // instant the ports crack open. A jet that is fast early and slow late
+    // must land where its time average does, not where either half says: the
+    // one-shot sample this replaced read the opening instant alone, which in
+    // the 5,000-6,000 band is the exhaust pipe's returning wave.
+    {
+        TwoStrokeScavengeState split;
+        openScavengeWindow(split, loopM);
+        for (auto step = 0; step < 32; ++step)
+            advanceScavengeWindow(split, 120.0, full * 0.5 / 32);
+        for (auto step = 0; step < 32; ++step)
+            advanceScavengeWindow(split, 40.0, full * 0.5 / 32);
+        const auto average = runWindow(80.0, full, 64);
+        require(std::abs(split.frontProgress - average.frontProgress) < 1.0e-12,
+            "a window's front progress is its time-averaged jet velocity");
+    }
+
+    // A stalled jet does not move the front. A cycle where the crankcase never
+    // builds a pressure difference must not creep towards mixing.
+    {
+        TwoStrokeScavengeState stalled;
+        openScavengeWindow(stalled, loopM);
+        for (auto step = 0; step < 64; ++step)
+            advanceScavengeWindow(stalled, 0.0, full / 64);
+        require(stalled.frontProgress == 0.0,
+            "no pressure across the ports leaves the front where it was");
+    }
+
     // The engine-speed mechanism. Same geometry, same jet: a faster engine has
-    // a shorter window, the transit is unchanged, so the displacement phase
-    // owns more of the window and more fresh charge is kept. This is the term
-    // the model had no mechanism for at all.
-    const auto mixedAtRpm = [](double rpm) {
-        TwoStrokeScavengeState state;
-        openScavengeWindow(state, 116.0, rpm, 0.12, 80.0);
-        advanceScavengeWindow(state, state.windowSeconds * 0.75);
-        return scavengeMixedFraction(state);
+    // a shorter window, so the front covers less of the loop and the
+    // displacement phase owns more of the window. This is the term the model
+    // had no mechanism for at all.
+    const auto mixedAtRpm = [&](double rpm) {
+        return scavengeMixedFraction(runWindow(80.0, windowSeconds(rpm), 64));
     };
     const auto slow = mixedAtRpm(3'000.0);
     const auto fast = mixedAtRpm(9'000.0);
     require(fast < slow,
-        "a faster engine keeps more of its charge at the same window fraction");
+        "a faster engine keeps more of its charge over its whole window");
     // A loop length of zero is the switch that restores the perfectly mixed
     // cylinder. It must report mixing on EVERY sub-step of the window,
-    // including the first, where the ramp would otherwise divide 0 by 0.
+    // including the first.
     {
         TwoStrokeScavengeState noLoop {};
-        openScavengeWindow(noLoop, 116.0, 6'000.0, 0.0, 80.0);
+        openScavengeWindow(noLoop, 0.0);
         for (int step = 0; step <= 10; ++step) {
             require(scavengeMixedFraction(noLoop) == 1.0,
                 "a cylinder with no loop mixes on every sub-step of the window");
-            advanceScavengeWindow(noLoop, 0.0001);
+            advanceScavengeWindow(noLoop, 80.0, 0.0001);
         }
     }
 
-    std::cout << "    scavenging at 75% of the window: 3000 rpm mixed="
+    std::cout << "    scavenging over a whole window at 80 m/s: 3000 rpm mixed="
               << slow << "  9000 rpm mixed=" << fast << '\n';
 }
 

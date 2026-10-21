@@ -373,7 +373,8 @@ struct SweepSummary final {
 SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
                          bool useWellMixedExhaustJunctions,
                          double settleSeconds, double sampleSeconds,
-                         double exhaustCellLengthM) {
+                         double exhaustCellLengthM, double crankDegreesPerStep,
+                         double couplingMicroseconds) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     enginelab::SimpleEcuModel ecu;
@@ -389,6 +390,20 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     // cells and steps. Absent leaves `productionExhaustCellLengthM`.
     if (exhaustCellLengthM > 0.0)
         simulatorOptions.exhaustTargetCellLengthM = exhaustCellLengthM;
+    // Two knobs that separate a gas-dynamic feature from a sampling artefact.
+    // The mechanical substep is sized so the crank advances no more than
+    // `maximumCrankDegreesPerStep`, while the exhaust network is flushed on a
+    // clock (`maximumLowSpeedExhaustCouplingSeconds`, 125 us in production)
+    // outside the fine-coupling window. Their ratio in crank degrees is
+    // irrational at most speeds and the flush phase drifts harmlessly, but
+    // where it locks the network sees the same part of every blowdown. A real
+    // resonance moves with pipe length and engine speed; an alias moves when
+    // either of these changes and the gas dynamics do not.
+    if (crankDegreesPerStep > 0.0)
+        config.solver.maximumCrankDegreesPerStep = crankDegreesPerStep;
+    if (couplingMicroseconds > 0.0)
+        simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
+            couplingMicroseconds * 1.0e-6;
     enginelab::EngineSimulator simulator(
         config, ecu, physics, events, exhaust, simulatorOptions);
 
@@ -582,6 +597,8 @@ int main(int argc, char** argv) {
     auto sampleSeconds = 1.0;
     // Exhaust mesh in millimetres; 0 keeps the production scale.
     auto exhaustCellMm = 0.0;
+    auto crankDegreesPerStep = 0.0;
+    auto couplingMicroseconds = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -603,6 +620,10 @@ int main(int argc, char** argv) {
             sampleSeconds = std::stod(argv[++index]);
         else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
             exhaustCellMm = std::stod(argv[++index]);
+        else if (argument == "--crank-degrees" && index + 1 < argc)
+            crankDegreesPerStep = std::stod(argv[++index]);
+        else if (argument == "--coupling-us" && index + 1 < argc)
+            couplingMicroseconds = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
@@ -610,7 +631,8 @@ int main(int argc, char** argv) {
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
                          " [--add-turbo] [--advance-offset deg]"
                          " [--settle seconds] [--sample seconds]"
-                         " [--exhaust-cell-mm mm]\n";
+                         " [--exhaust-cell-mm mm]"
+                         " [--crank-degrees deg] [--coupling-us us]\n";
             return EXIT_FAILURE;
         }
     }
@@ -678,7 +700,8 @@ int main(int argc, char** argv) {
         if (boostHoldMargin >= 0.0 && !checkBoost) continue;
         const auto summary = sweepEngine(
             engine, stepRpm, useWellMixedExhaustJunctions,
-            settleSeconds, sampleSeconds, exhaustCellMm * 0.001);
+            settleSeconds, sampleSeconds, exhaustCellMm * 0.001,
+            crankDegreesPerStep, couplingMicroseconds);
         if (!checkBoost) continue;
         // The simulator's controller holds its set ratio while the gate has
         // travel; 0.06 is what it may still overshoot.

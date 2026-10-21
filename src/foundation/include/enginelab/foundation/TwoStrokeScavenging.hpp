@@ -26,17 +26,31 @@
  * lower bound.
  *
  * What puts an engine between the bounds is the race between the front's
- * transit and the port window. The front needs `loopLength / jetVelocity` to
- * arrive; the window lasts `transferOpenDegrees / (6 * rpm)` seconds. Raising
- * engine speed shortens the window without changing the transit, so the
- * displacement phase occupies a *larger* share of a faster window -- which is
- * why a real two-stroke scavenges better near its tuned speed and is dirty and
- * inefficient when lugged. That is the engine-speed dependence the model had no
- * mechanism for, and it is a ratio of two times rather than a fitted curve.
+ * travel and the port window: the front needs one loop length to reach the
+ * exhaust port, and the window lasts `transferOpenDegrees / (6 * rpm)`
+ * seconds. Raising engine speed shortens the window without making the jet
+ * proportionally faster, so the displacement phase occupies a *larger* share
+ * of a faster window -- which is why a real two-stroke scavenges better near
+ * its tuned speed and is dirty and inefficient when lugged. That is the
+ * engine-speed dependence the model had no mechanism for, and it falls out of
+ * the geometry rather than being a fitted curve.
  *
- * Everything here is a pure function of a per-window state. The state is
- * integrated from the flows (see `advance`); the bias is never computed from
- * the instantaneous flow it goes on to modulate, because a bias derived from
+ * The front's progress is *integrated*, not predicted from one sample. An
+ * earlier version took the jet velocity once, at the instant the transfers
+ * opened, and divided the loop length by it to get a transit time. That put
+ * the whole model on the single jitteriest quantity available: in the
+ * 5,000-6,000 rpm band the exhaust pipe's returning wave sits near the port
+ * opening, so the cylinder pressure at that instant swings cycle to cycle, and
+ * the loop closed -- strong jet, more trapped, more exhaust energy, stronger
+ * wave, different pressure at the next opening. The RD350's brake torque then
+ * failed to hold at all there: 13.3 to 37.6 N.m around a 25.6 N.m mean at
+ * 5,999 rpm, against 6 % spread with the model switched off (journal
+ * 2026-10-21). A front does not travel at the orifice velocity of one instant
+ * anyway, so integrating is both the cheaper and the truer answer.
+ *
+ * The progress is a state, never a derivative of the flow the bias modulates:
+ * the velocity comes from the *transfer* port's pressure difference, while the
+ * bias acts on the *exhaust* port's outflow composition. A bias derived from
  * its own flow over-determines the orifice and its gain grows as the time step
  * shrinks (`CLAUDE.md`: "a flow bias must be a state, never a derivative of
  * the flow it drives").
@@ -49,17 +63,17 @@ namespace enginelab {
 
 /** Per-cylinder scavenging state, reset when the transfer ports open.
  *
- * `windowSeconds` and `transitSeconds` are sampled once at window open and
- * held for the window. Sampling them every sub-step would make the bias track
- * the flow it modulates; holding them makes the window a state.
+ * `frontProgress` counts loop lengths the fresh front has travelled this
+ * window: 1.0 is the exhaust port. It is integrated sub-step by sub-step from
+ * the transfer jet's velocity, so a window that shuts early leaves it short
+ * and a window with no pressure behind the jet does not advance it at all.
  */
 struct TwoStrokeScavengeState final {
-    /** Seconds since the transfer ports opened. */
-    double elapsedSeconds { 0.0 };
-    /** Length of this window, from engine speed at the moment it opened. */
-    double windowSeconds { 0.0 };
-    /** Time the fresh front needs to reach the exhaust port, this window. */
-    double transitSeconds { 0.0 };
+    /** Loop lengths travelled since the transfer ports opened. */
+    double frontProgress { 0.0 };
+    /** This cylinder's loop length, held for the window. Zero disables the
+     *  model and restores the perfectly mixed cylinder exactly. */
+    double loopLengthM { 0.0 };
     /** False until the window has been opened at least once. */
     bool open { false };
 };
@@ -69,48 +83,45 @@ struct TwoStrokeScavengeState final {
  * at a solver boundary rings; the classical two-phase model's corner is not
  * physical anyway, since the front arrives over a finite spread.
  *
- * The ramp's WIDTH is the transit time, not the rest of the window. Once the
- * front reaches the exhaust port the loop has broken down, and a turbulent jet
- * mixes over roughly the same loop-length/jet-velocity timescale it needed to
- * arrive. Spreading the breakdown over the whole remaining window instead gave
- * a lugged engine a gentle ramp across 90 % of a 10.7 ms window, where a
- * through-flowing cylinder is fully mixed (or worse) for almost all of it:
- * trapping at 2,000 rpm came out 0.73 against a measured 0.45, and torque
- * 48.8 N.m against about 29 (journal 2026-10-21). */
+ * The ramp's WIDTH is one further loop length of travel, not the rest of the
+ * window. Once the front reaches the exhaust port the loop has broken down, and
+ * a turbulent jet mixes over roughly the same timescale it needed to arrive.
+ * Spreading the breakdown over the whole remaining window instead gave a lugged
+ * engine a gentle ramp across 90 % of a 10.7 ms window, where a through-flowing
+ * cylinder is fully mixed (or worse) for almost all of it: trapping at 2,000
+ * rpm came out 0.73 against a measured 0.45, and torque 48.8 N.m against about
+ * 29 (journal 2026-10-21). */
 [[nodiscard]] constexpr double smoothRamp(double t) noexcept {
     if (!(t > 0.0)) return 0.0;
     if (t >= 1.0) return 1.0;
     return t * t * (3.0 - 2.0 * t);
 }
 
-/** Open a scavenging window.
- *
- * `jetVelocityMps` is taken once, here, from the crankcase-to-cylinder
- * pressure difference -- not from the port mass flow, which this bias goes on
- * to shape.
- */
-inline void openScavengeWindow(TwoStrokeScavengeState& state,
-    double transferOpenDegrees, double rpm, double loopLengthM,
-    double jetVelocityMps) noexcept {
-    state.elapsedSeconds = 0.0;
+/** Open a scavenging window. `loopLengthM` is the distance the front covers to
+ *  reach the exhaust port: up the far wall, over the head and back down. */
+inline void openScavengeWindow(
+    TwoStrokeScavengeState& state, double loopLengthM) noexcept {
+    state.frontProgress = 0.0;
+    state.loopLengthM = std::max(0.0, loopLengthM);
     state.open = true;
-    state.windowSeconds = (rpm > 0.0 && transferOpenDegrees > 0.0)
-        ? transferOpenDegrees / (6.0 * rpm)
-        : 0.0;
-    state.transitSeconds = (jetVelocityMps > 0.0 && loopLengthM > 0.0)
-        ? loopLengthM / jetVelocityMps
-        : 0.0;
 }
 
-/** Advance the open window by one sub-step. */
-inline void advanceScavengeWindow(
-    TwoStrokeScavengeState& state, double dtSeconds) noexcept {
-    if (state.open && dtSeconds > 0.0) state.elapsedSeconds += dtSeconds;
+/** Advance the front by one sub-step at the transfer jet's current velocity.
+ *
+ * `jetVelocityMps` is taken from the crankcase-to-cylinder pressure difference
+ * -- not from the port mass flow, which this bias goes on to shape. A
+ * non-positive velocity leaves the front where it is: there is nothing pushing
+ * it. */
+inline void advanceScavengeWindow(TwoStrokeScavengeState& state,
+    double jetVelocityMps, double dtSeconds) noexcept {
+    if (!state.open || !(state.loopLengthM > 0.0)) return;
+    if (!(jetVelocityMps > 0.0) || !(dtSeconds > 0.0)) return;
+    state.frontProgress += jetVelocityMps * dtSeconds / state.loopLengthM;
 }
 
 inline void closeScavengeWindow(TwoStrokeScavengeState& state) noexcept {
     state.open = false;
-    state.elapsedSeconds = 0.0;
+    state.frontProgress = 0.0;
 }
 
 /** How much of the exhaust outflow is drawn from the fully mixed cylinder
@@ -121,28 +132,13 @@ inline void closeScavengeWindow(TwoStrokeScavengeState& state) noexcept {
  * behaviour the simulator had unconditionally. The window runs from 0 towards 1
  * as the front arrives and the loop breaks down.
  *
- * Returns 1 for a closed or degenerate window, so an engine whose geometry is
- * unknown behaves exactly as it did before this existed.
+ * Returns 1 for a closed window or an unknown geometry, so an engine without a
+ * loop length behaves exactly as it did before this existed.
  */
 [[nodiscard]] inline double scavengeMixedFraction(
     const TwoStrokeScavengeState& state) noexcept {
-    if (!state.open || !(state.windowSeconds > 0.0)) return 1.0;
-    const auto displacement =
-        std::clamp(state.transitSeconds / state.windowSeconds, 0.0, 1.0);
-    // A window entirely inside the transit time never breaks down: the front
-    // has not arrived by the time the ports shut, which is pure displacement.
-    if (displacement >= 1.0) return 0.0;
-    // No loop at all -- an unknown geometry, or a jet with no pressure behind
-    // it. There is nothing to displace with, so the cylinder mixes exactly as
-    // it did before this model existed. Guarded rather than divided: the ramp
-    // below would otherwise be 0/0 on the window's first sub-step.
-    if (!(displacement > 0.0)) return 1.0;
-    const auto progress = state.elapsedSeconds / state.windowSeconds;
-    // Displacement until the front arrives, then mixing established over one
-    // further transit time -- the jet's own mixing timescale, not the window's
-    // leftovers. A short window therefore ends mid-breakdown and keeps more
-    // charge, which is the engine-speed dependence the whole model is for.
-    return smoothRamp((progress - displacement) / displacement);
+    if (!state.open || !(state.loopLengthM > 0.0)) return 1.0;
+    return smoothRamp(state.frontProgress - 1.0);
 }
 
 /** Scavenging efficiency of the two classical bounds, for tests and for

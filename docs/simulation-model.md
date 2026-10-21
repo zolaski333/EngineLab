@@ -135,16 +135,26 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   reaches the exhaust port does fresh charge start escaping. Those are the
   classical bounds -- displacement `SE = min(DR, 1)`, mixing
   `SE = 1 - exp(-DR)` -- and the simulator sat on the lower one.
-  What places an engine between them is a race between two times: the front
-  needs `scavenge_loop_length_ratio` x bore over the transfer jet's velocity to
-  arrive, and the window lasts `port_open_duration / (6 x rpm)`. Engine speed
-  shortens the window without changing the transit, so the displacement phase
-  owns a larger share of a faster window -- which is why a two-stroke scavenges
-  well near its tuned speed and is dirty when lugged. The jet velocity is taken
-  once, from the crankcase-to-cylinder pressure difference at the instant the
-  transfers crack open (the exhaust port is already open, so the cylinder has
-  blown down and the difference is near its peak); no pressure across the ports
-  means no loop, and the cylinder mixes as it used to.
+  What places an engine between them is a race between the front's travel and
+  the port window. The front's progress is *integrated* every sub-step,
+  `frontProgress += jetVelocity x dt / loopLength`, with the loop length
+  `scavenge_loop_length_ratio` x bore and the jet velocity read from the
+  crankcase-to-cylinder pressure difference; displacement lasts until the
+  progress reaches 1 and mixing is established over one further loop length.
+  The window lasts `port_open_duration / (6 x rpm)`, so a faster engine's front
+  covers less of the loop and the displacement phase owns more of the window --
+  which is why a two-stroke scavenges well near its tuned speed and is dirty
+  when lugged. No pressure across the ports means no loop: the front stays
+  where it is and the cylinder mixes as it used to.
+  Integrating rather than predicting a transit time is not a refinement. An
+  earlier version sampled the jet velocity once, at the instant the transfers
+  cracked open, and in the 5,000-6,000 rpm band that instant is where the
+  exhaust pipe's returning wave sits: the loop closed through it (strong jet,
+  more trapped, more exhaust energy, stronger wave, different pressure at the
+  next opening) and the RD350's brake torque stopped holding, 13.3 to 37.6 N.m
+  around a 25.6 N.m mean at 5,999 rpm against 6 % spread with the model off
+  (journal 2026-10-21). A front does not travel at one instant's orifice
+  velocity in any case.
   The bias is applied to the *composition* the exhaust port offers the 1-D
   network, not to the port areas: the network reports back exactly the species
   masses it took and the cylinder is debited those same masses, so species,

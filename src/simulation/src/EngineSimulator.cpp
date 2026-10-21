@@ -3409,13 +3409,21 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             if (twoStroke) {
                 auto& scavenge = scavengeStates_[cylinderIndex];
                 const auto transferOpen = intakeArea > 0.0;
-                if (transferOpen && !scavenge.open) {
+                if (!transferOpen) {
+                    closeScavengeWindow(scavenge);
+                } else {
+                    if (!scavenge.open)
+                        openScavengeWindow(scavenge,
+                            std::max(0.0,
+                                config_.twoStroke.scavengeLoopLengthRatio)
+                                * cylinder.boreMm * 0.001);
                     // Jet velocity from the pressure the crankcase pump has
-                    // built, sampled once, here -- never from the port mass
-                    // flow, which is the flow this bias goes on to shape. The
-                    // transfer ports open after the exhaust port, so the
-                    // cylinder has already blown down and the difference is
-                    // near its peak for the window.
+                    // built -- never from the port mass flow, which is the flow
+                    // this bias goes on to shape. It is read every sub-step and
+                    // integrated, because the front covers the loop at whatever
+                    // the jet is doing along the way: sampling the one instant
+                    // the ports crack open put the model on the pipe's
+                    // returning wave and the engine hunted (the header).
                     const auto& crankcase = intakePlenumGas_[intakePathIndex];
                     const auto crankcaseVolumeM3 = crankcase.volumeM3();
                     const auto densityKgPerM3 = crankcaseVolumeM3 > 0.0
@@ -3429,17 +3437,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         (deltaKpa > 0.0 && densityKgPerM3 > 0.0)
                         ? std::sqrt(2.0 * deltaKpa * 1'000.0 / densityKgPerM3)
                         : 0.0;
-                    openScavengeWindow(scavenge,
-                        portOpenDurationDegrees(
-                            config_.twoStroke.transferPortOpenDegrees),
-                        state_.rpm,
-                        std::max(0.0, config_.twoStroke.scavengeLoopLengthRatio)
-                            * cylinder.boreMm * 0.001,
-                        jetVelocityMps);
-                } else if (!transferOpen && scavenge.open) {
-                    closeScavengeWindow(scavenge);
-                } else {
-                    advanceScavengeWindow(scavenge, subDt);
+                    advanceScavengeWindow(scavenge, jetVelocityMps, subDt);
                 }
             }
             const auto& cylinderIntake = intakeGeometryAt(config_, intakePathIndex);
