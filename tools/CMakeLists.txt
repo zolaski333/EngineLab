@@ -47,6 +47,11 @@ target_link_libraries(EngineLabExhaustFlowBench PRIVATE
     EngineLab::Physics EngineLab::Catalog)
 enginelab_set_warnings(EngineLabExhaustFlowBench)
 
+add_executable(EngineLabDesignBench DesignBench.cpp)
+target_link_libraries(EngineLabDesignBench PRIVATE
+    EngineLab::Catalog EngineLab::Serialization EngineLab::Foundation)
+enginelab_set_warnings(EngineLabDesignBench)
+
 add_executable(EngineLabExhaustNetworkCostBench ExhaustNetworkCostBench.cpp)
 target_link_libraries(EngineLabExhaustNetworkCostBench PRIVATE
     EngineLab::GasDynamics EngineLab::Exhaust EngineLab::Foundation

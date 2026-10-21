@@ -182,6 +182,7 @@ file's header says which question it answers and lists its options.
 | `AudioRenderHarness` | the real-time audio path rendered offline: RMS, crest, DC, spectral bands, exhaust RT60 |
 | `ComparisonHarness` | deterministic scenarios on the catalogue with an operating gate, compared against a reference `summary.csv` (above) |
 | `CyclicVariabilityHarness` | COV(IMEP) per cylinder at a held engine speed |
+| `DesignBench` | designs engines from a spec file exactly as the designer window does, prints or exports every derived value, and writes them as a catalogue `--catalog-root` can sweep: the only way to measure what a user builds rather than what the catalogue authored |
 | `DieselControlHarness` | does the editable injected-quantity curve reach a diesel's fuel and torque? |
 | `DriveScenarioHarness` | a driving complaint as a timeline of pedals and gears (above) |
 | `DynoCurveHarness` | torque at established points, integrated over whole cycles once the engine has settled; writes per-cycle data and a provenance file next to its CSV |

@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-21 — Two-stroke: the product's own dyno is not where the chaos is
+
+- The complaint is about the product's dyno, not the sweep, so `EngineLabDynoRuntimeCurveHarness --mode ramp` was run on the shipped build (25 mm clamp restored, idle host) for the catalogue RD350 and a CP2 four-stroke control. RD350: 145 points, 1,800-9,000 rpm. CP2: 155 points, 1,800-9,500.
+- **Refuted, mine:** "a ramp measures while accelerating and `DynoQualityGate` accepts 150 rpm of speed error and 3x the ramp rate, so the two-stroke's accepted points scatter." **Every point of both runs is valid and `quality_reasons` is 0 on all 300.** The gate rejects nothing, so it is not filtering a scatter into existence and not letting one through by a loose tolerance either.
+- The two-stroke *is* measurably noisier in the product's own instrument, but by a margin nobody would call chaotic: second-difference roughness **0.71 % against the four-stroke's 0.09 %**, per-point torque variance **3.28 against 0.105 N·m²** (31x), max step 1.65 against 0.54 N·m. Window rpm spread and accepted cycles per point are the same for both (129/119 rpm, 11.8/12.3 cycles), so the controller is holding the two-stroke as well as the four-stroke.
+- So neither instrument reproduces the complaint on the **catalogue** engine: sweep 1.58 %, ramp 0.71 %. What the owner's words actually say is "whatever 2T engines **I design**" — the designer's derivation, not the hand-authored RD350, and no two-stroke measurement this session had touched it.
+- `EngineLabDesignBench` was written for exactly that: it runs `designCatalogueEngine` over a spec file and writes the results as a catalogue the sweep can measure, so a designed engine is now a first-class measurement subject. Eight designs (125-1,000 cc, 1-4 cylinders, inline and V, plus a four-stroke control from the same derivation) came out with nothing clamped — tuned lengths 840-1,055 mm inside the [500, 1800] range, redlines 8,600-10,800 from the 17.5 m/s piston-speed rule.
+- Not measured yet: the sweeps of those eight, running. The ramp also stops at its accepted ceiling (9,025 rpm here), so its 36.52 N·m peak at 8,900 is a transient reading below the sweep's 41.25 at 9,751 and the two numbers are not comparable.
+
 ## 2026-10-21 — Two-stroke: the mesh converges at 12 mm, and production is 18 % below it
 
 - Peak torque against exhaust cell length (probe-r18, step 250 / settle 8): **23.20@6,252 / 34.32@9,251 / 39.10@9,751 / 41.25@9,751 / 41.67@9,751 / 41.52@9,751** at 200 / 100 / 50 / 25 / 12 / 6 mm. It **converges at about 12 mm** — 12 against 6 mm differ by 1.47 % of mean torque and −0.36 % on the peak. Production for a two-stroke is 100 mm (`productionExhaustCellLengthM`, confirmed bit-identical to an explicit 100 mm run), so **production sits 17.6 % below the model's own converged answer with its peak 500 rpm low**. 25 mm is within 1 % of converged.
