@@ -93,9 +93,9 @@ ctest --preset linux-gcc-release        # xvfb-run for EngineLab.AudioWorkshop
   header tracking, and a modified header no longer recompiles anything.
 - `scripts/vsenv.ps1` pins the toolset. Since 2026-10-20 the 2022 line here is
   **BuildTools**, MSVC **14.44** (Community and the 14.34 pin are gone; VS 18 /
-  MSVC 14.50 sits beside it), so no figure from before that date is
-  comparable. If CMake targets VS 18, reconfigure (and the `_deps/*` caches)
-  with `-DCMAKE_GENERATOR_INSTANCE` set to the BuildTools root under
+  MSVC 14.50 sits beside it), so no figure from before that date is comparable.
+  If CMake targets VS 18, reconfigure (and the `_deps/*` caches) with
+  `-DCMAKE_GENERATOR_INSTANCE` set to the BuildTools root under
   `C:/Program Files (x86)/Microsoft Visual Studio/2022`.
 - **Stale binary trap**: a wrong target name (`MSB1009`) compiles nothing, and
   `ctest` reruns the old binary (`EngineLabCoreTests`, `EngineLabExhaustTests`,
@@ -104,7 +104,10 @@ ctest --preset linux-gcc-release        # xvfb-run for EngineLab.AudioWorkshop
 - A new test must **fail without the fix** (after rebuilding the right target).
 - A `ctest` that prints nothing more after `Start N:` is **stuck**, not slow
   (`Get-Process ... | Select CPU,StartTime`). A very short time can be a
-  failure (`EngineLab.Core`: ~90 s if it passes, ~8 s if it aborts).
+  failure (`EngineLab.Core`: ~90 s if it passes, ~8 s if it aborts). **Never
+  run it beside a harness or sweep** (a WSL suite included: shared CPUs):
+  `CoreTests` waits on wall-clock deadlines nothing scales by load, so a loaded
+  host invents failures. Alone vs in-suite is the cheap discriminator.
 - **Release**: bump `project(EngineLab VERSION ...)`, date the `[Unreleased]`
   section of `CHANGELOG.md`, then push the tag `v<version>`: `release.yml`
   refuses a tag that does not match the CMake version.
@@ -198,6 +201,11 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
   knocks; plus Douaud-Eyzat it over-knocks (1,000-1,200 K); integral control
   pulls 12 deg for nothing.
 - Closing cyclic variability through dilution: inert (it exists, 1.7-12.9 %).
+- Two-stroke, un-gating exhaust oxidation before fixing scavenging (journal
+  2026-10-21): peak torque 41.2@9751 -> 36.5@7248, egt *down*, four-stroke
+  torque and sound both moved. Burning a 25-55 % short-circuit at the port
+  mouth returns oxygen-free gas: trapping rises while torque falls. Scavenging
+  first, then re-test the chemistry on top of it.
 - "Trapped residual too low": a unit error, the residual is sound.
 - Intake runners: four inertance formulations are unstable or out of phase.
   The intake charge bias was not the MUSCL limiter, the finite plenum, wall
