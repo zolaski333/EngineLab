@@ -62,6 +62,44 @@ namespace {
     return result;
 }
 
+/** The cylinder's composition as the exhaust port sees it during a scavenging
+ * window, biased towards burned gas by `mixedFraction`.
+ *
+ * Conservation is free here, and that is the whole reason the model goes in at
+ * this point rather than at the port areas. The network removes exactly the
+ * species masses this state offers, reports them back in a
+ * `CylinderGasExchange`, and `cylinderDeltaForExchange` negates those same
+ * masses onto the cylinder. Species, mass and energy therefore balance for any
+ * composition presented here; the only way to break it is to offer more of a
+ * species than the cylinder holds, which `biasedOutflowDensities` caps against.
+ *
+ * A `mixedFraction` of one -- every four-stroke, and any two-stroke whose loop
+ * length is zero -- returns `networkStateForGasCell` bit for bit.
+ */
+[[nodiscard]] gasdynamics::ConservativeState scavengedNetworkStateForGasCell(
+    const GasCell& cell, double mixedFraction) noexcept {
+    auto result = networkStateForGasCell(cell);
+    if (mixedFraction >= 1.0) return result;
+    const auto oxygen = static_cast<std::size_t>(gasdynamics::GasSpecies::oxygen);
+    const auto inert = static_cast<std::size_t>(gasdynamics::GasSpecies::inert);
+    const auto fuel = static_cast<std::size_t>(gasdynamics::GasSpecies::fuel);
+    const auto burned = static_cast<std::size_t>(gasdynamics::GasSpecies::burned);
+    const auto biased = biasedOutflowDensities(
+        result.speciesMassDensityKgPerM3[oxygen],
+        result.speciesMassDensityKgPerM3[inert],
+        result.speciesMassDensityKgPerM3[fuel],
+        result.speciesMassDensityKgPerM3[burned],
+        mixedFraction);
+    result.speciesMassDensityKgPerM3[oxygen] = biased.oxygen;
+    result.speciesMassDensityKgPerM3[inert] = biased.inert;
+    result.speciesMassDensityKgPerM3[fuel] = biased.fuel;
+    result.speciesMassDensityKgPerM3[burned] = biased.burned;
+    // The energy density is deliberately left alone. Pressure and temperature
+    // at the boundary drive the flow; this model says what the gas leaving IS,
+    // not how much of it leaves.
+    return result;
+}
+
 [[nodiscard]] GasInventoryDelta cylinderDeltaForExchange(
     const gasdynamics::CylinderGasExchange& exchange,
     const GasCell& cell) noexcept {
@@ -3363,6 +3401,47 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     valveTrain.exhaustDischargeCoefficient, 0.34, 0.41,
                     std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(0.51),
                         0.05, 1.5));
+            // The scavenging window as a state, opened and closed by the
+            // transfer ports themselves and advanced by the sub-step. What it
+            // buys is in TwoStrokeScavenging.hpp: a perfectly mixed cylinder
+            // cannot carry an engine-speed dependence, and this one does,
+            // through the race between the loop's transit and the window.
+            if (twoStroke) {
+                auto& scavenge = scavengeStates_[cylinderIndex];
+                const auto transferOpen = intakeArea > 0.0;
+                if (transferOpen && !scavenge.open) {
+                    // Jet velocity from the pressure the crankcase pump has
+                    // built, sampled once, here -- never from the port mass
+                    // flow, which is the flow this bias goes on to shape. The
+                    // transfer ports open after the exhaust port, so the
+                    // cylinder has already blown down and the difference is
+                    // near its peak for the window.
+                    const auto& crankcase = intakePlenumGas_[intakePathIndex];
+                    const auto crankcaseVolumeM3 = crankcase.volumeM3();
+                    const auto densityKgPerM3 = crankcaseVolumeM3 > 0.0
+                        ? crankcase.massKg() / crankcaseVolumeM3
+                        : 0.0;
+                    const auto deltaKpa = crankcase.pressureKpa() - chamberKpa;
+                    // No pressure across the ports, no loop: the charge
+                    // dribbles in and mixes, which is what a lugged or a
+                    // cranking two-stroke really does.
+                    const auto jetVelocityMps =
+                        (deltaKpa > 0.0 && densityKgPerM3 > 0.0)
+                        ? std::sqrt(2.0 * deltaKpa * 1'000.0 / densityKgPerM3)
+                        : 0.0;
+                    openScavengeWindow(scavenge,
+                        portOpenDurationDegrees(
+                            config_.twoStroke.transferPortOpenDegrees),
+                        state_.rpm,
+                        std::max(0.0, config_.twoStroke.scavengeLoopLengthRatio)
+                            * cylinder.boreMm * 0.001,
+                        jetVelocityMps);
+                } else if (!transferOpen && scavenge.open) {
+                    closeScavengeWindow(scavenge);
+                } else {
+                    advanceScavengeWindow(scavenge, subDt);
+                }
+            }
             const auto& cylinderIntake = intakeGeometryAt(config_, intakePathIndex);
             const auto pistonAreaM2 = std::numbers::pi * std::pow(cylinder.boreMm * 0.0005, 2.0);
             // Both areas already carry their discharge coefficient, so the
@@ -4372,7 +4451,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
             exhaustValveConductanceTimeIntegralM2S_[index] +=
                 exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index] * subDt;
-            const auto boundaryState = networkStateForGasCell(cylinderGas_[index]);
+            const auto boundaryState = scavengedNetworkStateForGasCell(
+                cylinderGas_[index],
+                scavengeMixedFraction(scavengeStates_[index]));
             auto& stateIntegral = exhaustBoundaryStateTimeIntegral_[index];
             for (std::size_t species = 0; species < gasdynamics::gasSpeciesCount; ++species) {
                 stateIntegral.speciesMassDensityKgPerM3[species] +=
@@ -4760,7 +4841,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto index = exhaustNetworkCylinderIndex_[portIndex];
             instantaneousBoundaries[portIndex] = {
                 cylinderPorts[portIndex].cylinderId,
-                networkStateForGasCell(cylinderGas_[index]),
+                scavengedNetworkStateForGasCell(cylinderGas_[index],
+                    scavengeMixedFraction(scavengeStates_[index])),
                 cylinderGas_[index].volumeM3(),
                 exhaustValveAreaM2[index],
                 exhaustValveDischargeCoefficient[index],

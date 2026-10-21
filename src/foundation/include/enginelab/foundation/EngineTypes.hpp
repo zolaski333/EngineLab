@@ -1059,6 +1059,15 @@ struct TwoStrokeConfig final {
     /** Crankcase volume at top dead centre over that at bottom dead centre:
      *  1.25-1.5 on a road or race engine. */
     double crankcaseCompressionRatio { 1.35 };
+    /** Length of the scavenging loop -- up the far wall, over the head and
+     *  back down to the exhaust port -- as a multiple of the bore. A
+     *  loop-scavenged cylinder runs about 1.8; a cross-scavenged one with a
+     *  deflector piston is shorter, a long-stroke one longer.
+     *
+     *  Zero disables the displacement phase, leaving the perfectly mixed
+     *  cylinder the simulator had before the model existed. See
+     *  `TwoStrokeScavenging.hpp` for what the length buys. */
+    double scavengeLoopLengthRatio { 1.8 };
 };
 
 /** Crank degrees of one thermodynamic cycle: 720 for a four-stroke, 360 for

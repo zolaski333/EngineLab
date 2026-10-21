@@ -973,6 +973,7 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(ports, "transfer_port_width_mm", config.twoStroke.transferPortWidthMm);
         assignIfPresent(ports, "port_discharge_coefficient", config.twoStroke.portDischargeCoefficient);
         assignIfPresent(ports, "crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio);
+        assignIfPresent(ports, "scavenge_loop_length_ratio", config.twoStroke.scavengeLoopLengthRatio);
     }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);

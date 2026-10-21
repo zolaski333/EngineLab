@@ -15,6 +15,7 @@
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/physics/DuctWallHeatTransferModel.hpp>
 #include <enginelab/foundation/GasFieldSnapshot.hpp>
+#include <enginelab/foundation/TwoStrokeScavenging.hpp>
 #include <enginelab/simulation/CylinderWorkerPool.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
@@ -789,6 +790,13 @@ private:
     std::array<double, 32> completedIgnitionPhaseThisCycle_ {};
     std::array<double, 32> completedIgnitionPhaseLastCycle_ {};
     FlamePhysicsModel flamePhysics_ {};
+    /** Where each two-stroke cylinder stands in its scavenging window. The
+     *  window is a state because the composition bias it produces must not be
+     *  a function of the port flow it then modulates: a bias derived from its
+     *  own flow over-determines the orifice, and its gain grows as the time
+     *  step shrinks. Untouched on a four-stroke, where every window reports a
+     *  mixed fraction of one and the exhaust boundary is bit-exact unchanged. */
+    std::array<TwoStrokeScavengeState, 32> scavengeStates_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     bool previousAfrObservationCommandEnabled_ { false };
     std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;

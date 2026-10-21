@@ -671,9 +671,12 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         const auto widthOk = [&inRange](double width) { return width == 0.0 || inRange(width, 5.0, 500.0); };
         if (!widthOk(ports.exhaustPortWidthMm) || !widthOk(ports.transferPortWidthMm)
             || !inRange(ports.portDischargeCoefficient, 0.3, 1.0)
-            || !inRange(ports.crankcaseCompressionRatio, 1.1, 2.5))
+            || !inRange(ports.crankcaseCompressionRatio, 1.1, 2.5)
+            || !(ports.scavengeLoopLengthRatio == 0.0
+                 || inRange(ports.scavengeLoopLengthRatio, 0.5, 4.0)))
             return "Two-stroke port widths are 5-500 mm (0: from the bore), their discharge coefficient 0.3-1, "
-                   "the crankcase compression ratio 1.1-2.5";
+                   "the crankcase compression ratio 1.1-2.5, the scavenging loop 0.5-4 x bore "
+                   "(0: a perfectly mixed cylinder)";
         for (const auto& path : config.intakePaths) {
             if (path.cylinderIds.size() != 1)
                 return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";

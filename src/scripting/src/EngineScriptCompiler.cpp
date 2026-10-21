@@ -470,6 +470,7 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "two_stroke.transfer_port_width_mm", Dimension::length, [](auto& c, double v) { c.twoStroke.transferPortWidthMm = v; } },
         { "two_stroke.port_discharge_coefficient", Dimension::dimensionless, [](auto& c, double v) { c.twoStroke.portDischargeCoefficient = v; } },
         { "two_stroke.crankcase_compression_ratio", Dimension::dimensionless, [](auto& c, double v) { c.twoStroke.crankcaseCompressionRatio = v; } },
+        { "two_stroke.scavenge_loop_length_ratio", Dimension::dimensionless, [](auto& c, double v) { c.twoStroke.scavengeLoopLengthRatio = v; } },
         { "forced_induction.turbine_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.turbineEfficiency = v; } },
         { "forced_induction.shaft_inertia_kg_m2", Dimension::inertia, [](auto& c, double v) { c.forcedInduction.shaftInertiaKgM2 = v; } },
         { "forced_induction.wastegate_pressure_ratio", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.wastegatePressureRatio = v; } },

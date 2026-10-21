@@ -630,7 +630,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                                 {"key", config.audioVoicingKey} };
     // Written for a two-stroke only, so a four-stroke file is unchanged.
     if (config.cycle == EngineCycle::twoStroke)
-        document["engine"]["two_stroke"] = { {"exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees}, {"transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees}, {"exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm}, {"transfer_port_width_mm", config.twoStroke.transferPortWidthMm}, {"port_discharge_coefficient", config.twoStroke.portDischargeCoefficient}, {"crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio} };
+        document["engine"]["two_stroke"] = { {"exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees}, {"transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees}, {"exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm}, {"transfer_port_width_mm", config.twoStroke.transferPortWidthMm}, {"port_discharge_coefficient", config.twoStroke.portDischargeCoefficient}, {"crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio}, {"scavenge_loop_length_ratio", config.twoStroke.scavengeLoopLengthRatio} };
     return document.dump(2);
 }
 

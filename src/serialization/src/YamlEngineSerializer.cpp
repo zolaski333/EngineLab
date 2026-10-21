@@ -742,6 +742,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "transfer_port_width_mm" << YAML::Value << config.twoStroke.transferPortWidthMm
             << YAML::Key << "port_discharge_coefficient" << YAML::Value << config.twoStroke.portDischargeCoefficient
             << YAML::Key << "crankcase_compression_ratio" << YAML::Value << config.twoStroke.crankcaseCompressionRatio
+            << YAML::Key << "scavenge_loop_length_ratio" << YAML::Value << config.twoStroke.scavengeLoopLengthRatio
             << YAML::EndMap;
     out << YAML::EndMap << YAML::EndMap;
     return out.c_str();
@@ -849,6 +850,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.twoStroke.transferPortWidthMm = ports["transfer_port_width_mm"].as<double>(config.twoStroke.transferPortWidthMm);
             config.twoStroke.portDischargeCoefficient = ports["port_discharge_coefficient"].as<double>(config.twoStroke.portDischargeCoefficient);
             config.twoStroke.crankcaseCompressionRatio = ports["crankcase_compression_ratio"].as<double>(config.twoStroke.crankcaseCompressionRatio);
+            config.twoStroke.scavengeLoopLengthRatio = ports["scavenge_loop_length_ratio"].as<double>(config.twoStroke.scavengeLoopLengthRatio);
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

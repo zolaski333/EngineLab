@@ -6,6 +6,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
+#include <enginelab/foundation/TwoStrokeScavenging.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
@@ -171,6 +172,38 @@ void catalogueTwinMakesItsTorque() {
         "the full-load torque at 8,000 rpm is positive and not above the maker's");
 }
 
+/** The scavenging model's own switch, measured in one binary on one engine.
+ *
+ *  A loop length of zero is the perfectly mixed cylinder the simulator had
+ *  before the model existed, so this is the cleanest control available: the
+ *  same code, the same catalogue engine, one field changed. It is also the
+ *  answer to "what did the model actually buy", without comparing two builds
+ *  whose toolchains or meshes might differ.
+ *
+ *  The assertion is only that the switch works and that the result stays below
+ *  the maker's figure. It deliberately does NOT assert that the biased torque
+ *  is higher by some amount: the reference is the real engine's 40.2 N.m, not
+ *  this simulator's output on either setting. */
+void theScavengingLoopIsASwitch() {
+    auto mixed = catalogueTwoStroke();
+    mixed.twoStroke.scavengeLoopLengthRatio = 0.0;
+    const auto mixedHeld = heldFullLoad(mixed, 8'000.0);
+
+    auto looped = catalogueTwoStroke();
+    looped.twoStroke.scavengeLoopLengthRatio = 1.8;
+    const auto loopedHeld = heldFullLoad(looped, 8'000.0);
+
+    std::cout << "RD350LC-like at 8,000 rpm: perfectly mixed " << mixedHeld.torqueNm
+              << " N.m, loop 1.8 x bore " << loopedHeld.torqueNm
+              << " N.m (maker 40.2)\n";
+    require(std::abs(loopedHeld.torqueNm - mixedHeld.torqueNm) > 1.0e-6,
+        "the scavenging loop length actually reaches the cylinder");
+    require(mixedHeld.torqueNm > 0.0 && loopedHeld.torqueNm > 0.0,
+        "the twin runs on either setting");
+    require(loopedHeld.torqueNm < 1.15 * 40.2,
+        "a loop-scavenged cylinder still does not beat the maker's figure");
+}
+
 /** From bottom dead centre to the transfers' closing the cylinder's pressure
  *  rides on a few kPa between two open ports. Coupled to the exhaust every
  *  117 us there, the RD350 made 12 % less than with the exhaust coupled on
@@ -319,6 +352,195 @@ int trace(double rpm, bool single, double exhaustCellM) {
     }
     return EXIT_SUCCESS;
 }
+
+// The scavenging law on its own, before any engine runs it. These are the
+// properties that make it a scavenging model rather than a fudge factor: it
+// must reduce to the old perfect mixing where the geometry is unknown, reach
+// the displacement bound where the window is short, and carry engine speed
+// through a ratio of two times rather than a fitted curve.
+// A port's opening ANGLE is not its duration, and reading one as the other is
+// a quiet 5 % error in the scavenging window. It also fixes the ordering the
+// whole model rests on: the exhaust port must open before the transfer ports
+// and close after them, or there is no blowdown and no tail to short-circuit
+// through.
+void portDurationIsNotTheOpeningAngle() {
+    const TwoStrokeConfig stock {};
+    const auto exhaustDuration =
+        portOpenDurationDegrees(stock.exhaustPortOpenDegrees);
+    const auto transferDuration =
+        portOpenDurationDegrees(stock.transferPortOpenDegrees);
+    require(std::abs(exhaustDuration - 176.0) < 1.0e-12,
+        "the stock exhaust port is open for 176 deg, not 92");
+    require(std::abs(transferDuration - 124.0) < 1.0e-12,
+        "the stock transfer ports are open for 124 deg, not 118");
+    require(exhaustDuration > transferDuration,
+        "the exhaust port outlasts the transfer ports, as a two-stroke needs");
+    require(stock.exhaustPortOpenDegrees < stock.transferPortOpenDegrees,
+        "the exhaust port opens first, giving a blowdown before transfer");
+    require(portOpenDurationDegrees(200.0) == 0.0,
+        "a port the piston never uncovers is never open");
+}
+
+void scavengingLawBracketsTheClassicalBounds() {
+    // Perfect displacement keeps everything up to a full cylinder; perfect
+    // mixing always loses some. Displacement is the better bound everywhere.
+    for (const auto deliveryRatio : { 0.25, 0.5, 1.0, 1.5, 2.0 }) {
+        require(perfectDisplacementEfficiency(deliveryRatio)
+                > perfectMixingEfficiency(deliveryRatio),
+            "perfect displacement traps more than perfect mixing");
+    }
+    require(std::abs(perfectDisplacementEfficiency(2.0) - 1.0) < 1.0e-12,
+        "displacement saturates at a full cylinder");
+    require(perfectMixingEfficiency(0.0) == 0.0,
+        "no delivered charge scavenges nothing");
+
+    // A window nobody opened behaves exactly as the simulator did before this
+    // existed: perfect mixing, so no default figure can move.
+    TwoStrokeScavengeState closed;
+    require(scavengeMixedFraction(closed) == 1.0,
+        "a closed scavenging window is perfect mixing");
+
+    // Geometry for these: a 64 mm bore loops up, over and down in roughly
+    // 1.8 bores, so 0.12 m, and a transfer jet runs tens of m/s. At 116 deg of
+    // transfer and 6,000 rpm the window is 3.2 ms against a 1.5 ms transit.
+
+    // A window the front cannot cross before the ports shut is pure
+    // displacement throughout: nothing fresh escapes. A slow jet at high speed
+    // is that case: 3.0 ms of transit against a 1.6 ms window.
+    TwoStrokeScavengeState brief;
+    openScavengeWindow(brief, 116.0, 12'000.0, 0.12, 40.0);
+    require(scavengeMixedFraction(brief) == 0.0,
+        "a window shorter than the transit is pure displacement");
+    advanceScavengeWindow(brief, brief.windowSeconds * 0.9);
+    require(scavengeMixedFraction(brief) == 0.0,
+        "it stays pure displacement to the end of that window");
+
+    // A normal window: burned gas only until the front arrives, then a
+    // monotone breakdown towards mixing by the time the ports shut.
+    TwoStrokeScavengeState window;
+    openScavengeWindow(window, 116.0, 6'000.0, 0.12, 80.0);
+    require(window.windowSeconds > window.transitSeconds,
+        "the front arrives inside this window");
+    require(scavengeMixedFraction(window) == 0.0,
+        "nothing fresh escapes before the front arrives");
+    auto previous = 0.0;
+    auto rose = 0;
+    for (auto step = 1; step <= 20; ++step) {
+        TwoStrokeScavengeState probe = window;
+        advanceScavengeWindow(probe, window.windowSeconds * 0.05 * step);
+        const auto mixed = scavengeMixedFraction(probe);
+        require(mixed >= previous - 1.0e-12,
+            "the mixed fraction never falls inside a window");
+        if (mixed > previous + 1.0e-9) ++rose;
+        previous = mixed;
+    }
+    require(rose >= 5, "the mixed fraction actually rises across the window");
+    require(std::abs(previous - 1.0) < 1.0e-9,
+        "the window ends at perfect mixing");
+
+    // The engine-speed mechanism. Same geometry, same jet: a faster engine has
+    // a shorter window, the transit is unchanged, so the displacement phase
+    // owns more of the window and more fresh charge is kept. This is the term
+    // the model had no mechanism for at all.
+    const auto mixedAtRpm = [](double rpm) {
+        TwoStrokeScavengeState state;
+        openScavengeWindow(state, 116.0, rpm, 0.12, 80.0);
+        advanceScavengeWindow(state, state.windowSeconds * 0.75);
+        return scavengeMixedFraction(state);
+    };
+    const auto slow = mixedAtRpm(3'000.0);
+    const auto fast = mixedAtRpm(9'000.0);
+    require(fast < slow,
+        "a faster engine keeps more of its charge at the same window fraction");
+    // A loop length of zero is the switch that restores the perfectly mixed
+    // cylinder. It must report mixing on EVERY sub-step of the window,
+    // including the first, where the ramp would otherwise divide 0 by 0.
+    {
+        TwoStrokeScavengeState noLoop {};
+        openScavengeWindow(noLoop, 116.0, 6'000.0, 0.0, 80.0);
+        for (int step = 0; step <= 10; ++step) {
+            require(scavengeMixedFraction(noLoop) == 1.0,
+                "a cylinder with no loop mixes on every sub-step of the window");
+            advanceScavengeWindow(noLoop, 0.0001);
+        }
+    }
+
+    std::cout << "    scavenging at 75% of the window: 3000 rpm mixed="
+              << slow << "  9000 rpm mixed=" << fast << '\n';
+}
+
+// The apportionment that turns a mixed fraction into a port composition. These
+// are invariants rather than values: whatever the bias does to the mixture, it
+// may not create or destroy mass, and it must vanish exactly where the model
+// says it has no claim to make.
+void outflowBiasMovesCompositionWithoutMovingMass() {
+    // A plausible mid-scavenge cylinder: fresh air and fuel over a residual.
+    constexpr auto oxygen = 0.21;
+    constexpr auto inert = 0.79;
+    constexpr auto fuel = 0.014;
+    constexpr auto burned = 0.25;
+    constexpr auto total = oxygen + inert + fuel + burned;
+
+    const auto identity = biasedOutflowDensities(oxygen, inert, fuel, burned, 1.0);
+    require(identity.oxygen == oxygen && identity.inert == inert
+            && identity.fuel == fuel && identity.burned == burned,
+        "perfect mixing is bit-exact identity, so a four-stroke cannot move");
+
+    for (const auto mixed : { 0.0, 0.25, 0.5, 0.75, 1.0 }) {
+        const auto biased =
+            biasedOutflowDensities(oxygen, inert, fuel, burned, mixed);
+        const auto biasedTotal =
+            biased.oxygen + biased.inert + biased.fuel + biased.burned;
+        require(std::abs(biasedTotal - total) < 1.0e-12 * total,
+            "the bias preserves total mass density");
+        require(biased.oxygen >= 0.0 && biased.inert >= 0.0
+                && biased.fuel >= 0.0 && biased.burned >= 0.0,
+            "no species is driven negative");
+        require(biased.oxygen <= oxygen * (1.0 + 1.0e-12)
+                && biased.fuel <= fuel * (1.0 + 1.0e-12),
+            "the bias only ever holds fresh charge back, never adds it");
+        require(biased.inert >= inert * (1.0 - 1.0e-12)
+                && biased.burned >= burned * (1.0 - 1.0e-12),
+            "the mass held back is replaced by residual, not lost");
+    }
+
+    // Displacement is monotone in the window's progress: more mixing lets more
+    // fresh charge out of the port, never less.
+    auto previousFuel = -1.0;
+    for (const auto mixed : { 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 }) {
+        const auto biased =
+            biasedOutflowDensities(oxygen, inert, fuel, burned, mixed);
+        require(biased.fuel > previousFuel - 1.0e-15,
+            "fuel at the port rises with the mixed fraction");
+        previousFuel = biased.fuel;
+    }
+
+    // Cranking: almost no burned gas to displace with. The bias must reduce
+    // itself to what the residual can cover instead of inventing mass.
+    const auto cranking = biasedOutflowDensities(0.21, 0.79, 0.014, 0.0, 0.0);
+    const auto crankingTotal =
+        cranking.oxygen + cranking.inert + cranking.fuel + cranking.burned;
+    require(std::abs(crankingTotal - (0.21 + 0.79 + 0.014)) < 1.0e-14,
+        "a cylinder with no burned gas still conserves mass");
+    require(cranking.oxygen >= 0.0 && cranking.fuel >= 0.0,
+        "a cylinder with no burned gas is not driven negative");
+
+    // Nothing at all to present: the bias has no claim and must stand aside.
+    const auto empty = biasedOutflowDensities(0.0, 0.0, 0.0, 0.0, 0.0);
+    require(empty.oxygen == 0.0 && empty.inert == 0.0 && empty.fuel == 0.0
+            && empty.burned == 0.0,
+        "an empty cell biases to nothing");
+
+    const auto pureResidual = biasedOutflowDensities(0.0, 0.79, 0.0, 0.25, 0.0);
+    require(pureResidual.inert == 0.79 && pureResidual.burned == 0.25,
+        "with no fresh charge to hold back the bias is identity");
+
+    std::cout << "port fuel density, mixed=0 vs mixed=1: "
+              << biasedOutflowDensities(oxygen, inert, fuel, burned, 0.0).fuel
+              << "  " << biasedOutflowDensities(oxygen, inert, fuel, burned, 1.0).fuel
+              << '\n';
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -339,6 +561,10 @@ int main(int argc, char** argv) {
     catalogueTwinIdles();
     catalogueTwinMakesItsTorque();
     scavengingIsCoupledFinely();
+    theScavengingLoopIsASwitch();
+    portDurationIsNotTheOpeningAngle();
+    scavengingLawBracketsTheClassicalBounds();
+    outflowBiasMovesCompositionWithoutMovingMass();
     std::cout << "two-stroke: ok\n";
     return EXIT_SUCCESS;
 }

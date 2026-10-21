@@ -40,6 +40,21 @@ namespace enginelab {
     return widthMm * height * dischargeCoefficient;
 }
 
+/** Crank degrees a port stays open, from the angle at which the piston crown
+ *  uncovers its top edge.
+ *
+ *  `portOpenAreaMm2` puts the port's bottom at bottom dead centre, so a port
+ *  that opens `openDegrees` after top dead centre closes the same distance the
+ *  other side of it. The duration is NOT `openDegrees`: on the stock
+ *  catalogue twin the transfer ports open at 118 deg and are open for 124, and
+ *  the exhaust port opens at 92 and is open for 176. A larger opening angle is
+ *  a shorter window, which is why the exhaust port -- the smaller number --
+ *  opens first and closes last, as it must.
+ */
+[[nodiscard]] inline double portOpenDurationDegrees(double openDegrees) noexcept {
+    return 2.0 * std::max(0.0, 180.0 - openDegrees);
+}
+
 /** The crankcase volume, litres, at `phaseDegrees`: largest with the piston
  *  at top dead centre, `crankcaseCompressionRatio` times its volume at
  *  bottom dead centre. */

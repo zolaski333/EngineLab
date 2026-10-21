@@ -691,6 +691,9 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 "deg ATDC", sport ? 116.0 : 118.0, "the use's");
             config.twoStroke.crankcaseCompressionRatio = derive("crankcase_compression_ratio",
                 "Crankcase compression", "", 1.35, "1.25-1.5 on road and race engines");
+            config.twoStroke.scavengeLoopLengthRatio = derive("scavenge_loop_length_ratio",
+                "Scavenging loop length", "x bore", 1.8,
+                "a loop-scavenged cylinder: up the far wall, over the head, back to the port");
             config.combustionCalibration.chamberTurbulenceIntensityRatio = derive("chamber_turbulence_ratio",
                 "Chamber turbulence", "", 2.0, "a squish head, as the RD350LC's");
 

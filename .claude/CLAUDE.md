@@ -202,10 +202,18 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
   pulls 12 deg for nothing.
 - Closing cyclic variability through dilution: inert (it exists, 1.7-12.9 %).
 - Two-stroke, un-gating exhaust oxidation before fixing scavenging (journal
-  2026-10-21): peak torque 41.2@9751 -> 36.5@7248, egt *down*, four-stroke
-  torque and sound both moved. Burning a 25-55 % short-circuit at the port
-  mouth returns oxygen-free gas: trapping rises while torque falls. Scavenging
-  first, then re-test the chemistry on top of it.
+  2026-10-21): torque 41.2@9751 -> 36.5@7248, egt *down*, four-stroke torque
+  and sound moved. Burning a 25-55 % short-circuit at the port mouth returns
+  oxygen-free gas: trapping rises while torque falls.
+- Two-stroke exhaust geometry (journal 2026-10-21): Blair's 500 m/s and the
+  designer's tuned length are right (egt 345-365 C in the tuned band gives
+  c 486-493; 940 mm tunes to 8.5k as intended), and lengthening is no fix
+  (x1.300 is +33 % overpowered). The curve's TWO humps are both the pipe's --
+  they move as 1/L, x1.088 taking 7,245/9,751 to 6,750/9,001 -- so the 8,252
+  trough between them, where the real engine peaks, is the chamber's wave
+  structure, not scavenging. Do not read a delivery hump off max(delivered_ve):
+  it selects the lugged through-flow. A transit-vs-window scavenging race is
+  monotonic in rpm by construction: +26 % at 5,752, nothing at the top.
 - "Trapped residual too low": a unit error, the residual is sound.
 - Intake runners: four inertance formulations are unstable or out of phase.
   The intake charge bias was not the MUSCL limiter, the finite plenum, wall

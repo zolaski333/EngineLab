@@ -126,6 +126,45 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   about bottom dead centre); short-circuit losses come out of the same 1-D
   exhaust flow that scavenges the cylinder. There is no pumping loop in the
   cylinder: all of its work is gross work.
+- **Scavenging** (`TwoStrokeScavenging.hpp`): one well-mixed cylinder cell with
+  two ports onto it *is* perfect mixing, so trapping came out a function of
+  delivery ratio with no engine speed in it anywhere (0.448 at 2,000 rpm to
+  0.807 at 9,000, straight along that relation). A real loop-scavenged cylinder
+  displaces first: the transfers aim the charge up the far wall, it loops over
+  the head and pushes burned gas out ahead of it, and only once that front
+  reaches the exhaust port does fresh charge start escaping. Those are the
+  classical bounds -- displacement `SE = min(DR, 1)`, mixing
+  `SE = 1 - exp(-DR)` -- and the simulator sat on the lower one.
+  What places an engine between them is a race between two times: the front
+  needs `scavenge_loop_length_ratio` x bore over the transfer jet's velocity to
+  arrive, and the window lasts `port_open_duration / (6 x rpm)`. Engine speed
+  shortens the window without changing the transit, so the displacement phase
+  owns a larger share of a faster window -- which is why a two-stroke scavenges
+  well near its tuned speed and is dirty when lugged. The jet velocity is taken
+  once, from the crankcase-to-cylinder pressure difference at the instant the
+  transfers crack open (the exhaust port is already open, so the cylinder has
+  blown down and the difference is near its peak); no pressure across the ports
+  means no loop, and the cylinder mixes as it used to.
+  The bias is applied to the *composition* the exhaust port offers the 1-D
+  network, not to the port areas: the network reports back exactly the species
+  masses it took and the cylinder is debited those same masses, so species,
+  mass and energy conserve for any composition presented. Only the composition
+  moves -- the energy density is passed through untouched, because pressure and
+  temperature drive the flow and this model says what the gas leaving is, not
+  how much of it leaves. A cylinder holding less burned gas than the fresh
+  charge being held back (cranking, the first cycles) has nothing to displace
+  with, and the bias reduces itself to what the residual can cover. A loop
+  length of zero restores the perfectly mixed cylinder exactly, and a
+  four-stroke never opens a window, so its exhaust boundary is bit-for-bit
+  unchanged.
+  Measured, one binary with only the loop length changed: the curve moves
+  +2.2 % in the mean and +26 % at 5,752 rpm, where it fills an antiresonance
+  (23.1 -> 29.1 N.m), and less than 1 % below 3,250 or above 7,000. The band is
+  not a tuning. Below it the displacing share is a tenth of the window, so
+  there is almost no bias; above it trapping is already 0.83 and the cap on
+  what the residual can cover binds. It therefore does **not** address torque
+  climbing to the rev limiter: that is trapping which never falls, and the
+  displacing share is monotonic in engine speed by construction.
 - **Fuelling**: the ECU meters for the air that crossed the reed into the
   crankcase during its last fill (latched when the transfers close, just
   before the pulse), as a carburettor meters the air through it; not for the
