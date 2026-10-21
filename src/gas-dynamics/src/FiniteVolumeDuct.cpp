@@ -22,10 +22,6 @@ constexpr double reconstructionBias = 1.5;
     return (std::bit_cast<std::uint64_t>(value) & exponentMask) != exponentMask;
 }
 
-[[nodiscard]] constexpr std::size_t speciesIndex(GasSpecies species) noexcept {
-    return static_cast<std::size_t>(species);
-}
-
 [[nodiscard]] ConservativeState addScaled(const ConservativeState& first,
                                            const ConservativeState& second,
                                            double scale) noexcept {

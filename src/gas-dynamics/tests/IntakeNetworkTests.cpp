@@ -392,7 +392,8 @@ void testPerDuctPassIsOrderIndependent() {
         std::array<CylinderValveBoundary, runnerCount> boundaries {};
         for (std::size_t index = 0; index < runnerCount; ++index) {
             const auto state = model.conservativeFromPressureTemperature(
-                50'000.0 + 15'000.0 * index + 500.0 * window, 320.0 + 20.0 * index);
+                50'000.0 + 15'000.0 * static_cast<double>(index) + 500.0 * window,
+                320.0 + 20.0 * static_cast<double>(index));
             requireIntake(state.has_value(), "cylinder fixture must be physical");
             boundaries[index] = { static_cast<std::uint32_t>(index + 1), *state,
                 4.0e-4, 1.5e-4 * static_cast<double>(index % 3), 0.62 };

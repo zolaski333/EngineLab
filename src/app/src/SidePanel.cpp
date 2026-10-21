@@ -509,7 +509,7 @@ std::vector<std::pair<juce::String, juce::String>> DiagnosticsPanel::debugRows()
 }
 
 SidePanel::SidePanel(const DashboardModel& model, std::function<bool()> wheelModifierActive)
-    : dyno(model, wheelModifierActive), audio(model), model_(model), telemetry_(model), diagnostics_(model) {
+    : dyno(model, wheelModifierActive), audio(model), telemetry_(model), diagnostics_(model) {
     tabs_.onChange = [this](int tab) { showTab(tab); };
     telemetry_.onShowInjectors = [this] {
         if (onShowInjectors) onShowInjectors();

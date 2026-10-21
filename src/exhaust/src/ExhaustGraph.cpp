@@ -1058,7 +1058,15 @@ void ExhaustGraph::process(FiringEvent& event) const noexcept {
                 modeAmplitude, route.modes[index].frequencyHz, route.pathIndex });
         }
     }
-    std::sort(strongest.begin(), strongest.begin() + static_cast<std::ptrdiff_t>(strongestCount),
+    // `retain` never lets the count past `strongest.size()`, but GCC cannot
+    // carry that through the loops above: it then keeps the long-range branch
+    // of `std::sort`, whose insertion-sort threshold is 16, and reports
+    // element 16 of a 4-element array as out of bounds (-Warray-bounds).
+    // Clamping restates the invariant where the compiler can see it, and
+    // costs nothing at run time.
+    const auto sortedCount = static_cast<std::ptrdiff_t>(
+        std::min(strongestCount, strongest.size()));
+    std::sort(strongest.begin(), strongest.begin() + sortedCount,
         [](const auto& left, const auto& right) {
             if (left.delaySeconds != right.delaySeconds)
                 return left.delaySeconds < right.delaySeconds;

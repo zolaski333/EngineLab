@@ -483,7 +483,7 @@ void transferOracleRegression() {
     const auto expectedAddedSamples = addedLengthM
         / static_cast<double>(soundSpeedMps) * sampleRateHz;
     const auto measuredAddedSamples = static_cast<double>(
-        longStraight.firstArrivalSample) - straight.firstArrivalSample;
+        longStraight.firstArrivalSample) - static_cast<double>(straight.firstArrivalSample);
     require(std::abs(measuredAddedSamples - expectedAddedSamples) < 3.0,
         "a 600 mm geometry change must add its physical propagation delay");
     require(taper.acousticDuctCount > straight.acousticDuctCount,

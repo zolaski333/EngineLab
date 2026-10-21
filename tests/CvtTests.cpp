@@ -79,7 +79,7 @@ enginelab::EngineConfig cvtConfig(bool centrifugal) {
 }
 
 struct Rig final {
-    explicit Rig(const enginelab::EngineConfig& config) : config(config), driveline(config) {
+    explicit Rig(const enginelab::EngineConfig& engineConfig) : config(engineConfig), driveline(config) {
         driveline.setEngineInertia(engine.inertiaKgM2);
     }
     enginelab::DrivelineOutput step(double pedal, double brake = 0.0) {

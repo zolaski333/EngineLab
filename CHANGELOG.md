@@ -24,6 +24,21 @@ file formats, always with an in-memory migration).
 - `EngineLabSceneExport --catalog-root` exports another catalogue folder.
 - `EngineLabRealtimeBudgetHarness --designer-probe` runs the designer's
   real-time check on each engine.
+- **EngineLab builds and passes its tests on Linux x64.**
+  `cmake --preset linux-gcc-release` (GCC 13 or newer) configures and builds
+  the whole project with warnings as errors, and `ctest --preset
+  linux-gcc-release` runs all 89 tests green; `linux-clang-release` does the
+  same with Clang 18. Every push now compiles and tests both platforms.
+  Windows stays the reference, and [docs/platforms.md](docs/platforms.md) says
+  why a figure measured on one is not comparable with the other:
+  floating-point contraction is pinned off so a Linux result matches MSVC's
+  non-contracting `/fp:precise`, an unprivileged Linux run cannot raise the
+  physics thread's priority, file names are converted through each platform's
+  native encoding, the oversized `EngineRuntime` test fixtures moved off the
+  stack because Linux has no link-time stack size, and the one test that
+  builds real JUCE components runs under a window manager on `xvfb-run`.
+  No Linux archive is published yet, and the GUI has not been reviewed on a
+  Linux screen.
 
 ### Fixed
 

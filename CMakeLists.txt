@@ -68,6 +68,18 @@ if(ENGINELAB_ENABLE_COMPILER_CACHE)
     endif()
 endif()
 
+# GCC and Clang default to -ffp-contract=fast, which fuses `a * b + c` into a
+# single FMA. MSVC under /fp:precise does not contract, and the solver is full
+# of exactly that shape, so the default would make a Linux result differ from
+# the reference platform's -- and differ again between GCC versions and
+# optimisation levels, since whether a given expression gets fused is a
+# code-generation decision. The tests assert tight numeric tolerances, so
+# predictability is worth more here than the fused multiply-add. See
+# docs/platforms.md.
+if(NOT MSVC)
+    add_compile_options(-ffp-contract=off)
+endif()
+
 # Sanitizer instrumentation must be consistent across EngineLab and fetched
 # static dependencies (notably yaml-cpp), otherwise MSVC's annotated STL types
 # produce LNK2038 mismatches at the final executable.
@@ -99,6 +111,26 @@ FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/js
 FetchContent_Declare(yaml_cpp GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git GIT_TAG 0.8.0 GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(JUCE nlohmann_json yaml_cpp)
 
+# None of the three dependencies' headers build clean under the warning set
+# `cmake/CompilerWarnings.cmake` puts on our own targets, and that file explains
+# why no source property can reach a header.
+if(NOT MSVC)
+    set(enginelab_vendor_targets nlohmann_json yaml-cpp)
+    if(juce_SOURCE_DIR)
+        # A JUCE module's target carries its own directory's name, and the
+        # modules are one level deep inside `modules/` by construction.
+        file(GLOB enginelab_juce_module_dirs "${juce_SOURCE_DIR}/modules/*")
+        foreach(enginelab_juce_module_dir IN LISTS enginelab_juce_module_dirs)
+            if(IS_DIRECTORY "${enginelab_juce_module_dir}")
+                get_filename_component(enginelab_juce_module
+                    "${enginelab_juce_module_dir}" NAME)
+                list(APPEND enginelab_vendor_targets ${enginelab_juce_module})
+            endif()
+        endforeach()
+    endif()
+    enginelab_vendor_headers_are_system(${enginelab_vendor_targets})
+endif()
+
 add_subdirectory(src/foundation)
 add_subdirectory(src/calibration)
 add_subdirectory(src/events)
@@ -129,8 +161,9 @@ if(ENGINELAB_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-# Packaging: `--target package` produces EngineLab-<version>-win64.zip, the
-# archive attached to every GitHub release. It holds only what a user needs to
+# Packaging: `--target package` produces EngineLab-<version>-win64.zip on
+# Windows, EngineLab-<version>-Linux.zip on Linux. The Windows archive is the
+# one attached to every GitHub release. It holds only what a user needs to
 # run the application; the documentation stays online.
 install(TARGETS EngineLabApp
     RUNTIME DESTINATION . COMPONENT EngineLab
@@ -146,10 +179,15 @@ install(FILES src/app/resources/fonts/OFL-Inter.txt src/app/resources/fonts/OFL-
 
 # Ship the MSVC runtime next to the executable (app-local deployment), so the
 # archive runs on a machine without the Visual C++ Redistributable installed.
-set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
-set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT EngineLab)
-set(CMAKE_INSTALL_UCRT_LIBRARIES OFF)
-include(InstallRequiredSystemLibraries)
+# A Linux build has no counterpart: the application links the distribution's
+# own ALSA, X11, GL and freetype, which `CONTRIBUTING.md` lists as build and
+# run dependencies.
+if(MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT EngineLab)
+    set(CMAKE_INSTALL_UCRT_LIBRARIES OFF)
+    include(InstallRequiredSystemLibraries)
+endif()
 
 set(CPACK_PACKAGE_NAME "EngineLab")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

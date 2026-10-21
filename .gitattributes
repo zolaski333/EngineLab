@@ -1,6 +1,11 @@
 # Normalise line endings in the repository; check out with the platform default.
 * text=auto
 
+# A shell script has to keep LF even when it is checked out on Windows:
+# `#!/bin/sh` followed by a CR is not an interpreter, and scripts/run-gui-test.sh
+# is run by ctest on Linux.
+*.sh text eol=lf
+
 *.wav binary
 *.png binary
 *.jpg binary

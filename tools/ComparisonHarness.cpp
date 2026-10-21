@@ -45,7 +45,8 @@ void writeWav(const std::filesystem::path& path, const std::vector<float>& sampl
     std::ofstream out(path, std::ios::binary);
     const auto dataBytes = static_cast<std::uint32_t>(samples.size() * sizeof(std::int16_t));
     out.write("RIFF", 4); writeU32(out, 36U + dataBytes); out.write("WAVEfmt ", 8);
-    writeU32(out, 16U); writeU16(out, 1U); writeU16(out, 1U); writeU32(out, sampleRate);
+    writeU32(out, 16U); writeU16(out, 1U); writeU16(out, 1U);
+    writeU32(out, static_cast<std::uint32_t>(sampleRate));
     writeU32(out, static_cast<std::uint32_t>(sampleRate * 2)); writeU16(out, 2U); writeU16(out, 16U);
     out.write("data", 4); writeU32(out, dataBytes);
     for (const auto sample : samples) {

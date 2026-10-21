@@ -38,7 +38,14 @@ used.
 
 ## Building and testing
 
-Windows, Visual Studio 2022 (*Desktop development with C++*), CMake 3.24+:
+Windows is the reference platform: it gates commits and carries every measured
+figure. Linux builds and passes the same test suite, but a number taken there
+is not comparable with a Windows one (different libm, and GCC contracts
+`a*b+c` into an FMA where MSVC does not).
+
+### Windows
+
+Visual Studio 2022 (*Desktop development with C++*), CMake 3.24+:
 
 ```powershell
 cmake --preset windows-vs2022
@@ -49,6 +56,49 @@ ctest --preset windows-release
 The full suite takes about 15 minutes. If MSBuild fails with `C1060` (compiler
 out of heap space), rebuild with fewer parallel nodes, for example
 `cmake --build --preset windows-release -- /m:1`.
+
+### Linux
+
+GCC 13+ or Clang 18+, CMake 3.24+, and the system libraries JUCE needs. On
+Ubuntu 24.04 (the version CI uses):
+
+```bash
+sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+  libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+  libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+  libxinerama-dev libxrandr-dev libxrender-dev \
+  libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
+  xvfb matchbox-window-manager x11-utils mesa-utils libgl1-mesa-dri
+```
+
+`libasound2-dev` is needed even for the headless harnesses: they link
+`EngineLab::Audio`, which pulls in `juce_audio_devices`. `libwebkit2gtk` and
+`libcurl` are deliberately **not** required -- `JUCE_WEB_BROWSER` and
+`JUCE_USE_CURL` are both 0. The last three packages serve the one test that
+builds real JUCE components (see below): `xvfb` for the virtual display,
+`matchbox-window-manager` because a bare Xvfb is not enough, and `x11-utils`
+for the `xprop` the wrapper waits on.
+
+```bash
+cmake --preset linux-gcc-release
+cmake --build --preset linux-gcc-release
+ctest --preset linux-gcc-release
+```
+
+Two things differ from Windows:
+
+- `EngineLab.AudioWorkshop` constructs real JUCE components, so it needs a
+  display **with a window manager**. A bare Xvfb is not enough: JUCE 8 looks
+  the `_NET_WM_*` atoms up with `only_if_exists`, and with no window manager
+  to have interned them it issues an `XChangeProperty` with atom 0 and dies
+  with `BadAtom` before the first assertion. `ctest` therefore runs the test
+  through `scripts/run-gui-test.sh`, which starts Xvfb and
+  `matchbox-window-manager` and waits for the screen to be claimed. Running
+  the binary by hand works the same way:
+  `scripts/run-gui-test.sh ./EngineLabAudioWorkshopTests`. On a real desktop
+  the script uses the `DISPLAY` already there.
+- A `linux-clang-release` preset exists on purpose. Clang and GCC reject
+  different things, so a green GCC build is not proof on its own.
 
 ## Pull requests
 

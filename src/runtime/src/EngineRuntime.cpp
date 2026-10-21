@@ -8,6 +8,9 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#elif defined(__unix__) || defined(__APPLE__)
+#include <pthread.h>
+#include <sched.h>
 #endif
 
 namespace enginelab {
@@ -1120,8 +1123,22 @@ void EngineRuntime::deleteDynoRun(std::uint64_t id) {
 void EngineRuntime::run(std::stop_token stopToken) {
     using Clock = std::chrono::steady_clock;
     constexpr auto baseStep = std::chrono::duration<double>(1.0 / 240.0);
+    // The physics thread is the one that must not miss its deadline: the
+    // diagnostics real-time factor, and with it every audible symptom of a
+    // late step, is measured here. Windows grants the raise outright. POSIX
+    // only grants a real-time policy to a privileged process, so the attempt
+    // is made and its failure ignored: an unprivileged Linux run keeps
+    // SCHED_OTHER and can report a lower real-time factor than Windows for
+    // the same engine, which is a scheduling difference, not a slower solver.
 #if defined(_WIN32)
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+#elif defined(__unix__) || defined(__APPLE__)
+    {
+        sched_param parameters {};
+        parameters.sched_priority = (sched_get_priority_min(SCHED_RR)
+            + sched_get_priority_max(SCHED_RR)) / 2;
+        (void)pthread_setschedparam(pthread_self(), SCHED_RR, &parameters);
+    }
 #endif
     const auto clockEpoch = Clock::now();
     auto deadline = clockEpoch;

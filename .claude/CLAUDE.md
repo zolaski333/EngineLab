@@ -18,29 +18,34 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Done 2026-10-19 (owner's go): the engine builder from zero** (journal
-2026-10-18/19). Open: the designer window was never checked on screen; the
-ignition is a template (no MBT calibration: no knock limit to stop it).
+**Owner's mandate of 2026-10-20**, in order, each finished before the next:
 
-**Now, milestone 1 — the sound of the CP2 (MT-07, Arrow exhaust).**
+1. **Linux**: build, tests and CI green there, Windows staying the reference
+   platform. What differs between the two: `docs/platforms.md`.
+2. **The two-stroke model.** Whatever 2T engine is designed, the curves come
+   out chaotic and neither the behaviour nor the sound is a real two-stroke's.
+   Free rein to add what a 2T needs (carburettor, reed and power valves, a
+   scavenging model) or to rework the ports deeply. The complaint is a
+   measurement before it is a fix: `EngineLabDynoSweepHarness --filter RD350`.
+3. **Performance**: test duration, build time, real-time factor.
+4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
+   that would destroy a real one. Fix the knock PHYSICS, not the damage model.
+5. **Editing on the engine**: compression ratio by clicking the engine, every
+   turbo visible when two or more are fitted, carburettor parameters by
+   clicking (if one is added), and two exhaust paths joinable into one (a
+   boxer six cannot be made 6-into-1 today).
 
-1. Reference recordings made by the owner, at a known engine speed
-   (protocol: `docs/recording-protocol-cp2.md`).
-2. A simulation/reality comparison tool at the same engine speed (timbre per
-   band, engine orders, noise share), reproducible.
-3. Reduce the measured gaps, by whatever method works (physics, synthesis or
-   both), without ever requiring a per-engine recording.
+**Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust): owner's
+recordings (`docs/recording-protocol-cp2.md`), a reproducible
+simulation/reality comparison at one engine speed (timbre per band, engine
+orders, noise share), then close the measured gaps without ever requiring a
+per-engine recording. Its two unverified leads live in
+`docs/physical-afterfire.md` (the ~3.8 kHz ceiling) and
+`docs/thermoacoustic-architecture.md` 25.2 (the plane-mode cutoff).
 
-Known leads, **not verified**, to be tested by measurement first:
-
-- Afterfire (causes measured 2026-09-23, journal): its sound is capped at
-  ~3.8 kHz (0.47 × coupling rate ≤ 8 kHz) and only 0 to +10 dB over the
-  engine's peak. Physics decides *when* and *how much*; `ReactionCrackSynthesiser`
-  adds the > 4 kHz band, uncalibrated. On the CP2 nothing burns at the 800 K
-  threshold: measure that first.
-- Above the plane-mode cutoff (a few kHz for a 50-80 mm tube), a 1-D model no
-  longer carries anything physical: that is the band where generic synthesis is
-  most likely to help.
+**Done 2026-10-19: the engine builder from zero** (journal 2026-10-18/19).
+Open: the designer window was never checked on screen; the ignition is a
+template (no MBT calibration: no knock limit to stop it).
 
 ## Working rules
 
@@ -69,6 +74,13 @@ ctest  --test-dir out/build/windows-vs2022 -C Release              # all tests (
 cmake --build out/build/windows-vs2022 --config Release --target package   # release zip
 ```
 
+On Linux (never the reference; `docs/platforms.md` says what differs):
+
+```
+cmake --preset linux-gcc-release && cmake --build --preset linux-gcc-release
+ctest --preset linux-gcc-release        # xvfb-run for EngineLab.AudioWorkshop
+```
+
 - Warnings are errors. Green build + green `ctest` is the minimum for any
   change. CI (`.github/workflows/ci.yml`) runs the same steps on every push; a
   `v*` tag publishes a GitHub Release (`release.yml`).
@@ -79,9 +91,12 @@ cmake --build out/build/windows-vs2022 --config Release --target package   # rel
   cause for MSBuild: on `C1060`, rerun with `/m:1`. It is not a code bug.
 - **Never enable `ENGINELAB_ENABLE_COMPILER_CACHE`**: sccache breaks Ninja's
   header tracking, and a modified header no longer recompiles anything.
-- `scripts/vsenv.ps1` fixes a broken environment (VS 18 next to VS 2022, empty
-  `vswhere`). If CMake targets VS 18, reconfigure (and the `_deps/*` caches) with
-  `-DCMAKE_GENERATOR_INSTANCE="C:/Program Files/Microsoft Visual Studio/2022/Community"`.
+- `scripts/vsenv.ps1` pins the toolset. Since 2026-10-20 the 2022 line here is
+  **BuildTools**, MSVC **14.44** (Community and the 14.34 pin are gone; VS 18 /
+  MSVC 14.50 sits beside it), so no figure from before that date is
+  comparable. If CMake targets VS 18, reconfigure (and the `_deps/*` caches)
+  with `-DCMAKE_GENERATOR_INSTANCE` set to the BuildTools root under
+  `C:/Program Files (x86)/Microsoft Visual Studio/2022`.
 - **Stale binary trap**: a wrong target name (`MSB1009`) compiles nothing, and
   `ctest` reruns the old binary (`EngineLabCoreTests`, `EngineLabExhaustTests`,
   `EngineLabPhysicsRegressionTests`, `EngineLabCombustionPhasingTests`...).

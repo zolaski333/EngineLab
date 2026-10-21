@@ -17,7 +17,7 @@ namespace {
 
 /**
  * The values a designer picks for one use. Fitted to the catalogue engines,
- * which were authored from their makers' figures (engines/*.engine.yaml):
+ * which were authored from their makers' figures (engines/<name>.engine.yaml):
  * mean piston speed at the redline (K20A 24.7, CP2 22.9, CP4 20.4, LS3 20.2,
  * 2JZ 20.6, Audi I5 21.6, Harley 21.3, Merlin 18.5 m/s; boosted petrol 1.5
  * lower, journal 2026-10-19), piston mass over bore cubed

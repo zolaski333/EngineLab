@@ -71,10 +71,6 @@ using Clock = std::chrono::steady_clock;
 
 constexpr std::size_t audioUtilisationHistogramBins = 201;
 
-void sleepSeconds(double seconds) {
-    std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
-}
-
 struct AudioProbeSnapshot final {
     std::uint64_t callbacks {};
     std::uint64_t renderNanoseconds {};

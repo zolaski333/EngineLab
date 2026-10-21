@@ -47,6 +47,13 @@ cmake --build --preset windows-release
 ctest --preset windows-release
 ```
 
+Every command on this page uses the Windows tree, which is the reference for
+every baseline here. The same three commands work on Linux with the
+`linux-gcc-release` preset, and a Linux harness binary sits at
+`out/build/linux-gcc-release/tools/<name>` with no `Release` folder and no
+`.exe`. A figure measured there is not comparable with one measured on
+Windows: [platforms.md](platforms.md) says why.
+
 The main registered tests are:
 
 | Test | Main subject |

@@ -197,7 +197,8 @@ int main() {
             maximumSweepRpm = std::max(maximumSweepRpm, f.state.rpm);
             const auto bin = static_cast<int>(f.state.rpm / 500.0);
             if (time > 0.3 && bin >= 0 && bin < 16) {
-                fmepSum[bin] += f.state.frictionMeanEffectivePressureBar; ++fmepN[bin];
+                const auto slot = static_cast<std::size_t>(bin);
+                fmepSum[slot] += f.state.frictionMeanEffectivePressureBar; ++fmepN[slot];
             }
             for (std::size_t index = 0;
                  index < f.completedBrakeCycleSampleCount; ++index) {
@@ -207,24 +208,25 @@ int main() {
                     continue;
                 require(cycle.numericallyValid,
                         "friction literature measurements must use resolved complete cycles");
-                cycleFmepSum[cycleBin] += (cycle.indicatedWorkJoules
+                const auto slot = static_cast<std::size_t>(cycleBin);
+                cycleFmepSum[slot] += (cycle.indicatedWorkJoules
                     - cycle.brakeWorkJoules)
                     / (enginelab::engineDisplacementLitres(cfg) * 0.001) / 100'000.0;
-                ++cycleFmepN[cycleBin];
+                ++cycleFmepN[slot];
                 ++completedFrictionSampleCount;
             }
         }
-        const auto binFmep = [&](int b) {
+        const auto binFmep = [&](std::size_t b) {
             return cycleFmepN[b] > 0 ? cycleFmepSum[b] / cycleFmepN[b] : -1.0;
         };
         require(completedFrictionSampleCount > 30,
                 "friction literature measurements must cover many complete cycles");
         // Every populated running bin must stay inside a physical FMEP envelope.
-        for (int b = 1; b < 16; ++b) { // skip bin 0 (<500 rpm, cranking/stall)
+        for (std::size_t b = 1; b < 16; ++b) { // skip bin 0 (<500 rpm, cranking/stall)
             if (cycleFmepN[b] == 0) continue;
             const auto fmep = binFmep(b);
             if (!(fmep > 0.35 && fmep < 2.7)) {
-                for (int index = 1; index < 16; ++index) {
+                for (std::size_t index = 1; index < 16; ++index) {
                     std::cerr << "FMEP bin=" << index << " snapshot_mean_bar="
                         << (fmepN[index] > 0 ? fmepSum[index] / fmepN[index] : -1.0)
                         << " snapshot_count=" << fmepN[index]
@@ -2379,7 +2381,8 @@ int main() {
         // spark-off phase inject wets the low-speed cranking cuts and the
         // high-inertia Big Twin reproducibly stalls at 0 rpm in the realtime
         // budget harness.
-        enginelab::EngineRuntime runtime(*bigTwinConfig);
+        auto runtimeOwner = std::make_unique<enginelab::EngineRuntime>(*bigTwinConfig);
+        auto& runtime = *runtimeOwner;
         runtime.setRealtimeThrottleEnabled(false);
         runtime.setDynoMaximumDurationSeconds(30.0);
         runtime.setIgnitionEnabled(true);
@@ -3633,7 +3636,8 @@ int main() {
     }
 
     {
-        enginelab::EngineRuntime runtime(enginelab::makeDefaultInlineTwo());
+        auto runtimeOwner = std::make_unique<enginelab::EngineRuntime>(enginelab::makeDefaultInlineTwo());
+        auto& runtime = *runtimeOwner;
         runtime.setDynoMode(enginelab::DynoMode::steppedCalibration);
         runtime.setIgnitionEnabled(false);
         runtime.setThrottle(0.31);
@@ -3718,7 +3722,8 @@ int main() {
     }
 
     {
-        enginelab::EngineRuntime runtime(enginelab::makeDefaultInlineFour());
+        auto runtimeOwner = std::make_unique<enginelab::EngineRuntime>(enginelab::makeDefaultInlineFour());
+        auto& runtime = *runtimeOwner;
         runtime.setIgnitionEnabled(true);
         runtime.setStarterEngaged(true);
         runtime.setThrottle(0.55);

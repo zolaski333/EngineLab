@@ -14,7 +14,7 @@ class ActionButton final : public juce::Button {
 public:
     enum class Style { standard, primary, tool, compact };
 
-    explicit ActionButton(const juce::String& text = {}, Style = Style::standard);
+    explicit ActionButton(const juce::String& label = {}, Style = Style::standard);
     void setStyle(Style);
     void setKeyCap(const juce::String& keyCap);
     /** A stroked outline in a 24 x 24 box, drawn left of the text. */

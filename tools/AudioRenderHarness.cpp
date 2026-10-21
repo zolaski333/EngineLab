@@ -397,7 +397,7 @@ WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin,
         if (i > begin) { const auto d = v - static_cast<double>(x[i - 1]); diffSq += d * d; }
     }
     m.mean = sum / static_cast<double>(std::max<std::size_t>(1, n));
-    m.rms = std::sqrt(sumSq / std::max<std::size_t>(1, n));
+    m.rms = std::sqrt(sumSq / static_cast<double>(std::max<std::size_t>(1, n)));
     m.peak = peak;
     m.crest = m.rms > 1e-12 ? m.peak / m.rms : 0.0;
     m.brightness = sumSq > 1e-12 ? std::sqrt(diffSq / sumSq) : 0.0;

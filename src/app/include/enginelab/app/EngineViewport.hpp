@@ -412,7 +412,7 @@ private:
         std::uint32_t elementId {};
         int part { -1 };
         /** The first part with this role, when set; none if it is gone. */
-        std::optional<render::PartRole> role;
+        std::optional<render::PartRole> role {};
     };
     std::optional<Reselect> reselect_;
     GasProbeTrace gasProbe_;

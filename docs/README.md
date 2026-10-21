@@ -17,6 +17,8 @@ date when the code changes; measurement results go into the
 
 - [Architecture](architecture.md) — modules, threads, ownership and
   transactional boundaries.
+- [Platforms](platforms.md) — Windows is the reference; what differs on Linux
+  and why a number from one is not comparable with the other.
 - [Simulation model](simulation-model.md) — kinematics, gas network,
   two-stroke ports, injection, combustion, knock, forced induction, engine
   temperatures, gearboxes (shift styles, automatic, CVT) and the vehicle.

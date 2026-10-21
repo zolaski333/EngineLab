@@ -78,7 +78,8 @@ public:
 
 private:
     void fitContent(ScrollPane&, juce::Component& content, int height);
-    const DashboardModel& model_;
+    // No `model_` here on purpose: every tab below holds its own reference,
+    // and the panel itself never reads one.
     SegmentedControl tabs_ { { "Dyno", "Telemetry", "Audio", "Diagnostics" },
                              SegmentedControl::Style::tabs };
     TelemetryPanel telemetry_;

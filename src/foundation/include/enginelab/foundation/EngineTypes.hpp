@@ -158,8 +158,8 @@ struct CamshaftConfig final {
     double exhaustCenterlineDegrees { 112.0 };
     double intakeFlowCoefficient { 0.62 };
     double exhaustFlowCoefficient { 0.62 };
-    std::vector<ValveLiftSample> intakeLiftProfile;
-    std::vector<ValveLiftSample> exhaustLiftProfile;
+    std::vector<ValveLiftSample> intakeLiftProfile {};
+    std::vector<ValveLiftSample> exhaustLiftProfile {};
     bool variableProfileEnabled { false };
     double switchRpm { 5'800.0 };
     double switchThrottle { 0.55 };
@@ -167,11 +167,11 @@ struct CamshaftConfig final {
     double highExhaustDurationDegrees { 276.0 };
     double highIntakeLiftMm { 12.5 };
     double highExhaustLiftMm { 11.8 };
-    std::vector<ValveLiftSample> highIntakeLiftProfile;
-    std::vector<ValveLiftSample> highExhaustLiftProfile;
-    std::vector<ValveFlowSample> intakeFlowCurve;
-    std::vector<ValveFlowSample> exhaustFlowCurve;
-    ValveControlConfig continuousControl;
+    std::vector<ValveLiftSample> highIntakeLiftProfile {};
+    std::vector<ValveLiftSample> highExhaustLiftProfile {};
+    std::vector<ValveFlowSample> intakeFlowCurve {};
+    std::vector<ValveFlowSample> exhaustFlowCurve {};
+    ValveControlConfig continuousControl {};
 };
 
 /** Length of the common trunk the scalar exhaust geometry gives its
@@ -661,7 +661,7 @@ struct ExhaustPathConfig final {
     ExhaustConfig geometry;
     std::string impulseResponsePath;
     double audioVolume { 1.0 };
-    std::optional<ExhaustNetworkConfig> network;
+    std::optional<ExhaustNetworkConfig> network {};
     // Runtime migration provenance; deliberately not part of schema v1.
     bool inheritsGlobalGeometry { false };
     /** Radiation geometry for the outlet synthesized from scalar path data. */

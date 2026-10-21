@@ -48,7 +48,7 @@ struct ScenePart final {
     std::uint8_t layers { layerMechanism };
     /** For a duct, where each vertex sits along its centreline: 0 at the
         inlet, 1 at the outlet. Empty for every other part. */
-    std::vector<float> stations;
+    std::vector<float> stations {};
 };
 
 struct SceneInstance final {

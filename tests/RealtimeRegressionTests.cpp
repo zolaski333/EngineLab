@@ -309,7 +309,7 @@ void branchedAcousticTopologyRegression() {
     splitter.diameterMm = 55.0;
     splitter.lengthMm = 90.0;
     network.components.push_back(splitter);
-    for (const auto [id, length] : std::array {
+    for (const auto& [id, length] : std::array {
              std::pair { 300U, 240.0 }, std::pair { 301U, 510.0 } }) {
         enginelab::ExhaustComponentConfig outlet;
         outlet.id = id;
@@ -496,13 +496,13 @@ void exhaustJetNoiseRegression() {
                 static_cast<float>(soundSpeedMps),
                 static_cast<float>(areaM2) } }};
         acoustics.beginBlock(medium, 1.0, {}, {}, outletBoundary);
-        auto energy = 0.0;
+        auto outletEnergy = 0.0;
         for (std::size_t sample = 0; sample < 12'000; ++sample) {
             const auto output = acoustics.process(sources, boundaries, 1.0F);
-            energy += static_cast<double>(output[0].leftPa)
+            outletEnergy += static_cast<double>(output[0].leftPa)
                 * output[0].leftPa;
         }
-        return energy;
+        return outletEnergy;
     };
     require(signedFlowEnergy(-0.18F) == 0.0
             && signedFlowEnergy(0.18F) > 1.0e-10,
@@ -899,10 +899,10 @@ void reactionCrackRegression() {
     steady.reset(7U);
     Crack::State repeat;
     repeat.reset(7U);
-    constexpr int samples = 96'000;
+    constexpr std::size_t samples = 96'000;
     std::vector<double> output(samples);
     auto energy = 0.0;
-    for (int sample = 0; sample < samples; ++sample) {
+    for (std::size_t sample = 0; sample < samples; ++sample) {
         output[sample] = Crack::process(coefficients, steady, powerW, areaM2,
             soundSpeedMps, Crack::defaultCrackRatio);
         require(output[sample] == static_cast<double>(Crack::process(
@@ -911,7 +911,7 @@ void reactionCrackRegression() {
             "the crack noise must be bit-reproducible for offline renders");
         if (sample >= 4'800) energy += output[sample] * output[sample];
     }
-    const auto rms = std::sqrt(energy / (samples - 4'800));
+    const auto rms = std::sqrt(energy / static_cast<double>(samples - 4'800));
     // Energy two octaves under the crossover, through four one-pole
     // low-passes there (about -49 dB of leakage at the crossover itself).
     const auto lowHz = enginelab::BoundaryReconstructionFilter::
@@ -919,7 +919,7 @@ void reactionCrackRegression() {
     const auto pole = std::exp(-2.0 * std::numbers::pi * lowHz / sampleRate);
     std::array<double, 4> lowPass {};
     auto lowEnergy = 0.0;
-    for (int sample = 0; sample < samples; ++sample) {
+    for (std::size_t sample = 0; sample < samples; ++sample) {
         auto signal = output[sample];
         for (auto& stage : lowPass) {
             stage = (1.0 - pole) * signal + pole * stage;
@@ -927,7 +927,7 @@ void reactionCrackRegression() {
         }
         if (sample >= 4'800) lowEnergy += signal * signal;
     }
-    const auto lowRms = std::sqrt(lowEnergy / (samples - 4'800));
+    const auto lowRms = std::sqrt(lowEnergy / static_cast<double>(samples - 4'800));
     std::cout << "reaction crack: jump_pa=" << jumpPa << " rms_pa=" << rms
               << " below_crossover_rms_pa=" << lowRms << '\n';
     require(std::abs(rms / (Crack::defaultCrackRatio * jumpPa) - 1.0) < 0.05,
@@ -1952,7 +1952,8 @@ void customGraphRuntimeTelemetryRegression() {
     require(!enginelab::validateEngineConfig(config).has_value(),
             "custom runtime exhaust fixture must validate");
     const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineRuntime runtime(config);
+    auto runtimeOwner = std::make_unique<enginelab::EngineRuntime>(config);
+    auto& runtime = *runtimeOwner;
     auto& state = runtime.audioState();
     double downstreamLengthSum = 0.0;
     double restrictionSum = 0.0;

@@ -20,7 +20,7 @@ struct PartsLibrary final {
     std::map<std::string, VehicleConfig> vehicles;
 };
 
-/** Reads `<root>/parts/*.yaml`; throws on a malformed file. */
+/** Reads every `*.yaml` under `<root>/parts`; throws on a malformed file. */
 [[nodiscard]] PartsLibrary loadPartsLibrary(const std::filesystem::path& rootDirectory);
 
 /**

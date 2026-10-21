@@ -25,8 +25,8 @@ namespace {
 }
 } // namespace
 
-ActionButton::ActionButton(const juce::String& text, Style style)
-    : juce::Button(text), style_(style) {
+ActionButton::ActionButton(const juce::String& label, Style style)
+    : juce::Button(label), style_(style) {
     setWantsKeyboardFocus(false);
     setMouseClickGrabsKeyboardFocus(false);
     setMouseCursor(juce::MouseCursor::PointingHandCursor);

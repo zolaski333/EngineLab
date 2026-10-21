@@ -364,8 +364,28 @@ target_compile_definitions(EngineLabAudioWorkshopTests PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0)
 enginelab_set_warnings(EngineLabAudioWorkshopTests)
+# The only test that constructs real JUCE components, so the only one that
+# needs a display. Wrapping the command here, rather than wrapping `ctest` in
+# CI, means a contributor's bare `ctest` works on Linux too.
+set(enginelab_audio_workshop_command EngineLabAudioWorkshopTests)
+if(UNIX AND NOT APPLE)
+    # The wrapper finds Xvfb and a window manager itself and reports what is
+    # missing. A bare Xvfb is not enough: JUCE dies with `BadAtom` when no
+    # window manager has interned the `_NET_WM_*` atoms, which is why this
+    # goes through a script rather than straight to `xvfb-run`.
+    set(enginelab_audio_workshop_command
+        "${CMAKE_SOURCE_DIR}/scripts/run-gui-test.sh"
+        "$<TARGET_FILE:EngineLabAudioWorkshopTests>")
+    find_program(ENGINELAB_XVFB_RUN xvfb-run)
+    find_program(ENGINELAB_WINDOW_MANAGER matchbox-window-manager)
+    if(NOT ENGINELAB_XVFB_RUN OR NOT ENGINELAB_WINDOW_MANAGER)
+        message(STATUS
+            "EngineLab: xvfb-run or matchbox-window-manager not found, so "
+            "EngineLab.AudioWorkshop will need a desktop with a window manager")
+    endif()
+endif()
 add_test(NAME EngineLab.AudioWorkshop
-    COMMAND EngineLabAudioWorkshopTests)
+    COMMAND ${enginelab_audio_workshop_command})
 set_tests_properties(EngineLab.AudioWorkshop PROPERTIES TIMEOUT 120)
 if(MSVC)
     target_link_options(EngineLabAudioWorkshopTests PRIVATE /STACK:8388608)
@@ -656,3 +676,31 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabEngineDesignTests)
 add_test(NAME EngineLab.EngineDesign COMMAND EngineLabEngineDesignTests)
+
+# Every TIMEOUT above is tuned on Windows, the reference platform, where a test
+# that stops printing after `Start N:` is stuck rather than slow -- a diagnosis
+# the project leans on, and one a generous limit would blunt. Off Windows they
+# are headroom instead, for a reason that is not a measured speed ratio: on
+# 2026-10-21 a full Linux run timed four of these out, a later run of the same
+# binaries passed all 89 in 17 minutes against Windows's ~15, and in between
+# AudioRender alone measured 369 s and then 92 s against its 180 s limit. Wall
+# times here are simply not reproducible between runs (journal 2026-10-21), so
+# the limits carry slack rather than a factor, and a CI runner with half these
+# cores gets the same slack. A genuine hang still never terminates, so it is
+# still caught. All 31 limits are scaled in one place rather than written twice.
+if(NOT WIN32)
+    get_property(enginelab_timed_tests DIRECTORY PROPERTY TESTS)
+    foreach(enginelab_test IN LISTS enginelab_timed_tests)
+        get_test_property(${enginelab_test} TIMEOUT enginelab_timeout)
+        if(enginelab_timeout)
+            # The property comes back as a float ("600.0"); math() wants an
+            # integer, so drop any fractional part before multiplying. The
+            # dot is a character class, not an escape: CMake unescapes "\."
+            # inside a quoted argument, which would leave the regex matching
+            # any character and empty the value.
+            string(REGEX REPLACE "[.].*$" "" enginelab_timeout "${enginelab_timeout}")
+            math(EXPR enginelab_scaled "${enginelab_timeout} * 4")
+            set_tests_properties(${enginelab_test} PROPERTIES TIMEOUT ${enginelab_scaled})
+        endif()
+    endforeach()
+endif()

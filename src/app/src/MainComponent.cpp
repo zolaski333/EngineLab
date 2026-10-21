@@ -44,13 +44,25 @@ constexpr std::array<std::uint32_t, 8> curveColours {
     return std::min(*chosen, EngineSimulator::productionExhaustCellLengthM(config));
 }
 
-/** A path that keeps every character of the file name, on Windows too. */
+/** A path that keeps every character of the file name, on Windows too.
+ *  `std::filesystem::path` reads a narrow string through the active code page
+ *  on Windows, which drops accents, and a wide one through the locale on
+ *  Linux, which can throw under LC_ALL=C: each platform gets the encoding its
+ *  own `path` is native in. */
 [[nodiscard]] std::filesystem::path pathOf(const juce::File& file) {
+#if defined(_WIN32)
     return std::filesystem::path(file.getFullPathName().toWideCharPointer());
+#else
+    return std::filesystem::path(file.getFullPathName().toRawUTF8());
+#endif
 }
 
 [[nodiscard]] juce::File fileOf(const std::filesystem::path& path) {
+#if defined(_WIN32)
     return juce::File(juce::String(path.wstring().c_str()));
+#else
+    return juce::File(juce::String::fromUTF8(path.string().c_str()));
+#endif
 }
 
 /** Where "Save engine" writes. */

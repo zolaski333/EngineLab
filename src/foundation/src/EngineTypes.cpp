@@ -50,6 +50,21 @@ namespace {
     return path;
 }
 
+/** The six scalars that tell the built-in engines apart. The rest of
+ *  `CamshaftConfig` keeps its defaults, and naming them here keeps the
+ *  built-in engines out of the positional-initialisation trap. */
+[[nodiscard]] CamshaftConfig cam(double intakeDuration, double exhaustDuration, double intakeLift,
+                                 double exhaustLift, double intakeCentre, double exhaustCentre) {
+    CamshaftConfig cams;
+    cams.intakeDurationDegrees = intakeDuration;
+    cams.exhaustDurationDegrees = exhaustDuration;
+    cams.intakeLiftMm = intakeLift;
+    cams.exhaustLiftMm = exhaustLift;
+    cams.intakeCenterlineDegrees = intakeCentre;
+    cams.exhaustCenterlineDegrees = exhaustCentre;
+    return cams;
+}
+
 EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t count,
                         std::vector<std::uint32_t> order, double bore, double stroke,
                         double idle, double redline, double inertia, CamshaftConfig cams) {
@@ -127,22 +142,22 @@ EngineConfig makeDefaultInlineFour() {
 
 EngineConfig makeDefaultInlineTwo() {
     return makeEngine("EL-09 I2", EngineLayout::inlineLayout, 2, { 1, 2 },
-                      84.0, 81.0, 1'050.0, 8'200.0, 0.13, { 262.0, 256.0, 10.8, 10.3, 108.0, 110.0 });
+                      84.0, 81.0, 1'050.0, 8'200.0, 0.13, cam(262.0, 256.0, 10.8, 10.3, 108.0, 110.0));
 }
 
 EngineConfig makeDefaultInlineFive() {
     return makeEngine("EL-25 I5", EngineLayout::inlineLayout, 5, { 1, 2, 4, 5, 3 },
-                      82.5, 92.8, 780.0, 6'800.0, 0.29, { 252.0, 248.0, 10.5, 10.0, 110.0, 112.0 });
+                      82.5, 92.8, 780.0, 6'800.0, 0.29, cam(252.0, 248.0, 10.5, 10.0, 110.0, 112.0));
 }
 
 EngineConfig makeDefaultV6() {
     return makeEngine("EL-30 V6", EngineLayout::vLayout, 6, { 1, 4, 2, 5, 3, 6 },
-                      86.0, 86.0, 750.0, 7'000.0, 0.32, { 256.0, 252.0, 11.0, 10.5, 109.0, 111.0 });
+                      86.0, 86.0, 750.0, 7'000.0, 0.32, cam(256.0, 252.0, 11.0, 10.5, 109.0, 111.0));
 }
 
 EngineConfig makeDefaultV8() {
     auto config = makeEngine("EL-50 V8", EngineLayout::vLayout, 8, { 1, 5, 4, 8, 6, 3, 7, 2 },
-                             94.0, 90.0, 720.0, 6'600.0, 0.46, { 268.0, 264.0, 12.0, 11.5, 108.0, 110.0 });
+                             94.0, 90.0, 720.0, 6'600.0, 0.46, cam(268.0, 264.0, 12.0, 11.5, 108.0, 110.0));
     config.frictionCoefficient = 0.15;
     config.bankAngleDegrees = 90.0;
     for (auto& cylinder : config.cylinders) {
@@ -167,7 +182,7 @@ EngineConfig makeDefaultV8() {
 EngineConfig makeDefaultFlatSix() {
     auto config = makeEngine("EL-36 F6", EngineLayout::flat, 6, { 1, 6, 2, 4, 3, 5 },
                              97.0, 81.5, 780.0, 7'600.0, 0.33,
-                             { 270.0, 266.0, 12.3, 11.9, 106.0, 109.0 });
+                             cam(270.0, 266.0, 12.3, 11.9, 106.0, 109.0));
     config.frictionCoefficient = 0.13;
     config.intake.plenumVolumeLitres = 4.2;
     config.intake.throttleDiameterMm = 74.0;

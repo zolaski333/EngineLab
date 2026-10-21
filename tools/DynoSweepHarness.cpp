@@ -205,7 +205,6 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     auto n = 0.0;
     Sample acc {};
     auto peak = 0.0;
-    auto cylN = 0.0;
     auto veAcc = 0.0, lambdaAcc = 0.0, imepAcc = 0.0, egtAcc = 0.0, mapAcc = 0.0;
     auto boostAcc = 0.0;
     auto airAcc = 0.0, fuelAcc = 0.0, rpmAcc = 0.0;
@@ -308,7 +307,6 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             // The simulator's per-sub-step cycle peak: a per-frame sample of
             // the chamber pressure misses the firing peak.
             peak = std::max(peak, frame.state.peakCylinderPressureBar);
-            cylN += static_cast<double>(frame.state.cylinderStateCount);
         }
     }
     const auto d = std::max(1.0, n);

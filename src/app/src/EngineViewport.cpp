@@ -1651,10 +1651,10 @@ void EngineViewport::updateInspector() {
             edited.injection.injectorFlowMgPerSecond = flowGPerMin / 0.06;
             edited.injection.railPressureBar = pressureBar;
             if (diesel && values.size() > 2U) {
-                auto& injection = edited.injection;
-                const auto windowDegrees = std::fmod(injection.endAngleDegrees - injection.startAngleDegrees + 720.0, 720.0);
-                injection.startAngleDegrees = std::fmod(720.0 - values[2] + 720.0, 720.0);
-                injection.endAngleDegrees = std::fmod(injection.startAngleDegrees + windowDegrees, 720.0);
+                auto& fuelling = edited.injection;
+                const auto windowDegrees = std::fmod(fuelling.endAngleDegrees - fuelling.startAngleDegrees + 720.0, 720.0);
+                fuelling.startAngleDegrees = std::fmod(720.0 - values[2] + 720.0, 720.0);
+                fuelling.endAngleDegrees = std::fmod(fuelling.startAngleDegrees + windowDegrees, 720.0);
             }
             return std::string();
         };
@@ -2017,11 +2017,11 @@ void EngineViewport::updateInspector() {
                     && count == turbo.turbochargerCount) {
                     // Written only when it changes: an authored index equal to
                     // the default is still another config, and a restart.
-                    auto& path = edited.exhaustPaths[pathIndex];
-                    const auto now = path.turbocharger >= 0
-                        ? path.turbocharger : static_cast<std::int32_t>(pathIndex % turbo.turbochargerCount);
+                    auto& editedPath = edited.exhaustPaths[pathIndex];
+                    const auto now = editedPath.turbocharger >= 0
+                        ? editedPath.turbocharger : static_cast<std::int32_t>(pathIndex % turbo.turbochargerCount);
                     const auto wanted = static_cast<std::int32_t>(std::lround(values[4])) - 1;
-                    if (wanted != now) path.turbocharger = wanted;
+                    if (wanted != now) editedPath.turbocharger = wanted;
                 }
                 if (count != turbo.turbochargerCount) edited = withTurbochargerCount(std::move(edited), count);
                 return std::string();
@@ -2137,13 +2137,13 @@ void EngineViewport::updateInspector() {
                 box.quickshifterCutSeconds = cutMs / 1'000.0;
                 if (values.size() != 3 + box.gearRatios.size()) return std::string("The gearbox changed meanwhile.");
                 box.finalDriveRatio = values[2];
-                for (std::size_t gear = 0; gear < box.gearRatios.size(); ++gear) {
-                    box.gearRatios[gear] = values[3 + gear];
+                for (std::size_t gearIndex = 0; gearIndex < box.gearRatios.size(); ++gearIndex) {
+                    box.gearRatios[gearIndex] = values[3 + gearIndex];
                     // Each gear taller than the one below: the scheduler and
                     // the shift protection count on it.
-                    if (gear > 0 && box.gearRatios[gear] >= box.gearRatios[gear - 1])
-                        return "Gear " + std::to_string(gear + 1) + " must be taller (a smaller ratio) than gear "
-                            + std::to_string(gear) + ".";
+                    if (gearIndex > 0 && box.gearRatios[gearIndex] >= box.gearRatios[gearIndex - 1])
+                        return "Gear " + std::to_string(gearIndex + 1) + " must be taller (a smaller ratio) than gear "
+                            + std::to_string(gearIndex) + ".";
                 }
                 return std::string();
             };

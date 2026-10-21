@@ -28,8 +28,12 @@ enginelab::EngineConfig loadAircooledFlatSix() {
     if (!catalog.errors.empty())
         throw std::runtime_error(catalog.errors.front());
     constexpr std::string_view engineName = "Aircooled-like 3.6 Flat-6";
+    // The capture is not redundant: comparing against a `string_view` binds it
+    // to a reference, which odr-uses it, and a lambda with no capture-default
+    // may not reach a local that way however constant it is. MSVC and GCC let
+    // it pass; Clang is the one that is right.
     const auto engine = std::find_if(catalog.entries.begin(), catalog.entries.end(),
-        [](const enginelab::EngineCatalogEntry& entry) {
+        [engineName](const enginelab::EngineCatalogEntry& entry) {
             return entry.config.name == engineName;
         });
     if (engine == catalog.entries.end())

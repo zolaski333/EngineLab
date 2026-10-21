@@ -4,10 +4,12 @@
   "configurePresets": [
     {
       "name": "windows-vs2022",
-      "displayName": "Windows VS 2022 x64",
+      "displayName": "Windows VS 2022 x64 (authoritative)",
+      "description": "The tree that gates commits and carries every performance figure. Needs a Visual Studio 2022 instance; `. scripts/vsenv.ps1` pins the toolset.",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/windows-vs2022",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "cacheVariables": {
         "ENGINELAB_BUILD_TESTS": "ON",
         "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON"
@@ -15,9 +17,10 @@
     },
     {
       "name": "ninja-dev",
-      "displayName": "Ninja developer build",
+      "displayName": "Ninja developer build (Windows)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/ninja-dev",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "ENGINELAB_BUILD_TESTS": "ON",
@@ -31,22 +34,69 @@
       "description": "Fast compile-error and targeted-test loop. Gates, commits and every performance number belong to windows-vs2022 -- see .claude/CLAUDE.md. Requires `. scripts/vsenv.ps1` first.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/ninja-release",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "ENGINELAB_BUILD_TESTS": "ON",
         "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON",
         "ENGINELAB_ENABLE_COMPILER_CACHE": "OFF"
       }
+    },
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC Release",
+      "description": "Secondary platform: must build and pass ctest, but Windows keeps the authority on every measured figure. Uses the distribution's default compiler (GCC 13 on Ubuntu 24.04, matching the CI runner). Needs the JUCE system packages listed in CONTRIBUTING.md.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/linux-gcc-release",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENGINELAB_BUILD_TESTS": "ON",
+        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "displayName": "Linux GCC Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/linux-gcc-debug",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENGINELAB_BUILD_TESTS": "ON",
+        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-clang-release",
+      "displayName": "Linux Clang Release",
+      "description": "A second front-end over the same code: Clang rejects things GCC accepts and vice versa, so a green GCC build is not proof on its own.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/linux-clang-release",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ENGINELAB_BUILD_TESTS": "ON",
+        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release" },
     { "name": "ninja-dev", "configurePreset": "ninja-dev" },
-    { "name": "ninja-release", "configurePreset": "ninja-release" }
+    { "name": "ninja-release", "configurePreset": "ninja-release" },
+    { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release" },
+    { "name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug" },
+    { "name": "linux-clang-release", "configurePreset": "linux-clang-release" }
   ],
   "testPresets": [
     { "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release", "output": { "outputOnFailure": true } },
     { "name": "ninja-dev", "configurePreset": "ninja-dev", "output": { "outputOnFailure": true } },
-    { "name": "ninja-release", "configurePreset": "ninja-release", "output": { "outputOnFailure": true } }
+    { "name": "ninja-release", "configurePreset": "ninja-release", "output": { "outputOnFailure": true } },
+    { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release", "output": { "outputOnFailure": true } },
+    { "name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-release", "configurePreset": "linux-clang-release", "output": { "outputOnFailure": true } }
   ]
 }

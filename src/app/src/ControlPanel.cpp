@@ -219,9 +219,9 @@ void ControlPanel::resized() {
     area.removeFromTop(6);
     const auto pair = [&area](ActionButton& left, ActionButton& right) {
         auto row = area.removeFromTop(30);
-        const auto width = (row.getWidth() - 6) / 2;
-        left.setBounds(row.removeFromLeft(width));
-        right.setBounds(row.removeFromRight(width));
+        const auto halfWidth = (row.getWidth() - 6) / 2;
+        left.setBounds(row.removeFromLeft(halfWidth));
+        right.setBounds(row.removeFromRight(halfWidth));
         area.removeFromTop(6);
     };
     {

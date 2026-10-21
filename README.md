@@ -3,7 +3,7 @@
 [![CI](https://github.com/zolaski333/EngineLab/actions/workflows/ci.yml/badge.svg)](https://github.com/zolaski333/EngineLab/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zolaski333/EngineLab?include_prereleases&sort=semver)](https://github.com/zolaski333/EngineLab/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
-![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
+![Platform: Windows x64 | Linux x64](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64-lightgrey)
 
 **An engine simulator whose sound comes from the simulated gas dynamics, not
 from samples.** Written in C++20 with JUCE.
@@ -37,6 +37,11 @@ The executable is not code-signed, so Windows SmartScreen may warn about an
 unknown publisher: choose **More info → Run anyway**. Every release archive is
 built by GitHub Actions from the tagged commit and comes with a SHA-256
 checksum.
+
+**Linux x64:** no archive is published yet, so build from source (below).
+Every push compiles and tests the Linux build, but Windows stays the reference
+platform: [docs/platforms.md](docs/platforms.md) lists what differs, and why a
+figure measured on one platform is not comparable with the other.
 
 Then:
 
@@ -151,9 +156,9 @@ factor is shown in the diagnostics.
 
 ## Building from source
 
-Prerequisites: Windows, Visual Studio 2022 with the *Desktop development with
-C++* workload, CMake 3.24 or newer, and Git. JUCE, nlohmann/json and yaml-cpp
-are fetched by CMake at pinned versions.
+Prerequisites on Windows: Visual Studio 2022 with the *Desktop development
+with C++* workload, CMake 3.24 or newer, and Git. JUCE, nlohmann/json and
+yaml-cpp are fetched by CMake at pinned versions.
 
 ```powershell
 git clone https://github.com/zolaski333/EngineLab.git
@@ -171,6 +176,21 @@ Run the test suite and build the release archive:
 ctest --preset windows-release
 cmake --build out/build/windows-vs2022 --config Release --target package
 ```
+
+On Linux the prerequisites are GCC 13 or newer (or Clang 17 or newer), CMake
+3.24 or newer, Git, and the X11, OpenGL, freetype, ALSA and cURL development
+packages; [CONTRIBUTING.md](CONTRIBUTING.md#linux) lists them for apt.
+
+```bash
+cmake --preset linux-gcc-release
+cmake --build --preset linux-gcc-release
+ctest --preset linux-gcc-release
+```
+
+The application lands in
+`out/build/linux-gcc-release/src/app/EngineLabApp_artefacts/EngineLab`. One
+test builds real JUCE components and so needs a display; `ctest` wraps that
+one in `xvfb-run` by itself when `xvfb-run` is installed.
 
 The project builds with warnings as errors. Details on the tests, the
 deterministic harnesses and sanitizer builds are in
@@ -319,8 +339,11 @@ holds the working rules, build notes and verified traps of this repository.
   pressure waves shown on it are the real-time gas solver's, whose cells are
   about 0.36 m long on a four-stroke and 0.10 m on a two-stroke (see
   [the architecture document](docs/architecture.md#gas-field-on-the-ducts));
-- Windows only for now: the code is standard C++20 and JUCE, but no other
-  platform is built or tested;
+- Windows is the reference platform. Linux is built and tested on every push,
+  but its GUI has not been checked on screen, no Linux archive is published,
+  and an unprivileged Linux run cannot raise the physics thread, so its
+  real-time factor can read lower for the same engine
+  (see [docs/platforms.md](docs/platforms.md)); macOS is not built at all;
 - large engines (V8, V12) are expensive for the physics thread; the application
   shows its realtime factor so that cost is visible.
 
@@ -341,8 +364,11 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - **Recordings of real engines at a known engine speed**, no code needed:
   see [contributing a recording](CONTRIBUTING.md#contributing-a-recording).
   They are what the sound is measured against.
-- **A Linux or macOS build**: the code is standard C++20 and JUCE, but only
-  Windows is built today.
+- **A macOS build**: Linux landed in October 2026, macOS has not. Everything
+  that is platform-specific is collected in
+  [docs/platforms.md](docs/platforms.md).
+- **Linux desk testing**: the Linux build is green in CI, but nobody has yet
+  reported back on the window, the audio device or the 3-D view there.
 - Issues labelled
   [good first issue](https://github.com/zolaski333/EngineLab/labels/good%20first%20issue)
   are scoped for a first contribution.

@@ -183,7 +183,20 @@ private:
     }
 
 #if defined(__cpp_lib_hardware_interference_size)
+    // GCC warns (-Winterference-size) that this value is not stable across
+    // compilers, so a class whose layout depends on it is not ABI-portable.
+    // EngineLab is one binary per build and nothing here crosses an ABI
+    // boundary, while the per-architecture value is exactly what the padding
+    // below wants (64 on x86-64, 128 on some aarch64): keep it, drop the
+    // warning. Clang does not know the option, hence the compiler guard.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winterference-size"
+#endif
     static constexpr std::size_t cacheLine = std::hardware_destructive_interference_size;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #else
     static constexpr std::size_t cacheLine = 64;
 #endif
