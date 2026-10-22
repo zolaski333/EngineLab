@@ -39,6 +39,16 @@ file formats, always with an in-memory migration).
   builds real JUCE components runs under a window manager on `xvfb-run`.
   No Linux archive is published yet, and the GUI has not been reviewed on a
   Linux screen.
+- **Two-stroke engines get a carburettor.** The designer fits a slide
+  carburettor to every two-stroke it builds, one per cylinder, with jets sized
+  from the engine (an RD350-sized design gets a 287 main and a 41 pilot; the
+  real bike runs 260-290 and 30-40). The main and pilot circuits each run on
+  their own depression, the needle clip and the air screw do what they do on a
+  real one, and the fuel enters the crankcase with the air. Engine files carry
+  it as `carburettor:` under `intake:` and under each intake path. A
+  carburetted two-stroke runs richer than the injector did (lambda 0.74-0.84
+  against 0.88-0.94) and makes 4-6 % less peak torque. The catalogue RD350
+  keeps its injector.
 
 ### Fixed
 
@@ -59,6 +69,11 @@ file formats, always with an in-memory migration).
   whose speed swings within each cycle, nor engines the dyno cannot pull up to
   the measuring speed (it measures where they settle). When the check cannot
   finish, the box says so instead of "Not real time".
+- A designed two-stroke's throttle (now its carburettor) is sized from the
+  cylinder it feeds instead of from the whole engine, which gave identical
+  125 cc cylinders a 16.6 mm bore on a single and 33.2 mm on a four. Singles gain
+  18-29 % of peak torque; triples, fours and V4s lose the 6-9 % their oversized
+  bores gave them; twins are unchanged.
 
 ### Changed
 
@@ -68,6 +83,13 @@ file formats, always with an in-memory migration).
   1.40 -> 1.86 on a 6-core desktop). `EngineLabRealtimeBudgetHarness
   --inline-cylinders` (and `--serial-publish`) keep the old serial passes for
   comparison.
+- Two-stroke scavenging follows the fresh charge's front as it crosses the
+  cylinder, integrated through the transfer window, instead of a fixed
+  short-circuit share. A two-stroke held at one speed no longer hunts between
+  4,500 and 6,250 rpm. Designed two-strokes' torque curves are smoother and
+  2-14 % stronger; the catalogue RD350's curve now rises steadily to its peak
+  instead of dipping at 5,750 rpm, at 12 % less mean torque, and it sounds
+  different.
 
 ### Removed
 

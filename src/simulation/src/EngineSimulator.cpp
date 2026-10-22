@@ -18,6 +18,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <utility>
 
 namespace enginelab {
 namespace {
@@ -2061,9 +2062,35 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     intakeSourcePressureKpa, temperatureK,
                     plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
                     intake.throttleDischargeCoefficient, subDt, twoStrokeCrankcase);
+                const auto plenumInflowKg = std::max(0.0,
+                    intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg);
                 if (twoStrokeCrankcase)
-                    reedInflowMgThisFill_[pathIndex] += std::max(0.0,
-                        intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg) * 1.0e6;
+                    reedInflowMgThisFill_[pathIndex] += plenumInflowKg * 1.0e6;
+                if (intake.carburettor.enabled) {
+                    // A carburettor meters the air that crossed it, and the
+                    // fuel it draws goes where that air went: into the
+                    // crankcase, not into the transfer duct an event later.
+                    // The lag to the cylinder is then the crankcase's own
+                    // residence time, which is the thing an injector command
+                    // had to guess at and got wrong on a tip-in.
+                    constexpr double airGasConstantJPerKgK = 287.05;
+                    const auto boundaryDensityKgPerM3 =
+                        intakeSourcePressureKpa * 1'000.0
+                        / (airGasConstantJPerKgK * std::max(1.0, temperatureK));
+                    const auto metering = CarburettorModel::meter(
+                        intake.carburettor, config_.fuelProperties,
+                        carburettorStates_[pathIndex],
+                        plenumInflowKg / subDt, boundaryDensityKgPerM3,
+                        intakeSourcePressureKpa,
+                        intakePlenumGas_[pathIndex].pressureKpa(),
+                        intake.throttleDiameterMm, state_.throttle, subDt);
+                    if (metering.deliveredMoles > 0.0)
+                        intakePlenumGas_[pathIndex].injectFuelMoles(
+                            metering.deliveredMoles,
+                            config_.injection.fuelTemperatureC + 273.15);
+                    carburettorFuelMassKgThisStep_ += metering.meteredMoles
+                        * config_.fuelProperties.molarMassGramsPerMole * 0.001;
+                }
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
@@ -2933,6 +2960,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // injector must place before the window closes; delivery is metered
             // per substep at the injector's flow limit, so a healthy injector
             // reaches it and a saturated one does not.
+            // A carburetted path is already fuelled, in its bore. The
+            // injector is commanded nothing rather than removed, so whatever
+            // film it is holding still drains instead of vanishing.
+            if (intakeGeometryAt(config_, intakePathIndex).carburettor.enabled)
+                commandedFuelMoles = 0.0;
             commandedFuelMolesMaxThisCycle_[cylinderIndex] = std::max(
                 commandedFuelMolesMaxThisCycle_[cylinderIndex], commandedFuelMoles);
             const auto injectionResult = FuelInjectionModel::deliver(config_.injection,
@@ -5190,10 +5222,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.lambda = state_.airFuelRatio
                 / config_.fuelProperties.stoichiometricAirFuelRatio;
         }
-        const auto meteredFuelFlowGramsPerSecond = meteredFuelMassKg / subDt * 1'000.0;
+        const auto totalMeteredFuelMassKg = meteredFuelMassKg
+            + std::exchange(carburettorFuelMassKgThisStep_, 0.0);
+        const auto meteredFuelFlowGramsPerSecond =
+            totalMeteredFuelMassKg / subDt * 1'000.0;
         state_.fuelFlowGramsPerSecond = smooth(state_.fuelFlowGramsPerSecond,
             meteredFuelFlowGramsPerSecond, subDt, 22.0);
-        state_.fuelConsumedGrams += meteredFuelMassKg * 1'000.0;
+        state_.fuelConsumedGrams += totalMeteredFuelMassKg * 1'000.0;
         state_.fuelConsumedLitres = state_.fuelConsumedGrams * 0.001
             / config_.fuelProperties.densityKgPerL;
         state_.airFlowGramsPerSecond = state_.airMassMgPerCycle
@@ -6195,6 +6230,8 @@ void EngineSimulator::reset() noexcept {
     portPulsePrimeDeficitMoles_.fill(0.0);
     portPulseAvailableFraction_.fill(1.0);
     airboxSlug_.fill({});
+    carburettorStates_.fill({});
+    carburettorFuelMassKgThisStep_ = 0.0;
     entrainedFuelMolesThisCycle_.fill(0.0);
     meteredFuelMolesLastCycle_.fill(0.0);
     deliveredFuelMolesLastCycle_.fill(0.0);

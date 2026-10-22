@@ -210,12 +210,85 @@ struct ExhaustConfig final {
     double midpipeDiameterMm { 0.0 };
 };
 
+/** A slide carburettor: the fuel system that meters from the air itself.
+ *
+ * An injector is told how much fuel to deliver. A carburettor is not told
+ * anything: its jets are orifices into a float bowl at ambient pressure, and
+ * whatever depression the air draws through them is the mixture. Everything a
+ * rider feels about a carburetted two-stroke follows from that, so the model
+ * reproduces the mechanism rather than a mixture curve.
+ *
+ * Two circuits run in parallel and hand over without any blend between them,
+ * because each is driven by a depression the other does not have. The main
+ * circuit is driven by the venturi's own depression, which goes as the square
+ * of the air velocity through the throat, so it is worth nothing at idle. The
+ * pilot circuit is driven by the drop from the float bowl to the crankcase,
+ * which is largest with the slide shut and collapses to nothing at full
+ * throttle, where the crankcase pumps at about ambient. Neither needs to know
+ * about the other.
+ *
+ * Jet sizes are diameters here. Real jets are stamped with a flow number
+ * (a "260 main"), which is a calibrated flow at a reference head and not a
+ * diameter; a 260 is about 0.90 mm.
+ */
+struct CarburettorConfig final {
+    /** False keeps the intake path on its injector, as every engine that
+     * predates this field does. */
+    bool enabled { false };
+    /** Throat diameter. Zero takes 0.80 of the throttle bore, which is about
+     * the venturi a slide carburettor of a given nominal size carries. */
+    double venturiDiameterMm { 0.0 };
+    /** Main jet, metering from about a quarter throttle upwards, as the number
+     * stamped on a Mikuni jet: cubic centimetres per minute of test fluid
+     * under one metre of head. A 280 is what an RD350 runs, and the arithmetic
+     * agrees: at full throttle each of its cylinders burns about 155 cc/min,
+     * the venturi depression there is about 2.2 kPa, which is 0.3 m of petrol,
+     * and a jet passes sqrt(0.3) of its rating at 0.3 m, so the rating wanted
+     * is 155/0.55 = 282. */
+    double mainJetFlowNumber { 280.0 };
+    /** Pilot (slow) jet, metering at and just off idle, same convention. */
+    double pilotJetFlowNumber { 35.0 };
+    /** How much of the pilot circuit's restriction is the jet.
+     *
+     * The main jet is very nearly the only restriction in its circuit, so its
+     * stamped number can be used directly. The pilot's is not: its fuel then
+     * travels an emulsion passage, meets the air screw's bleed and leaves
+     * through a small outlet at the slide's edge, and all of that throttles it
+     * further. Driving a bare 35 jet with the whole crankcase depression gives
+     * AFR 1.5 at idle, so the lumping is not optional; this factor is the
+     * series restriction of everything after the jet. 0.14 is what an RD350's
+     * 35 pilot and its ~21 kPa idle depression need to idle at AFR 13, which
+     * is the one real pair the value is fitted to. A circuit resolved passage
+     * by passage would replace it. */
+    double pilotCircuitFactor { 0.14 };
+    /** Needle clip position, 1 (needle highest, richest) to 5. The taper in
+     * the needle jet is what meters between the pilot and the main. */
+    double needleClipPosition { 3.0 };
+    /** Turns out on the pilot air screw. More turns bleed more air into the
+     * pilot circuit and lean it; 1.5 is the usual nominal setting. */
+    double airScrewTurns { 1.5 };
+    /** Height of the jet outlet above the float-bowl level. It is what stops a
+     * carburettor dribbling fuel at rest, and what makes the main circuit go
+     * lean before it goes rich. */
+    double jetLiftMm { 5.0 };
+    double jetDischargeCoefficient { 0.80 };
+    /** Share of metered fuel that wets the bore and crankcase walls instead of
+     * reaching the charge, and how fast that film gives it back. This is a
+     * carburetted engine's tip-in stumble, and the reason an accelerator pump
+     * exists. Zero is a dry bore. */
+    double wallFilmFraction { 0.25 };
+    double wallFilmTimeConstantSeconds { 0.12 };
+};
+
 struct IntakeConfig final {
     double plenumVolumeLitres { 3.0 };
     double throttleDiameterMm { 60.0 };
     /** Number of equal throttle bores feeding this intake path. */
     std::uint32_t throttleCount { 1 };
     double throttleDischargeCoefficient { 0.72 };
+    /** Fuel metering in this path's throttle bore. Disabled by default,
+     * leaving the path on `InjectionConfig`. */
+    CarburettorConfig carburettor {};
     double runnerLengthMm { 300.0 };
     /** Runner diameter at the cylinder-head/valve end. */
     double runnerDiameterMm { 38.0 };

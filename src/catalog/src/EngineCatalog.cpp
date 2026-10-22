@@ -214,6 +214,22 @@ void assignIfPresent(const YAML::Node& node, const char* key, T& value) {
     if (node && node[key]) value = node[key].as<T>();
 }
 
+void assignCarburettor(const YAML::Node& intake, CarburettorConfig& carburettor) {
+    const auto node = intake["carburettor"];
+    if (!node) return;
+    assignIfPresent(node, "enabled", carburettor.enabled);
+    assignIfPresent(node, "venturi_diameter_mm", carburettor.venturiDiameterMm);
+    assignIfPresent(node, "main_jet_flow_number", carburettor.mainJetFlowNumber);
+    assignIfPresent(node, "pilot_jet_flow_number", carburettor.pilotJetFlowNumber);
+    assignIfPresent(node, "pilot_circuit_factor", carburettor.pilotCircuitFactor);
+    assignIfPresent(node, "needle_clip_position", carburettor.needleClipPosition);
+    assignIfPresent(node, "air_screw_turns", carburettor.airScrewTurns);
+    assignIfPresent(node, "jet_lift_mm", carburettor.jetLiftMm);
+    assignIfPresent(node, "jet_discharge_coefficient", carburettor.jetDischargeCoefficient);
+    assignIfPresent(node, "wall_film_fraction", carburettor.wallFilmFraction);
+    assignIfPresent(node, "wall_film_time_constant_s", carburettor.wallFilmTimeConstantSeconds);
+}
+
 [[nodiscard]] AcousticPoint3M decodePoint(
     const YAML::Node& node, AcousticPoint3M fallback = {}) {
     return { node["x"].as<double>(fallback.x), node["y"].as<double>(fallback.y),
@@ -914,6 +930,7 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(intake, "throttle_diameter_mm", config.intake.throttleDiameterMm);
         assignIfPresent(intake, "throttle_count", config.intake.throttleCount);
         assignIfPresent(intake, "throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
+        assignCarburettor(intake, config.intake.carburettor);
         assignIfPresent(intake, "runner_length_mm", config.intake.runnerLengthMm);
         assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
         assignIfPresent(intake, "runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
@@ -1057,6 +1074,7 @@ void applyCrankOffsets(EngineConfig& config) {
                 assignIfPresent(geometry, "throttle_diameter_mm", pathConfig.geometry.throttleDiameterMm);
                 assignIfPresent(geometry, "throttle_count", pathConfig.geometry.throttleCount);
                 assignIfPresent(geometry, "throttle_discharge_coefficient", pathConfig.geometry.throttleDischargeCoefficient);
+                assignCarburettor(geometry, pathConfig.geometry.carburettor);
                 assignIfPresent(geometry, "runner_length_mm", pathConfig.geometry.runnerLengthMm);
                 assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);
                 assignIfPresent(geometry, "runner_plenum_diameter_mm", pathConfig.geometry.runnerPlenumDiameterMm);

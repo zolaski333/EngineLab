@@ -890,6 +890,16 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || outOfRange("intake.throttleDiameterMm", config.intake.throttleDiameterMm, minimumThrottleDiameterMm, 150.0)
         || config.intake.throttleCount < 1 || config.intake.throttleCount > 16
         || outOfRange("intake.throttleDischargeCoefficient", config.intake.throttleDischargeCoefficient, 0.05, 1.5)
+        || outOfRange("intake.carburettor.venturiDiameterMm", config.intake.carburettor.venturiDiameterMm, 0.0, 200.0)
+        || outOfRange("intake.carburettor.mainJetFlowNumber", config.intake.carburettor.mainJetFlowNumber, 5.0, 5000.0)
+        || outOfRange("intake.carburettor.pilotJetFlowNumber", config.intake.carburettor.pilotJetFlowNumber, 1.0, 2000.0)
+        || outOfRange("intake.carburettor.pilotCircuitFactor", config.intake.carburettor.pilotCircuitFactor, 0.005, 1.0)
+        || outOfRange("intake.carburettor.needleClipPosition", config.intake.carburettor.needleClipPosition, 1.0, 5.0)
+        || outOfRange("intake.carburettor.airScrewTurns", config.intake.carburettor.airScrewTurns, 0.1, 6.0)
+        || outOfRange("intake.carburettor.jetLiftMm", config.intake.carburettor.jetLiftMm, 0.0, 100.0)
+        || outOfRange("intake.carburettor.jetDischargeCoefficient", config.intake.carburettor.jetDischargeCoefficient, 0.05, 1.0)
+        || outOfRange("intake.carburettor.wallFilmFraction", config.intake.carburettor.wallFilmFraction, 0.0, 0.98)
+        || outOfRange("intake.carburettor.wallFilmTimeConstantSeconds", config.intake.carburettor.wallFilmTimeConstantSeconds, 1.0e-4, 5.0)
         || outOfRange("intake.runnerLengthMm", config.intake.runnerLengthMm, 20.0, 2'000.0)
         || outOfRange("intake.runnerDiameterMm", config.intake.runnerDiameterMm, 10.0, 150.0)
         || !(config.intake.runnerPlenumDiameterMm == 0.0
@@ -1190,6 +1200,16 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(intake.throttleDiameterMm, 5.0, 250.0)
             || intake.throttleCount < 1 || intake.throttleCount > 16
             || !inRange(intake.throttleDischargeCoefficient, 0.05, 1.5)
+            || !inRange(intake.carburettor.venturiDiameterMm, 0.0, 200.0)
+            || !inRange(intake.carburettor.mainJetFlowNumber, 5.0, 5000.0)
+            || !inRange(intake.carburettor.pilotJetFlowNumber, 1.0, 2000.0)
+            || !inRange(intake.carburettor.pilotCircuitFactor, 0.005, 1.0)
+            || !inRange(intake.carburettor.needleClipPosition, 1.0, 5.0)
+            || !inRange(intake.carburettor.airScrewTurns, 0.1, 6.0)
+            || !inRange(intake.carburettor.jetLiftMm, 0.0, 100.0)
+            || !inRange(intake.carburettor.jetDischargeCoefficient, 0.05, 1.0)
+            || !inRange(intake.carburettor.wallFilmFraction, 0.0, 0.98)
+            || !inRange(intake.carburettor.wallFilmTimeConstantSeconds, 1.0e-4, 5.0)
             || !inRange(intake.runnerLengthMm, 20.0, 2'000.0)
             || !inRange(intake.runnerDiameterMm, 10.0, 150.0)
             || !(intake.runnerPlenumDiameterMm == 0.0

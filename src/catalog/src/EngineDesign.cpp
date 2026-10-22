@@ -543,8 +543,19 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         intake.throttleCount = static_cast<std::uint32_t>(std::lround(derive("throttle_count", "Throttle bodies", "",
             perCylinderThrottles ? countD : 1.0,
             perCylinderThrottles ? "one per cylinder" : twoStroke ? "one, feeding the crankcase circuit" : "one")));
-        const auto throttleAreaFactor = diesel ? 0.27 : twoStroke ? 0.16 : profile.throttleAreaMm2PerLitreRpm;
-        const auto throttleArea = throttleAreaFactor * litres * config.redlineRpm;
+        // A two-stroke's bore feeds one cylinder, because its intake path is
+        // that cylinder's crankcase, so it is sized from that cylinder and not
+        // from the engine. Sized from the engine it was wrong by the cylinder
+        // count: a 125 cc single got a 16.6 mm carburettor and a 500 cc four
+        // got 33.2 mm for the same 125 cc cylinder, four times the area for
+        // identical hardware. The factor doubles with the change so that the
+        // twin the figure was calibrated on -- the RD350's 26 mm -- does not
+        // move; every other cylinder count does.
+        const auto throttleAreaFactor = diesel ? 0.27 : twoStroke ? 0.32 : profile.throttleAreaMm2PerLitreRpm;
+        const auto throttleDisplacementLitres = twoStroke
+            ? litres / std::max(1.0, countD) : litres;
+        const auto throttleArea = throttleAreaFactor * throttleDisplacementLitres
+            * config.redlineRpm;
         const auto throttleDiameter = std::sqrt(4.0 * throttleArea
             / (std::numbers::pi * static_cast<double>(std::max(1U, intake.throttleCount))));
         const auto throttleRule = format(throttleAreaFactor) + " mm2 per litre and redline rpm, shared by the bodies";
@@ -570,6 +581,73 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             spec.use == EngineUse::aircraft ? 0.0 : profile.motorcycle ? std::clamp(2.5 * litres, 3.0, 10.0)
                 : 4.0 + 0.5 * litres, profile.motorcycle ? "2.5 x litres, 3-10 L" : "4 L + 0.5 x litres");
         intake.throttleGamma = profile.throttleGamma;
+        if (twoStroke) {
+            // A two-stroke gets the fuel system it has in the world. The jets
+            // are sized the way a tuner sizes them and not copied from one
+            // engine: from the fuel the engine needs at each end of its range,
+            // and the head available to push it through at that point. A jet's
+            // stamped number is its flow under one metre of fuel, and flow
+            // goes as the square root of the head, so a number is the fuel
+            // wanted divided by the square root of the head there.
+            //
+            // On an RD350-sized design the arithmetic returns a 287 main and a
+            // 41 pilot. The bike runs 260-290 and 30-40, which is the only
+            // check that matters: neither number was fitted to it.
+            auto& carburettor = intake.carburettor;
+            carburettor.enabled = true;
+            const auto bores = std::max(1.0, static_cast<double>(intake.throttleCount));
+            // One crankcase circuit per cylinder, so one carburettor swallows
+            // one cylinder, however the bore was sized.
+            const auto displacementPerBoreM3 = litres * 0.001 / std::max(1.0, countD);
+            const auto throatM = 0.80 * intake.throttleDiameterMm * 0.001;
+            const auto throatAreaM2 = 0.25 * std::numbers::pi * throatM * throatM * bores;
+            const auto fuelDensityKgPerM3 = std::max(1.0,
+                config.fuelProperties.densityKgPerL * 1'000.0);
+            constexpr double ambientDensityKgPerM3 = 1.2;
+            constexpr double gravityMPerS2 = 9.80665;
+            const auto jetNumberFor = [&](double fuelKgPerSecond, double headM) {
+                if (!(fuelKgPerSecond > 0.0) || !(headM > 0.0)) return 0.0;
+                const auto ccPerMinute = fuelKgPerSecond / fuelDensityKgPerM3
+                    * 60.0 * 1.0e6;
+                return ccPerMinute / std::sqrt(headM);
+            };
+
+            // Main circuit, at peak power: the depression is the venturi's own,
+            // from the velocity the air has to have to get through the throat.
+            const auto wotAirKgPerSecond = displacementPerBoreM3 * 0.85
+                * (peakPowerRpm / 60.0) * ambientDensityKgPerM3;
+            const auto throatVelocityMps = throatAreaM2 > 0.0
+                ? wotAirKgPerSecond / (ambientDensityKgPerM3 * throatAreaM2) : 0.0;
+            const auto wotDepressionPa = 0.5 * ambientDensityKgPerM3
+                * throatVelocityMps * throatVelocityMps;
+            const auto wotHeadM = wotDepressionPa
+                / (fuelDensityKgPerM3 * gravityMPerS2);
+            // A two-stroke runs its full load rich: the surplus fuel is what
+            // cools the piston and carries the oil.
+            constexpr double fullLoadAirFuelRatio = 12.8;
+            carburettor.mainJetFlowNumber = derive("carb_main_jet_flow", "Main jet", "cc/min",
+                std::clamp(jetNumberFor(wotAirKgPerSecond / fullLoadAirFuelRatio, wotHeadM),
+                    20.0, 2'000.0),
+                "the fuel peak power needs at AFR 12.8, over the root of the venturi head there");
+
+            // Pilot circuit, at idle: the depression is the whole drop from the
+            // float bowl to a crankcase pumping about 20 kPa below ambient.
+            const auto idleAirKgPerSecond = displacementPerBoreM3 * 0.35
+                * (std::max(1.0, config.idleRpm) / 60.0) * ambientDensityKgPerM3;
+            constexpr double idleCrankcaseDropPa = 20'000.0;
+            const auto idleHeadM = idleCrankcaseDropPa
+                / (fuelDensityKgPerM3 * gravityMPerS2);
+            constexpr double idleAirFuelRatio = 13.5;
+            // What reaches the engine is the jet throttled by everything after
+            // it, so the jet itself has to be the larger by that factor.
+            const auto pilotCircuitFactor = std::max(0.01,
+                carburettor.pilotCircuitFactor);
+            carburettor.pilotJetFlowNumber = derive("carb_pilot_jet_flow", "Pilot jet", "cc/min",
+                std::clamp(jetNumberFor(idleAirKgPerSecond / idleAirFuelRatio, idleHeadM)
+                    / pilotCircuitFactor, 5.0, 500.0),
+                "the fuel the idle needs at AFR 13.5, over the root of the crankcase head, "
+                "divided by the circuit's own restriction");
+        }
         if (diesel) intake.throttleDischargeCoefficient = 0.86;
         config.plenumVolumeLitres = intake.plenumVolumeLitres;
         config.throttleDiameterMm = intake.throttleDiameterMm;

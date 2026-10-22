@@ -107,6 +107,38 @@ using Json = nlohmann::json;
     throw std::invalid_argument(
         "Unknown structural mode drive: " + std::string(value));
 }
+[[nodiscard]] Json carburettorJson(const CarburettorConfig& carburettor) {
+    return Json{
+        {"enabled", carburettor.enabled},
+        {"venturi_diameter_mm", carburettor.venturiDiameterMm},
+        {"main_jet_flow_number", carburettor.mainJetFlowNumber},
+        {"pilot_jet_flow_number", carburettor.pilotJetFlowNumber},
+        {"pilot_circuit_factor", carburettor.pilotCircuitFactor},
+        {"needle_clip_position", carburettor.needleClipPosition},
+        {"air_screw_turns", carburettor.airScrewTurns},
+        {"jet_lift_mm", carburettor.jetLiftMm},
+        {"jet_discharge_coefficient", carburettor.jetDischargeCoefficient},
+        {"wall_film_fraction", carburettor.wallFilmFraction},
+        {"wall_film_time_constant_s", carburettor.wallFilmTimeConstantSeconds},
+    };
+}
+
+void readCarburettor(const Json& intake, CarburettorConfig& carburettor) {
+    if (!intake.contains("carburettor")) return;
+    const auto& node = intake.at("carburettor");
+    carburettor.enabled = node.value("enabled", carburettor.enabled);
+    carburettor.venturiDiameterMm = node.value("venturi_diameter_mm", carburettor.venturiDiameterMm);
+    carburettor.mainJetFlowNumber = node.value("main_jet_flow_number", carburettor.mainJetFlowNumber);
+    carburettor.pilotJetFlowNumber = node.value("pilot_jet_flow_number", carburettor.pilotJetFlowNumber);
+    carburettor.pilotCircuitFactor = node.value("pilot_circuit_factor", carburettor.pilotCircuitFactor);
+    carburettor.needleClipPosition = node.value("needle_clip_position", carburettor.needleClipPosition);
+    carburettor.airScrewTurns = node.value("air_screw_turns", carburettor.airScrewTurns);
+    carburettor.jetLiftMm = node.value("jet_lift_mm", carburettor.jetLiftMm);
+    carburettor.jetDischargeCoefficient = node.value("jet_discharge_coefficient", carburettor.jetDischargeCoefficient);
+    carburettor.wallFilmFraction = node.value("wall_film_fraction", carburettor.wallFilmFraction);
+    carburettor.wallFilmTimeConstantSeconds = node.value("wall_film_time_constant_s", carburettor.wallFilmTimeConstantSeconds);
+}
+
 [[nodiscard]] Json structuralNvhJson(
     const StructuralNvhConfig& config) {
     auto modes = Json::array();
@@ -342,6 +374,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"throttle_diameter_mm", path.geometry.throttleDiameterMm},
             {"throttle_count", path.geometry.throttleCount},
             {"throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient},
+            {"carburettor", carburettorJson(path.geometry.carburettor)},
             {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
             {"runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm},
             {"airbox_volume_l", path.geometry.airboxVolumeLitres},
@@ -538,7 +571,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"inlet_duct_length_mm", config.intake.inletDuctLengthMm},
                      {"inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm},
                      {"bellmouth_diameter_mm", config.intake.bellmouthDiameterMm},
-                     {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
+                     {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma},
+                     {"carburettor", carburettorJson(config.intake.carburettor)}}},
         {"intake_paths", intakePaths}, {"banks", banks}, {"exhaust_paths", exhaustPaths},
         {"acoustic_observer", {
             {"left_microphone_m", pointJson(config.acousticObserver.leftMicrophoneM)},
@@ -811,6 +845,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDiameterMm = intake.value("throttle_diameter_mm", config.intake.throttleDiameterMm);
             config.intake.throttleCount = intake.value("throttle_count", config.intake.throttleCount);
             config.intake.throttleDischargeCoefficient = intake.value("throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
+            readCarburettor(intake, config.intake.carburettor);
             config.intake.runnerLengthMm = intake.value("runner_length_mm", config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
             config.intake.runnerPlenumDiameterMm = intake.value("runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
@@ -993,6 +1028,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDiameterMm = geometry.value("throttle_diameter_mm", path.geometry.throttleDiameterMm);
                     path.geometry.throttleCount = geometry.value("throttle_count", path.geometry.throttleCount);
                     path.geometry.throttleDischargeCoefficient = geometry.value("throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient);
+                    readCarburettor(geometry, path.geometry.carburettor);
                     path.geometry.runnerLengthMm = geometry.value("runner_length_mm", path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
                     path.geometry.runnerPlenumDiameterMm = geometry.value("runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm);

@@ -10,6 +10,7 @@ add_library(EngineLabPhysics STATIC
     src/DuctWallHeatTransferModel.cpp)
 target_sources(EngineLabPhysics PRIVATE src/IndicatedWorkModel.cpp)
 target_sources(EngineLabPhysics PRIVATE src/ValveTrainModel.cpp src/HelmholtzRunnerModel.cpp)
+target_sources(EngineLabPhysics PRIVATE src/CarburettorModel.cpp)
 add_library(EngineLab::Physics ALIAS EngineLabPhysics)
 target_include_directories(EngineLabPhysics PUBLIC include)
 target_link_libraries(EngineLabPhysics PUBLIC EngineLab::Foundation)

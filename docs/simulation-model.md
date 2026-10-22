@@ -175,15 +175,55 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   what the residual can cover binds. It therefore does **not** address torque
   climbing to the rev limiter: that is trapping which never falls, and the
   displacing share is monotonic in engine speed by construction.
-- **Fuelling**: the ECU meters for the air that crossed the reed into the
-  crankcase during its last fill (latched when the transfers close, just
-  before the pulse), as a carburettor meters the air through it; not for the
-  trapped oxygen (most of a two-stroke's trapped charge is retained from
-  earlier cycles), nor for the air across the transfers, which lags the fill
-  by an event on a tip-in and left the RD350 lean and stalling. There is no
-  overrun fuel cut (a cut scavenges the cylinder clean, and each resume fires
-  a full charge), and lambda learning is held through a closed-throttle
-  overrun and for 2 s after it.
+- **Carburettor**: the fuel system a two-stroke actually has, and what the
+  designer fits to every two-stroke it builds
+  (`IntakeConfig::carburettor`, `CarburettorModel`). Nothing is commanded: the
+  jets are orifices into a float bowl at the pressure outside the engine, and
+  the mixture is whatever depression the air draws through them. The fuel goes
+  into the crankcase with the air that metered it, in the bore, so the lag to
+  the cylinder is the crankcase's own residence time rather than an injector
+  command's guess at it.
+
+  Two circuits run in parallel and are never blended, because each is driven by
+  a depression the other does not see. The main circuit has the venturi's own,
+  which goes as the square of the throat velocity and is worth tens of pascals
+  at idle -- less than the lift of the jet above the bowl, so it passes nothing
+  there at all. The pilot circuit has the whole drop from the bowl to the
+  crankcase, largest with the slide shut and gone at full throttle, where the
+  crankcase pumps at about ambient. Each fades out where the other takes over
+  and no crossover term is written anywhere. Between them the needle taper
+  meters, riding with the slide over the first three quarters of the opening,
+  which is what the clip position moves.
+
+  Jets carry the number stamped on them: cc/min of test fluid under one metre
+  of head, so flow is the number times the root of the head available. The
+  designer sizes them from the engine and not from a table -- the fuel peak
+  power needs at AFR 12.8 over the root of the venturi head there, and the
+  fuel the idle needs at AFR 13.5 over the root of the crankcase head -- and on
+  an RD350-sized design that returns a 287 main and a 41 pilot against the
+  bike's 260-290 and 30-40, neither of which was fitted to it. The main jet is
+  very nearly its circuit's only restriction so its number is used directly;
+  the pilot's is not, because the emulsion passage, the air screw's bleed and
+  the outlet all throttle it further, and `pilotCircuitFactor` is that lumped
+  restriction (0.14, the one value fitted to a real pair: an RD350's 35 pilot
+  idling at AFR 13 on about 21 kPa).
+
+  Two things a real carburettor has are deliberately absent, both of which act
+  at the top of the range: there is no emulsion tube or air corrector, so the
+  main circuit keeps the plain jet's richening with flow instead of being held
+  flat, and the air density at the throat does not fall with the depression.
+  Neither is stood in for by a factor, because the first is a two-phase effect
+  in the passage that no single algebraic term represents honestly. They are
+  measured gaps, not calibrations.
+- **Fuelling** (an engine configured without a carburettor): the ECU meters for
+  the air that crossed the reed into the crankcase during its last fill
+  (latched when the transfers close, just before the pulse), which is the same
+  air a carburettor would have metered; not for the trapped oxygen (most of a
+  two-stroke's trapped charge is retained from earlier cycles), nor for the air
+  across the transfers, which lags the fill by an event on a tip-in and left
+  the RD350 lean and stalling. There is no overrun fuel cut (a cut scavenges
+  the cylinder clean, and each resume fires a full charge), and lambda learning
+  is held through a closed-throttle overrun and for 2 s after it.
 - **Load**: a two-stroke's "manifold" is its crankcase, which pumps about
   ambient at any throttle (75-87 kPa at idle), so its load is the delivery
   ratio of its last cycle, not the manifold pressure; the ECU's load axis
@@ -209,12 +249,13 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   maker's figure (6.2:1 for the RD350LC) is usually the trapped one, counted
   from the exhaust port's closing.
 - **Limits**: petrol only, naturally aspirated, one cylinder per intake path,
-  no individual throttles, injection angles inside the 360-degree cycle. Fuel is metered by
-  a port injector in the transfer duct; there is no carburettor model and no
-  oil (premix) in the charge; the fuel reaches the cylinder about an event
-  before the crankcase would deliver a carburettor's mixture, so a tip-in
-  runs rich (AFR 9-10) for a few events. The expansion chamber's return wave
-  needs fine exhaust cells: a two-stroke's production mesh is 100 mm
+  no individual throttles, injection angles inside the 360-degree cycle. There
+  is no oil (premix) in the charge. An engine configured with an injector
+  rather than a carburettor keeps the injector's own limit: the fuel reaches
+  the cylinder about an event before the crankcase would deliver a
+  carburettor's mixture, so a tip-in runs rich (AFR 9-10) for a few events. The
+  expansion chamber's return wave needs fine exhaust cells: a two-stroke's
+  production mesh is 100 mm
   (`EngineSimulator::productionExhaustCellLengthM`, 360 mm for a four-stroke;
   the view's fine mode never coarsens it). The catalogue RD350LC-like twin
   makes 29-33 N.m at 8,000 rpm (dyno sweep and held test) and 34 kW at

@@ -7,6 +7,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/foundation/TwoStrokeScavenging.hpp>
+#include <enginelab/physics/CarburettorModel.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
@@ -575,6 +576,209 @@ void outflowBiasMovesCompositionWithoutMovingMass() {
               << '\n';
 }
 
+// A carburettor is checked against the convention its jets are stamped with
+// and against one real engine's numbers, never against its own output.
+struct CarburettorRig final {
+    CarburettorConfig carburettor {};
+    FuelConfig fuel {};
+    // The RD350LC-like twin, per cylinder: 173.5 cc on a 26 mm carburettor.
+    double throttleDiameterMm { 26.0 };
+    double displacementPerCylinderM3 { 173.5e-6 };
+    double airDensityKgPerM3 { 1.2 };
+
+    CarburettorRig() { carburettor.enabled = true; }
+
+    /** Air crossing one carburettor, from what the cylinder swallows. */
+    [[nodiscard]] double airFlowKgPerSecond(double rpm, double deliveryRatio) const {
+        return displacementPerCylinderM3 * deliveryRatio * (rpm / 60.0)
+            * airDensityKgPerM3;
+    }
+
+    [[nodiscard]] CarburettorMetering run(CarburettorState& state,
+                                          double airFlowKgPerSecond,
+                                          double crankcaseKpa,
+                                          double throttleFraction,
+                                          double dtSeconds) const {
+        return CarburettorModel::meter(carburettor, fuel, state, airFlowKgPerSecond,
+            airDensityKgPerM3, 101.325, crankcaseKpa, throttleDiameterMm,
+            throttleFraction, dtSeconds);
+    }
+
+    /** Air-fuel ratio from the fuel a settled carburettor delivers. */
+    [[nodiscard]] double settledAirFuelRatio(double airFlowKgPerSecond,
+                                             double crankcaseKpa,
+                                             double throttleFraction) const {
+        CarburettorState state;
+        constexpr double dt = 1.0e-4;
+        auto fuelKgPerSecond = 0.0;
+        const auto molarMassKg = fuel.molarMassGramsPerMole * 0.001;
+        // Long enough for the wall film to stop taking a share.
+        for (auto step = 0; step < 20'000; ++step) {
+            const auto metering = run(state, airFlowKgPerSecond, crankcaseKpa,
+                throttleFraction, dt);
+            if (step >= 19'000)
+                fuelKgPerSecond += metering.deliveredMoles * molarMassKg / dt;
+        }
+        fuelKgPerSecond /= 1'000.0;
+        return fuelKgPerSecond > 0.0 ? airFlowKgPerSecond / fuelKgPerSecond : 1.0e9;
+    }
+};
+
+void aJetPassesItsStampedNumber() {
+    // A jet's number is cc/min of test fluid under one metre of head, and the
+    // velocity a metre of head gives is sqrt(2 g h) whatever the fluid weighs.
+    // Putting the modelled jet back under that head must return the number.
+    constexpr double dischargeCoefficient = 0.80;
+    for (const auto flowNumber : { 20.0, 35.0, 180.0, 280.0, 420.0 }) {
+        const auto areaM2 = CarburettorModel::jetAreaM2(flowNumber, dischargeCoefficient);
+        const auto velocityMps = std::sqrt(2.0 * 9.80665 * 1.0);
+        const auto volumeFlowCcPerMinute =
+            dischargeCoefficient * areaM2 * velocityMps * 1.0e6 * 60.0;
+        require(std::abs(volumeFlowCcPerMinute - flowNumber) < 1.0e-9 * flowNumber,
+            "a jet under one metre of head passes its stamped number");
+    }
+    require(CarburettorModel::jetAreaM2(0.0, 0.8) == 0.0,
+        "an absent jet has no area");
+}
+
+void theTwoCircuitsHandOverWithoutBeingBlended() {
+    const CarburettorRig rig;
+    CarburettorState idleState;
+    // Idle: the slide is shut, the crankcase is pumping well below ambient.
+    const auto idleAir = rig.airFlowKgPerSecond(1'300.0, 0.35);
+    const auto idle = rig.run(idleState, idleAir, 80.0, 0.0, 1.0e-4);
+    require(idle.mainMoles == 0.0,
+        "the main circuit passes nothing at idle: the venturi cannot lift the fuel");
+    require(idle.pilotMoles > 0.0, "the pilot circuit carries the idle");
+
+    CarburettorState wideState;
+    // Full throttle: a two-stroke's crankcase pumps at about ambient, so the
+    // pilot has no drop left to work with.
+    const auto wideAir = rig.airFlowKgPerSecond(8'000.0, 0.9);
+    const auto wide = rig.run(wideState, wideAir, 101.325, 1.0, 1.0e-4);
+    require(wide.pilotMoles == 0.0,
+        "the pilot circuit passes nothing at full throttle: its drop has gone");
+    require(wide.mainMoles > 0.0, "the main circuit carries full throttle");
+    require(wide.venturiDepressionKpa > 1.5 && wide.venturiDepressionKpa < 3.5,
+        "the full-throttle venturi depression is the couple of kPa a 26 mm bore gives");
+}
+
+void theDefaultJetsGiveTheRealEngineItsMixture() {
+    const CarburettorRig rig;
+    // The one reference that is not the simulator's own output: a 280 main is
+    // what the bike runs, and it has to come out at a usable full-load mixture.
+    const auto wideOpenAfr = rig.settledAirFuelRatio(
+        rig.airFlowKgPerSecond(8'000.0, 0.9), 101.325, 1.0);
+    std::cout << "  full throttle, 8,000 rpm: AFR " << wideOpenAfr << '\n';
+    require(wideOpenAfr > 11.5 && wideOpenAfr < 14.5,
+        "the stock main jet gives a full-load mixture a two-stroke can run");
+    const auto idleAfr = rig.settledAirFuelRatio(
+        rig.airFlowKgPerSecond(1'300.0, 0.35), 80.0, 0.0);
+    std::cout << "  idle, 1,300 rpm: AFR " << idleAfr << '\n';
+    require(idleAfr > 11.0 && idleAfr < 17.0,
+        "the stock pilot jet idles in the band a carburetted two-stroke idles in");
+}
+
+void aPlainJetRichensAsTheEngineBreathesHarder() {
+    const CarburettorRig rig;
+    // The lift of the jet above the bowl is a fixed head the depression has to
+    // beat, so it costs a larger share of a small depression than of a big
+    // one. That is the plain-jet characteristic, and it is why a real
+    // carburettor needs an emulsion tube at the top of the range.
+    auto previousAfr = 0.0;
+    for (const auto rpm : { 3'000.0, 4'500.0, 6'000.0, 8'000.0 }) {
+        const auto afr = rig.settledAirFuelRatio(
+            rig.airFlowKgPerSecond(rpm, 0.9), 101.325, 1.0);
+        if (previousAfr > 0.0)
+            require(afr < previousAfr,
+                "a plain main jet richens as the air flow rises");
+        previousAfr = afr;
+    }
+}
+
+void theJetsAndTheScrewsDoWhatTheyAreFor() {
+    CarburettorRig rig;
+    const auto wideAir = rig.airFlowKgPerSecond(8'000.0, 0.9);
+    const auto stockAfr = rig.settledAirFuelRatio(wideAir, 101.325, 1.0);
+    // A jet's area goes with its number, and so does the fuel it passes.
+    rig.carburettor.mainJetFlowNumber = 560.0;
+    const auto doubledAfr = rig.settledAirFuelRatio(wideAir, 101.325, 1.0);
+    require(doubledAfr < stockAfr * 0.55 && doubledAfr > stockAfr * 0.45,
+        "doubling the main jet's number halves the air-fuel ratio");
+    rig.carburettor.mainJetFlowNumber = 280.0;
+
+    // The air screw bleeds air into the pilot circuit, which leans the idle.
+    const auto idleAir = rig.airFlowKgPerSecond(1'300.0, 0.35);
+    const auto nominalIdleAfr = rig.settledAirFuelRatio(idleAir, 80.0, 0.0);
+    rig.carburettor.airScrewTurns = 3.0;
+    const auto openIdleAfr = rig.settledAirFuelRatio(idleAir, 80.0, 0.0);
+    require(openIdleAfr > nominalIdleAfr,
+        "opening the air screw leans the idle");
+    rig.carburettor.airScrewTurns = 0.75;
+    const auto closedIdleAfr = rig.settledAirFuelRatio(idleAir, 80.0, 0.0);
+    require(closedIdleAfr < nominalIdleAfr,
+        "closing the air screw richens the idle");
+}
+
+void theNeedleClipMovesTheMiddleAndNotTheTop() {
+    CarburettorConfig rich;
+    CarburettorConfig lean;
+    rich.needleClipPosition = 2.0;
+    lean.needleClipPosition = 4.0;
+    const auto richMid = CarburettorModel::needleOpenFraction(rich, 0.4);
+    const auto leanMid = CarburettorModel::needleOpenFraction(lean, 0.4);
+    require(richMid > leanMid, "a lower clip holds the needle higher and richens mid-throttle");
+    require(CarburettorModel::needleOpenFraction(rich, 1.0) == 1.0
+        && CarburettorModel::needleOpenFraction(lean, 1.0) == 1.0,
+        "the clip position does not touch full throttle, where the main jet meters");
+    CarburettorConfig middle;
+    require(CarburettorModel::needleOpenFraction(middle, 0.0) < 0.25,
+        "the needle nearly shuts the needle jet with the slide down");
+    auto previous = -1.0;
+    for (const auto throttle : { 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 }) {
+        const auto open = CarburettorModel::needleOpenFraction(middle, throttle);
+        require(open >= previous, "the needle jet opens monotonically with the slide");
+        previous = open;
+    }
+}
+
+void theWallFilmKeepsEveryMoleItTakes() {
+    const CarburettorRig rig;
+    const auto wideAir = rig.airFlowKgPerSecond(8'000.0, 0.9);
+    CarburettorState state;
+    auto metered = 0.0;
+    auto delivered = 0.0;
+    constexpr double dt = 1.0e-4;
+    for (auto step = 0; step < 2'000; ++step) {
+        const auto metering = rig.run(state, wideAir, 101.325, 1.0, dt);
+        metered += metering.meteredMoles;
+        delivered += metering.deliveredMoles;
+    }
+    const auto accounted = delivered + state.wallFilmMoles;
+    require(std::abs(accounted - metered) < 1.0e-12 * std::max(1.0, metered),
+        "every mole the jets passed is in the charge or still on the wall");
+
+    // The stumble: the first charge after a tip-in is short of what the jets
+    // metered, because the bore is being wetted before it is fed.
+    CarburettorState fresh;
+    const auto first = rig.run(fresh, wideAir, 101.325, 1.0, dt);
+    require(first.deliveredMoles < first.meteredMoles,
+        "a dry bore keeps part of the first fuel it is given");
+    require(fresh.wallFilmMoles > 0.0, "that fuel is on the wall, not lost");
+
+    // Metering is an amount per step, so the solver's rate cannot change it.
+    CarburettorState coarse;
+    CarburettorState fine;
+    auto coarseMetered = 0.0;
+    auto fineMetered = 0.0;
+    for (auto step = 0; step < 100; ++step)
+        coarseMetered += rig.run(coarse, wideAir, 101.325, 1.0, 1.0e-4).meteredMoles;
+    for (auto step = 0; step < 400; ++step)
+        fineMetered += rig.run(fine, wideAir, 101.325, 1.0, 0.25e-4).meteredMoles;
+    require(std::abs(fineMetered - coarseMetered) < 1.0e-12 * coarseMetered,
+        "four times the substeps meter the same fuel: this is not a rate gain");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -599,6 +803,13 @@ int main(int argc, char** argv) {
     portDurationIsNotTheOpeningAngle();
     scavengingLawBracketsTheClassicalBounds();
     outflowBiasMovesCompositionWithoutMovingMass();
+    aJetPassesItsStampedNumber();
+    theTwoCircuitsHandOverWithoutBeingBlended();
+    theDefaultJetsGiveTheRealEngineItsMixture();
+    aPlainJetRichensAsTheEngineBreathesHarder();
+    theJetsAndTheScrewsDoWhatTheyAreFor();
+    theNeedleClipMovesTheMiddleAndNotTheTop();
+    theWallFilmKeepsEveryMoleItTakes();
     std::cout << "two-stroke: ok\n";
     return EXIT_SUCCESS;
 }

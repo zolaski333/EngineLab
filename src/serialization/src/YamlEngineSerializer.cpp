@@ -4,6 +4,22 @@
 
 namespace enginelab {
 namespace {
+void readCarburettor(const YAML::Node& intake, CarburettorConfig& carburettor) {
+    const auto node = intake["carburettor"];
+    if (!node) return;
+    carburettor.enabled = node["enabled"].as<bool>(carburettor.enabled);
+    carburettor.venturiDiameterMm = node["venturi_diameter_mm"].as<double>(carburettor.venturiDiameterMm);
+    carburettor.mainJetFlowNumber = node["main_jet_flow_number"].as<double>(carburettor.mainJetFlowNumber);
+    carburettor.pilotJetFlowNumber = node["pilot_jet_flow_number"].as<double>(carburettor.pilotJetFlowNumber);
+    carburettor.pilotCircuitFactor = node["pilot_circuit_factor"].as<double>(carburettor.pilotCircuitFactor);
+    carburettor.needleClipPosition = node["needle_clip_position"].as<double>(carburettor.needleClipPosition);
+    carburettor.airScrewTurns = node["air_screw_turns"].as<double>(carburettor.airScrewTurns);
+    carburettor.jetLiftMm = node["jet_lift_mm"].as<double>(carburettor.jetLiftMm);
+    carburettor.jetDischargeCoefficient = node["jet_discharge_coefficient"].as<double>(carburettor.jetDischargeCoefficient);
+    carburettor.wallFilmFraction = node["wall_film_fraction"].as<double>(carburettor.wallFilmFraction);
+    carburettor.wallFilmTimeConstantSeconds = node["wall_film_time_constant_s"].as<double>(carburettor.wallFilmTimeConstantSeconds);
+}
+
 [[nodiscard]] std::uint8_t decodeOptionalCrossoverPort(
     const YAML::Node& object, const char* key) {
     const auto encoded = object[key];
@@ -503,7 +519,21 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << config.intake.inletDuctDiameterMm
         << YAML::Key << "bellmouth_diameter_mm" << YAML::Value << config.intake.bellmouthDiameterMm
         << YAML::Key << "idle_bypass_area_mm2" << YAML::Value << config.intake.idleBypassAreaMm2
-        << YAML::Key << "throttle_gamma" << YAML::Value << config.intake.throttleGamma << YAML::EndMap
+        << YAML::Key << "throttle_gamma" << YAML::Value << config.intake.throttleGamma
+        << YAML::Key << "carburettor" << YAML::Value << YAML::BeginMap
+        << YAML::Key << "enabled" << YAML::Value << config.intake.carburettor.enabled
+        << YAML::Key << "venturi_diameter_mm" << YAML::Value << config.intake.carburettor.venturiDiameterMm
+        << YAML::Key << "main_jet_flow_number" << YAML::Value << config.intake.carburettor.mainJetFlowNumber
+        << YAML::Key << "pilot_jet_flow_number" << YAML::Value << config.intake.carburettor.pilotJetFlowNumber
+        << YAML::Key << "pilot_circuit_factor" << YAML::Value << config.intake.carburettor.pilotCircuitFactor
+        << YAML::Key << "needle_clip_position" << YAML::Value << config.intake.carburettor.needleClipPosition
+        << YAML::Key << "air_screw_turns" << YAML::Value << config.intake.carburettor.airScrewTurns
+        << YAML::Key << "jet_lift_mm" << YAML::Value << config.intake.carburettor.jetLiftMm
+        << YAML::Key << "jet_discharge_coefficient" << YAML::Value << config.intake.carburettor.jetDischargeCoefficient
+        << YAML::Key << "wall_film_fraction" << YAML::Value << config.intake.carburettor.wallFilmFraction
+        << YAML::Key << "wall_film_time_constant_s" << YAML::Value << config.intake.carburettor.wallFilmTimeConstantSeconds
+        << YAML::EndMap
+        << YAML::EndMap
         << YAML::Key << "intake_paths" << YAML::Value << YAML::BeginSeq;
     for (const auto& path : config.intakePaths)
         out << YAML::BeginMap << YAML::Key << "id" << YAML::Value << path.id
@@ -513,6 +543,19 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "throttle_diameter_mm" << YAML::Value << path.geometry.throttleDiameterMm
             << YAML::Key << "throttle_count" << YAML::Value << path.geometry.throttleCount
             << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << path.geometry.throttleDischargeCoefficient
+            << YAML::Key << "carburettor" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "enabled" << YAML::Value << path.geometry.carburettor.enabled
+            << YAML::Key << "venturi_diameter_mm" << YAML::Value << path.geometry.carburettor.venturiDiameterMm
+            << YAML::Key << "main_jet_flow_number" << YAML::Value << path.geometry.carburettor.mainJetFlowNumber
+            << YAML::Key << "pilot_jet_flow_number" << YAML::Value << path.geometry.carburettor.pilotJetFlowNumber
+            << YAML::Key << "pilot_circuit_factor" << YAML::Value << path.geometry.carburettor.pilotCircuitFactor
+            << YAML::Key << "needle_clip_position" << YAML::Value << path.geometry.carburettor.needleClipPosition
+            << YAML::Key << "air_screw_turns" << YAML::Value << path.geometry.carburettor.airScrewTurns
+            << YAML::Key << "jet_lift_mm" << YAML::Value << path.geometry.carburettor.jetLiftMm
+            << YAML::Key << "jet_discharge_coefficient" << YAML::Value << path.geometry.carburettor.jetDischargeCoefficient
+            << YAML::Key << "wall_film_fraction" << YAML::Value << path.geometry.carburettor.wallFilmFraction
+            << YAML::Key << "wall_film_time_constant_s" << YAML::Value << path.geometry.carburettor.wallFilmTimeConstantSeconds
+            << YAML::EndMap
             << YAML::Key << "runner_length_mm" << YAML::Value << path.geometry.runnerLengthMm
             << YAML::Key << "runner_diameter_mm" << YAML::Value << path.geometry.runnerDiameterMm
             << YAML::Key << "runner_plenum_diameter_mm" << YAML::Value << path.geometry.runnerPlenumDiameterMm
@@ -1019,6 +1062,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDiameterMm = intake["throttle_diameter_mm"].as<double>(config.intake.throttleDiameterMm);
             config.intake.throttleCount = intake["throttle_count"].as<std::uint32_t>(config.intake.throttleCount);
             config.intake.throttleDischargeCoefficient = intake["throttle_discharge_coefficient"].as<double>(config.intake.throttleDischargeCoefficient);
+            readCarburettor(intake, config.intake.carburettor);
             config.intake.runnerLengthMm = intake["runner_length_mm"].as<double>(config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake["runner_diameter_mm"].as<double>(config.intake.runnerDiameterMm);
             config.intake.runnerPlenumDiameterMm = intake["runner_plenum_diameter_mm"].as<double>(config.intake.runnerPlenumDiameterMm);
@@ -1041,6 +1085,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDiameterMm = geometry["throttle_diameter_mm"].as<double>(path.geometry.throttleDiameterMm);
                     path.geometry.throttleCount = geometry["throttle_count"].as<std::uint32_t>(path.geometry.throttleCount);
                     path.geometry.throttleDischargeCoefficient = geometry["throttle_discharge_coefficient"].as<double>(path.geometry.throttleDischargeCoefficient);
+                    readCarburettor(geometry, path.geometry.carburettor);
                     path.geometry.runnerLengthMm = geometry["runner_length_mm"].as<double>(path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry["runner_diameter_mm"].as<double>(path.geometry.runnerDiameterMm);
                     path.geometry.runnerPlenumDiameterMm = geometry["runner_plenum_diameter_mm"].as<double>(path.geometry.runnerPlenumDiameterMm);

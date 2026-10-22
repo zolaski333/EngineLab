@@ -5,6 +5,7 @@
 #include <enginelab/physics/IPhysicsModel.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/FlamePhysicsModel.hpp>
+#include <enginelab/physics/CarburettorModel.hpp>
 #include <enginelab/physics/CompressionIgnitionModel.hpp>
 #include <enginelab/physics/FuelInjectionModel.hpp>
 #include <enginelab/physics/EndGasKnockModel.hpp>
@@ -677,6 +678,10 @@ private:
      *  the ECU saw a lean cylinder it could not correct (CP2: 592 of 1192 mg
      *  lost). See throttleFlowKeepingReversedFuel(). */
     std::array<AirboxSlug, 32> airboxSlug_ {};
+    /** One carburettor per intake path, holding the fuel on its walls. */
+    std::array<CarburettorState, 32> carburettorStates_ {};
+    /** What the jets passed this substep, for the fuel flow and the total. */
+    double carburettorFuelMassKgThisStep_ {};
     /** Density-scaled previous charge sampled once at the injector-start edge.
      *  Resolved chamber oxygen may raise the request later in the intake event,
      *  but sub-cycle plenum waves must not be peak-detected into pulse width. */

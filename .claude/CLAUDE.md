@@ -24,9 +24,9 @@ without the owner's explicit agreement.
 2. **The two-stroke model.** Whatever 2T engine is designed, the curves come out
    chaotic and neither the behaviour nor the sound is a real two-stroke's. Free
    rein to add what a 2T needs (carburettor, reed and power valves) or to rework
-   the ports deeply. Half the chaos was the scavenging model and is fixed
-   (journal 2026-10-21); still open are a carburettor, and holding failures at
-   3,500/7,000/7,500 rpm that are the engine's own and not the dyno's.
+   the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
+   and a carburettor exists (2026-10-22); open are reed and power valves and the
+   3,500/7,000/7,500 rpm holding band, the engine's own and not the dyno's.
 3. **Performance**: test duration, build time, real-time factor.
 4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
    that would destroy a real one. Fix the knock PHYSICS, not the damage model.
@@ -72,8 +72,7 @@ cmake --build out/build/windows-vs2022 --config Release --target package   # rel
 ```
 
 Linux is never the reference: the `linux-gcc-release` presets build and test it,
-and `docs/platforms.md` says what differs (`ctest` wraps the GUI test in Xvfb
-itself, so no `xvfb-run` prefix is needed).
+and `ctest` wraps the GUI test in Xvfb itself (no `xvfb-run` prefix needed).
 
 - Warnings are errors. Green build + green `ctest` is the minimum for any
   change. CI (`.github/workflows/ci.yml`) runs the same steps on every push; a
@@ -204,12 +203,13 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   falls); lengthening the pipe (Blair's 500 m/s and the designer's tuned length
   are right; x1.300 is +33 % overpowered, and the curve's TWO humps are both
   the pipe's -- they move as 1/L, so the trough between them is the chamber's
-  wave structure, not scavenging); a transit-vs-window scavenging race
-  (monotonic in rpm by construction); a scavenging bias taken from ONE pressure
-  sample at port opening (a hunting limit cycle over 4,500-6,250 rpm: integrate
-  the front); "the trapped residual is too low" (a unit error). The holding
-  failures at 3,500/7,000/7,500 rpm are none of pipe length, settle, step,
-  crank step or flush clock: still open, and the intake side is untested.
+  wave structure, not scavenging); the carburettor's extra roughness as its
+  pilot, its richness or mixture noise (at equal lambda it is fuelling the
+  crankcase); a transit-vs-window scavenging race (monotonic in rpm by
+  construction); a scavenging bias from ONE pressure sample at port opening (a
+  hunting limit cycle over 4,500-6,250 rpm: integrate the front); "the trapped
+  residual is too low" (a unit error). The 3,500/7,000/7,500 rpm holding band
+  is none of pipe length, settle, step, crank step, flush clock or carburettor.
 - **Intake**: four inertance formulations (unstable or out of phase); the charge
   bias as the MUSCL limiter, the finite plenum, wall heat or valve linearisation
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or
