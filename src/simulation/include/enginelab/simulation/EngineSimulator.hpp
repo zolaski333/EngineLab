@@ -764,6 +764,14 @@ private:
     std::array<CompressionIgnitionResult, 32> compressionIgnitionResults_ {};
     std::array<FuelInjectionState, 32> injectionStates_ {};
     std::array<EndGasKnockState, 32> endGasKnockStates_ {};
+    /** The chamber state at the seal, which Woschni's motored pressure is
+     *  followed from; zero while the cylinder exchanges gas. */
+    struct WoschniReference final {
+        double pressureKpa { 0.0 };
+        double temperatureK { 0.0 };
+        double volumeM3 { 0.0 };
+    };
+    std::array<WoschniReference, 32> woschniReferences_ {};
     std::array<IndicatedWorkState, 32> indicatedWorkStates_ {};
     std::array<ValveTrainState, 32> valveTrainStates_ {};
     std::array<ValveTrainResult, 32> valveTrainResults_ {};

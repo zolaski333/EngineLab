@@ -312,7 +312,10 @@ rev limiter apply after that.
 A spark is scheduled per cylinder. Before the kernel is born, an ignition delay
 depends on pressure, temperature, equivalence ratio and residuals. The laminar
 speed follows a Metghalchi-Keck type correlation; a closure based on mean
-piston speed adds turbulence, while dilution reduces speed and efficiency.
+piston speed adds turbulence, while dilution reduces speed and efficiency. The
+turbulence term grows with load up to a full cylinder and no further: the
+piston stirs the charge, not the intake pressure, so boost does not burn it
+faster.
 
 The current progression geometry is a cylindrical effective volume:
 
@@ -325,13 +328,30 @@ chamber height. It is neither an ellipsoidal front nor a resolved 3D surface.
 The geometric fraction drives an absolute number of moles to react; the
 released energy uses the fuel's LHV and stoichiometry.
 
-Knock uses a Livengood-Wu integral on the end gas. When its threshold is
-reached, a share of the remainder really auto-ignites in the cell, raises the
-pressure and feeds the telemetry. The ECU then pulls advance in proportion to
-the knock level, so at WOT engines sit at a light, constant knock (0.1-0.4)
-rather than stepping back and holding as a real knock control does. Only knock
-above 0.45 (the diagnostics' "severe") adds damage, which lowers efficiency for
-good. This global correlation is not multi-species chemical kinetics.
+Knock follows the end gas, the charge the flame has not reached yet. From the
+seal it is its own zone, compressed isentropically by the cylinder pressure
+with real heat capacities (air, products and gasoline vapour, fitted to the
+ideal-gas tables). Its autoignition delay is Douaud and Eyzat's, fitted on
+primary reference fuels in a knocking engine:
+
+```text
+tau = 17.68 ms x (ON/100)^3.402 x p[atm]^-1.7 x exp(3800 / T_unburned)
+```
+
+A Livengood-Wu integral of dt/tau runs from the spark. When it reaches 1 while
+the flame burns, everything the flame has not reached autoignites at once and
+really raises the pressure in the cell. The pressure that gas adds burning at
+constant volume, (gamma - 1) x unburned share x charge energy / V, is the scale
+of the oscillation it starts; the knock intensity is that over 30 bar. The
+ECU's knock control retards in steps and gives the advance back slowly
+([ecu-tuning.md](ecu-tuning.md)), so at full load an engine settles at its
+knock limit. Only knock above 0.45 (the diagnostics' "severe") adds damage,
+which lowers efficiency for good.
+
+The correlation is global, not multi-species kinetics, and it over-predicts
+knock under boost: the Audi I5 knocks heavily at its maker's 2.5 bar even at
+the ECU's -10 deg floor, where the real engine (10:1, direct injection) holds
+it on 98 RON (journal 2026-10-22).
 
 Each cylinder's firing peak is tracked at every physics sub-step and published
 once per cycle, when the cylinder opens into its gas exchange
@@ -340,8 +360,9 @@ the engine's structural limit (`peak_pressure_limit_bar`; zero takes 120 bar
 naturally aspirated, 140 boosted, 200 for a diesel, the upper end of production
 designs) it adds damage as the square of the excess: 10 % over takes about
 17 minutes to "damaged", 30 % about 2 minutes. The simulated full-load peaks of
-the boosted catalogue engines run above real ones (Audi I5 175 bar, TDI 231 bar),
-so those two carry their own limit 10 % over their stock peak.
+the boosted catalogue engines ran above real ones (Audi I5 175 bar before the
+knock control held it, TDI 231 bar), so those two carry their own limit 10 %
+over that stock peak.
 
 ## Forced induction
 
@@ -377,10 +398,11 @@ to the engine's draw. A turbocharger fed by fewer cylinders spins slower and
 passes less of the air, without any special rule.
 
 `intercooler_effectiveness` (0 to 0.95, default 0) takes that share of the
-compressor's temperature rise back out of the charge. No catalogue engine
-authors one: with a real one (0.7) the petrol turbo engines make 19-29 % more
-torque than their makers' figures, so the model is optimistic at boost by
-about that much and the missing cooler hides it (journal 2026-10-15).
+compressor's temperature rise back out of the charge. The 2JZ, EJ25 and I5
+author 0.7, as their real engines have one. Before the end gas could knock it
+gave them 19-29 % more torque than their makers' figures (journal 2026-10-15);
+now the knock control spends that margin and they land 7-13 % over (journal
+2026-10-22).
 
 The turbine lives in the exhaust gas network, as a restriction face (the same
 primitive as an individual throttle) on the single outgoing face of the first
@@ -431,7 +453,12 @@ Without a graph, the historical geometry is first expanded into a compatible
 physical DAG. See [custom-exhaust.md](custom-exhaust.md).
 
 Cylinders use Woschni's instantaneous convective correlation rather than a
-constant conductance. Intake ducts and every cell of the exhaust network have a
+constant conductance, with its combustion term: C2 = 3.24e-3 m/(s K) times the
+swept volume, the state at the seal and the gap between the firing pressure
+and the motored one (a 1.35 polytrope from the seal). The area is the head,
+the crown and the liner the gas touches, 4V/B. Without the combustion term the
+TDI read 171 g/kWh at 2,000 rpm, below any real diesel; with it 212 (journal
+2026-10-22). Intake ducts and every cell of the exhaust network have a
 metal wall with finite heat capacity. Internal exchange is integrated
 analytically and conserves gas + wall energy; only the explicitly accounted
 external convection rejects energy to the ambient. The model therefore never

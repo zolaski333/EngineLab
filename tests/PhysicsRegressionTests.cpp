@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <numbers>
 #include <utility>
 
 namespace {
@@ -50,6 +51,38 @@ int main() {
             * (exchanging.gasTemperatureK - exchanging.wallTemperatureK);
         require(-open.heatToGasJ < maximumRejectableHeatJ,
                 "finite cylinder heat exchange must not cool gas through the wall temperature");
+    }
+
+    {
+        // Woschni's combustion term (Heywood, eq. 12.19), with his constants:
+        // a 0.5 l cylinder sealed at 200 kPa, 400 K and 0.45 l, fired 3 MPa
+        // above its motored pressure, stirs its gas at 2.28 x 10 m/s plus
+        // 3.24e-3 x 0.5e-3 x 400 / (200 x 0.45e-3) x 3,000 = 21.6 m/s more.
+        const auto volumeM3 = 0.06e-3;
+        const auto motoredKpa = 200.0 * std::pow(0.45e-3 / volumeM3, 1.35);
+        const enginelab::CylinderHeatTransferConditions fired {
+            0.086, 0.0, 10.0, motoredKpa + 3'000.0, 2'200.0, 450.0, 0.85, 0.0, 0.001, false,
+            volumeM3, 0.5e-3, 200.0, 400.0, 0.45e-3
+        };
+        auto unreferenced = fired;
+        unreferenced.referencePressureKpa = 0.0;
+        const auto withFlame = enginelab::CylinderHeatTransferModel::evaluate(fired);
+        const auto pistonOnly = enginelab::CylinderHeatTransferModel::evaluate(unreferenced);
+        require(std::abs(withFlame.coefficientWPerM2K / pistonOnly.coefficientWPerM2K
+                    - std::pow((22.8 + 21.6) / 22.8, 0.8)) < 1.0e-3,
+                "combustion stirs the gas as Woschni's second term says");
+        auto motored = fired;
+        motored.pressureKpa = motoredKpa;
+        auto motoredUnreferenced = motored;
+        motoredUnreferenced.referencePressureKpa = 0.0;
+        require(std::abs(enginelab::CylinderHeatTransferModel::evaluate(motored).coefficientWPerM2K
+                    - enginelab::CylinderHeatTransferModel::evaluate(motoredUnreferenced).coefficientWPerM2K) < 1.0e-9,
+                "a motored cylinder has no combustion term");
+        // At top dead centre the gas still touches the liner above the
+        // piston: head, crown and the clearance height, 2 pi r^2 + 4 V / B.
+        require(std::abs(withFlame.exposedAreaM2 - (2.0 * std::numbers::pi * 0.043 * 0.043
+                    + 4.0 * volumeM3 / 0.086)) < 1.0e-12,
+                "the exposed liner includes the clearance height");
     }
 
     {

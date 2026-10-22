@@ -74,6 +74,24 @@ file formats, always with an in-memory migration).
   125 cc cylinders a 16.6 mm bore on a single and 33.2 mm on a four. Singles gain
   18-29 % of peak torque; triples, fours and V4s lose the 6-9 % their oversized
   bores gave them; twins are unchanged.
+- **Engines knock.** A boost and an advance that would destroy a real engine
+  now knock: the end gas the flame has not reached is followed as its own
+  zone, compressed from the seal, against an autoignition delay fitted on
+  reference fuels in a knocking engine (Douaud-Eyzat), and the knock's
+  intensity is the pressure that gas adds. With knock control off, a 2JZ at
+  full load knocks heavily and damages itself. The knock control now works as
+  a production one: it pulls the spark back in steps of about a degree while
+  the engine knocks and gives it back at 1 deg/s, so an engine settles at its
+  knock limit instead of sitting in light knock. The 2JZ, EJ25 and Audi I5 get
+  the intercoolers their real engines have. The Audi I5 still knocks heavily at
+  its maker's 2.5 bar: the model over-predicts knock under boost.
+- Boost no longer burns the charge faster: the flame's turbulence follows the
+  piston, not the intake pressure, so a boosted cylinder burns like a full
+  unboosted one.
+- Cylinder heat loss includes Woschni's combustion term and the liner above
+  the piston, so the 2.0 TDI's fuel consumption is a real diesel's (212 g/kWh
+  at 2,000 rpm, it read an impossible 171). Its turbine was re-fitted to hold
+  its boost: 285 N.m at 2,000 rpm against the rated 320.
 
 ### Changed
 

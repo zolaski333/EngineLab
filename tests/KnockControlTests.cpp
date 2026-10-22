@@ -1,6 +1,8 @@
-// Knock control is a calibration: the ECU retards the spark by a gain per unit
-// of knock intensity, `knock.retard_deg_per_intensity` (12 deg by default, the
-// gain it always used). Zero turns the control off and the knock runs free.
+// Knock control is a calibration: `knock.retard_deg_per_intensity` is the most
+// spark the ECU may pull (12 deg by default). Knock the sensor hears pulls the
+// spark back fast, clean running gives it back at a degree per second, so the
+// retard settles at the knock limit. Zero turns the control off and the knock
+// runs free.
 
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
@@ -43,8 +45,9 @@ void publishKnockGain(SimpleEcuModel& ecu, double degreesPerIntensity) {
     ecu.beginFrame();
 }
 
-/** The ECU alone: the retard is the gain times the knock, and the knock-retard
- *  limit is reported only when the control actually retards. */
+/** The ECU alone: knock above the detection level (0.1) retards at 20 x its
+ *  excess per second, a share of the authority; clean running recovers 0.08
+ *  of it per second. The knock-retard limit is reported while it retards. */
 void ecuAppliesTheGain() {
     const auto config = makeDefaultInlineFour();
     SimpleEcuModel ecu;
@@ -52,7 +55,7 @@ void ecuAppliesTheGain() {
     ecu.beginFrame();
     require(knockRetardGainDegrees(*ecu.calibrationStore()->snapshot())
                 == calibration::ecuLimits::defaultKnockRetardGainDegrees,
-        "the baseline gain is the ECU's former 12 deg");
+        "the baseline authority is the ECU's former 12 deg");
 
     EngineState state;
     state.rpm = 3'000.0;
@@ -62,27 +65,39 @@ void ecuAppliesTheGain() {
     EngineControls controls;
     controls.ignitionEnabled = true;
     controls.throttle = 1.0;
-    const auto advanceAt = [&](double knock) {
-        state.knockLevel = knock;
-        return ecu.evaluate(config, state, controls);
+    // Evaluated every millisecond, as the solver's substeps call it.
+    const auto runFor = [&](double knock, double seconds) {
+        EcuCommand command;
+        for (auto step = 0; step < static_cast<int>(std::lround(seconds * 1'000.0)); ++step) {
+            state.simulationTimeSeconds += 1.0e-3;
+            state.knockLevel = knock;
+            command = ecu.evaluate(config, state, controls);
+        }
+        return command;
     };
-    const auto clean = advanceAt(0.0).ignitionAdvanceDegrees;
-    const auto knocking = advanceAt(0.4);
-    require(std::abs(clean - knocking.ignitionAdvanceDegrees - 4.8) < 1.0e-9,
-        "at the default gain, knock 0.4 retards 4.8 deg");
+    const auto clean = runFor(0.0, 0.01).ignitionAdvanceDegrees;
+    require(std::abs(clean - runFor(0.08, 1.0).ignitionAdvanceDegrees) < 1.0e-9,
+        "knock below the detection level does not move the spark");
+    const auto knocking = runFor(0.2, 0.1);
+    require(std::abs(clean - knocking.ignitionAdvanceDegrees - 2.4) < 0.05,
+        "0.1 s at knock 0.2 pulls 20 x 0.1 x 0.1 = a fifth of 12 deg");
     require(hasActiveLimit(knocking.activeLimits, ActiveLimit::knockRetard),
         "a retarding knock control is reported");
-
-    publishKnockGain(ecu, 0.0);
-    const auto off = advanceAt(0.4);
-    require(std::abs(off.ignitionAdvanceDegrees - clean) < 1.0e-9,
-        "with the gain at zero the knock does not move the spark");
-    require(!hasActiveLimit(off.activeLimits, ActiveLimit::knockRetard),
-        "a control that is off does not report a knock retard");
+    require(std::abs(clean - runFor(0.0, 1.0).ignitionAdvanceDegrees - 1.44) < 0.05,
+        "a clean second gives back 0.08 x 12 = 0.96 deg");
 
     publishKnockGain(ecu, 25.0);
-    require(std::abs(clean - advanceAt(0.4).ignitionAdvanceDegrees - 10.0) < 1.0e-9,
-        "a gain of 25 deg retards 10 deg at knock 0.4");
+    require(std::abs(clean - runFor(0.0, 0.001).ignitionAdvanceDegrees - 0.12 * 25.0) < 0.05,
+        "the retard is a share of the authority, so 25 deg scales it");
+    require(std::abs(clean - runFor(0.6, 1.0).ignitionAdvanceDegrees - 25.0) < 1.0e-9,
+        "sustained heavy knock pulls the whole authority and no more");
+
+    publishKnockGain(ecu, 0.0);
+    const auto off = runFor(0.4, 0.5);
+    require(std::abs(off.ignitionAdvanceDegrees - clean) < 1.0e-9,
+        "with the authority at zero the knock does not move the spark");
+    require(!hasActiveLimit(off.activeLimits, ActiveLimit::knockRetard),
+        "a control that is off does not report a knock retard");
 
     auto diesel = config;
     diesel.fuel = FuelType::diesel;
@@ -163,7 +178,8 @@ void knockRunsFreeWithoutControl() {
         std::cout << "  2JZ held at full load, knock control " << name << ": knock mean " << run.meanKnock
                   << ", peak " << run.peakKnock << ", advance " << run.meanAdvance << " deg, torque "
                   << run.meanTorque << " N.m, damage " << run.damage << '\n';
-    require(on.meanKnock > 0.1, "the 2JZ knocks lightly at full load (else this proves nothing)");
+    require(on.peakKnock > 0.1 && on.meanKnock < 0.2,
+        "the 2JZ reaches its knock limit at full load and the control holds it there");
     require(off.meanAdvance > on.meanAdvance + 2.0, "without knock control the spark stays where the map puts it");
     require(off.meanKnock > on.meanKnock + 0.05, "without knock control the knock grows");
 }

@@ -657,19 +657,70 @@ int main() {
                 "simultaneous valve transaction must conserve species and total energy");
     }
     {
-        enginelab::EndGasKnockState coolState;
-        enginelab::EndGasKnockState hotState;
-        bool hotAutoIgnited = false;
-        for (int step = 0; step < 300; ++step) {
-            const auto cool = enginelab::EndGasKnockModel::advance(coolState,
-                { 12.0, 650.0, 1.0, 0.25, 98.0, true }, 0.00005);
-            const auto hot = enginelab::EndGasKnockModel::advance(hotState,
-                { 72.0, 1'060.0, 1.0, 0.25, 90.0, true }, 0.00005);
-            require(!cool.autoIgnited, "cool low-pressure end gas must not knock");
-            hotAutoIgnited = hotAutoIgnited || hot.autoIgnited;
+        using enginelab::EndGasKnockModel;
+        // The literature, not the simulator: Douaud and Eyzat give 8.2 ms at
+        // 850 K, 20 bar, RON 95.
+        require(std::abs(EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 95.0) - 8.15e-3) < 0.05e-3,
+                "the end-gas delay is Douaud and Eyzat's");
+        require(EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 105.0)
+                    > 1.3 * EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 95.0),
+                "ten octane numbers lengthen the delay by (105/95)^3.4");
+        // Ideal-gas tables: air 3.50 R at 300 K and 3.98 R at 1,000 K.
+        constexpr double r = 8.31446261815324;
+        require(std::abs(EndGasKnockModel::unburnedMolarHeatCapacityCp(300.0, 0.0, 0.0) / r - 3.50) < 0.03
+                    && std::abs(EndGasKnockModel::unburnedMolarHeatCapacityCp(1'000.0, 0.0, 0.0) / r - 3.98) < 0.04,
+                "the end gas's air has the tables' heat capacity, not 7/2 R at every temperature");
+
+        // The zone follows the pressure from the seal: a stoichiometric
+        // charge at 350 K compressed 30 times ends near 790 K (an average
+        // gamma of 1.31), where 7/2 R would put it at 925 K.
+        enginelab::EndGasKnockState zone;
+        enginelab::EndGasConditions closed { 1.0, 350.0, 1.0, 0.0, 98.0, true, false, 0.0165, 0.04 };
+        (void)EndGasKnockModel::advance(zone, closed, 1.0e-5);
+        for (int step = 1; step <= 300; ++step) {
+            closed.pressureBar = std::pow(30.0, step / 300.0);
+            (void)EndGasKnockModel::advance(zone, closed, 1.0e-9);
         }
-        require(hotAutoIgnited && hotState.filteredLevel > 0.0,
-                "hot high-pressure end gas must auto-ignite through the Livengood-Wu integral");
+        require(zone.unburnedTemperatureK > 760.0 && zone.unburnedTemperatureK < 820.0,
+                "the unburned zone is compressed with its own heat capacities");
+
+        // Intensity is the end gas left when it goes: the same knock with
+        // 40 % unburned is four times the one with 10 %, and an open cylinder
+        // has no end gas at all.
+        const auto knockAt = [](double burnedFraction) {
+            enginelab::EndGasKnockState state;
+            enginelab::EndGasConditions hot { 60.0, 1'000.0, 1.0, burnedFraction, 90.0, true, true,
+                                              0.0165, 0.05, 1.0e-4, 1'000.0, 1.3 };
+            enginelab::EndGasKnockResult result;
+            for (int step = 0; step < 2'000 && !result.autoIgnited; ++step)
+                result = EndGasKnockModel::advance(state, hot, 1.0e-5);
+            return result;
+        };
+        const auto early = knockAt(0.6);
+        const auto late = knockAt(0.9);
+        require(early.autoIgnited && late.autoIgnited, "a hot, high-pressure end gas knocks");
+        require(std::abs(early.knockPressureRiseBar / late.knockPressureRiseBar - 4.0) < 1.0e-9
+                    && early.level > late.level,
+                "knock intensity is the unburned share at onset");
+        enginelab::EndGasKnockState open;
+        for (int step = 0; step < 2'000; ++step)
+            require(!EndGasKnockModel::advance(open, { 60.0, 1'000.0, 1.0, 0.5, 90.0, false, true,
+                                                       0.0165, 0.05, 1.0e-4, 1'000.0, 1.3 }, 1.0e-5).autoIgnited,
+                    "an open cylinder has no end gas to knock");
+    }
+    {
+        // The integral starts at ignition: a hot charge sealed for 20 ms of
+        // compression has not used up its delay when the flame starts.
+        using enginelab::EndGasKnockModel;
+        enginelab::EndGasKnockState state;
+        enginelab::EndGasConditions compressed { 60.0, 1'000.0, 1.0, 0.0, 90.0, true, false,
+                                                 0.0165, 0.05, 1.0e-4, 1'000.0, 1.3 };
+        for (int step = 0; step < 2'000; ++step)
+            (void)EndGasKnockModel::advance(state, compressed, 1.0e-5);
+        compressed.combustionActive = true;
+        compressed.burnedFraction = 0.05;
+        require(!EndGasKnockModel::advance(state, compressed, 1.0e-6).autoIgnited,
+                "the compression stroke does not count toward the end gas's delay");
     }
     {
         enginelab::GasCell highPressure;
@@ -820,6 +871,16 @@ int main() {
                         * highSpeedPentRoof.temperatureK) + 1.0e-12,
                 "high-speed pent-roof combustion must retain calibrated tumble "
                 "while remaining a subsonic deflagration");
+        // Turbulence follows the piston, not the intake pressure: a boosted
+        // charge burns no faster than a full unboosted one.
+        auto boosted = highSpeedPentRoof;
+        boosted.load = 1.5;
+        boosted.temperatureK = 600.0;
+        auto unboosted = boosted;
+        unboosted.load = 1.0;
+        require(enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, boosted)
+                    == enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, unboosted),
+                "boost must not stir the charge harder than a full cylinder");
         enginelab::FlameEvent event;
         enginelab::FlameConditions conditions { 0.086, 0.000055, 700.0, 900'000.0,
                                                  1.05, 0.04, 12.0, 0.9 };

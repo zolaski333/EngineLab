@@ -37,7 +37,7 @@
 #include <vector>
 
 namespace {
-constexpr std::array<std::string_view, 32> dynoColumnNames {
+constexpr std::array<std::string_view, 37> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
     "egt_c", "map_kpa", "air_mg", "fuel_g_s", "pmep_bar",
@@ -46,6 +46,8 @@ constexpr std::array<std::string_view, 32> dynoColumnNames {
     "rpm_min", "rpm_max", "rpm_stddev", "rpm_drift",
     "held_rpm_min", "held_rpm_max", "held_rpm_stddev", "held_rpm_drift",
     "brake_nm_mean", "brake_nm_min", "brake_nm_max",
+    "knock_mean", "knock_peak", "heavy_knock_share", "advance_deg",
+    "end_gas_k",
 };
 
 struct Sample final {
@@ -82,6 +84,15 @@ struct Sample final {
     double meanBrakeTorqueNm {};
     double minimumBrakeTorqueNm {};
     double maximumBrakeTorqueNm {};
+    /** `knockLevel`, the intensity the ECU retards on: window mean and peak,
+     * and the share of frames above the 0.45 the diagnostics call severe. */
+    double meanKnock {};
+    double peakKnock {};
+    double heavyKnockShare {};
+    /** The spark the ECU commanded, knock retard included; window mean. */
+    double advanceDegrees {};
+    /** The end gas's peak temperature per cycle, over cylinders and window. */
+    double endGasPeakTemperatureK {};
 };
 
 [[nodiscard]] std::array<double, dynoColumnNames.size() - 1U> numericColumns(
@@ -101,6 +112,8 @@ struct Sample final {
         sample.heldRpmStandardDeviation, sample.heldRpmDrift,
         sample.meanBrakeTorqueNm, sample.minimumBrakeTorqueNm,
         sample.maximumBrakeTorqueNm,
+        sample.meanKnock, sample.peakKnock, sample.heavyKnockShare,
+        sample.advanceDegrees, sample.endGasPeakTemperatureK,
     };
 }
 
@@ -231,6 +244,8 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     auto secondHalfHeldRpmAcc = 0.0;
     auto firstHalfCount = 0.0;
     auto secondHalfCount = 0.0;
+    auto knockAcc = 0.0, peakKnock = 0.0, heavyKnockAcc = 0.0, advanceAcc = 0.0;
+    auto endGasAcc = 0.0;
     auto sampleStartTimeSeconds = std::numeric_limits<double>::infinity();
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
         const auto absorberOutput = absorber.advance(
@@ -304,6 +319,15 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             exhaustAcc += frame.state.exhaustPressureKpa;
             airAcc += frame.state.airMassMgPerCycle;
             fuelAcc += frame.state.fuelFlowGramsPerSecond;
+            knockAcc += frame.state.knockLevel;
+            peakKnock = std::max(peakKnock, frame.state.knockLevel);
+            if (frame.state.knockLevel > 0.45) heavyKnockAcc += 1.0;
+            advanceAcc += frame.state.ignitionAdvanceDegrees;
+            auto endGasPeak = 0.0;
+            for (std::size_t c = 0; c < frame.state.cylinderStateCount; ++c)
+                endGasPeak += frame.state.cylinderStates[c].endGasPeakTemperatureK;
+            endGasAcc += endGasPeak / std::max<double>(1.0,
+                static_cast<double>(frame.state.cylinderStateCount));
             // The simulator's per-sub-step cycle peak: a per-frame sample of
             // the chamber pressure misses the firing peak.
             peak = std::max(peak, frame.state.peakCylinderPressureBar);
@@ -360,6 +384,11 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     acc.minimumBrakeTorqueNm = std::isfinite(minimumBrakeTorque)
         ? minimumBrakeTorque : acc.meanBrakeTorqueNm;
     acc.maximumBrakeTorqueNm = maximumBrakeTorque;
+    acc.meanKnock = knockAcc / d;
+    acc.peakKnock = peakKnock;
+    acc.heavyKnockShare = heavyKnockAcc / d;
+    acc.advanceDegrees = advanceAcc / d;
+    acc.endGasPeakTemperatureK = endGasAcc / d;
     return acc;
 }
 
@@ -588,6 +617,8 @@ int main(int argc, char** argv) {
     // Degrees added to the whole ignition curve: how far it is from the best
     // torque (journal 2026-10-19).
     auto advanceOffset = 0.0;
+    // Replaces every engine's fuel octane (RON); 0 keeps the catalogue's.
+    auto octaneRating = 0.0;
     // Seconds held at each point before sampling, and the length of the sample
     // window. The defaults are what every figure this tool has ever printed
     // used, so leaving them alone keeps old CSVs comparable. Raise the settle
@@ -614,6 +645,8 @@ int main(int argc, char** argv) {
         else if (argument == "--add-turbo") addTurbo = true;
         else if (argument == "--advance-offset" && index + 1 < argc)
             advanceOffset = std::stod(argv[++index]);
+        else if (argument == "--octane" && index + 1 < argc)
+            octaneRating = std::stod(argv[++index]);
         else if (argument == "--settle" && index + 1 < argc)
             settleSeconds = std::stod(argv[++index]);
         else if (argument == "--sample" && index + 1 < argc)
@@ -629,7 +662,7 @@ int main(int argc, char** argv) {
                          " [--filter name-fragment] [--step rpm]"
                          " [--reference-file csv] [--schema-only]"
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
-                         " [--add-turbo] [--advance-offset deg]"
+                         " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm]"
                          " [--crank-degrees deg] [--coupling-us us]\n";
@@ -691,6 +724,8 @@ int main(int argc, char** argv) {
             if (!engine.forcedInduction.enabled) engine = enginelab::withTurbocharger(engine);
     for (auto& engine : engines)
         for (auto& sample : engine.ignition.timingCurve) sample.advanceDegrees += advanceOffset;
+    if (octaneRating > 0.0)
+        for (auto& engine : engines) engine.octaneRating = octaneRating;
 
     auto boostHeld = true;
     for (const auto& engine : engines) {

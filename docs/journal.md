@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-22 — Knock: the end gas, a stepped control, Woschni's combustion term
+
+- End gas as its own zone from the seal, isentropic with real cp(T); Douaud-Eyzat delay; Livengood-Wu from the spark; intensity = the constant-volume pressure the unburned share adds, over 30 bar. ECU knock control now steps (20 x excess/s of a 12 deg authority, ~1.3 deg per heavy event, back at 1 deg/s).
+- 2JZ at full load, control off: knock 0.83 mean, damage 0.0065; on: 0.08 mean at 4.7 deg, no damage. Catalogue WOT: NA engines at most 0.10, 2JZ <= 0.08, EJ25 0.40 at 5,000 rpm.
+- It took three more changes: the flame's load term capped at 1 (boost burned a charge up to 36 % faster); intercoolers 0.7 on 2JZ/EJ25/I5; Woschni's combustion term and the 4V/B liner (TDI BSFC 171/181/199 -> 212/203/215 g/kWh at 2/3/4,000 rpm; petrol WOT 227-310). TDI throat 280 -> 220 mm2: 285 N.m at 2,000 rpm.
+- Maker gate (before the TDI refit): all pass but the TDI at 2,000 rpm; 2JZ +9.6 %, EJ25 +12.8 %, I5 +7.0 % torque.
+- **Open: the model over-knocks under boost.** Implied knock-limited spark vs calibration practice: ~6 deg early NA, ~11 at 1.9 bar, ~17 at 2.45. The I5 knocks 0.78-0.90 at every rpm with the authority saturated, 0.56 at 2,000 rpm at the -10 deg floor; at 2.3/2.2/2.1 bar still heavy (2.1: 0.47-0.83); direct injection (end gas -15 K) and CR 10 neither cure it.
+- Refuted: Kalghatgi's octane index (the zone is 150-200 K colder than his K fit, boost gains 1-3 octane); an ECU boost cut on knock (I5 155 kPa / 363 N.m).
+- Leads: the intensity scale (constant-volume rise vs MAPO, a load-scaled threshold); Douaud-Eyzat used at 90-100 bar onsets, beyond its fit; the DI preset going lean above 5,000 rpm (lambda 1.07-1.18); the RD350's 437-1,582 g/kWh.
+- Not measured: the sound before/after; CatalogReference and CatalogBoostHold after the TDI refit; the full ctest.
+
 ## 2026-10-22 — Two-stroke: a carburettor, and the bore it sits in
 
 - Added: a slide carburettor per intake path (`CarburettorModel`), two circuits on their own depressions -- the main on the venturi's 1/2 rho V^2, the pilot on the bowl-to-crankcase drop -- with jets in their stamped numbers (cc/min under 1 m of head). Its fuel enters the crankcase with the air; the injector is commanded nothing on a carburetted path. The designer fits one to every two-stroke and sizes the jets from the engine: an RD350-sized design gets #287 main / #41 pilot against the bike's 260-290 / 30-40, fitted to neither.

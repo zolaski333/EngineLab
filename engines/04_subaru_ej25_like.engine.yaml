@@ -42,6 +42,10 @@ engine:
     shaft_inertia_kg_m2: 0.00011
     wastegate_pressure_ratio: 2.05
     charge_temperature_rise_c: 46
+    # The real engine has an air-to-air intercooler. Without one the charge
+    # reached the runners at ~130 degC at full boost and the knock control
+    # retarded the spark to hold it, at the cost of torque (journal 2026-10-22).
+    intercooler_effectiveness: 0.7
     # Family-level acoustic estimates; replace with measured turbo geometry.
     compressor_blade_count: 6
     turbine_blade_count: 9
