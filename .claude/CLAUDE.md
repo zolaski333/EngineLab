@@ -31,7 +31,11 @@ without the owner's explicit agreement.
 4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
    that would destroy a real one. Fix the knock PHYSICS, not the damage model.
    The designer's ignition is a template because there is no knock limit to
-   calibrate MBT against, so this item unblocks that one.
+   calibrate MBT against, so this item unblocks that one. The end gas knocks
+   since 2026-10-22, a stepped control holds the limit, and Douaud-Eyzat's
+   prefactor (x2) puts the catalogue's maps at their limit (2026-10-23). Open:
+   the I5 holds 8-12 deg of retard at its maker's boost; Woschni's combustion
+   term (right for the TDI's BSFC, it stalls lugged engines) was backed out.
 5. **Editing on the engine**: compression ratio by clicking the engine, every
    turbo visible when two or more are fitted, carburettor parameters by
    clicking (if one is added), and two exhaust paths joinable into one (a
@@ -225,10 +229,11 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   fail, 5 more trade the lean first cycle for rich or misfires); seeding the
   high-load correction cell from the idle cell (saves a start at 4 s but stalls
   10 engines of 14 after 25 s of idle) and an asynchronous pulse on tip-in.
-- **Knock, one input at a time** (journal 2026-10-13): the end-gas integral
-  reads the MEAN chamber temperature with a delay 2-5 x slow; isentropic end gas
-  never knocks; plus Douaud-Eyzat it over-knocks (1,000-1,200 K); integral
-  control pulls 12 deg for nothing.
+- **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
+  constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
+  octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363
+  N.m); the I5 at 2.1 bar. A weaker Douaud-Eyzat pressure exponent has no
+  source (pressure matters more in the NTC band).
 - **The other simulator's ingredients, one at a time** (journal 2026-10-13/14):
   output stage, pressure-release outlet, valve-area noise, mild room IR -- none
   kept (blind listening or measurement). Its fine mesh is not shown to matter.

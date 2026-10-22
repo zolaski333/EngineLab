@@ -3037,7 +3037,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             .cycleVariationCorrelation,
                         combustionVariationRandomState_[cylinderIndex],
                         combustionVariationNormalisedState_[cylinderIndex]);
-                endGasKnockStates_[cylinderIndex] = {};
                 meteredFuelMolesLastCycle_[cylinderIndex] = injectedFuelMolesThisCycle_[cylinderIndex];
                 const auto chamberFuelMoles = cylinderGas_[cylinderIndex].mixture().fuelMoles;
                 deliveredFuelMolesLastCycle_[cylinderIndex] = chamberFuelMoles;
@@ -3357,6 +3356,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         reaction.releasedEnergyJoules;
                 }
 
+                // The end gas exists from the moment the cylinder seals: both
+                // valves shut, or a two-stroke's transfer and exhaust ports.
+                const auto cylinderSealed = twoStroke
+                    ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
+                          transferPortWidthMm(config_.twoStroke, cylinder),
+                          config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
+                        && portOpenAreaMm2(cylinder, config_.twoStroke.exhaustPortOpenDegrees,
+                          exhaustPortWidthMm(config_.twoStroke, cylinder),
+                          config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
+                    : intakeLift <= 0.0 && exhaustLift <= 0.0;
+                const auto& chamberMixture = cylinderGas_[cylinderIndex].mixture();
+                const auto chamberMoles = std::max(1.0e-15, chamberMixture.totalMoles());
                 const auto endGas = EndGasKnockModel::advance(
                     endGasKnockStates_[cylinderIndex], {
                         cylinderGas_[cylinderIndex].pressureKpa() / 100.0,
@@ -3364,9 +3375,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         flameConditions.equivalenceRatio,
                         flameEvents_[cylinderIndex].burnedFraction,
                         config_.octaneRating,
+                        cylinderSealed,
                         cylinderSparkCombustionAvailable
                             && flameEvents_[cylinderIndex].active
-                            && !cylinderMisfires_[cylinderIndex] },
+                            && !cylinderMisfires_[cylinderIndex],
+                        chamberMixture.fuelMoles / chamberMoles,
+                        chamberMixture.burnedMoles / chamberMoles,
+                        cylinderGas_[cylinderIndex].volumeM3(),
+                        flameEvents_[cylinderIndex].initialBurnableFuelMoles
+                            * config_.fuelProperties.molarMassGramsPerMole * 0.001
+                            * config_.fuelProperties.lowerHeatingValueMjPerKg * 1.0e6,
+                        cylinderGas_[cylinderIndex].heatCapacityRatioEffective() },
                     combustionDt);
                 if (endGas.autoIgnited
                         && endGas.autoIgnitedFuelFraction > 0.0) {
@@ -5458,6 +5477,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 highLoadTrimBlend);
             cylinderState.residualGasFractionAtSpark = residualGasFractionAtSpark_[index];
             cylinderState.equivalenceRatioAtSpark = equivalenceRatioAtSpark_[index];
+            cylinderState.endGasPeakTemperatureK = compressionIgnition
+                ? 0.0 : endGasKnockStates_[index].lastCyclePeakUnburnedTemperatureK;
+            cylinderState.knockPressureRiseBar = compressionIgnition
+                ? 0.0 : endGasKnockStates_[index].lastKnockPressureRiseBar;
             cylinderState.pistonTravelMm = kinematics.pistonTravelMm;
             cylinderState.pistonPositionMm = kinematics.pistonPositionMm;
             cylinderState.pistonVelocityMps = kinematics.pistonVelocityMps;

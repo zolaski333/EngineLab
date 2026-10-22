@@ -174,8 +174,8 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
     }
     if (!diesel) {
         draft.set(ScalarCalibration {
-            metadata(std::string(keys::knockRetardGain), "Knock retard gain",
-                     "Spark retard per unit of knock intensity. Zero turns knock control off: the knock then runs free and severe knock damages the engine.",
+            metadata(std::string(keys::knockRetardGain), "Knock retard limit",
+                     "The most spark the knock control may pull. It retards fast while the engine knocks and gives the advance back at about a degree per second, so it settles at the knock limit; past this much retard the knock is no longer held. Zero turns knock control off: the knock then runs free and severe knock damages the engine.",
                      CalibrationUnit::degreeCrankshaft, ecuLimits::minimumKnockRetardGainDegrees,
                      ecuLimits::maximumKnockRetardGainDegrees, 1),
             ecuLimits::defaultKnockRetardGainDegrees

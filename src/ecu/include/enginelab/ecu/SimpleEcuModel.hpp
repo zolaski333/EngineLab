@@ -13,8 +13,8 @@ namespace enginelab {
  *  here rather than from the authored config. */
 [[nodiscard]] double activeRevLimitRpm(const EngineConfig& config,
                                        const calibration::CalibrationSnapshot& calibration) noexcept;
-/** The ECU's knock control gain: spark retard per unit of knock intensity,
- *  from the calibration's `knock.retard_deg_per_intensity` (12 deg when the
+/** The ECU's knock control authority: the most spark it may pull, from the
+ *  calibration's `knock.retard_deg_per_intensity` (12 deg when the
  *  calibration has none). Zero turns knock control off. */
 [[nodiscard]] double knockRetardGainDegrees(const calibration::CalibrationSnapshot& calibration) noexcept;
 /** Launch control's rev limit (calibration `limits.launch_rpm`); 0 = off. */
@@ -60,6 +60,7 @@ public:
         driverRevvedSinceStart_.store(false, std::memory_order_relaxed);
         afterfireOverrunWindow_.store(false, std::memory_order_relaxed);
         afterfirePulseEpochSeconds_.store(0.0, std::memory_order_relaxed);
+        knockRetardShare_.store(0.0, std::memory_order_relaxed);
     }
     /**
      * Read-only view of the idle governor's internal state, for diagnostics.
@@ -108,6 +109,8 @@ private:
     mutable std::atomic<bool> limiterLatched_ { false };
     mutable std::atomic<bool> decelerationFuelCutLatched_ { false };
     mutable std::atomic<double> decelerationFuelResume_ { 1.0 };
+    /** The knock control's retard as a share of its authority, 0-1. */
+    mutable std::atomic<double> knockRetardShare_ { 0.0 };
     mutable std::atomic<double> lambdaLearningHoldSeconds_ { 0.0 };
     mutable std::atomic<double> limiterReleaseTime_ { 0.0 };
     mutable std::atomic<double> previousThrottle_ { 0.0 };

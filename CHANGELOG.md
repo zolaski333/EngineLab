@@ -74,6 +74,21 @@ file formats, always with an in-memory migration).
   125 cc cylinders a 16.6 mm bore on a single and 33.2 mm on a four. Singles gain
   18-29 % of peak torque; triples, fours and V4s lose the 6-9 % their oversized
   bores gave them; twins are unchanged.
+- **Engines knock.** A boost and an advance that would destroy a real engine
+  now knock: the end gas the flame has not reached is followed as its own
+  zone, compressed from the seal, against an autoignition delay fitted on
+  reference fuels in a knocking engine (Douaud-Eyzat), and the knock's
+  intensity is the pressure that gas adds. The delay's prefactor is
+  calibrated so that the catalogue's own spark maps sit at their knock limit,
+  as a production map does: 10 deg of advance over a map knocks, and a 2JZ
+  run that way at full load with knock control off knocks heavily. The knock
+  control now works as a production one: it pulls the spark back in steps of
+  about a degree while the engine knocks and gives it back at 1 deg/s, so an
+  engine settles at its knock limit instead of sitting in light knock. The
+  2JZ, EJ25 and Audi I5 get the intercoolers their real engines have.
+- Boost no longer burns the charge faster: the flame's turbulence follows the
+  piston, not the intake pressure, so a boosted cylinder burns like a full
+  unboosted one.
 
 ### Changed
 

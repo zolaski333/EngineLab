@@ -1449,6 +1449,12 @@ struct CylinderState final {
      *  command, for example while DFCO resume waits for a complete port-injector
      *  window. Event/audio consumers must not label that clean cut a misfire. */
     bool combustionCommandAvailable { true };
+    /** The end gas: the hottest the unburned charge got in the last completed
+     *  cycle, compressed from the moment the cylinder sealed (EndGasKnockModel),
+     *  and the pressure the last knock event's end gas released. Spark ignition
+     *  only; zero on a diesel. */
+    double endGasPeakTemperatureK { 0.0 };
+    double knockPressureRiseBar { 0.0 };
 };
 
 enum class DynoMode : std::uint8_t {

@@ -5,6 +5,27 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Knock: Douaud-Eyzat's prefactor doubled; Woschni's combustion term backed out
+
+- Linux, `linux-gcc-release`. The 2026-10-22 knock work failed 8 ctest gates its baseline (91c04d3) passes. Ablation by switches, one ingredient each.
+- Woschni's combustion term plus the 4V/B liner stalled the RD350's standing start (min 552 -> 260 rpm), the lugged I4 of CombustionPhasing and moved CameraMicrophone's click metric; either one off fixed them. Backed out with the TDI refit it forced (280 mm2, 0.028 law): still the TDI's 171 g/kWh, an open lead.
+- I5 at 2,000 rpm, 2.48 bar, map 8.7 deg, control off: CA50 ~8 ATDC, end gas 955-965 K at 96-100 bar, 13-33 % unburned at onset, tau 0.37 ms. Seal 377 K at 2.28 bar, manifold 64 degC: plausible inputs.
+- Retard held behind the map (8 engines, 2-9.5 krpm): x1 delay K20 7-12 deg, LS3 5-9, 2JZ 5-12, EJ25 10-12, I5 saturated; x2: NA 0-2, 2JZ 0-4.6, EJ25 0-5.4, I5 8-13 at light knock; x3 all ~0. Same with Woschni off. Kept x2 (35.4 ms): a production map sits 0-3 deg from its limit.
+- x2, control off: map clean; +5 deg light (K20 0.28 at 3,500); +10 deg K20 0.23-0.39, 2JZ 0.80 at 5,000 (all frames heavy).
+- KnockControl/LiveTuning now advance the 2JZ map 8 deg to reach a limit. CatalogPhysics' absorber stopped at 25 bar BMEP, below the I5's ~26: now 35 bar, gains x25/35.
+- Sources reachable here are search snippets only: Chen et al. 2014 (D-E ignores EGR and lambda), an Energy & Fuels study, doi 10.1021/acs.energyfuels.4c04775 (D-E over-predicts knock as intake pressure rises). Not measured: the sound; Windows.
+
+## 2026-10-22 — Knock: the end gas, a stepped control, Woschni's combustion term
+
+- End gas as its own zone from the seal, isentropic with real cp(T); Douaud-Eyzat delay; Livengood-Wu from the spark; intensity = the constant-volume pressure the unburned share adds, over 30 bar. ECU knock control now steps (20 x excess/s of a 12 deg authority, ~1.3 deg per heavy event, back at 1 deg/s).
+- 2JZ at full load, control off: knock 0.83 mean, damage 0.0065; on: 0.08 mean at 4.7 deg, no damage. Catalogue WOT: NA engines at most 0.10, 2JZ <= 0.08, EJ25 0.40 at 5,000 rpm.
+- It took three more changes: the flame's load term capped at 1 (boost burned a charge up to 36 % faster); intercoolers 0.7 on 2JZ/EJ25/I5; Woschni's combustion term and the 4V/B liner (TDI BSFC 171/181/199 -> 212/203/215 g/kWh at 2/3/4,000 rpm; petrol WOT 227-310). TDI throat 280 -> 220 mm2: 285 N.m at 2,000 rpm.
+- Maker gate (before the TDI refit): all pass but the TDI at 2,000 rpm; 2JZ +9.6 %, EJ25 +12.8 %, I5 +7.0 % torque.
+- **Open: the model over-knocks under boost.** Implied knock-limited spark vs calibration practice: ~6 deg early NA, ~11 at 1.9 bar, ~17 at 2.45. The I5 knocks 0.78-0.90 at every rpm with the authority saturated, 0.56 at 2,000 rpm at the -10 deg floor; at 2.3/2.2/2.1 bar still heavy (2.1: 0.47-0.83); direct injection (end gas -15 K) and CR 10 neither cure it.
+- Refuted: Kalghatgi's octane index (the zone is 150-200 K colder than his K fit, boost gains 1-3 octane); an ECU boost cut on knock (I5 155 kPa / 363 N.m).
+- Leads: the intensity scale (constant-volume rise vs MAPO, a load-scaled threshold); Douaud-Eyzat used at 90-100 bar onsets, beyond its fit; the DI preset going lean above 5,000 rpm (lambda 1.07-1.18); the RD350's 437-1,582 g/kWh.
+- Not measured: the sound before/after; CatalogReference and CatalogBoostHold after the TDI refit; the full ctest.
+
 ## 2026-10-22 — Two-stroke: a carburettor, and the bore it sits in
 
 - Added: a slide carburettor per intake path (`CarburettorModel`), two circuits on their own depressions -- the main on the venturi's 1/2 rho V^2, the pilot on the bowl-to-crankcase drop -- with jets in their stamped numbers (cc/min under 1 m of head). Its fuel enters the crankcase with the air; the injector is commanded nothing on a carburetted path. The designer fits one to every two-stroke and sizes the jets from the engine: an RD350-sized design gets #287 main / #41 pilot against the bike's 260-290 / 30-40, fitted to neither.

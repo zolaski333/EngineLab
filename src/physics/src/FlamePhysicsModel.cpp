@@ -30,10 +30,15 @@ double FlamePhysicsModel::turbulentFlameSpeedMps(const FuelConfig& fuel,
                                                   const FlameConditions& conditions) noexcept {
     const auto laminar = laminarFlameSpeedMps(fuel, conditions.equivalenceRatio,
                                                conditions.temperatureK, conditions.pressurePa);
+    // The load term slows a throttled flame; it stops at a full cylinder.
+    // Turbulence intensity follows the piston, not the intake pressure, so
+    // boost does not stir the charge harder: letting the term run to a load
+    // of 1.5 burned a boosted charge up to 36 % faster than the same engine
+    // unboosted, and the earlier, higher peak pressure knocked.
     const auto turbulence = std::max(0.0, conditions.meanPistonSpeedMps)
         * std::clamp(conditions.chamberTurbulenceIntensityRatio, 0.1, 4.0)
         * std::clamp(fuel.turbulenceFlameSpeedGain, 0.0, 8.0)
-        * (0.28 + 0.72 * std::clamp(conditions.load, 0.0, 1.5));
+        * (0.28 + 0.72 * std::clamp(conditions.load, 0.0, 1.0));
     const auto dilutionAttenuation = std::clamp(1.0 - conditions.residualDilutionSensitivity
         * std::clamp(conditions.burnedGasFraction, 0.0, 0.85), 0.25, 1.0);
     // In a running SI engine the integral turbulent flame speed scales with

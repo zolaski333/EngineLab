@@ -463,12 +463,13 @@ void realisticTemperaturesFollowHeatAndAir() {
     require(!aircooledFan, "an air-cooled engine has no radiator fan");
 }
 
-/** Light knock does not wear the engine: the 2JZ held at full load knocks
- * lightly the whole time, as every catalogue engine does at WOT, and ends with
- * no damage. Counted linearly, it lost 0.3-0.5 % of power for good per dyno
- * pass. */
+/** Light knock does not wear the engine: the 2JZ held at full load with its
+ * spark map advanced 8 deg runs at its knock limit, where the knock control
+ * holds it, and ends with no damage. Counted linearly, it lost 0.3-0.5 % of
+ * power for good per dyno pass. */
 void lightKnockDoesNotWear() {
-    const auto config = catalogueEngine("2JZ");
+    auto config = catalogueEngine("2JZ");
+    for (auto& sample : config.ignition.timingCurve) sample.advanceDegrees += 8.0;
     Rig rig(config);
     constexpr auto frames = 10 * 240;
     double rpm = 0.0;
@@ -485,7 +486,8 @@ void lightKnockDoesNotWear() {
     const auto damage = rig.simulator->state().damage;
     std::cout << "  2JZ at full load for 8 s: knock mean " << meanKnock << ", peak " << peakKnock << ", damage "
               << damage << '\n';
-    require(meanKnock > 0.1 && peakKnock < 0.45, "the 2JZ knocks lightly at full load (else this proves nothing)");
+    require(peakKnock > 0.1 && peakKnock < 0.45,
+        "the 2JZ knocks lightly at full load, where its control holds it (else this proves nothing)");
     require(damage < 1.0e-9, "light knock does not damage the engine");
 }
 
