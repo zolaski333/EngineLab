@@ -1147,6 +1147,16 @@ struct TwoStrokeConfig final {
      *  cylinder the simulator had before the model existed. See
      *  `TwoStrokeScavenging.hpp` for what the length buys. */
     double scavengeLoopLengthRatio { 1.8 };
+    /** An exhaust power valve (Yamaha's YPVS and its kind): a blade or drum
+     *  in the port's roof that lowers it at low speed, so the port opens later
+     *  and the exhaust keeps more of the stroke, and lifts out of the way as
+     *  the speed rises. The opening angle with the valve shut, later than
+     *  `exhaustPortOpenDegrees`; zero is no valve. */
+    double powerValveClosedExhaustPortOpenDegrees { 0.0 };
+    /** The speeds where the servo starts to lift the valve and where it is
+     *  fully open. */
+    double powerValveOpeningStartRpm { 0.0 };
+    double powerValveFullyOpenRpm { 0.0 };
 };
 
 /** Crank degrees of one thermodynamic cycle: 720 for a four-stroke, 360 for
@@ -1893,6 +1903,8 @@ struct EngineState final {
      *  frame, a ripple near that rate aliases into a slow wander; a
      *  two-stroke twin fires at 233 Hz at 7,000 rpm. Zero before a step. */
     double frameAveragedRpm { 0.0 };
+    /** A two-stroke's exhaust power valve, 0 shut to 1 open; 1 without one. */
+    double powerValveOpening { 1.0 };
 };
 
 struct EcuCommand final {

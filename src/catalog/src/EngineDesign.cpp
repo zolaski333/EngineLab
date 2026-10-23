@@ -786,6 +786,21 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             config.twoStroke.scavengeLoopLengthRatio = derive("scavenge_loop_length_ratio",
                 "Scavenging loop length", "x bore", 1.8,
                 "a loop-scavenged cylinder: up the far wall, over the head, back to the port");
+            // A sport port's long exhaust window throws the charge out at low
+            // speed: on a designed 500 cc twin, 30 N.m at 4,000-4,750 rpm
+            // against 46-50 from 7,000. A power valve lowers the port there and
+            // lifts as the pipe comes in; 12 deg later shut (82 -> 94, 196 deg
+            // of window -> 172) gave +20-39 % from 3,250 to 5,750 rpm and the
+            // same top end (journal 2026-10-23).
+            if (sport) {
+                config.twoStroke.powerValveClosedExhaustPortOpenDegrees = derive(
+                    "power_valve_closed_exhaust_port_open_deg", "Power valve shut: exhaust opens", "deg ATDC",
+                    config.twoStroke.exhaustPortOpenDegrees + 12.0, "12 deg later than the open port");
+                config.twoStroke.powerValveOpeningStartRpm = derive("power_valve_opening_start_rpm",
+                    "Power valve starts to open", "rpm", 0.65 * peakPowerRpm, "65 % of peak power speed");
+                config.twoStroke.powerValveFullyOpenRpm = derive("power_valve_fully_open_rpm",
+                    "Power valve fully open", "rpm", 0.90 * peakPowerRpm, "90 % of peak power speed");
+            }
             config.combustionCalibration.chamberTurbulenceIntensityRatio = derive("chamber_turbulence_ratio",
                 "Chamber turbulence", "", 2.0, "a squish head, as the RD350LC's");
 

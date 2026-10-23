@@ -1598,6 +1598,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     double frameMaximumAfterfireInductionDelaySeconds = 0.0;
     double frameTravelledDegrees = 0.0;
     double frameIntegratedSeconds = 0.0;
+    // A power valve's servo follows its speed schedule with a lag: YPVS-type
+    // servos take a few tenths of a second to sweep the valve.
+    {
+        constexpr double powerValveServoSeconds = 0.25;
+        powerValveOpening_ += (powerValveTargetOpening(config_.twoStroke, state_.rpm)
+            - powerValveOpening_) * (1.0 - std::exp(-dt / powerValveServoSeconds));
+    }
+    const auto exhaustPortOpenDegrees = exhaustPortOpenDegreesAt(config_.twoStroke, powerValveOpening_);
 
     while (remainingStepSeconds > 0.0) {
         // Predict with this frame's known external/starter commands rather
@@ -3266,7 +3274,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto exhaustCenterPhase = std::fmod(360.0 - cams.config->exhaustCenterlineDegrees
                 - valveTrain.exhaustAdvanceDegrees + 720.0, 720.0);
             const auto exhaustOpenPhase = twoStroke
-                ? config_.twoStroke.exhaustPortOpenDegrees
+                ? exhaustPortOpenDegrees
                 : std::fmod(exhaustCenterPhase - cams.exhaustDuration() * 0.5 + 720.0, 720.0);
             const auto distanceToExhaustOpen = std::fmod(
                 exhaustOpenPhase - previousPhase + cycleDegrees, cycleDegrees);
@@ -3378,7 +3386,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
                           transferPortWidthMm(config_.twoStroke, cylinder),
                           config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
-                        && portOpenAreaMm2(cylinder, config_.twoStroke.exhaustPortOpenDegrees,
+                        && portOpenAreaMm2(cylinder, exhaustPortOpenDegrees,
                           exhaustPortWidthMm(config_.twoStroke, cylinder),
                           config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
                     : intakeLift <= 0.0 && exhaustLift <= 0.0;
@@ -3460,7 +3468,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     cylinder.intakeValveCount, cylinder.intakeValveDiameterMm,
                     valveTrain.intakeDischargeCoefficient, 0.40, 0.50, 0.58);
             const auto exhaustArea = twoStroke
-                ? portOpenAreaMm2(cylinder, config_.twoStroke.exhaustPortOpenDegrees,
+                ? portOpenAreaMm2(cylinder, exhaustPortOpenDegrees,
                     exhaustPortWidthMm(config_.twoStroke, cylinder),
                     config_.twoStroke.portDischargeCoefficient, cyclePhase)
                 : effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
@@ -5714,7 +5722,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 pressureSample.exhaustValveOpening[index] = static_cast<float>(std::clamp(
                     twoStroke
                         ? exhaustValveAreaM2[index] * 1.0e6 / std::max(1.0e-9, portOpenAreaMm2(ported,
-                            config_.twoStroke.exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, ported),
+                            exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, ported),
                             config_.twoStroke.portDischargeCoefficient, 180.0))
                         : valveTrainResults_[index].exhaustLiftMm / maximumExhaustLiftMm, 0.0, 1.0));
                 pressureSample.exhaustPathIndex[index] =
@@ -5838,6 +5846,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         | static_cast<std::uint32_t>(ActiveLimit::coolantProtection)
         | static_cast<std::uint32_t>(ActiveLimit::launchControl);
     state_.activeLimits = (state_.activeLimits & ecuLimitBits) | publishedSimulatorLimits();
+    state_.powerValveOpening = powerValveOpening_;
     state_.frameAveragedRpm = frameIntegratedSeconds > 0.0
         ? frameTravelledDegrees / (6.0 * frameIntegratedSeconds) : state_.rpm;
     frame.state = state_;
@@ -6308,6 +6317,7 @@ void EngineSimulator::reset() noexcept {
     compressionIgnitionResults_.fill({});
     injectionStates_.fill({});
     endGasKnockStates_.fill({});
+    powerValveOpening_ = powerValveTargetOpening(config_.twoStroke, 0.0);
     indicatedWorkStates_.fill({});
     valveTrainStates_.fill({});
     valveTrainResults_.fill({});

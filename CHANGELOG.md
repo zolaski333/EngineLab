@@ -86,6 +86,12 @@ file formats, always with an in-memory migration).
   about a degree while the engine knocks and gives it back at 1 deg/s, so an
   engine settles at its knock limit instead of sitting in light knock. The
   Audi I5 gets the intercooler its real engine has.
+- **Two-strokes can have a power valve** (`two_stroke.power_valve_*`): it
+  lowers the exhaust port at low speed and lifts as the pipe comes in. The
+  designer fits one to sport two-strokes; a designed 500 cc twin gains 20-39 %
+  of torque between 3,250 and 5,750 rpm and keeps its top end.
+- A two-stroke saved as JSON keeps its scavenging loop length (it came back
+  at the default).
 - A two-stroke twin no longer fails to hold 3,500, 7,000 and 7,500 rpm on the
   dyno: the brake answered the crankshaft speed sampled at the end of each
   240 Hz frame, where a firing rate near 240 Hz (or 120) aliases into a slow

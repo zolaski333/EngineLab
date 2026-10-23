@@ -150,7 +150,11 @@ timings (exhaust 92 deg, transfers 118 deg after top dead centre). The ports
 are set with `two_stroke.exhaust_port_open_deg`, `two_stroke.transfer_port_open_deg`
 (angles after top dead centre), `two_stroke.exhaust_port_width_mm`,
 `two_stroke.transfer_port_width_mm` (0: from the bore),
-`two_stroke.port_discharge_coefficient` and `two_stroke.crankcase_compression_ratio`.
+`two_stroke.port_discharge_coefficient`, `two_stroke.crankcase_compression_ratio`
+and `two_stroke.scavenge_loop_length_ratio`. A power valve is
+`two_stroke.power_valve_closed_exhaust_port_open_deg` (the exhaust's opening
+with the valve shut; 0, none), `two_stroke.power_valve_opening_start_rpm` and
+`two_stroke.power_valve_fully_open_rpm`.
 The final validation applies the two-stroke rules (petrol, one cylinder per
 intake path).
 

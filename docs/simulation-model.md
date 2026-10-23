@@ -122,6 +122,15 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   volume. The throttle is the carburettor bore with a reed check valve (no
   flow out of the crankcase), and the runner is the transfer duct. The piston's
   underside sees the crankcase pressure, not the ambient.
+- **Power valve** (optional): a valve in the exhaust port's roof, Yamaha's
+  YPVS and its kind. Shut, it lowers the roof, so the port opens
+  `power_valve_closed_exhaust_port_open_deg` after top dead centre instead of
+  `exhaust_port_open_deg` and is that much lower; a servo lifts it between
+  `power_valve_opening_start_rpm` and `power_valve_fully_open_rpm` (a smooth
+  schedule, 0.25 s of lag). The designer fits one to sport two-strokes, 12 deg
+  later shut, lifting from 65 to 90 % of peak power speed: on a 500 cc twin it
+  fills the 30 N.m trough at 4,000-4,750 rpm (+20-39 % from 3,250 to 5,750)
+  and leaves the top end as it was. `EngineState::powerValveOpening` publishes it.
 - **Trapping**: the charge is trapped when the transfers close (symmetric
   about bottom dead centre); short-circuit losses come out of the same 1-D
   exhaust flow that scavenges the cylinder. There is no pumping loop in the

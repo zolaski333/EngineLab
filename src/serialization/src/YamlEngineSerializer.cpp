@@ -777,7 +777,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::EndMap;
     out << YAML::EndSeq;
     // Written for a two-stroke only, so a four-stroke file is unchanged.
-    if (config.cycle == EngineCycle::twoStroke)
+    if (config.cycle == EngineCycle::twoStroke) {
         out << YAML::Key << "two_stroke" << YAML::Value << YAML::BeginMap
             << YAML::Key << "exhaust_port_open_deg" << YAML::Value << config.twoStroke.exhaustPortOpenDegrees
             << YAML::Key << "transfer_port_open_deg" << YAML::Value << config.twoStroke.transferPortOpenDegrees
@@ -785,8 +785,14 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "transfer_port_width_mm" << YAML::Value << config.twoStroke.transferPortWidthMm
             << YAML::Key << "port_discharge_coefficient" << YAML::Value << config.twoStroke.portDischargeCoefficient
             << YAML::Key << "crankcase_compression_ratio" << YAML::Value << config.twoStroke.crankcaseCompressionRatio
-            << YAML::Key << "scavenge_loop_length_ratio" << YAML::Value << config.twoStroke.scavengeLoopLengthRatio
-            << YAML::EndMap;
+            << YAML::Key << "scavenge_loop_length_ratio" << YAML::Value << config.twoStroke.scavengeLoopLengthRatio;
+        if (config.twoStroke.powerValveClosedExhaustPortOpenDegrees != 0.0)
+            out << YAML::Key << "power_valve_closed_exhaust_port_open_deg" << YAML::Value
+                << config.twoStroke.powerValveClosedExhaustPortOpenDegrees
+                << YAML::Key << "power_valve_opening_start_rpm" << YAML::Value << config.twoStroke.powerValveOpeningStartRpm
+                << YAML::Key << "power_valve_fully_open_rpm" << YAML::Value << config.twoStroke.powerValveFullyOpenRpm;
+        out << YAML::EndMap;
+    }
     out << YAML::EndMap << YAML::EndMap;
     return out.c_str();
 }
@@ -894,6 +900,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.twoStroke.portDischargeCoefficient = ports["port_discharge_coefficient"].as<double>(config.twoStroke.portDischargeCoefficient);
             config.twoStroke.crankcaseCompressionRatio = ports["crankcase_compression_ratio"].as<double>(config.twoStroke.crankcaseCompressionRatio);
             config.twoStroke.scavengeLoopLengthRatio = ports["scavenge_loop_length_ratio"].as<double>(config.twoStroke.scavengeLoopLengthRatio);
+            config.twoStroke.powerValveClosedExhaustPortOpenDegrees = ports["power_valve_closed_exhaust_port_open_deg"].as<double>(config.twoStroke.powerValveClosedExhaustPortOpenDegrees);
+            config.twoStroke.powerValveOpeningStartRpm = ports["power_valve_opening_start_rpm"].as<double>(config.twoStroke.powerValveOpeningStartRpm);
+            config.twoStroke.powerValveFullyOpenRpm = ports["power_valve_fully_open_rpm"].as<double>(config.twoStroke.powerValveFullyOpenRpm);
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

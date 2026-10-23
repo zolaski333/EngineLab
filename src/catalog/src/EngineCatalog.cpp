@@ -991,6 +991,10 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(ports, "port_discharge_coefficient", config.twoStroke.portDischargeCoefficient);
         assignIfPresent(ports, "crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio);
         assignIfPresent(ports, "scavenge_loop_length_ratio", config.twoStroke.scavengeLoopLengthRatio);
+        assignIfPresent(ports, "power_valve_closed_exhaust_port_open_deg",
+            config.twoStroke.powerValveClosedExhaustPortOpenDegrees);
+        assignIfPresent(ports, "power_valve_opening_start_rpm", config.twoStroke.powerValveOpeningStartRpm);
+        assignIfPresent(ports, "power_valve_fully_open_rpm", config.twoStroke.powerValveFullyOpenRpm);
     }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);

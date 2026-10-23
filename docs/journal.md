@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Two-stroke: a power valve
+
+- Added: `two_stroke.power_valve_*` (the exhaust's opening with the valve shut, the speeds it lifts between, 0.25 s servo lag); the port's roof and so its area follow the valve. The designer fits one to sport designs: 12 deg later shut, lifting from 65 to 90 % of peak power speed.
+- Designed t2_twin_500 (EPO 82), DynoSweep step 250 / settle 8, valve shut at 90 / 94 / 98 deg (5,500-7,500 rpm): +18-29 % / +22-39 % / +24-47 % over 3,000-5,750 rpm, within 1 % from 7,250 up; 2,000 rpm -4 / -7 / -9 %. The designer's (94, 5,031-6,966): 34-42 N.m from 2,000 to 5,000 rpm where the valveless port gave 29.5-37, top end unchanged, held within 1.5 rpm.
+- Found on the way: the JSON reader dropped `scavenge_loop_length_ratio`, so a saved two-stroke lost an authored loop length and came back at the default 1.8. Fixed and tested.
+- Not measured: a real YPVS engine's curve against the model's (no data here); the sound; the RD350LC keeps no valve, as the LC had none.
+
 ## 2026-10-23 — Two-stroke: the 3,500/7,000/7,500 rpm holding band is the 240 Hz frame's alias
 
 - Designed t2_twin_500 (sport, 0.5 L), DynoSweep step 250, settle 8, with a new `--frame-hz`. `held_rpm_stddev` at 240 Hz: 3,500 2.3, 7,000 6.6, 7,500 2.6, elsewhere 0.2-1.1; at 300 Hz the three are gone (0.2-0.4); at 200 Hz the band moves to 5,750-6,250 (2.7-3.1), where the twin fires at 200 Hz. A twin two-stroke fires at 233 Hz at 7,000 rpm, 117 at 3,500, 250 at 7,500.
