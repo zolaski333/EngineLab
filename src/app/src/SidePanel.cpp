@@ -481,6 +481,18 @@ std::vector<std::pair<juce::String, juce::String>> DiagnosticsPanel::debugRows()
         // count, and the cylinder-pressure telemetry -- the exhaust chain's
         // only excitation -- is produced slower than the audio thread drains it.
         { "Real-time factor", juce::String(health.realtimeFactor, 3) + utf8(" \xc3\x97") },
+        // What a slow machine report needs first. Over 100 % the audio
+        // callback drops samples; a 96 or 192 kHz device is synthesised at
+        // 48 kHz. On a hybrid processor the physics thread is held to the
+        // performance cores and opted out of power throttling.
+        { "Audio device / synthesis", juce::String(health.audioDeviceSampleRate / 1000.0, 1) + " / "
+              + juce::String(health.audioSynthesisSampleRate / 1000.0, 1) + " kHz" },
+        { "Audio callback load", juce::String(health.audioCallbackLoad * 100.0, 0) + " %" },
+        { "Physics cores", (health.physicsCpuSets == 0
+              ? juce::String("any of ") + count(health.logicalProcessors)
+              : juce::String("held to ") + count(health.physicsCpuSets) + " of "
+                    + count(health.logicalProcessors))
+              + (health.physicsThrottlingOptOut ? ", no throttling" : "") },
         { "Runtime overruns", count(health.timingOverruns) },
         { "Audio late / pending", count(health.lateAudioEvents) + " / " + count(health.droppedPendingAudioEvents) },
         { "Load protection", juce::String(health.loadProtectionActive ? "ACTIVE / " : "idle / ")

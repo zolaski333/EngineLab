@@ -50,7 +50,13 @@ struct RuntimeHealth final {
     std::uint64_t timingOverruns {};
     bool loadProtectionActive { false };
     std::uint64_t loadProtectionActivations {};
+    std::size_t physicsCpuSets {};
+    std::size_t logicalProcessors {};
+    bool physicsThrottlingOptOut { false };
     bool audioAvailable { false };
+    double audioDeviceSampleRate {};
+    double audioSynthesisSampleRate {};
+    double audioCallbackLoad {};
     std::uint64_t droppedReactionEvents {};
     std::uint64_t reactionPressureLimitedSamples {};
     std::uint64_t lateAudioEvents {};

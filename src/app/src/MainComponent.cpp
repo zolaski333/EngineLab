@@ -10,6 +10,7 @@
 #include <variant>
 #include <cmath>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace enginelab {
@@ -631,9 +632,15 @@ void MainComponent::refreshRuntimeHealth() {
         health.timingOverruns = runtime_->timingOverrunCount();
         health.loadProtectionActive = runtime_->realtimeLoadProtectionActive();
         health.loadProtectionActivations = runtime_->realtimeLoadProtectionActivationCount();
+        health.physicsCpuSets = runtime_->physicsThreadCpuSets();
+        health.physicsThrottlingOptOut = runtime_->physicsThreadThrottlingOptOut();
+        health.logicalProcessors = std::thread::hardware_concurrency();
     }
     health.audioAvailable = audio_ != nullptr;
     if (audio_) {
+        health.audioSynthesisSampleRate = audio_->synthesisSampleRate();
+        health.audioDeviceSampleRate = health.audioSynthesisSampleRate * audio_->upsamplingFactor();
+        health.audioCallbackLoad = deviceManager.getCpuUsage();
         health.droppedReactionEvents = audio_->droppedReactionEventCount();
         health.reactionPressureLimitedSamples = audio_->reactionPressureLimitedSampleCount();
         health.lateAudioEvents = audio_->lateEventCount();

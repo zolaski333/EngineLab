@@ -82,6 +82,10 @@ and upsamples to the device (`IntegerUpsampler.hpp`, about 80 dB of image
 rejection). A 44.1 or 48 kHz device is unchanged. The offline exporter still
 synthesises at the rate it is asked for.
 
+The diagnostics panel shows both: "Audio device / synthesis" with "Audio
+callback load", and "Physics cores" (how many CPU sets the physics thread is
+held to, and whether it opted out of throttling).
+
 ### Stack size
 
 An `EngineRuntime` embeds a `SpscQueue<CylinderPressureSample, 8192>` and

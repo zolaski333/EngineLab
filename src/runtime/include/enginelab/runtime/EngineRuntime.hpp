@@ -430,6 +430,14 @@ public:
     [[nodiscard]] double realtimeFactor() const noexcept {
         return realtimeFactor_.load(std::memory_order_relaxed);
     }
+    /** What the physics thread obtained from the OS (ThreadScheduling.hpp):
+     *  the CPU sets it is held to, 0 when it is not restricted. */
+    [[nodiscard]] std::size_t physicsThreadCpuSets() const noexcept {
+        return physicsThreadCpuSets_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool physicsThreadThrottlingOptOut() const noexcept {
+        return physicsThreadThrottlingOptOut_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] bool realtimeLoadProtectionActive() const noexcept {
         return realtimeLoadProtectionActive_.load(std::memory_order_relaxed);
     }
@@ -582,6 +590,8 @@ private:
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
     std::atomic<double> realtimeFactor_ { 1.0 };
+    std::atomic<std::size_t> physicsThreadCpuSets_ { 0 };
+    std::atomic<bool> physicsThreadThrottlingOptOut_ { false };
     std::atomic<double> dynoMaximumDurationSeconds_ { 60.0 };
     std::atomic<bool> paused_ { false };
     std::atomic<bool> realtimeThrottleEnabled_ { true };

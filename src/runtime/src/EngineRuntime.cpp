@@ -1135,7 +1135,9 @@ void EngineRuntime::run(std::stop_token stopToken) {
     // hybrid processor places threads by QoS, and may clock a process it
     // judges in the background down to EcoQoS (ThreadScheduling.hpp).
     platform::requestLatencyCriticalProcess();
-    (void)platform::requestLatencyCriticalThread();
+    const auto scheduling = platform::requestLatencyCriticalThread();
+    physicsThreadCpuSets_.store(scheduling.heldToCpuSets, std::memory_order_relaxed);
+    physicsThreadThrottlingOptOut_.store(scheduling.throttlingOptOut, std::memory_order_relaxed);
 #if defined(_WIN32)
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 #elif defined(__unix__) || defined(__APPLE__)

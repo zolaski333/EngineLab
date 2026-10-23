@@ -61,6 +61,10 @@ file formats, always with an in-memory migration).
   columns are headed *Quantity* and *Value*.
 - A carburetted engine no longer draws, or offers to edit, injectors it does
   not have.
+- The diagnostics say what a slow machine report needs first: the audio
+  device's rate and the rate the sound is synthesised at, the audio callback's
+  load (over 100 % it drops samples), and whether the physics thread is held to
+  the performance cores and opted out of power throttling.
 - An audio device set to 96 or 192 kHz (common on gaming headsets and external
   DACs) no longer costs two or four times the sound of a 48 kHz one: the engine
   is synthesised at 48 kHz, the rate it is voiced at, and upsampled to the
