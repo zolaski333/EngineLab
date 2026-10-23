@@ -182,6 +182,9 @@ struct AudioProbeDelta final {
     return delta;
 }
 
+/** --native-rate-audio: synthesise at the probe's rate, as before 2026-10-23. */
+bool nativeRateAudio = false;
+
 /**
  * Real-wall-clock consumer for the same renderer and SPSC queues used by the
  * application. This is intentionally not an audio-device wrapper: a hardware
@@ -230,6 +233,10 @@ public:
         renderer_.setOutletJetNoiseEnabled(outletJetNoiseEnabled);
         renderer_.setForcedInductionBroadbandPowerNormalisationEnabled(
             forcedInductionPowerNormalisationEnabled);
+        // As the application does (MainComponent), unless --native-rate-audio.
+        if (!nativeRateAudio)
+            renderer_.setReferenceSynthesisRate(
+                enginelab::RealtimeEngineAudio::voicedSampleRateHz);
         renderer_.prepare(sampleRate_, blockSize_);
     }
 
@@ -1007,6 +1014,7 @@ int main(int argc, char** argv) {
             forcedInductionPowerNormalisationEnabled = false;
         else if (argument == "--audio-rate" && index + 1 < argc)
             audioSampleRate = std::stod(argv[++index]);
+        else if (argument == "--native-rate-audio") nativeRateAudio = true;
         else if (argument == "--audio-block" && index + 1 < argc)
             audioBlockSize = std::stoi(argv[++index]);
         else if (argument == "--well-mixed-junctions")
@@ -1033,7 +1041,9 @@ int main(int argc, char** argv) {
                          "[--enforce FACTOR] [--free-run] [--designer-probe] "
                          "[--with-audio] [--gas-view] [--disable-exhaust-jet-noise] "
                          "[--disable-fi-power-normalisation] "
-                         "[--audio-rate HZ] [--audio-block N]\n"
+                         "[--audio-rate HZ] [--audio-block N] [--native-rate-audio]\n"
+                         "  --native-rate-audio  synthesise at --audio-rate instead of the 48 kHz\n"
+                         "                       voicing rate upsampled, as the application does.\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
                          "  --power-throttled  put the process under EcoQoS, as Windows may do\n"

@@ -62,6 +62,11 @@ target_link_libraries(EngineLabDynoRunArchiveTests PRIVATE EngineLab::Runtime)
 enginelab_set_warnings(EngineLabDynoRunArchiveTests)
 add_test(NAME EngineLab.DynoRunArchive COMMAND EngineLabDynoRunArchiveTests)
 
+add_executable(EngineLabAudioUpsamplingTests AudioUpsamplingTests.cpp)
+target_link_libraries(EngineLabAudioUpsamplingTests PRIVATE EngineLab::Audio)
+enginelab_set_warnings(EngineLabAudioUpsamplingTests)
+add_test(NAME EngineLab.AudioUpsampling COMMAND EngineLabAudioUpsamplingTests)
+
 add_executable(EngineLabThreadSchedulingTests ThreadSchedulingTests.cpp)
 target_link_libraries(EngineLabThreadSchedulingTests PRIVATE EngineLab::Foundation)
 enginelab_set_warnings(EngineLabThreadSchedulingTests)

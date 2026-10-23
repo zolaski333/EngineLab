@@ -3,6 +3,7 @@
 #include <enginelab/audio/AcousticIntakeNetwork.hpp>
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/IAudioRenderer.hpp>
+#include <enginelab/audio/IntegerUpsampler.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
@@ -72,6 +73,19 @@ public:
     ~RealtimeEngineAudio() override;
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
+    /**
+     * Synthesise at the lowest whole fraction of the device rate that is still
+     * at least `hz`, and upsample to the device (IntegerUpsampler): a 192 kHz
+     * device then costs a 48 kHz one, not four times as much, and sounds as the
+     * engines were voiced. 0 (the default) synthesises at the device rate.
+     * Read by the next prepare(). Above that fraction, renderWithStems()
+     * observes no stems.
+     */
+    void setReferenceSynthesisRate(double hz) noexcept { referenceSynthesisRateHz_ = hz; }
+    /** The rate the engines are voiced and checked at. */
+    static constexpr double voicedSampleRateHz = 48'000.0;
+    [[nodiscard]] double synthesisSampleRate() const noexcept { return sampleRate_; }
+    [[nodiscard]] int upsamplingFactor() const noexcept { return upsamplingFactor_; }
     /**
      * Change the compiled exhaust to one built from `graph` while the engine
      * plays: the same components resized (a live exhaust change). The new
@@ -556,6 +570,22 @@ private:
     std::size_t pendingEventCount_ { 0 };
     std::size_t observedExhaustPathCount_ { 1 };
     double sampleRate_ { 48'000.0 };
+    double referenceSynthesisRateHz_ { 0.0 };
+    int upsamplingFactor_ { 1 };
+    /** Synthesis at sampleRate_, then upsampled to the device's rate. */
+    static constexpr int maximumUpsamplingFactor = 16;
+    juce::AudioBuffer<float> synthesisScratch_;
+    std::array<IntegerUpsampler, 2> upsamplers_ {};
+    std::array<std::vector<float>, 2> upsampledScratch_ {};
+    /** Upsampled samples a device block did not take, for the next one. */
+    std::array<std::array<float, maximumUpsamplingFactor>, 2> pendingUpsampled_ {};
+    int pendingUpsampledCount_ { 0 };
+    int pendingUpsampledRead_ { 0 };
+    void prepareSynthesis(double sampleRate, int maximumBlockSize) noexcept;
+    void renderSynthesis(juce::AudioBuffer<float>& output, int startSample,
+                         int sampleCount, const RealtimeAudioStemBuffers& stems) noexcept;
+    void renderUpsampled(juce::AudioBuffer<float>& output, int startSample,
+                         int sampleCount) noexcept;
     double audioTimeSeconds_ { -0.020 };
     double producerClock_ { 0.0 };
     double eventLatencySeconds_ { 0.020 };

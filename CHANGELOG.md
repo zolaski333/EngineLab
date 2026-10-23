@@ -61,6 +61,12 @@ file formats, always with an in-memory migration).
   columns are headed *Quantity* and *Value*.
 - A carburetted engine no longer draws, or offers to edit, injectors it does
   not have.
+- An audio device set to 96 or 192 kHz (common on gaming headsets and external
+  DACs) no longer costs two or four times the sound of a 48 kHz one: the engine
+  is synthesised at 48 kHz, the rate it is voiced at, and upsampled to the
+  device. At 192 kHz the sound took 95 % of the audio thread's time and dropped
+  samples on a 2JZ; it now takes 22 %, as at 48 kHz. A 44.1 or 48 kHz device
+  is unchanged.
 - On a processor with performance and efficiency cores (Intel 12th generation
   and later), the physics thread and its workers are held to the performance
   cores, and the process opts out of the power throttling Windows applies to

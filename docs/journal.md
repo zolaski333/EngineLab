@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Performance: the audio device's rate
+
+- The audio work scales with the device rate, and WASAPI shared mode offers only the mixer's rate (96/192 kHz on many headsets and DACs). `RealtimeBudgetHarness --with-audio`, 2JZ at 5,000 rpm, free-run, interleaved: audio load 21 % at 48 kHz, 41 % at 96, 90 % at 192 with ~180k dropped samples per run (INVALID).
+- Fix: synthesise at the lowest whole fraction of the device rate >= 48 kHz and upsample (`IntegerUpsampler`, Kaiser polyphase, 48 taps/phase; image -106 to -129 dB, passband +0.0001 dB). 44.1/48 kHz devices take the old path unchanged.
+- Equal 5.33 ms blocks (192 kHz/1024 against 48 kHz/256), 7 rounds: upsampled 192 kHz 22.2-22.8 % mean audio, all valid, factor 1.96-2.02; 48 kHz 21.2-22.0 %, 1.96-2.04; native 192 kHz 93.7-96.2 %, every run INVALID (175-183k dropped). The 48 kHz voicing's level at 192 kHz: -0.008 dB.
+- Ruled out here: core count (the pool caps at 2-3 workers), the GUI (paced at 60 fps by default), the release build (same preset), the timer (paced 2JZ holds 1.000 with 1.4 ms max lateness on a 4.17 ms step).
+- Not measured: the friend's device rate; whether the 192 kHz case alone puts a 14th-gen i9 below real time (the physics factor itself barely moves with audio: it is the sound that breaks up).
+
 ## 2026-10-23 — Performance on a hybrid processor (a 14th-gen i9 below real time)
 
 - Report: the 0.3.1 zip falls below real time on a 2JZ on an i9-14xxx, while the Ryzen 7 8840U reference holds it. The zip is built with the same preset and Release config as the reference tree; the cylinder pool is 2-3 workers whatever the core count, so many cores do not dilute it.

@@ -462,6 +462,26 @@ void RealtimeEngineAudio::allocateDelayLines() {
 }
 
 void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexcept {
+    const auto deviceRate = sampleRate > 0.0 ? sampleRate : 48'000.0;
+    const auto deviceBlock = std::max(1, maximumBlockSize);
+    upsamplingFactor_ = referenceSynthesisRateHz_ > 0.0
+        ? std::clamp(static_cast<int>(deviceRate / referenceSynthesisRateHz_),
+                     1, maximumUpsamplingFactor)
+        : 1;
+    pendingUpsampledCount_ = pendingUpsampledRead_ = 0;
+    if (upsamplingFactor_ == 1) {
+        prepareSynthesis(deviceRate, deviceBlock);
+        return;
+    }
+    const auto synthesisBlock = (deviceBlock + upsamplingFactor_ - 1) / upsamplingFactor_;
+    synthesisScratch_.setSize(2, synthesisBlock, false, true, false);
+    for (auto& channel : upsampledScratch_)
+        channel.assign(static_cast<std::size_t>(synthesisBlock * upsamplingFactor_), 0.0F);
+    for (auto& upsampler : upsamplers_) upsampler.prepare(upsamplingFactor_);
+    prepareSynthesis(deviceRate / upsamplingFactor_, synthesisBlock);
+}
+
+void RealtimeEngineAudio::prepareSynthesis(double sampleRate, int maximumBlockSize) noexcept {
     sampleRate_ = sampleRate > 0.0 ? sampleRate : 48'000.0;
     maximumBlockSize_ = std::max(1, maximumBlockSize);
     // Keep the audio cursor at least one complete host callback plus a small
@@ -534,6 +554,8 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     preparedSampleRate_.store(sampleRate_, std::memory_order_release);
 }
 void RealtimeEngineAudio::release() noexcept {
+    for (auto& upsampler : upsamplers_) upsampler.reset();
+    pendingUpsampledCount_ = pendingUpsampledRead_ = 0;
     voices_.fill({}); pendingEvents_.fill({}); pendingEventCount_ = 0;
     observedExhaustPathCount_ = 1;
     audioTimeSeconds_ = -eventLatencySeconds_; producerClock_ = 0.0;
@@ -721,11 +743,66 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
 void RealtimeEngineAudio::renderWithStems(
     juce::AudioBuffer<float>& output, int startSample, int sampleCount,
     const RealtimeAudioStemBuffers& stems) noexcept {
+    if (upsamplingFactor_ > 1)
+        renderUpsampled(output, startSample, sampleCount);
+    else
+        renderSynthesis(output, startSample, sampleCount, stems);
+}
+
+void RealtimeEngineAudio::renderUpsampled(
+    juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept {
+    if (sampleCount <= 0 || startSample < 0 || startSample >= output.getNumSamples()) return;
+    sampleCount = std::min(sampleCount, output.getNumSamples() - startSample);
+    const juce::ScopedNoDenormals noDenormals;
+    const auto channels = output.getNumChannels();
+    auto written = 0;
+    // The interpolator rings a little between samples: hold the synthesis's
+    // own output ceiling.
+    const auto emit = [&](float left, float right) {
+        const auto outLeft = std::clamp(finiteState(left, 1.0F), -0.999F, 0.999F);
+        const auto outRight = std::clamp(finiteState(right, 1.0F), -0.999F, 0.999F);
+        const auto sample = startSample + written++;
+        if (channels > 0) output.setSample(0, sample, outLeft);
+        if (channels > 1) output.setSample(1, sample, outRight);
+        for (int channel = 2; channel < channels; ++channel)
+            output.setSample(channel, sample, (outLeft + outRight) * 0.5F);
+    };
+    for (; written < sampleCount && pendingUpsampledRead_ < pendingUpsampledCount_;
+         ++pendingUpsampledRead_)
+        emit(pendingUpsampled_[0][static_cast<std::size_t>(pendingUpsampledRead_)],
+             pendingUpsampled_[1][static_cast<std::size_t>(pendingUpsampledRead_)]);
+    const auto factor = upsamplingFactor_;
+    while (written < sampleCount) {
+        const auto needed = sampleCount - written;
+        const auto synthesisCount = std::min(synthesisScratch_.getNumSamples(),
+            (needed + factor - 1) / factor);
+        renderSynthesis(synthesisScratch_, 0, synthesisCount, {});
+        for (std::size_t channel = 0; channel < 2; ++channel)
+            upsamplers_[channel].process(
+                synthesisScratch_.getReadPointer(static_cast<int>(channel)),
+                synthesisCount, upsampledScratch_[channel].data());
+        const auto produced = synthesisCount * factor;
+        const auto used = std::min(produced, needed);
+        for (int index = 0; index < used; ++index)
+            emit(upsampledScratch_[0][static_cast<std::size_t>(index)],
+                 upsampledScratch_[1][static_cast<std::size_t>(index)]);
+        pendingUpsampledCount_ = produced - used;
+        pendingUpsampledRead_ = 0;
+        for (int index = 0; index < pendingUpsampledCount_; ++index)
+            for (std::size_t channel = 0; channel < 2; ++channel)
+                pendingUpsampled_[channel][static_cast<std::size_t>(index)]
+                    = upsampledScratch_[channel][static_cast<std::size_t>(used + index)];
+    }
+}
+
+void RealtimeEngineAudio::renderSynthesis(
+    juce::AudioBuffer<float>& output, int startSample, int sampleCount,
+    const RealtimeAudioStemBuffers& stems) noexcept {
     if (sampleCount <= 0 || startSample < 0 || startSample >= output.getNumSamples()) return;
     sampleCount = std::min(sampleCount, output.getNumSamples() - startSample);
     if (sampleCount > maximumBlockSize_) {
         for (int offset = 0; offset < sampleCount; offset += maximumBlockSize_)
-            renderWithStems(output, startSample + offset,
+            renderSynthesis(output, startSample + offset,
                 std::min(maximumBlockSize_, sampleCount - offset), stems);
         return;
     }

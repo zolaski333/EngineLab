@@ -71,6 +71,17 @@ the machine has more than one class. On a uniform processor (the Ryzen 7
 `EngineLabRealtimeBudgetHarness --power-throttled` measures the throttled case
 on any machine; no hybrid machine has measured the fix itself.
 
+### The audio device's rate
+
+The engine sound costs in proportion to the rate it is synthesised at, and in
+shared mode Windows offers the application only the rate the device is set to
+in its sound settings: often 96 or 192 kHz on a gaming headset or an external
+DAC. The application therefore synthesises at the lowest whole fraction of the
+device rate that is still at least 48 kHz, the rate the engines are voiced at,
+and upsamples to the device (`IntegerUpsampler.hpp`, about 80 dB of image
+rejection). A 44.1 or 48 kHz device is unchanged. The offline exporter still
+synthesises at the rate it is asked for.
+
 ### Stack size
 
 An `EngineRuntime` embeds a `SpscQueue<CylinderPressureSample, 8192>` and

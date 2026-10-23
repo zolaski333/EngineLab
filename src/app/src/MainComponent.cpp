@@ -378,6 +378,9 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState(),
         &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph(),
         &runtime_->engineConfig(), &runtime_->exhaustAcousticSamples());
+    // A 96 or 192 kHz device would otherwise cost two or four times the
+    // synthesis of the 48 kHz the engines are voiced at.
+    audio_->setReferenceSynthesisRate(RealtimeEngineAudio::voicedSampleRateHz);
     model_.telemetry.clear();
     runtime_->setThrottle(controls_.throttle.getValue() / 100.0);
     // No external load: the dyno and the vehicle load the engine.
