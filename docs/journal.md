@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Owner reports: V gearbox, two-stroke intake drawing, editors
+
+- Gearbox: `EngineLab.EngineModel3D` now measures, across the crank, the gap from the drawn case to each barrel (top of the crank's sweep to the deck, a bore wide). Without the new turn the catalogue Big Twin-like V2 already fails at -16.6 mm (the test stops at the first failure, so the designed Vs were not read without it). With it (5 deg steps, downwards first, kept where already clear): Big Twin 22.0 mm; designed V2 90 deg 14.7, V2 45 deg 15.6, V4 65 deg 9.6, two-stroke V4 90 deg 9.5, I4 27.0; catalogue inlines and the RD350 25-36 mm (the turn leaves a case its own estimate finds clear where it was).
+- Two-stroke intake drawn as built: transfer duct per cylinder (authored length, within 3 %), reed block, 25 mm manifold, carburettor, boot, one airbox of the authored volume. Catalogue route check 9 / 4 / 0 / 46 / 7 (tight bends 48 -> 46); the transfer duct is left out of the engine-solid check (it is cast in the barrel).
+- The shared airbox moves every crankcase's intake mouth to its top; that placement only reaches the sound once the camera microphone moves. Not listened to.
+- Editors (port timing and widths, compression ratio on every head, clutch capacity live): no automated test of the inspector, and not checked on screen. Clicking the carburettors: not checked on screen either.
+- Left aside (they need measurements first): the two-stroke's cost, its idle firing every revolution.
+
 ## 2026-10-23 — Performance: a 4K window costs 1.3 cores and does not take the 2JZ below real time
 
 - Hypothesis for the 14th-gen i9 report: a gaming PC's 1440p/4K screen. The app (VS tree, 6c90081+), 2JZ running free at 20 % throttle (~6,800 rpm), 30 s settle, then six alternating 30 s phases, window forced to 3840x2159 or 1600x900 (DPI-aware MoveWindow), engine started from its own buttons.

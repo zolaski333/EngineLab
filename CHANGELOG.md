@@ -52,6 +52,23 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **A two-stroke's intake is drawn as one is built**: per cylinder the
+  transfer duct inside the barrel, then out of it a reed block, a short
+  manifold and the carburettor a few centimetres from the reeds, and a rubber
+  boot into one airbox all the carburettors share (above a V's valley). The
+  carburettors were hidden inside per-crankcase boxes and could not be
+  clicked; the crankcase is now the block's only.
+- **Clicking a two-stroke's head or ports edits the port timing** (exhaust
+  and transfer opening, with the boost port following the transfers) and the
+  port widths; the engine restarts with them.
+- **The compression ratio can be edited** from the head of any engine (a
+  two-stroke's included, and engines whose cylinders differ in size).
+- **The clutch's capacity can be edited** on the gearbox, live: a boosted
+  engine no longer has to slip on the designer's estimate.
+- **A V motorcycle engine's gearbox no longer goes through the rear bank**
+  (a designed V-twin or V4, and the catalogue Big Twin's, 16.6 mm inside a
+  barrel): the case turns down behind the crankshaft until it clears the
+  barrels.
 - **The designer's real-time check failed every carburetted two-stroke**
   ("did not hold 5000 rpm"): it cranked the engine at full throttle, where a
   carburettor cannot start it. It now cranks with the throttle shut until the
