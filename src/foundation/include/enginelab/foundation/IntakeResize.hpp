@@ -46,4 +46,27 @@ struct IntakePartSize final {
 [[nodiscard]] std::string resizeIntakePart(EngineConfig& config, std::uint32_t pathId, IntakePart part,
                                            std::size_t cylinderIndex, double first, double second = 0.0);
 
+/** What the 3-D view's inspector tunes on a carburettor: its jets as stamped
+ *  flow numbers, the needle clip (1 richest to 5) and the pilot air screw's
+ *  turns out (CarburettorConfig). */
+struct CarburettorTune final {
+    double mainJetFlowNumber { 0.0 };
+    double pilotJetFlowNumber { 0.0 };
+    double needleClipPosition { 0.0 };
+    double airScrewTurns { 0.0 };
+};
+
+/** The tune of intake path `pathId`'s carburettor, or nothing when the path
+ *  does not exist or meters with an injector. */
+[[nodiscard]] std::optional<CarburettorTune> carburettorTune(const EngineConfig& config, std::uint32_t pathId);
+
+/**
+ * Gives intake path `pathId`'s carburettor `tune` in place, mirrored like
+ * resizeIntakePart(). Returns an empty string on success, or why the edit was
+ * refused (the configuration is then unchanged): no such path, no
+ * carburettor on it, or a value out of range (main jet 50-1,000, pilot jet
+ * 10-150, clip 1-5, air screw 0-5 turns).
+ */
+[[nodiscard]] std::string tuneCarburettor(EngineConfig& config, std::uint32_t pathId, const CarburettorTune& tune);
+
 } // namespace enginelab

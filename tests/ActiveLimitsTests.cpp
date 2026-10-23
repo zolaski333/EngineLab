@@ -80,14 +80,20 @@ void checkEcu() {
         "at the tuned limit the ECU cuts and says the rev limiter holds the engine");
 
     state.rpm = 1'800.0;
-    state.simulationTimeSeconds = 5.0;
-    state.knockLevel = 0.2;
-    (void)ecu.evaluate(config, state, controls);
-    const auto knocking = ecu.evaluate(config, state, controls);
-    require(hasActiveLimit(knocking.activeLimits, ActiveLimit::knockRetard),
+    // Knock control integrates: 0.05 s at knock 0.2 pulls 1.2 deg, and clean
+    // running gives back a degree a second.
+    const auto holdKnock = [&](double knock, double seconds) {
+        enginelab::EcuCommand command;
+        for (auto step = 0; step < static_cast<int>(seconds * 1'000.0); ++step) {
+            state.simulationTimeSeconds += 1.0e-3;
+            state.knockLevel = knock;
+            command = ecu.evaluate(config, state, controls);
+        }
+        return command;
+    };
+    require(hasActiveLimit(holdKnock(0.2, 0.05).activeLimits, ActiveLimit::knockRetard),
         "knock control pulling spark is reported");
-    state.knockLevel = 0.01;
-    require(!hasActiveLimit(ecu.evaluate(config, state, controls).activeLimits, ActiveLimit::knockRetard),
+    require(!hasActiveLimit(holdKnock(0.01, 0.75).activeLimits, ActiveLimit::knockRetard),
         "a retard below half a degree is not reported");
 
     state.knockLevel = 0.0;

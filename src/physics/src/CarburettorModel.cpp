@@ -76,7 +76,8 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
                                              double crankcasePressureKpa,
                                              double throttleDiameterMm,
                                              double throttleFraction,
-                                             double dtSeconds) noexcept {
+                                             double dtSeconds,
+                                             double idleCircuitOpening) noexcept {
     CarburettorMetering result;
     if (!(dtSeconds > 0.0) || !std::isfinite(dtSeconds)) return result;
 
@@ -118,7 +119,8 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
     // root so that a doubled bleed is a halved head rather than a halved flow.
     const auto airScrewFactor = std::sqrt(nominalAirScrewTurns / airScrewTurns);
     const auto pilotAreaM2 = jetAreaM2(carburettor.pilotJetFlowNumber, coefficient)
-        * std::max(0.0, carburettor.pilotCircuitFactor) * airScrewFactor;
+        * std::max(0.0, carburettor.pilotCircuitFactor) * airScrewFactor
+        * (std::isfinite(idleCircuitOpening) ? std::clamp(idleCircuitOpening, 0.0, 4.0) : 1.0);
     const auto pilotFlowKgPerSecond = orificeMassFlowKgPerSecond(
         pilotAreaM2, coefficient, fuelDensityKgPerM3, pilotDropPa - liftPressurePa);
     result.pilotMoles = pilotFlowKgPerSecond * dtSeconds / fuelMolarMassKg;

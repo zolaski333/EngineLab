@@ -210,6 +210,10 @@ struct ExhaustConfig final {
     double midpipeDiameterMm { 0.0 };
 };
 
+/** The idle-air opening a carburettor's pilot jet is sized at: the idle
+ *  governor's neutral command (its feed-forward), where a warm engine idles. */
+inline constexpr double carburettorPilotSizingIdleOpening = 0.42;
+
 /** A slide carburettor: the fuel system that meters from the air itself.
  *
  * An injector is told how much fuel to deliver. A carburettor is not told
@@ -256,11 +260,13 @@ struct CarburettorConfig final {
      * through a small outlet at the slide's edge, and all of that throttles it
      * further. Driving a bare 35 jet with the whole crankcase depression gives
      * AFR 1.5 at idle, so the lumping is not optional; this factor is the
-     * series restriction of everything after the jet. 0.14 is what an RD350's
-     * 35 pilot and its ~21 kPa idle depression need to idle at AFR 13, which
-     * is the one real pair the value is fitted to. A circuit resolved passage
-     * by passage would replace it. */
-    double pilotCircuitFactor { 0.14 };
+     * series restriction of everything after the jet. 0.026 is what an
+     * RD350's 35 pilot and its ~20 kPa idle depression need to feed the air
+     * its idle path passes at AFR 13.5, which is the one real pair the value
+     * is fitted to (0.14 belonged to an idle delivery ratio of 0.35, about
+     * three times a real one). A circuit resolved passage by passage would
+     * replace it. */
+    double pilotCircuitFactor { 0.026 };
     /** Needle clip position, 1 (needle highest, richest) to 5. The taper in
      * the needle jet is what meters between the pilot and the main. */
     double needleClipPosition { 3.0 };
@@ -1141,6 +1147,16 @@ struct TwoStrokeConfig final {
      *  cylinder the simulator had before the model existed. See
      *  `TwoStrokeScavenging.hpp` for what the length buys. */
     double scavengeLoopLengthRatio { 1.8 };
+    /** An exhaust power valve (Yamaha's YPVS and its kind): a blade or drum
+     *  in the port's roof that lowers it at low speed, so the port opens later
+     *  and the exhaust keeps more of the stroke, and lifts out of the way as
+     *  the speed rises. The opening angle with the valve shut, later than
+     *  `exhaustPortOpenDegrees`; zero is no valve. */
+    double powerValveClosedExhaustPortOpenDegrees { 0.0 };
+    /** The speeds where the servo starts to lift the valve and where it is
+     *  fully open. */
+    double powerValveOpeningStartRpm { 0.0 };
+    double powerValveFullyOpenRpm { 0.0 };
 };
 
 /** Crank degrees of one thermodynamic cycle: 720 for a four-stroke, 360 for
@@ -1449,6 +1465,12 @@ struct CylinderState final {
      *  command, for example while DFCO resume waits for a complete port-injector
      *  window. Event/audio consumers must not label that clean cut a misfire. */
     bool combustionCommandAvailable { true };
+    /** The end gas: the hottest the unburned charge got in the last completed
+     *  cycle, compressed from the moment the cylinder sealed (EndGasKnockModel),
+     *  and the pressure the last knock event's end gas released. Spark ignition
+     *  only; zero on a diesel. */
+    double endGasPeakTemperatureK { 0.0 };
+    double knockPressureRiseBar { 0.0 };
 };
 
 enum class DynoMode : std::uint8_t {
@@ -1876,6 +1898,13 @@ struct EngineState final {
     bool airFuelRatioValid { false };
     /** The electric radiator fan, realistic temperatures only. */
     bool coolingFanOn { false };
+    /** Crankshaft speed averaged over the last step: `rpm` is the speed at
+     *  its end, which carries the firing ripple. Sampled once per 240 Hz
+     *  frame, a ripple near that rate aliases into a slow wander; a
+     *  two-stroke twin fires at 233 Hz at 7,000 rpm. Zero before a step. */
+    double frameAveragedRpm { 0.0 };
+    /** A two-stroke's exhaust power valve, 0 shut to 1 open; 1 without one. */
+    double powerValveOpening { 1.0 };
 };
 
 struct EcuCommand final {

@@ -26,6 +26,27 @@ namespace enginelab {
     return ports.transferPortWidthMm > 0.0 ? ports.transferPortWidthMm : 1.30 * cylinder.boreMm;
 }
 
+[[nodiscard]] inline bool hasPowerValve(const TwoStrokeConfig& ports) noexcept {
+    return ports.powerValveClosedExhaustPortOpenDegrees > ports.exhaustPortOpenDegrees
+        && ports.powerValveFullyOpenRpm > ports.powerValveOpeningStartRpm;
+}
+
+/** Where a power valve's servo is told to be at `rpm`, 0 shut to 1 open:
+ *  a smooth lift between its start and fully-open speeds; 1 without one. */
+[[nodiscard]] inline double powerValveTargetOpening(const TwoStrokeConfig& ports, double rpm) noexcept {
+    if (!hasPowerValve(ports)) return 1.0;
+    const auto t = std::clamp((rpm - ports.powerValveOpeningStartRpm)
+        / (ports.powerValveFullyOpenRpm - ports.powerValveOpeningStartRpm), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+/** The exhaust port's opening angle at a valve opening, 0 shut to 1 open. */
+[[nodiscard]] inline double exhaustPortOpenDegreesAt(const TwoStrokeConfig& ports, double valveOpening) noexcept {
+    if (!hasPowerValve(ports)) return ports.exhaustPortOpenDegrees;
+    return ports.powerValveClosedExhaustPortOpenDegrees + std::clamp(valveOpening, 0.0, 1.0)
+        * (ports.exhaustPortOpenDegrees - ports.powerValveClosedExhaustPortOpenDegrees);
+}
+
 /**
  * The effective open area, mm^2 (discharge coefficient included), of a port
  * whose top edge the piston uncovers `openDegrees` after top dead centre, at

@@ -7,10 +7,10 @@ engine:
   firing_order: [1, 2, 4, 5, 3]
   idle_rpm: 780
   redline_rpm: 7100
-  # Simulated stock firing pressure reaches 175 bar at 3,000 rpm full load,
-  # above the 140 bar of a typical boosted petrol engine: the limit sits 10 %
-  # over this engine's own stock peak so the stock calibration does no harm
-  # (journal 2026-10-15). Not a manufacturer figure.
+  # Simulated stock firing pressure reached 175 bar at 3,000 rpm full load
+  # before the end gas could knock (journal 2026-10-15); the knock control now
+  # holds it at 136-156 bar. The limit stays 10 % over the old peak. Not a
+  # manufacturer figure.
   peak_pressure_limit_bar: 195
   rotating_inertia_kg_m2: 0.31
   friction_coefficient: 0.13
@@ -45,6 +45,11 @@ engine:
     shaft_inertia_kg_m2: 0.00013
     wastegate_pressure_ratio: 2.45
     charge_temperature_rise_c: 43
+    # The real engine has an air-to-air intercooler. Without one the charge
+    # reached the runners at ~130 degC at full boost and the engine knocked
+    # heavily at the maker's boost; with it the knock control holds it 8-12
+    # deg behind its map, in light knock (journal 2026-10-23).
+    intercooler_effectiveness: 0.7
     # Family-level acoustic estimates; replace with measured turbo geometry.
     compressor_blade_count: 7
     turbine_blade_count: 9

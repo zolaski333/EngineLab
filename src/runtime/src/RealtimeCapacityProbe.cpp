@@ -69,6 +69,14 @@ RealtimeCapacity measureRealtimeCapacity(const EngineConfig& config, double meas
         runtime->setDynoHoldEnabled(true);
         runtime->setDynoHoldRpm(result.holdRpm);
         runtime->start();
+        // Cranked with the throttle shut until it runs, as a carburetted
+        // engine is: at full throttle and cranking speed its venturi draws
+        // nearly nothing and its pilot is dead, so it never catches.
+        while (!cancelled() && Clock::now() < deadline) {
+            const auto state = runtime->snapshot();
+            if (state.rpm > 0.8 * config.idleRpm || state.simulationTimeSeconds > 5.0) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
         runtime->startDyno();
 
         RealtimeHoldJudge judge(result.holdRpm);

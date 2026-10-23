@@ -44,6 +44,28 @@ std::string resizeCylinders(EngineConfig& config, double boreMm, double strokeMm
     return {};
 }
 
+std::string setCompressionRatio(EngineConfig& config, double ratio) {
+    if (!std::isfinite(ratio) || ratio < 5.0 || ratio > 20.0)
+        return "The compression ratio must be between 5 and 20.";
+    auto edited = config;
+    for (auto& cylinder : edited.cylinders) {
+        cylinder.compressionRatio = ratio;
+        if (cylinder.headChamberVolumeCc <= 0.0) continue;
+        // The clearance this ratio needs, taken from the piston-to-deck gap.
+        const auto areaMm2 = std::numbers::pi * cylinder.boreMm * cylinder.boreMm * 0.25;
+        const auto clearanceCc = areaMm2 * cylinder.strokeMm / 1'000.0 / (ratio - 1.0);
+        const auto deckClearanceMm = (clearanceCc - cylinder.headChamberVolumeCc + cylinder.pistonCrownVolumeCc)
+                * 1'000.0 / areaMm2
+            - cylinder.headGasketThicknessMm;
+        if (deckClearanceMm + cylinder.headGasketThicknessMm < 0.0)
+            return "The piston would rise past the head gasket: this chamber cannot reach that ratio.";
+        cylinder.deckHeightMm = deckClearanceMm + cylinder.strokeMm * 0.5 + cylinder.connectingRodMm
+            + cylinder.compressionHeightMm;
+    }
+    config = std::move(edited);
+    return {};
+}
+
 std::optional<double> connectingRodLength(const EngineConfig& config) {
     if (config.cylinders.empty()) return std::nullopt;
     const auto& first = config.cylinders.front();

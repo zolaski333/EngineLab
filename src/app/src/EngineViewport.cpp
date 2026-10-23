@@ -1164,7 +1164,7 @@ void EngineViewport::applyEdit(const std::vector<double>& values, bool gradual) 
         && scene_->ducts()[static_cast<std::size_t>(identity.duct)].kind == render::DuctKind::exhaustComponent)
         applyExhaustEdit(first, second);
     else if (role == render::PartRole::liner || role == render::PartRole::piston)
-        applyCylinderEdit(first, second, gradual);
+        applyCylinderEdit(values, gradual);
     else if (role == render::PartRole::rod)
         applyRodEdit(first, gradual);
     else if (partEditor_ && (role == render::PartRole::head || role == render::PartRole::intakeValve
@@ -1214,10 +1214,19 @@ void EngineViewport::applyPartChoice(int index) {
     }
 }
 
-void EngineViewport::applyCylinderEdit(double boreMm, double strokeMm, bool gradual) {
-    if (!scene_ || !cylinderEditor_ || selectedPart_ < 0) return;
+void EngineViewport::applyCylinderEdit(const std::vector<double>& values, bool gradual) {
+    if (!scene_ || !cylinderEditor_ || selectedPart_ < 0 || values.size() < 3U) return;
     auto edited = scene_->config();
-    const auto error = resizeCylinders(edited, boreMm, strokeMm);
+    const auto boreMm = values[0];
+    const auto strokeMm = values[1];
+    const auto ratio = values[2];
+    // Only what was edited: a chamber-geometry engine's ratio follows its
+    // bore and stroke, and the field still holds the ratio from before.
+    std::string error;
+    if (const auto size = cylinderSize(edited); size && (boreMm != size->boreMm || strokeMm != size->strokeMm))
+        error = resizeCylinders(edited, boreMm, strokeMm);
+    if (error.empty() && ratio != scene_->config().cylinders.front().compressionRatio)
+        error = setCompressionRatio(edited, ratio);
     sendCylinderEdit(edited, error, gradual);
 }
 
@@ -1619,12 +1628,20 @@ void EngineViewport::updateInspector() {
         result.key = std::uint64_t { 1 } << 63U;
         result.length("Bore", size->boreMm, 1.0, 0.1, 20.0, 200.0);
         result.length("Stroke", size->strokeMm, 1.0, 0.1, 20.0, 200.0);
+        result.value("Compression ratio", config.cylinders.front().compressionRatio, utf8(" : 1"), 1, 0.5, 0.1, 5.0,
+                     20.0);
         result.offersRamp = true;
-        result.note = "Every cylinder changes, each crank throw at its gas-exchange TDC.";
+        result.note = "Every cylinder changes, each crank throw at its gas-exchange TDC. A new bore or stroke keeps "
+                      "the compression ratio; a higher ratio gives more torque, and knocks sooner.";
         return result;
     };
     const auto injectorEdit = [this, &config]() -> std::optional<PartInspector::Edit> {
         if (!configEditor_) return std::nullopt;
+        // Carburettors meter every cylinder: no injector is commanded.
+        if (!config.intakePaths.empty()
+            && std::all_of(config.intakePaths.begin(), config.intakePaths.end(),
+                           [](const IntakePathConfig& path) { return path.geometry.carburettor.enabled; }))
+            return std::nullopt;
         const auto& injection = config.injection;
         const auto direct = injection.mode == InjectionMode::direct;
         PartInspector::Edit result;
@@ -1683,6 +1700,41 @@ void EngineViewport::updateInspector() {
                 "compression). The ignition map stays the engine's own: a high-compression engine may knock at "
                 "boost. Or takes the turbo off."),
             forced.enabled ? 1 : 0 };
+    };
+
+    // Joins the next exhaust path into `pathId`'s, a restart: a boxer six's
+    // two banks made one 6-into-1. Offered only when the join is valid.
+    const auto joinEdit = [this, &config](std::uint32_t pathId) -> std::optional<PartInspector::Edit> {
+        const auto& paths = config.exhaustPaths;
+        if (!configEditor_ || paths.size() < 2U) return std::nullopt;
+        const auto kept = std::find_if(paths.begin(), paths.end(),
+                                       [pathId](const ExhaustPathConfig& path) { return path.id == pathId; });
+        if (kept == paths.end()) return std::nullopt;
+        const auto joinedId = std::next(kept) != paths.end() ? std::next(kept)->id : paths.front().id;
+        auto trial = config;
+        if (!joinExhaustPaths(trial, pathId, joinedId).empty() || validateEngineConfig(trial)) return std::nullopt;
+        PartInspector::Edit result;
+        result.key = (std::uint64_t { 9 } << 60U) | pathId;
+        result.heading = "EXHAUST PATHS";
+        result.restarts = true;
+        result.choice = PartInspector::Edit::Choice {
+            { "Separate", "Joined" },
+            "Joins exhaust path " + juce::String(joinedId) + " into path " + juce::String(pathId)
+                + ", and restarts: each of its cylinders gets a copy of this path's primary, into this path's "
+                  "collector; its own pipes, silencers and outlet go. The collector keeps its size.",
+            0 };
+        const auto joinedPipes = kept->cylinderIds.size()
+            + std::find_if(paths.begin(), paths.end(), [joinedId](const ExhaustPathConfig& path) {
+                  return path.id == joinedId;
+              })->cylinderIds.size();
+        result.note = "Path " + juce::String(joinedId) + " can join this one: one collector for "
+            + juce::String(static_cast<int>(joinedPipes)) + " pipes.";
+        partChoice_ = [pathId, joinedId](EngineConfig& edited, int index) {
+            if (index == 1) (void)joinExhaustPaths(edited, pathId, joinedId);
+        };
+        // The pipes are redrawn: the ports then show the joined path.
+        partChoiceSelects_ = render::PartRole::exhaustPorts;
+        return result;
     };
 
     switch (identity.role) {
@@ -1916,6 +1968,19 @@ void EngineViewport::updateInspector() {
     case render::PartRole::exhaustPorts:
         title = "Exhaust ports";
         if (live != nullptr) add("Exhaust gas", model_.units.text(units::Quantity::temperature, live->exhaustTemperatureC));
+        if (cylinder != nullptr)
+            for (const auto& path : config.exhaustPaths)
+                if (std::find(path.cylinderIds.begin(), path.cylinderIds.end(), cylinder->id) != path.cylinderIds.end()) {
+                    add("Exhaust path", juce::String(path.id) + ", " + juce::String(static_cast<int>(path.cylinderIds.size()))
+                                            + (path.cylinderIds.size() == 1U ? " cylinder" : " cylinders"));
+                    edit = joinEdit(path.id);
+                }
+        // The stubs of every cylinder are one part: the paths, the first
+        // offered the next one.
+        if (cylinder == nullptr && !config.exhaustPaths.empty()) {
+            add("Exhaust paths", juce::String(static_cast<int>(config.exhaustPaths.size())));
+            edit = joinEdit(config.exhaustPaths.front().id);
+        }
         break;
     case render::PartRole::afterfire:
         title = "Afterfire";
@@ -1926,8 +1991,12 @@ void EngineViewport::updateInspector() {
         const auto& forced = config.forcedInduction;
         const auto krpm = [](double rpm) { return juce::String(rpm / 1'000.0, 1) + " krpm"; };
         const auto area = [](double mm2) { return juce::String(juce::roundToInt(mm2)) + utf8(" mm²"); };
-        title = "Turbocharger";
-        subtitle = "On exhaust path " + juce::String(scene_->turbo().pathId);
+        const auto& drawn = scene_->turbos();
+        const auto& clicked = identity.turbo >= 0 && static_cast<std::size_t>(identity.turbo) < drawn.size()
+            ? drawn[static_cast<std::size_t>(identity.turbo)] : scene_->turbo();
+        title = drawn.size() > 1U ? "Turbocharger " + juce::String(static_cast<int>(clicked.unit) + 1)
+                                  : juce::String("Turbocharger");
+        subtitle = "On exhaust path " + juce::String(clicked.pathId);
         const auto units = std::min<std::size_t>(state.turbochargerCount, maximumTurbochargers);
         if (units > 1U) {
             juce::String speeds;
@@ -1986,7 +2055,7 @@ void EngineViewport::updateInspector() {
             edit->value("Turbochargers", static_cast<double>(forced.turbochargerCount), "", 0, 1.0, 1.0, 1.0,
                         static_cast<double>(maximumTurbochargers));
             // Which turbocharger this path's turbine drives, when there is a choice.
-            const auto pathId = scene_->turbo().pathId;
+            const auto pathId = clicked.pathId;
             const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
                 [pathId](const ExhaustPathConfig& candidate) { return candidate.id == pathId; });
             const auto pathIndex = static_cast<std::size_t>(std::distance(config.exhaustPaths.begin(), path));
@@ -2162,6 +2231,7 @@ void EngineViewport::updateInspector() {
         case render::DuctKind::intakeInletDuct: title = "Air inlet"; break;
         }
         const auto exhaust = duct.kind == render::DuctKind::exhaustComponent || duct.kind == render::DuctKind::exhaustFeeder;
+        if (duct.kind == render::DuctKind::exhaustFeeder) edit = joinEdit(duct.pathId);
         if (duct.kind == render::DuctKind::exhaustComponent && configEditor_) {
             if (const auto size = exhaustComponentSize(config, duct.pathId, duct.elementId)) {
                 edit = PartInspector::Edit {};
@@ -2194,10 +2264,34 @@ void EngineViewport::updateInspector() {
                 } else {
                     edit->length("Bore", size->first, 1.0, 0.1, 10.0, 150.0);
                 }
-                partEditor_ = [part, pathId, cylinderIndex](EngineConfig& edited, const std::vector<double>& values) {
-                    return part == IntakePart::runner
-                        ? resizeIntakePart(edited, pathId, part, cylinderIndex, values[0], values[1])
-                        : resizeIntakePart(edited, pathId, part, cylinderIndex, values[0]);
+                // A carburettor is its throttle bore: its jets are tuned there.
+                const auto tune = part == IntakePart::throttle ? carburettorTune(config, pathId) : std::nullopt;
+                if (tune) {
+                    title = "Carburettor";
+                    edit->heading = "JETTING";
+                    edit->value("Main jet", tune->mainJetFlowNumber, {}, 1, 10.0, 2.5, 50.0, 1'000.0);
+                    edit->value("Pilot jet", tune->pilotJetFlowNumber, {}, 1, 2.5, 2.5, 10.0, 150.0);
+                    edit->value("Needle clip", tune->needleClipPosition, {}, 0, 1.0, 1.0, 1.0, 5.0);
+                    edit->value("Air screw", tune->airScrewTurns, " turns out", 2, 0.25, 0.125, 0.0, 5.0);
+                    edit->note = "Jets as the number stamped on them (a Mikuni main: cc/min at one metre of head). "
+                                 "The main meters from about a quarter throttle up, the pilot at and just off "
+                                 "idle, the needle between them (clip 1 richest, 5 leanest); turning the air screw "
+                                 "out leans the pilot. Every carburettor changes alike. The running engine takes "
+                                 "them.";
+                }
+                partEditor_ = [part, pathId, cylinderIndex, carburetted = tune.has_value()](
+                                  EngineConfig& edited, const std::vector<double>& values) {
+                    if (part == IntakePart::runner)
+                        return resizeIntakePart(edited, pathId, part, cylinderIndex, values[0], values[1]);
+                    auto error = resizeIntakePart(edited, pathId, part, cylinderIndex, values[0]);
+                    if (!error.empty() || !carburetted || values.size() < 5U) return error;
+                    // A two-stroke has one per cylinder, jetted alike.
+                    const CarburettorTune tuned { values[1], values[2], values[3], values[4] };
+                    const auto paths = edited.intakePaths;
+                    for (const auto& path : paths)
+                        if (carburettorTune(edited, path.id))
+                            if (error = tuneCarburettor(edited, path.id, tuned); !error.empty()) return error;
+                    return error;
                 };
             }
         }

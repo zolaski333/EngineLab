@@ -633,6 +633,23 @@ void realtimeIsChecked() {
     std::cout << "  designed single: physics at " << singleCapacity.factor << " x real time"
               << (singleCapacity.error.empty() ? "" : " (" + singleCapacity.error + ")") << '\n';
     require(singleCapacity.error.empty() && singleCapacity.factor > 0.0, "a single holds its measuring speed");
+
+    // A carburetted two-stroke never catches cranked at full throttle (its
+    // pilot is dead there and its venturi draws nothing at cranking speed):
+    // the probe cranks it shut first, as a rider does.
+    EngineSpec twin;
+    twin.name = "Two-stroke Twin";
+    twin.cycle = EngineCycle::twoStroke;
+    twin.use = EngineUse::sportMotorcycle;
+    twin.cylinderCount = 2;
+    twin.boreMm = 64.0;
+    twin.strokeMm = 54.0;
+    const auto stinger = designCatalogueEngine(twin, ENGINELAB_CATALOG_ROOT);
+    require(stinger.config.has_value(), "a two-stroke twin designs");
+    const auto twinCapacity = measureRealtimeCapacity(*stinger.config, 1.0, 60.0);
+    std::cout << "  designed two-stroke twin: physics at " << twinCapacity.factor << " x real time"
+              << (twinCapacity.error.empty() ? "" : " (" + twinCapacity.error + ")") << '\n';
+    require(twinCapacity.error.empty() && twinCapacity.factor > 0.0, "a carburetted two-stroke holds its measuring speed");
 }
 
 } // namespace

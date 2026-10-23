@@ -30,11 +30,17 @@ neutral at 0. The spark slider adds a trim in degrees to the table. Cranking,
 temperature, transient enrichment, knock and rev-limiter logic apply after
 that.
 
-Knock control retards the spark by `knock.retard_deg_per_intensity` degrees
-per unit of knock intensity (0 to 1), 12° by default, read with
-`knockRetardGainDegrees()`. Zero turns it off: the knock then runs free. The
-control is proportional and continuous; a real ECU retards in steps per knock
-event and recovers slowly, which is not modelled. Diesels have no entry.
+Knock control works as a production ECU's does: while the knock intensity is
+above 0.1 (about 1 bar of oscillation, where measurements start calling a
+cycle knocking) it pulls the spark back fast, 20 x the excess per second as a
+share of its authority: a heavy event (0.5, decaying at 45/s) pulls about 1.3°,
+within the 1-3° production controls take per knocking cycle. In a clean stretch it
+gives the advance back at 1°/s. The retard therefore settles at the knock-limited
+advance instead of needing knock to hold it. Its authority, the most it may
+pull, is `knock.retard_deg_per_intensity` (12° by default; the key keeps the
+name of the proportional control it replaced), read with
+`knockRetardGainDegrees()`. Past that much retard the knock is no longer held.
+Zero turns it off: the knock then runs free. Diesels have no entry.
 
 Launch control (`limits.launch_rpm`, off by default) moves the limiter's cut
 down to that speed while the vehicle stands in gear (under 5 km/h) with the

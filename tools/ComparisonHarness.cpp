@@ -472,6 +472,13 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
         std::array<std::uint64_t, 32> sampledInvalidBoundaries {};
         double previousPressureSampleTime = 0.0;
         double dynoLoadIntegral = 0.0;
+        // The absorber brakes up to 35 bar of BMEP. The simulator's legacy
+        // load stops at 25, about what a real 2.5 TFSI makes (500 N.m), so a
+        // faithful boosted engine outran it. The gains are scaled so that
+        // below 25 bar the torque per rpm of error is what it always was.
+        const auto absorberCapacityNm = 3'500'000.0
+            * enginelab::engineDisplacementLitres(config) * 0.001 / (4.0 * std::numbers::pi);
+        constexpr double absorberGainShare = 25.0 / 35.0;
         const auto dynoTargetRpm = std::max(config.idleRpm * 1.55,
                                             config.ignition.revLimitRpm * 0.65);
         for (int step = 0; step < static_cast<int>(7.0 / dt); ++step) {
@@ -481,11 +488,15 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
                 const auto speedError = (simulator.state().rpm - dynoTargetRpm)
                     / std::max(1.0, dynoTargetRpm);
                 dynoLoadIntegral = std::clamp(
-                    dynoLoadIntegral + speedError * dt * 1.20, 0.0, 0.92);
-                dynoLoad = std::clamp(dynoLoadIntegral + speedError * 0.70, 0.0, 1.0);
+                    dynoLoadIntegral + speedError * dt * 1.20 * absorberGainShare, 0.0, 0.92);
+                dynoLoad = std::clamp(dynoLoadIntegral + speedError * 0.70 * absorberGainShare, 0.0, 1.0);
             }
-            const auto frame = simulator.step(dt,
-                { true, time < 1.5, 0.72, dynoLoad });
+            enginelab::EngineControls controls;
+            controls.ignitionEnabled = true;
+            controls.starterEngaged = time < 1.5;
+            controls.throttle = 0.72;
+            controls.dynamometerTorqueNm = dynoLoad * absorberCapacityNm;
+            const auto frame = simulator.step(dt, controls);
             const auto& state = frame.state;
             enginelab::CylinderPressureSample pressureSample;
             while (simulator.tryPopCylinderPressureSample(pressureSample)) {

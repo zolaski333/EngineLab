@@ -526,7 +526,14 @@ void EngineModel3D::buildDucts() {
         // The injector. A port injector sits in the runner just out of the
         // head, above it, spraying at the back of the intake valves; a direct
         // injector sits in the head on the intake side, under the valves,
-        // spraying across the chamber.
+        // spraying across the chamber. A cylinder fed by a carburettor has
+        // none: its fuel comes with the air.
+        const auto carburetted = std::any_of(config_.intakePaths.begin(), config_.intakePaths.end(),
+            [&config](const IntakePathConfig& path) {
+                return path.geometry.carburettor.enabled
+                    && std::find(path.cylinderIds.begin(), path.cylinderIds.end(), config.id) != path.cylinderIds.end();
+            });
+        if (carburetted) continue;
         const auto direct = config_.injection.mode == InjectionMode::direct;
         auto& drawn = cylinders_[i];
         drawn.injectorTip = direct ? cylinder.deckCentre + axis * (0.10F * b) - side * (0.42F * b)
@@ -588,7 +595,7 @@ void EngineModel3D::buildDucts() {
         }
         avoid.push_back(boxBetween(low, high));
     }
-    add(layoutExhaust(config_, exhaustPorts_, bore, intakeTubes, avoid, &turbo_));
+    add(layoutExhaust(config_, exhaustPorts_, bore, intakeTubes, avoid, &turbos_));
     buildTurbo();
 
     // A plume at every outlet, lit only by an afterfire.
@@ -617,20 +624,25 @@ void EngineModel3D::buildDucts() {
 }
 
 void EngineModel3D::buildTurbo() {
-    if (!turbo_.placed) return;
+    // A unit the layout found no collector for is not drawn.
+    std::erase_if(turbos_, [](const TurboPlacement& turbo) { return !turbo.placed; });
+    turboParts_.clear();
     const auto& forced = config_.forcedInduction;
-    Mesh turbineHousing, compressorHousing, turbineWheel, compressorWheel;
-    appendTurboHousings(turbineHousing, compressorHousing, turbo_);
     // Without a blade count, a typical wheel: it is only drawn.
     const auto turbineBlades = forced.turbineBladeCount > 0U ? static_cast<int>(forced.turbineBladeCount) : 10;
     const auto compressorBlades = forced.compressorBladeCount > 0U ? static_cast<int>(forced.compressorBladeCount) : 7;
-    appendTurboWheel(turbineWheel, turbo_.turbineWheelRadius, 0.8F * turbo_.turbineWidth, turbineBlades, 1.0F);
-    appendTurboWheel(compressorWheel, turbo_.compressorWheelRadius, 0.7F * turbo_.compressorWidth, compressorBlades, -1.0F);
-    turboParts_[0] = addPart(std::move(turbineHousing), SceneMaterial::turboHousing, layerExhaust);
-    turboParts_[1] = addPart(std::move(compressorHousing), SceneMaterial::turboHousing, layerIntake);
-    turboParts_[2] = addPart(std::move(turbineWheel), SceneMaterial::forged, layerExhaust);
-    turboParts_[3] = addPart(std::move(compressorWheel), SceneMaterial::steel, layerIntake);
-    for (const auto& solid : turboSolids(turbo_)) solids_.push_back(solid);
+    for (const auto& turbo : turbos_) {
+        Mesh turbineHousing, compressorHousing, turbineWheel, compressorWheel;
+        appendTurboHousings(turbineHousing, compressorHousing, turbo);
+        appendTurboWheel(turbineWheel, turbo.turbineWheelRadius, 0.8F * turbo.turbineWidth, turbineBlades, 1.0F);
+        appendTurboWheel(compressorWheel, turbo.compressorWheelRadius, 0.7F * turbo.compressorWidth,
+            compressorBlades, -1.0F);
+        turboParts_.push_back({ addPart(std::move(turbineHousing), SceneMaterial::turboHousing, layerExhaust),
+            addPart(std::move(compressorHousing), SceneMaterial::turboHousing, layerIntake),
+            addPart(std::move(turbineWheel), SceneMaterial::forged, layerExhaust),
+            addPart(std::move(compressorWheel), SceneMaterial::steel, layerIntake) });
+        for (const auto& solid : turboSolids(turbo)) solids_.push_back(solid);
+    }
 }
 
 void EngineModel3D::buildSupercharger() {
@@ -844,14 +856,17 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
             out[cylinder.runnerPart].intensity = static_cast<float>(std::clamp(intakeLift / maximumLift, 0.0, 1.0));
     }
     for (const auto part : outletFlameParts_) out[part].intensity = std::clamp(input.afterfire, 0.0F, 1.0F);
-    if (turbo_.placed) {
-        // Both wheels turn with the shaft, about its axis.
-        const auto shaft = static_cast<float>(std::fmod(input.turboShaftDegrees, 360.0) * (pi / 180.0F));
-        const auto axis = turbo_.axis;
-        const auto x = turbo_.radial * std::cos(shaft) + cross(axis, turbo_.radial) * std::sin(shaft);
+    for (std::size_t index = 0; index < turbos_.size(); ++index) {
+        // Both wheels turn with the shaft, about its axis; each unit a little
+        // out of phase with the next, so a pair does not look geared together.
+        const auto& turbo = turbos_[index];
+        const auto shaft = static_cast<float>(std::fmod(input.turboShaftDegrees + 47.0 * static_cast<double>(turbo.unit),
+            360.0) * (pi / 180.0F));
+        const auto axis = turbo.axis;
+        const auto x = turbo.radial * std::cos(shaft) + cross(axis, turbo.radial) * std::sin(shaft);
         const auto z = cross(x, axis);
-        out[turboParts_[2]].transform = Mat4::basis(x, axis, z, turbo_.turbineCentre);
-        out[turboParts_[3]].transform = Mat4::basis(x, axis, z, turbo_.compressorCentre);
+        out[turboParts_[index][2]].transform = Mat4::basis(x, axis, z, turbo.turbineCentre);
+        out[turboParts_[index][3]].transform = Mat4::basis(x, axis, z, turbo.compressorCentre);
     }
     if (supercharger_.placed) {
         // Geared to the crank.
@@ -918,7 +933,9 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
         }
     if (std::find(outletFlameParts_.begin(), outletFlameParts_.end(), part) != outletFlameParts_.end())
         return { PartRole::afterfire, -1, -1 };
-    if (std::find(turboParts_.begin(), turboParts_.end(), part) != turboParts_.end()) return { PartRole::turbo, -1, -1 };
+    for (std::size_t index = 0; index < turboParts_.size(); ++index)
+        if (std::find(turboParts_[index].begin(), turboParts_[index].end(), part) != turboParts_[index].end())
+            return { PartRole::turbo, -1, -1, static_cast<int>(index) };
     if (std::find(superchargerParts_.begin(), superchargerParts_.end(), part) != superchargerParts_.end())
         return { PartRole::supercharger, -1, -1 };
     if (std::find(gearboxParts_.begin(), gearboxParts_.end(), part) != gearboxParts_.end()

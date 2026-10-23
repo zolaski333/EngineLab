@@ -677,6 +677,13 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             return "Two-stroke port widths are 5-500 mm (0: from the bore), their discharge coefficient 0.3-1, "
                    "the crankcase compression ratio 1.1-2.5, the scavenging loop 0.5-4 x bore "
                    "(0: a perfectly mixed cylinder)";
+        if (ports.powerValveClosedExhaustPortOpenDegrees != 0.0
+                && (!inRange(ports.powerValveClosedExhaustPortOpenDegrees, ports.exhaustPortOpenDegrees + 1.0,
+                        ports.transferPortOpenDegrees - 4.0)
+                    || !inRange(ports.powerValveOpeningStartRpm, 0.0, 30'000.0)
+                    || !inRange(ports.powerValveFullyOpenRpm, ports.powerValveOpeningStartRpm + 100.0, 30'000.0)))
+            return "A two-stroke power valve opens the exhaust port later than the port itself and at least "
+                   "4 deg before the transfers, and is fully open at least 100 rpm above where it starts";
         for (const auto& path : config.intakePaths) {
             if (path.cylinderIds.size() != 1)
                 return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";

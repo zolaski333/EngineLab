@@ -52,6 +52,16 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **The designer's real-time check failed every carburetted two-stroke**
+  ("did not hold 5000 rpm"): it cranked the engine at full throttle, where a
+  carburettor cannot start it. It now cranks with the throttle shut until the
+  engine runs.
+- The designer names the engine from what it is (*Two-stroke Inline Twin*)
+  until a name is typed, instead of keeping *Inline Seven*, and its table's
+  columns are headed *Quantity* and *Value*.
+- A carburetted engine no longer draws, or offers to edit, injectors it does
+  not have.
+
 - A designed V or W engine shares one crank pin between the cylinders of a
   row, as real ones do; each had its own pin. A 90 deg V-twin now fires
   270-450 and a 45 deg one 315-405. Where a shared pin cannot fire six
@@ -74,9 +84,60 @@ file formats, always with an in-memory migration).
   125 cc cylinders a 16.6 mm bore on a single and 33.2 mm on a four. Singles gain
   18-29 % of peak torque; triples, fours and V4s lose the 6-9 % their oversized
   bores gave them; twins are unchanged.
+- **Engines knock.** A boost and an advance that would destroy a real engine
+  now knock: the end gas the flame has not reached is followed as its own
+  zone, compressed from the seal, against an autoignition delay fitted on
+  reference fuels in a knocking engine (Douaud-Eyzat), and the knock's
+  intensity is the pressure that gas adds. The delay's prefactor is
+  calibrated so that the catalogue's own spark maps sit at their knock limit,
+  as a production map does: 10 deg of advance over a map knocks, and a 2JZ
+  run that way at full load with knock control off knocks heavily. The knock
+  control now works as a production one: it pulls the spark back in steps of
+  about a degree while the engine knocks and gives it back at 1 deg/s, so an
+  engine settles at its knock limit instead of sitting in light knock. The
+  Audi I5 gets the intercooler its real engine has.
+- **The compression ratio is edited by clicking the engine**: a cylinder
+  liner or piston offers it beside the bore and stroke, and the running
+  engine takes it (at once or over the ramp).
+- **A carburettor is drawn and tuned in the 3-D view**: on a carburetted
+  engine the throttle body becomes a carburettor (slide tower, float bowl),
+  and clicking it offers its main and pilot jets, needle clip and air screw,
+  taken by the running engine.
+- **Two exhaust paths can be joined into one**: the exhaust ports or a
+  junction offer *Joined*, which gives the other path's cylinders a copy of
+  this path's primary into its collector (a boxer six's two banks become a
+  6-into-1) and restarts the engine.
+- **Every turbocharger is drawn.** With two or more units the 3-D view drew
+  only the first; now each unit an exhaust path drives sits on that path's
+  collector (a flat six's two banks get one each), and clicking one opens its
+  own inspector, titled with its number and its path.
+- **Two-strokes can have a power valve** (`two_stroke.power_valve_*`): it
+  lowers the exhaust port at low speed and lifts as the pipe comes in. The
+  designer fits one to sport two-strokes; a designed 500 cc twin gains 20-39 %
+  of torque between 3,250 and 5,750 rpm and keeps its top end.
+- A two-stroke saved as JSON keeps its scavenging loop length (it came back
+  at the default).
+- A two-stroke twin no longer fails to hold 3,500, 7,000 and 7,500 rpm on the
+  dyno: the brake answered the crankshaft speed sampled at the end of each
+  240 Hz frame, where a firing rate near 240 Hz (or 120) aliases into a slow
+  wander. The dyno now holds the speed averaged over the frame.
+- A designed carburetted two-stroke idles: its pilot jet was sized for about
+  eight times the air a two-stroke idles on, so twins and triples flooded and
+  stalled. The pilot is now sized from the air the idle path passes and
+  follows it as the idle air opens, and each carburettor's idle bypass goes
+  with the cylinder it feeds. Designed 1-4 cylinder two-strokes idle at their
+  1,300 rpm; an RD350-sized design keeps a 35 pilot.
+- A two-stroke's idle no longer hunts: the idle governor runs at half the
+  gain on two-strokes, whose idle air passes the crankcase first. The RD350
+  held 1,175-1,398 rpm with a 5 s period; now 1,284-1,325.
+- Boost no longer burns the charge faster: the flame's turbulence follows the
+  piston, not the intake pressure, so a boosted cylinder burns like a full
+  unboosted one.
 
 ### Changed
 
+- The build compiles JUCE once instead of once per executable: a clean
+  Linux build takes 6 minutes instead of 15 on four cores.
 - Engines with eight cylinders or more simulate their cylinders in parallel,
   with exactly the same result: 22-33 % more real-time headroom (a designed
   6 L V12 at 7,500 rpm 0.71 -> 0.93, the LS3 1.17 -> 1.43, the Merlin

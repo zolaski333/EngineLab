@@ -25,18 +25,27 @@ without the owner's explicit agreement.
    chaotic and neither the behaviour nor the sound is a real two-stroke's. Free
    rein to add what a 2T needs (carburettor, reed and power valves) or to rework
    the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
-   and a carburettor exists (2026-10-22); open are reed and power valves and the
-   3,500/7,000/7,500 rpm holding band, the engine's own and not the dyno's.
-3. **Performance**: test duration, build time, real-time factor.
+   and a carburettor exists (2026-10-22); the 3,500/7,000/7,500 rpm holding
+   band was the 240 Hz frame's alias of the firing ripple, and a power valve
+   exists (2026-10-23). The reed stays a perfect check valve until a measured
+   gap asks for its petals (VISION.md's decision rule).
+3. **Performance**: test duration, build time, real-time factor. JUCE compiles
+   once since 2026-10-23 (Linux CI build 18 -> 4.5 min, Windows 25 -> 32: one
+   serial MSBuild project). Open, and measurable only on the reference machine:
+   the V10-V16 designs below real time (pool spin vs park, duct numerics).
 4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
    that would destroy a real one. Fix the knock PHYSICS, not the damage model.
    The designer's ignition is a template because there is no knock limit to
-   calibrate MBT against, so this item unblocks that one.
-5. **Editing on the engine**: compression ratio by clicking the engine, every
-   turbo visible when two or more are fitted, carburettor parameters by
-   clicking (if one is added), and two exhaust paths joinable into one (a
-   boxer six cannot be made 6-into-1 today). The designer window built on
-   2026-10-19 has never been checked on screen: do that here.
+   calibrate MBT against, so this item unblocks that one. The end gas knocks
+   since 2026-10-22, a stepped control holds the limit, and Douaud-Eyzat's
+   prefactor (x2) puts the catalogue's maps at their limit (2026-10-23). Open:
+   the I5 holds 8-12 deg of retard at its maker's boost; Woschni's combustion
+   term (right for the TDI's BSFC, it stalls lugged engines) was backed out.
+5. **Editing on the engine** -- done 2026-10-23, each checked on screen
+   (journal): compression ratio on the liner/piston, every turbo drawn, the
+   carburettor drawn and jetted by clicking, two exhaust paths joined into one
+   (*Joined* on the ports or a junction), and the designer window. Open: the
+   designer lists valve and injector rows a two-stroke does not use.
 
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
@@ -125,9 +134,10 @@ masks everything); `EngineLabPhysicsPerfHarness` needs `--idle` beside
 `--trace 1` (`--trace <low rpm>` alone is full-load lugging, not an idle).
 
 **Flags that separate a real effect from an artefact**:
-`EngineLabDynoSweepHarness` `--crank-degrees` and `--coupling-us` resize the
-mechanical substep and the exhaust flush clock, and a gas-dynamic feature stays
-where it is when either changes; `EngineLabGeometrySensitivityHarness` says
+`EngineLabDynoSweepHarness` `--crank-degrees`, `--coupling-us` and
+`--frame-hz` resize the mechanical substep, the exhaust flush clock and the
+240 Hz outer frame, and a gas-dynamic feature stays where it is when any one
+changes; `EngineLabGeometrySensitivityHarness` says
 whether an exhaust change moved the timbre (`shape`) or only the level
 (`level`).
 
@@ -194,7 +204,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
 - **Performance**: fork-join per cylinder with woken threads (the resident pool
   runs the pass since 2026-10-20); AVX/AVX2 (dependent-division latency); a
   telemetry cache for listening; state-variable valve-flow reconstruction
-  against clicks.
+  against clicks; whole-project LTO (bit-identical, within noise); `/MP2` on
+  the JUCE project in CI (C1060 beside the app's LTCG link).
 - **Two-stroke**: a 50 mm mesh; coupling the exhaust every substep beyond
   BDC-to-transfer-close, a characteristic valve, finer transfer coupling (none
   of them real time); un-gating exhaust oxidation before scavenging is right
@@ -208,8 +219,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   crankcase); a transit-vs-window scavenging race (monotonic in rpm by
   construction); a scavenging bias from ONE pressure sample at port opening (a
   hunting limit cycle over 4,500-6,250 rpm: integrate the front); "the trapped
-  residual is too low" (a unit error). The 3,500/7,000/7,500 rpm holding band
-  is none of pipe length, settle, step, crank step, flush clock or carburettor.
+  residual is too low" (a unit error). A holding band locked to crank speed is
+  first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it.
 - **Intake**: four inertance formulations (unstable or out of phase); the charge
   bias as the MUSCL limiter, the finite plenum, wall heat or valve linearisation
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or
@@ -225,10 +236,11 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   fail, 5 more trade the lean first cycle for rich or misfires); seeding the
   high-load correction cell from the idle cell (saves a start at 4 s but stalls
   10 engines of 14 after 25 s of idle) and an asynchronous pulse on tip-in.
-- **Knock, one input at a time** (journal 2026-10-13): the end-gas integral
-  reads the MEAN chamber temperature with a delay 2-5 x slow; isentropic end gas
-  never knocks; plus Douaud-Eyzat it over-knocks (1,000-1,200 K); integral
-  control pulls 12 deg for nothing.
+- **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
+  constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
+  octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363
+  N.m); the I5 at 2.1 bar. A weaker Douaud-Eyzat pressure exponent has no
+  source (pressure matters more in the NTC band).
 - **The other simulator's ingredients, one at a time** (journal 2026-10-13/14):
   output stage, pressure-release outlet, valve-area noise, mild room IR -- none
   kept (blind listening or measurement). Its fine mesh is not shown to matter.

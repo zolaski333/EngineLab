@@ -122,6 +122,15 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   volume. The throttle is the carburettor bore with a reed check valve (no
   flow out of the crankcase), and the runner is the transfer duct. The piston's
   underside sees the crankcase pressure, not the ambient.
+- **Power valve** (optional): a valve in the exhaust port's roof, Yamaha's
+  YPVS and its kind. Shut, it lowers the roof, so the port opens
+  `power_valve_closed_exhaust_port_open_deg` after top dead centre instead of
+  `exhaust_port_open_deg` and is that much lower; a servo lifts it between
+  `power_valve_opening_start_rpm` and `power_valve_fully_open_rpm` (a smooth
+  schedule, 0.25 s of lag). The designer fits one to sport two-strokes, 12 deg
+  later shut, lifting from 65 to 90 % of peak power speed: on a 500 cc twin it
+  fills the 30 N.m trough at 4,000-4,750 rpm (+20-39 % from 3,250 to 5,750)
+  and leaves the top end as it was. `EngineState::powerValveOpening` publishes it.
 - **Trapping**: the charge is trapped when the transfers close (symmetric
   about bottom dead centre); short-circuit losses come out of the same 1-D
   exhaust flow that scavenges the cylinder. There is no pumping loop in the
@@ -199,14 +208,19 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   of head, so flow is the number times the root of the head available. The
   designer sizes them from the engine and not from a table -- the fuel peak
   power needs at AFR 12.8 over the root of the venturi head there, and the
-  fuel the idle needs at AFR 13.5 over the root of the crankcase head -- and on
-  an RD350-sized design that returns a 287 main and a 41 pilot against the
-  bike's 260-290 and 30-40, neither of which was fitted to it. The main jet is
-  very nearly its circuit's only restriction so its number is used directly;
-  the pilot's is not, because the emulsion passage, the air screw's bleed and
-  the outlet all throttle it further, and `pilotCircuitFactor` is that lumped
-  restriction (0.14, the one value fitted to a real pair: an RD350's 35 pilot
-  idling at AFR 13 on about 21 kPa).
+  fuel the idle air needs at AFR 13.5 over the root of the crankcase head. The
+  idle air is what the idle path passes at that head (the slide's leak and the
+  bypass at the idle governor's neutral opening), and as the ECU opens or
+  shuts that path, standing in for the slide's idle stop, the pilot follows it
+  the way progression holes do: the idle mixture holds through cranking and
+  idle. On an RD350-sized design the main comes out at 287 against the bike's
+  260-290. The main jet is very nearly its circuit's only restriction so its
+  number is used directly; the pilot's is not, because the emulsion passage,
+  the air screw's bleed and the outlet all throttle it further, and
+  `pilotCircuitFactor` is that lumped restriction (0.026, the one value fitted
+  to a real pair: an RD350's 35 pilot feeding its idle air at AFR 13.5 on about
+  20 kPa). A pilot sized for an idle delivery ratio of 0.35, about eight times
+  what the model's RD350 idles on, flooded every designed twin.
 
   Two things a real carburettor has are deliberately absent, both of which act
   at the top of the range: there is no emulsion tube or air corrector, so the
@@ -312,7 +326,10 @@ rev limiter apply after that.
 A spark is scheduled per cylinder. Before the kernel is born, an ignition delay
 depends on pressure, temperature, equivalence ratio and residuals. The laminar
 speed follows a Metghalchi-Keck type correlation; a closure based on mean
-piston speed adds turbulence, while dilution reduces speed and efficiency.
+piston speed adds turbulence, while dilution reduces speed and efficiency. The
+turbulence term grows with load up to a full cylinder and no further: the
+piston stirs the charge, not the intake pressure, so boost does not burn it
+faster.
 
 The current progression geometry is a cylindrical effective volume:
 
@@ -325,13 +342,36 @@ chamber height. It is neither an ellipsoidal front nor a resolved 3D surface.
 The geometric fraction drives an absolute number of moles to react; the
 released energy uses the fuel's LHV and stoichiometry.
 
-Knock uses a Livengood-Wu integral on the end gas. When its threshold is
-reached, a share of the remainder really auto-ignites in the cell, raises the
-pressure and feeds the telemetry. The ECU then pulls advance in proportion to
-the knock level, so at WOT engines sit at a light, constant knock (0.1-0.4)
-rather than stepping back and holding as a real knock control does. Only knock
-above 0.45 (the diagnostics' "severe") adds damage, which lowers efficiency for
-good. This global correlation is not multi-species chemical kinetics.
+Knock follows the end gas, the charge the flame has not reached yet. From the
+seal it is its own zone, compressed isentropically by the cylinder pressure
+with real heat capacities (air, products and gasoline vapour, fitted to the
+ideal-gas tables). Its autoignition delay is Douaud and Eyzat's, fitted on
+primary reference fuels in a knocking engine, with their prefactor doubled:
+
+```text
+tau = 35.4 ms x (ON/100)^3.402 x p[atm]^-1.7 x exp(3800 / T_unburned)
+```
+
+The prefactor is the constant users of this correlation recalibrate to their
+engine. With Douaud and Eyzat's 17.68 ms every catalogue engine with a knock
+limit, naturally aspirated ones included, held 4-13 deg of knock retard behind
+its own spark map, where a production map sits 0-3 deg from its limit; with
+35.4 ms the maps hold 0-5 deg and 10 deg of advance over a map knocks.
+
+A Livengood-Wu integral of dt/tau runs from the spark. When it reaches 1 while
+the flame burns, everything the flame has not reached autoignites at once and
+really raises the pressure in the cell. The pressure that gas adds burning at
+constant volume, (gamma - 1) x unburned share x charge energy / V, is the scale
+of the oscillation it starts; the knock intensity is that over 30 bar. The
+ECU's knock control retards in steps and gives the advance back slowly
+([ecu-tuning.md](ecu-tuning.md)), so at full load an engine settles at its
+knock limit. Only knock above 0.45 (the diagnostics' "severe") adds damage,
+which lowers efficiency for good.
+
+The correlation is global, not multi-species kinetics, and it over-predicts
+knock under boost: the Audi I5 knocks heavily at its maker's 2.5 bar even at
+the ECU's -10 deg floor, where the real engine (10:1, direct injection) holds
+it on 98 RON (journal 2026-10-22).
 
 Each cylinder's firing peak is tracked at every physics sub-step and published
 once per cycle, when the cylinder opens into its gas exchange
@@ -340,8 +380,9 @@ the engine's structural limit (`peak_pressure_limit_bar`; zero takes 120 bar
 naturally aspirated, 140 boosted, 200 for a diesel, the upper end of production
 designs) it adds damage as the square of the excess: 10 % over takes about
 17 minutes to "damaged", 30 % about 2 minutes. The simulated full-load peaks of
-the boosted catalogue engines run above real ones (Audi I5 175 bar, TDI 231 bar),
-so those two carry their own limit 10 % over their stock peak.
+the boosted catalogue engines ran above real ones (Audi I5 175 bar before the
+knock control held it, TDI 231 bar), so those two carry their own limit 10 %
+over that stock peak.
 
 ## Forced induction
 
@@ -377,10 +418,11 @@ to the engine's draw. A turbocharger fed by fewer cylinders spins slower and
 passes less of the air, without any special rule.
 
 `intercooler_effectiveness` (0 to 0.95, default 0) takes that share of the
-compressor's temperature rise back out of the charge. No catalogue engine
-authors one: with a real one (0.7) the petrol turbo engines make 19-29 % more
-torque than their makers' figures, so the model is optimistic at boost by
-about that much and the missing cooler hides it (journal 2026-10-15).
+compressor's temperature rise back out of the charge. The 2JZ, EJ25 and I5
+author 0.7, as their real engines have one. Before the end gas could knock it
+gave them 19-29 % more torque than their makers' figures (journal 2026-10-15);
+now the knock control spends that margin and they land 7-13 % over (journal
+2026-10-22).
 
 The turbine lives in the exhaust gas network, as a restriction face (the same
 primitive as an individual throttle) on the single outgoing face of the first
@@ -431,7 +473,10 @@ Without a graph, the historical geometry is first expanded into a compatible
 physical DAG. See [custom-exhaust.md](custom-exhaust.md).
 
 Cylinders use Woschni's instantaneous convective correlation rather than a
-constant conductance. Intake ducts and every cell of the exhaust network have a
+constant conductance, its motored term only: the combustion term would bring
+the TDI's 171 g/kWh at 2,000 rpm to a real diesel's 212, but it stalls lugged
+and launched engines the tests hold (journal 2026-10-23). Intake ducts and every
+cell of the exhaust network have a
 metal wall with finite heat capacity. Internal exchange is integrated
 analytically and conserves gas + wall energy; only the explicitly accounted
 external convection rejects energy to the ambient. The model therefore never

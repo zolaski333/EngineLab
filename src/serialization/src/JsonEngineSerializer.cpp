@@ -663,8 +663,15 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         document["engine"]["audio_voicing"] = { {"family", config.audioVoicingFamily},
                                                 {"key", config.audioVoicingKey} };
     // Written for a two-stroke only, so a four-stroke file is unchanged.
-    if (config.cycle == EngineCycle::twoStroke)
+    if (config.cycle == EngineCycle::twoStroke) {
         document["engine"]["two_stroke"] = { {"exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees}, {"transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees}, {"exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm}, {"transfer_port_width_mm", config.twoStroke.transferPortWidthMm}, {"port_discharge_coefficient", config.twoStroke.portDischargeCoefficient}, {"crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio}, {"scavenge_loop_length_ratio", config.twoStroke.scavengeLoopLengthRatio} };
+        if (config.twoStroke.powerValveClosedExhaustPortOpenDegrees != 0.0) {
+            auto& ports = document["engine"]["two_stroke"];
+            ports["power_valve_closed_exhaust_port_open_deg"] = config.twoStroke.powerValveClosedExhaustPortOpenDegrees;
+            ports["power_valve_opening_start_rpm"] = config.twoStroke.powerValveOpeningStartRpm;
+            ports["power_valve_fully_open_rpm"] = config.twoStroke.powerValveFullyOpenRpm;
+        }
+    }
     return document.dump(2);
 }
 
@@ -782,6 +789,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.twoStroke.transferPortWidthMm = ports.value("transfer_port_width_mm", config.twoStroke.transferPortWidthMm);
             config.twoStroke.portDischargeCoefficient = ports.value("port_discharge_coefficient", config.twoStroke.portDischargeCoefficient);
             config.twoStroke.crankcaseCompressionRatio = ports.value("crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio);
+            config.twoStroke.scavengeLoopLengthRatio = ports.value("scavenge_loop_length_ratio", config.twoStroke.scavengeLoopLengthRatio);
+            config.twoStroke.powerValveClosedExhaustPortOpenDegrees = ports.value("power_valve_closed_exhaust_port_open_deg", config.twoStroke.powerValveClosedExhaustPortOpenDegrees);
+            config.twoStroke.powerValveOpeningStartRpm = ports.value("power_valve_opening_start_rpm", config.twoStroke.powerValveOpeningStartRpm);
+            config.twoStroke.powerValveFullyOpenRpm = ports.value("power_valve_fully_open_rpm", config.twoStroke.powerValveFullyOpenRpm);
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");

@@ -5,6 +5,73 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Editing on the engine: checked on screen (Linux, Xvfb)
+
+- Compression ratio on a 2JZ piston, 8.7 -> 9.5 by the stepper: taken live (the engine shows modified, the field reads it back). `LiveCylinderResize`: K20A +1.5 held at 60 % redline settles like one built so, with more torque.
+- Aircooled flat six, *Joined* on its exhaust ports: one path, six primaries into one collector, one tailpipe; it idles at 744 rpm. The ports are one part for all cylinders (no cylinder to name a path), so the first path is offered the next.
+- The designer window (built 2026-10-19), first time on screen: it works. Fixed: the names' column was headed "Value" and the values' none; the name stayed "Inline Seven" for any engine. Not fixed: a two-stroke lists "Valves per side" and "Injector flow", which it does not use.
+- Designed two-stroke twin (64 x 54): its real-time check failed ("did not hold 5000 rpm; mean 673"): cranked at full throttle, a carburettor's pilot is dead and its venturi draws nothing, so it never catches. The probe now cranks shut until it runs (<= 5 s simulated): 1.90 x real time here (test fails without, 1,397 rpm mean).
+- The same twin catches only after ~3.1 s of cranking at closed throttle (lambda 6.8 -> 1.4 first), against ~1 s for an injected engine. A real cold two-stroke is started on its choke, which the model has not: not changed, recorded.
+- Carburettor jetting live: main #288 -> #431 at ~5,800 rpm full throttle, lambda 0.80 -> 0.53. Its injectors were still drawn (and offered) on a carburetted engine; both removed.
+
+## 2026-10-23 — Performance: what this Linux box can and cannot say
+
+- Refuted: whole-project link-time optimisation (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`, GCC 13): bit-identical CSVs; CP2 sweep 6.65 -> 6.42 s best of 3, LS3+K20+Hayabusa 40.8 -> 39.1 s, within the run-to-run spread (39.1-42.1 for both).
+- Test duration is simulation CPU: 3,485 s of tests packed into 1,742-1,803 s at `-j 2`, the ideal. The ten slowest (IdleStabilityRegression 382 s, LiveCylinderResize 274, IntakeTuning 258...) are half of it; splitting them cannot help at two-wide.
+- Designed 6 L V12 (`PhysicsPerfHarness`, one run): 2,256 / 4,580 / 7,129 us per 240 Hz frame at 990 / 4,345 / 7,110 rpm (budget 4,167). perf: 24 % self time in `CylinderWorkerPool` workers plus 6.5 % in `attachNetworkParallelFor` (spin, then yield, then park, by design); FV duct + Riemann + primitive recovery ~14 %; `pow` 3 %.
+- Not changed: the pool's spin/park balance and the duct numerics. Both move the real-time factor, which is valid only on the reference Windows machine, interleaved (`.claude/CLAUDE.md`); Linux scheduling differs by construction.
+
+## 2026-10-23 — Build: JUCE compiled once
+
+- JUCE's modules are interface libraries carrying their sources, and `EngineLabAudio` linked four of them PUBLIC: every executable that linked audio compiled JUCE again (6 units each, 15 for the app); 130 of the tree's 390 compile units were JUCE.
+- `EngineLabJuce` (top-level `CMakeLists.txt`) links every module PRIVATE and re-exports their include directories (as SYSTEM) and definitions; all targets link it.
+- Linux, 4 cores, clean configure + build at `-j 4`, `linux-gcc-release` flags: 14 min 46 s wall / 53 min 40 s CPU (390 units) -> 6 min 08 s / 20 min 50 s (255 units). Full ctest green on the new tree.
+- Profile of a CP2 dyno sweep for the next step: `pow` 9 % (open ends, `GasCell::dynamicPressureKpa`, valve fluxes), the FV duct (cache, Riemann flux, primitive recovery) ~20 %. Not changed: each costs bit-exactness.
+- CI, Build step: Linux 17 min 47 s -> 4 min 33 s; Windows 25 min 21 s -> 32 min 05 s: MSBuild compiles one project's units in series and CI runs two nodes, so the one JUCE project sits on the critical path. `/MP2` on that project failed the build with C1060 (out of heap) on two harnesses beside the app's LTCG link: reverted. Not measured: a local many-core Windows build, where JUCE no longer compiles ~20 times.
+
+## 2026-10-23 — Two-stroke: a power valve
+
+- Added: `two_stroke.power_valve_*` (the exhaust's opening with the valve shut, the speeds it lifts between, 0.25 s servo lag); the port's roof and so its area follow the valve. The designer fits one to sport designs: 12 deg later shut, lifting from 65 to 90 % of peak power speed.
+- Designed t2_twin_500 (EPO 82), DynoSweep step 250 / settle 8, valve shut at 90 / 94 / 98 deg (5,500-7,500 rpm): +18-29 % / +22-39 % / +24-47 % over 3,000-5,750 rpm, within 1 % from 7,250 up; 2,000 rpm -4 / -7 / -9 %. The designer's (94, 5,031-6,966): 34-42 N.m from 2,000 to 5,000 rpm where the valveless port gave 29.5-37, top end unchanged, held within 1.5 rpm.
+- Found on the way: the JSON reader dropped `scavenge_loop_length_ratio`, so a saved two-stroke lost an authored loop length and came back at the default 1.8. Fixed and tested.
+- Not measured: a real YPVS engine's curve against the model's (no data here); the sound; the RD350LC keeps no valve, as the LC had none.
+
+## 2026-10-23 — Two-stroke: the 3,500/7,000/7,500 rpm holding band is the 240 Hz frame's alias
+
+- Designed t2_twin_500 (sport, 0.5 L), DynoSweep step 250, settle 8, with a new `--frame-hz`. `held_rpm_stddev` at 240 Hz: 3,500 2.3, 7,000 6.6, 7,500 2.6, elsewhere 0.2-1.1; at 300 Hz the three are gone (0.2-0.4); at 200 Hz the band moves to 5,750-6,250 (2.7-3.1), where the twin fires at 200 Hz. A twin two-stroke fires at 233 Hz at 7,000 rpm, 117 at 3,500, 250 at 7,500.
+- Mechanism: `EngineState::rpm` is the speed at the frame's end, with the firing ripple in it (+-50 rpm here). Sampled once a frame it beats at 6-7 Hz, which the absorber's 8 rad/s filter passes in part: the brake swung 40-58 N.m with the alias. Spark, AFR and trim were steady, so the engine itself held.
+- Fix: the simulator publishes `frameAveragedRpm` (crank travel over the frame) and the absorber holds that. 240 Hz after: 3,500 0.2, 7,000 0.3, 7,500 0.2; torque within 1 %. Left: 1.4-1.8 rpm at 5,750-6,000, present at 200/240/300 Hz alike, so the engine's own.
+- Not measured: the application's continuous-ramp dyno, which reads the same controller; Windows.
+
+## 2026-10-23 — Two-stroke idle: the governor's gains halved; designed carburetted engines idle
+
+- RD350 (injected) free idle, std over 16-40 s: the idle gate failed on drift 66 rpm (baseline 64.4, gate 65): a 5 s limit cycle, trim 0.68-1.16, air per cycle 34-49 mg. No end-gas event in it (the old model had 4).
+- Lambda trim gain x0 / x0.5 / x1 / x2: std 165 / 125 / 66 / 16: the trim damps the hunt, it does not make it. The cycle-correct trim gain (360 deg, half the speed) made it worse (std 69, drift 78): not kept.
+- Governor P,I x0.5: std 13.6 (trim on), 15.8 (trim frozen); D x2 helps only with the trim (16.7 vs 152). Kept for two-strokes: idle gate std 13.4, drift 0.8; WOT-blip recovery settles at 1,489 rpm (was 1,336).
+- Designed carburetted 2T (sport, 54-64 x 54 mm): the 1-, 2- and 3-cylinder designs do not idle; the 4-cylinder idles 1,131 rpm, std 31. The twin's pilot meters ~AFR 7 against the air its bypass can pass (it is sized for an idle delivery ratio of 0.35); `airFlowGramsPerSecond` reads trapped mass x cycle rate, ~4 g/s of a misfiring charge, not throttle flow.
+- Sizing the pilot from the idle path's air at the governor's neutral 0.42 alone: the twin cranks at AFR 30-100 on the 0.88 post-start air and never fires. With the pilot also following the idle path's opening (progression holes), the bypass per carburettor at 18 mm2 per litre of its cylinder (a four had 6.25 each) and the pilot factor refitted 0.14 -> 0.026 (RD350 #35): designed 1/2/3/4-cylinder engines idle 1,310/1,303/1,303/1,302 rpm, std 73/26/20/18, pilots #25/35/35/35. The rig's RD350 idles at delivery ratio 0.041.
+
+## 2026-10-23 — Knock: Douaud-Eyzat's prefactor doubled; Woschni's combustion term backed out
+
+- Linux, `linux-gcc-release`. The 2026-10-22 knock work failed 8 ctest gates its baseline (91c04d3) passes. Ablation by switches, one ingredient each.
+- Woschni's combustion term plus the 4V/B liner stalled the RD350's standing start (min 552 -> 260 rpm), the lugged I4 of CombustionPhasing and moved CameraMicrophone's click metric; either one off fixed them. Backed out with the TDI refit it forced (280 mm2, 0.028 law): still the TDI's 171 g/kWh, an open lead.
+- I5 at 2,000 rpm, 2.48 bar, map 8.7 deg, control off: CA50 ~8 ATDC, end gas 955-965 K at 96-100 bar, 13-33 % unburned at onset, tau 0.37 ms. Seal 377 K at 2.28 bar, manifold 64 degC: plausible inputs.
+- Retard held behind the map (8 engines, 2-9.5 krpm): x1 delay K20 7-12 deg, LS3 5-9, 2JZ 5-12, EJ25 10-12, I5 saturated; x2: NA 0-2, 2JZ 0-4.6, EJ25 0-5.4, I5 8-13 at light knock; x3 all ~0. Same with Woschni off. Kept x2 (35.4 ms): a production map sits 0-3 deg from its limit.
+- x2, control off: map clean; +5 deg light (K20 0.28 at 3,500); +10 deg K20 0.23-0.39, 2JZ 0.80 at 5,000 (all frames heavy).
+- KnockControl/LiveTuning now advance the 2JZ map 8 deg to reach a limit. CatalogPhysics' absorber stopped at 25 bar BMEP, below the I5's ~26: now 35 bar, gains x25/35.
+- Sources reachable here are search snippets only: Chen et al. 2014 (D-E ignores EGR and lambda), an Energy & Fuels study, doi 10.1021/acs.energyfuels.4c04775 (D-E over-predicts knock as intake pressure rises). Not measured: the sound; Windows.
+
+## 2026-10-22 — Knock: the end gas, a stepped control, Woschni's combustion term
+
+- End gas as its own zone from the seal, isentropic with real cp(T); Douaud-Eyzat delay; Livengood-Wu from the spark; intensity = the constant-volume pressure the unburned share adds, over 30 bar. ECU knock control now steps (20 x excess/s of a 12 deg authority, ~1.3 deg per heavy event, back at 1 deg/s).
+- 2JZ at full load, control off: knock 0.83 mean, damage 0.0065; on: 0.08 mean at 4.7 deg, no damage. Catalogue WOT: NA engines at most 0.10, 2JZ <= 0.08, EJ25 0.40 at 5,000 rpm.
+- It took three more changes: the flame's load term capped at 1 (boost burned a charge up to 36 % faster); intercoolers 0.7 on 2JZ/EJ25/I5; Woschni's combustion term and the 4V/B liner (TDI BSFC 171/181/199 -> 212/203/215 g/kWh at 2/3/4,000 rpm; petrol WOT 227-310). TDI throat 280 -> 220 mm2: 285 N.m at 2,000 rpm.
+- Maker gate (before the TDI refit): all pass but the TDI at 2,000 rpm; 2JZ +9.6 %, EJ25 +12.8 %, I5 +7.0 % torque.
+- **Open: the model over-knocks under boost.** Implied knock-limited spark vs calibration practice: ~6 deg early NA, ~11 at 1.9 bar, ~17 at 2.45. The I5 knocks 0.78-0.90 at every rpm with the authority saturated, 0.56 at 2,000 rpm at the -10 deg floor; at 2.3/2.2/2.1 bar still heavy (2.1: 0.47-0.83); direct injection (end gas -15 K) and CR 10 neither cure it.
+- Refuted: Kalghatgi's octane index (the zone is 150-200 K colder than his K fit, boost gains 1-3 octane); an ECU boost cut on knock (I5 155 kPa / 363 N.m).
+- Leads: the intensity scale (constant-volume rise vs MAPO, a load-scaled threshold); Douaud-Eyzat used at 90-100 bar onsets, beyond its fit; the DI preset going lean above 5,000 rpm (lambda 1.07-1.18); the RD350's 437-1,582 g/kWh.
+- Not measured: the sound before/after; CatalogReference and CatalogBoostHold after the TDI refit; the full ctest.
+
 ## 2026-10-22 — Two-stroke: a carburettor, and the bore it sits in
 
 - Added: a slide carburettor per intake path (`CarburettorModel`), two circuits on their own depressions -- the main on the venturi's 1/2 rho V^2, the pilot on the bowl-to-crankcase drop -- with jets in their stamped numbers (cc/min under 1 m of head). Its fuel enters the crankcase with the air; the injector is commanded nothing on a carburetted path. The designer fits one to every two-stroke and sizes the jets from the engine: an RD350-sized design gets #287 main / #41 pilot against the bike's 260-290 / 30-40, fitted to neither.

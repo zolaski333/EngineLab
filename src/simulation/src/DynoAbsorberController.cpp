@@ -55,8 +55,15 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     // A non-finite observation is not a zero-speed impulse. Hold the last
     // finite observation so one corrupt frame cannot inject an artificial
     // acceleration spike into the controller.
-    const auto measuredRpm = std::isfinite(engineState.rpm)
-        ? std::max(0.0, engineState.rpm) : filteredRpm_;
+    // The speed averaged over the frame, not the speed at its end: sampled
+    // once a frame, the firing ripple aliases into a slow wander the brake
+    // answered. A two-stroke twin, firing at 233 Hz at 7,000 rpm, swung
+    // +-50 rpm on a 240 Hz frame and could not be held there (nor at 3,500
+    // or 7,500 rpm); on a 300 Hz frame it held (journal 2026-10-23).
+    const auto observedRpm = engineState.frameAveragedRpm > 0.0
+        ? engineState.frameAveragedRpm : engineState.rpm;
+    const auto measuredRpm = std::isfinite(observedRpm)
+        ? std::max(0.0, observedRpm) : filteredRpm_;
     const auto previousFilteredRpm = filteredRpm_;
     const auto speedFilterAlpha = 1.0 - std::exp(-dt * 8.0);
     filteredRpm_ += (measuredRpm - filteredRpm_)

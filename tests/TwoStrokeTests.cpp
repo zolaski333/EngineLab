@@ -113,6 +113,67 @@ void missingCrankOffsetsFollowTheCycle() {
     }
 }
 
+/** A power valve lowers the exhaust port's roof at low speed, so the port
+ *  opens later and is lower, and lifts as the speed rises. Off, a file and
+ *  the port are what they were. */
+void thePowerValveLowersThePortAtLowSpeed() {
+    auto config = catalogueTwoStroke();
+    require(!hasPowerValve(config.twoStroke)
+            && exhaustPortOpenDegreesAt(config.twoStroke, 0.0) == config.twoStroke.exhaustPortOpenDegrees
+            && powerValveTargetOpening(config.twoStroke, 0.0) == 1.0,
+        "without a power valve the exhaust port is the one authored, at every speed");
+    config.twoStroke.powerValveClosedExhaustPortOpenDegrees = config.twoStroke.exhaustPortOpenDegrees + 12.0;
+    config.twoStroke.powerValveOpeningStartRpm = 5'000.0;
+    config.twoStroke.powerValveFullyOpenRpm = 7'000.0;
+    require(!validateEngineConfig(config), "a power valve that lowers the port is valid");
+    require(powerValveTargetOpening(config.twoStroke, 4'000.0) == 0.0
+            && powerValveTargetOpening(config.twoStroke, 7'500.0) == 1.0
+            && std::abs(powerValveTargetOpening(config.twoStroke, 6'000.0) - 0.5) < 1.0e-12,
+        "the valve is shut below its start, open above its end, half open between");
+    const auto& cylinder = config.cylinders.front();
+    const auto bottom = [&](double opening) {
+        return portOpenAreaMm2(cylinder, exhaustPortOpenDegreesAt(config.twoStroke, opening),
+            exhaustPortWidthMm(config.twoStroke, cylinder), 0.72, 180.0);
+    };
+    require(exhaustPortOpenDegreesAt(config.twoStroke, 0.0) == config.twoStroke.exhaustPortOpenDegrees + 12.0
+            && bottom(0.0) < bottom(0.5) && bottom(0.5) < bottom(1.0),
+        "shut, the port opens 12 deg later and is lower: its area grows as the valve lifts");
+
+    auto early = config;
+    early.twoStroke.powerValveClosedExhaustPortOpenDegrees = config.twoStroke.exhaustPortOpenDegrees - 2.0;
+    require(validateEngineConfig(early).has_value(), "a power valve that would open the port earlier is refused");
+    auto pastTransfers = config;
+    pastTransfers.twoStroke.powerValveClosedExhaustPortOpenDegrees = config.twoStroke.transferPortOpenDegrees;
+    require(validateEngineConfig(pastTransfers).has_value(),
+        "a power valve that would open the exhaust with the transfers is refused");
+
+    config.twoStroke.scavengeLoopLengthRatio = 2.1;
+    const JsonEngineSerializer json;
+    const YamlEngineSerializer yaml;
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        const auto decoded = serializer->decode(serializer->encode(config));
+        require(decoded
+                && decoded.config->twoStroke.powerValveClosedExhaustPortOpenDegrees
+                    == config.twoStroke.powerValveClosedExhaustPortOpenDegrees
+                && decoded.config->twoStroke.powerValveOpeningStartRpm == 5'000.0
+                && decoded.config->twoStroke.powerValveFullyOpenRpm == 7'000.0
+                && decoded.config->twoStroke.scavengeLoopLengthRatio == 2.1,
+            "a file keeps the power valve and the scavenging loop");
+    }
+
+    // At idle the servo holds the valve shut.
+    auto rig = std::make_unique<Rig>(config);
+    EngineState last;
+    for (auto frame = 0; frame < 6 * 240; ++frame) {
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = frame * frameSeconds < 1.5;
+        last = rig->simulator->step(frameSeconds, controls).state;
+    }
+    require(last.rpm > 600.0 && last.powerValveOpening < 1.0e-6, "idling, the power valve is shut");
+}
+
 struct Held final {
     double torqueNm { 0.0 };
     double lambda { 0.0 };
@@ -672,8 +733,14 @@ void theDefaultJetsGiveTheRealEngineItsMixture() {
     std::cout << "  full throttle, 8,000 rpm: AFR " << wideOpenAfr << '\n';
     require(wideOpenAfr > 11.5 && wideOpenAfr < 14.5,
         "the stock main jet gives a full-load mixture a two-stroke can run");
-    const auto idleAfr = rig.settledAirFuelRatio(
-        rig.airFlowKgPerSecond(1'300.0, 0.35), 80.0, 0.0);
+    // At idle the air is what the bike's idle path passes, not a share of
+    // what the cylinder could swallow: its 3 mm2 per carburettor, at the idle
+    // governor's neutral opening, plus the 26 mm slide's 0.26 mm2 leak, under
+    // the crankcase's 21 kPa.
+    const auto idleAirKgPerSecond = 0.72
+        * (3.0 * carburettorPilotSizingIdleOpening + 0.26) * 1.0e-6
+        * std::sqrt(2.0 * rig.airDensityKgPerM3 * (101.325 - 80.0) * 1'000.0);
+    const auto idleAfr = rig.settledAirFuelRatio(idleAirKgPerSecond, 80.0, 0.0);
     std::cout << "  idle, 1,300 rpm: AFR " << idleAfr << '\n';
     require(idleAfr > 11.0 && idleAfr < 17.0,
         "the stock pilot jet idles in the band a carburetted two-stroke idles in");
@@ -795,6 +862,7 @@ int main(int argc, char** argv) {
     portsFollowThePiston();
     configurationIsChecked();
     missingCrankOffsetsFollowTheCycle();
+    thePowerValveLowersThePortAtLowSpeed();
     loadIsTheDeliveredCharge();
     catalogueTwinIdles();
     catalogueTwinMakesItsTorque();

@@ -764,6 +764,9 @@ private:
     std::array<CompressionIgnitionResult, 32> compressionIgnitionResults_ {};
     std::array<FuelInjectionState, 32> injectionStates_ {};
     std::array<EndGasKnockState, 32> endGasKnockStates_ {};
+    /** A two-stroke's exhaust power valve, 0 shut to 1 open, behind its
+     *  servo's lag. */
+    double powerValveOpening_ { 1.0 };
     std::array<IndicatedWorkState, 32> indicatedWorkStates_ {};
     std::array<ValveTrainState, 32> valveTrainStates_ {};
     std::array<ValveTrainResult, 32> valveTrainResults_ {};

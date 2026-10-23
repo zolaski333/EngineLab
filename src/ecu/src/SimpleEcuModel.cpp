@@ -235,9 +235,15 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // integration step before the plate has opened and creates a real air
         // gap during tip-in.
         const auto driverOverride = std::clamp(1.0 - state.throttle * 12.0, 0.0, 1.0);
-        constexpr double feedForward = 0.42;
-        constexpr double proportionalGain = 0.90;
-        constexpr double integralGain = 0.55;
+        constexpr double feedForward = carburettorPilotSizingIdleOpening;
+        // The gains were set on four-strokes. On a two-stroke, whose idle air
+        // goes through the crankcase first, they hunt: the RD350 swung
+        // 1,006-1,565 rpm with its fuel trim frozen (std 165) and 1,175-1,398
+        // with it; at half the gain, 1,271-1,349 and 1,279-1,325 (journal
+        // 2026-10-23).
+        const auto governorGainShare = config.cycle == EngineCycle::twoStroke ? 0.5 : 1.0;
+        const auto proportionalGain = 0.90 * governorGainShare;
+        const auto integralGain = 0.55 * governorGainShare;
         constexpr double derivativeGainSeconds = 0.12;
         constexpr double minimumIntegral = -0.20;
         if (effectiveThrottle > 0.02) {
@@ -455,7 +461,24 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     mappedAfr = std::clamp(mappedAfr
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.025,
         minimumMappedAfr, maximumMappedAfr);
-    const auto knockRetardDegrees = state.knockLevel * knockRetardGainDegrees(*calibrationSnapshot);
+    // Knock control as an ECU does it: knock the sensor hears pulls the spark
+    // back fast, a clean stretch gives it back slowly, so the retard settles
+    // where knock just stops (the knock-limited advance). A retard
+    // proportional to the knock it removes could only hold by keeping knock.
+    // The threshold is ~1 bar of oscillation, where measurements start
+    // calling a cycle knocking. A heavy event (0.5, decaying at 45/s) pulls
+    // about 1.3 deg, within the 1-3 deg production controls take per knocking
+    // cycle; the recovery is 1 deg/s at 12 deg of authority.
+    constexpr double knockDetectionLevel = 0.1;
+    constexpr double knockAttackPerSecond = 20.0;
+    constexpr double knockRecoveryPerSecond = 0.08;
+    auto knockRetardShare = knockRetardShare_.load(std::memory_order_relaxed);
+    knockRetardShare = std::clamp(state.knockLevel > knockDetectionLevel
+            ? knockRetardShare + (state.knockLevel - knockDetectionLevel) * knockAttackPerSecond * idleDt
+            : knockRetardShare - knockRecoveryPerSecond * idleDt,
+        0.0, 1.0);
+    knockRetardShare_.store(knockRetardShare, std::memory_order_relaxed);
+    const auto knockRetardDegrees = knockRetardShare * knockRetardGainDegrees(*calibrationSnapshot);
     mappedAdvance = std::clamp(mappedAdvance - knockRetardDegrees
         - std::max(0.0, controls.shiftSparkRetardDegrees)
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.20,

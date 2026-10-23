@@ -31,6 +31,20 @@ struct CylinderSize final {
  */
 [[nodiscard]] std::string resizeCylinders(EngineConfig& config, double boreMm, double strokeMm);
 
+/**
+ * Gives every cylinder the compression ratio `ratio`, in place. Returns an
+ * empty string on success, or why the edit was refused (the configuration is
+ * then unchanged): a ratio out of [5, 20], or a chamber geometry that cannot
+ * reach it.
+ *
+ * An engine authored by compression ratio takes it as is: the clearance
+ * volume follows. An engine authored by chamber geometry keeps its head
+ * chamber, gasket and piston, and its deck moves (a decked or shimmed block):
+ * refused when the piston crown would have to rise past the gasket. The
+ * caller still validates the whole configuration.
+ */
+[[nodiscard]] std::string setCompressionRatio(EngineConfig& config, double ratio);
+
 /** The connecting rod length every cylinder shares, or nothing when the rods
  *  differ or one is a radial's master or articulated rod. */
 [[nodiscard]] std::optional<double> connectingRodLength(const EngineConfig& config);

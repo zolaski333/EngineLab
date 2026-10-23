@@ -251,6 +251,19 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
 
 /** What feeds the plenum: the throttle, or with individual throttles the bores
  *  held fully open, the plenum being the airbox and the plates in the runners. */
+/** A carburettor's idle air path against the one its pilot was sized at:
+ *  the closed-slide leak plus the bypass at the idle governor's neutral
+ *  opening. The ECU's idle air stands in for the slide's idle stop, and
+ *  opening that stop uncovers the progression holes, so the pilot follows. */
+[[nodiscard]] double carburettorIdleCircuitOpening(const IntakeConfig& intake,
+                                                   double idleAirOpening) noexcept {
+    const auto leak = closedThrottleLeakageAreaM2(intake);
+    const auto bypass = std::max(0.0, intake.idleBypassAreaMm2) * 1.0e-6;
+    const auto neutral = leak + bypass * carburettorPilotSizingIdleOpening;
+    if (!(neutral > 0.0)) return 1.0;
+    return (leak + bypass * std::clamp(idleAirOpening, 0.0, 1.0)) / neutral;
+}
+
 [[nodiscard]] double plenumInletAreaM2(const IntakeConfig& intake,
                                        double throttleAreaM2,
                                        double throttlePlateAreaM2) noexcept {
@@ -1583,6 +1596,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     double frameMaximumAfterfireInductionIntegral = 0.0;
     double frameMinimumAfterfireInductionDelaySeconds = 0.0;
     double frameMaximumAfterfireInductionDelaySeconds = 0.0;
+    double frameTravelledDegrees = 0.0;
+    double frameIntegratedSeconds = 0.0;
+    // A power valve's servo follows its speed schedule with a lag: YPVS-type
+    // servos take a few tenths of a second to sweep the valve.
+    {
+        constexpr double powerValveServoSeconds = 0.25;
+        powerValveOpening_ += (powerValveTargetOpening(config_.twoStroke, state_.rpm)
+            - powerValveOpening_) * (1.0 - std::exp(-dt / powerValveServoSeconds));
+    }
+    const auto exhaustPortOpenDegrees = exhaustPortOpenDegreesAt(config_.twoStroke, powerValveOpening_);
 
     while (remainingStepSeconds > 0.0) {
         // Predict with this frame's known external/starter commands rather
@@ -2083,7 +2106,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         plenumInflowKg / subDt, boundaryDensityKgPerM3,
                         intakeSourcePressureKpa,
                         intakePlenumGas_[pathIndex].pressureKpa(),
-                        intake.throttleDiameterMm, state_.throttle, subDt);
+                        intake.throttleDiameterMm, state_.throttle, subDt,
+                        carburettorIdleCircuitOpening(intake, ecuCommand.idleAirOpening));
                     if (metering.deliveredMoles > 0.0)
                         intakePlenumGas_[pathIndex].injectFuelMoles(
                             metering.deliveredMoles,
@@ -3037,7 +3061,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             .cycleVariationCorrelation,
                         combustionVariationRandomState_[cylinderIndex],
                         combustionVariationNormalisedState_[cylinderIndex]);
-                endGasKnockStates_[cylinderIndex] = {};
                 meteredFuelMolesLastCycle_[cylinderIndex] = injectedFuelMolesThisCycle_[cylinderIndex];
                 const auto chamberFuelMoles = cylinderGas_[cylinderIndex].mixture().fuelMoles;
                 deliveredFuelMolesLastCycle_[cylinderIndex] = chamberFuelMoles;
@@ -3251,7 +3274,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto exhaustCenterPhase = std::fmod(360.0 - cams.config->exhaustCenterlineDegrees
                 - valveTrain.exhaustAdvanceDegrees + 720.0, 720.0);
             const auto exhaustOpenPhase = twoStroke
-                ? config_.twoStroke.exhaustPortOpenDegrees
+                ? exhaustPortOpenDegrees
                 : std::fmod(exhaustCenterPhase - cams.exhaustDuration() * 0.5 + 720.0, 720.0);
             const auto distanceToExhaustOpen = std::fmod(
                 exhaustOpenPhase - previousPhase + cycleDegrees, cycleDegrees);
@@ -3357,6 +3380,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         reaction.releasedEnergyJoules;
                 }
 
+                // The end gas exists from the moment the cylinder seals: both
+                // valves shut, or a two-stroke's transfer and exhaust ports.
+                const auto cylinderSealed = twoStroke
+                    ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
+                          transferPortWidthMm(config_.twoStroke, cylinder),
+                          config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
+                        && portOpenAreaMm2(cylinder, exhaustPortOpenDegrees,
+                          exhaustPortWidthMm(config_.twoStroke, cylinder),
+                          config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
+                    : intakeLift <= 0.0 && exhaustLift <= 0.0;
+                const auto& chamberMixture = cylinderGas_[cylinderIndex].mixture();
+                const auto chamberMoles = std::max(1.0e-15, chamberMixture.totalMoles());
                 const auto endGas = EndGasKnockModel::advance(
                     endGasKnockStates_[cylinderIndex], {
                         cylinderGas_[cylinderIndex].pressureKpa() / 100.0,
@@ -3364,9 +3399,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         flameConditions.equivalenceRatio,
                         flameEvents_[cylinderIndex].burnedFraction,
                         config_.octaneRating,
+                        cylinderSealed,
                         cylinderSparkCombustionAvailable
                             && flameEvents_[cylinderIndex].active
-                            && !cylinderMisfires_[cylinderIndex] },
+                            && !cylinderMisfires_[cylinderIndex],
+                        chamberMixture.fuelMoles / chamberMoles,
+                        chamberMixture.burnedMoles / chamberMoles,
+                        cylinderGas_[cylinderIndex].volumeM3(),
+                        flameEvents_[cylinderIndex].initialBurnableFuelMoles
+                            * config_.fuelProperties.molarMassGramsPerMole * 0.001
+                            * config_.fuelProperties.lowerHeatingValueMjPerKg * 1.0e6,
+                        cylinderGas_[cylinderIndex].heatCapacityRatioEffective() },
                     combustionDt);
                 if (endGas.autoIgnited
                         && endGas.autoIgnitedFuelFraction > 0.0) {
@@ -3425,7 +3468,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     cylinder.intakeValveCount, cylinder.intakeValveDiameterMm,
                     valveTrain.intakeDischargeCoefficient, 0.40, 0.50, 0.58);
             const auto exhaustArea = twoStroke
-                ? portOpenAreaMm2(cylinder, config_.twoStroke.exhaustPortOpenDegrees,
+                ? portOpenAreaMm2(cylinder, exhaustPortOpenDegrees,
                     exhaustPortWidthMm(config_.twoStroke, cylinder),
                     config_.twoStroke.portDischargeCoefficient, cyclePhase)
                 : effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
@@ -5108,6 +5151,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.angularVelocityRadPerSecond = 0.0;
         }
         const auto subTravelled = (subPreviousRpm + state_.rpm) * 0.5 * 6.0 * subDt;
+        frameTravelledDegrees += subTravelled;
+        frameIntegratedSeconds += subDt;
         maximumIntegratedCrankStep = std::max(maximumIntegratedCrankStep, std::abs(subTravelled));
         cycleNumericalFault_ = cycleNumericalFault_
             || state_.solverResolutionLimited
@@ -5458,6 +5503,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 highLoadTrimBlend);
             cylinderState.residualGasFractionAtSpark = residualGasFractionAtSpark_[index];
             cylinderState.equivalenceRatioAtSpark = equivalenceRatioAtSpark_[index];
+            cylinderState.endGasPeakTemperatureK = compressionIgnition
+                ? 0.0 : endGasKnockStates_[index].lastCyclePeakUnburnedTemperatureK;
+            cylinderState.knockPressureRiseBar = compressionIgnition
+                ? 0.0 : endGasKnockStates_[index].lastKnockPressureRiseBar;
             cylinderState.pistonTravelMm = kinematics.pistonTravelMm;
             cylinderState.pistonPositionMm = kinematics.pistonPositionMm;
             cylinderState.pistonVelocityMps = kinematics.pistonVelocityMps;
@@ -5673,7 +5722,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 pressureSample.exhaustValveOpening[index] = static_cast<float>(std::clamp(
                     twoStroke
                         ? exhaustValveAreaM2[index] * 1.0e6 / std::max(1.0e-9, portOpenAreaMm2(ported,
-                            config_.twoStroke.exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, ported),
+                            exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, ported),
                             config_.twoStroke.portDischargeCoefficient, 180.0))
                         : valveTrainResults_[index].exhaustLiftMm / maximumExhaustLiftMm, 0.0, 1.0));
                 pressureSample.exhaustPathIndex[index] =
@@ -5797,6 +5846,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         | static_cast<std::uint32_t>(ActiveLimit::coolantProtection)
         | static_cast<std::uint32_t>(ActiveLimit::launchControl);
     state_.activeLimits = (state_.activeLimits & ecuLimitBits) | publishedSimulatorLimits();
+    state_.powerValveOpening = powerValveOpening_;
+    state_.frameAveragedRpm = frameIntegratedSeconds > 0.0
+        ? frameTravelledDegrees / (6.0 * frameIntegratedSeconds) : state_.rpm;
     frame.state = state_;
     return frame;
 }
@@ -6265,6 +6317,7 @@ void EngineSimulator::reset() noexcept {
     compressionIgnitionResults_.fill({});
     injectionStates_.fill({});
     endGasKnockStates_.fill({});
+    powerValveOpening_ = powerValveTargetOpening(config_.twoStroke, 0.0);
     indicatedWorkStates_.fill({});
     valveTrainStates_.fill({});
     valveTrainResults_.fill({});
