@@ -29,7 +29,10 @@ without the owner's explicit agreement.
    band was the 240 Hz frame's alias of the firing ripple, and a power valve
    exists (2026-10-23). The reed stays a perfect check valve until a measured
    gap asks for its petals (VISION.md's decision rule).
-3. **Performance**: test duration, build time, real-time factor.
+3. **Performance**: test duration, build time, real-time factor. JUCE compiles
+   once since 2026-10-23 (Linux CI build 18 -> 4.5 min, Windows 25 -> 32: one
+   serial MSBuild project). Open, and measurable only on the reference machine:
+   the V10-V16 designs below real time (pool spin vs park, duct numerics).
 4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
    that would destroy a real one. Fix the knock PHYSICS, not the damage model.
    The designer's ignition is a template because there is no knock limit to
@@ -201,7 +204,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
 - **Performance**: fork-join per cylinder with woken threads (the resident pool
   runs the pass since 2026-10-20); AVX/AVX2 (dependent-division latency); a
   telemetry cache for listening; state-variable valve-flow reconstruction
-  against clicks.
+  against clicks; whole-project LTO (bit-identical, within noise); `/MP2` on
+  the JUCE project in CI (C1060 beside the app's LTCG link).
 - **Two-stroke**: a 50 mm mesh; coupling the exhaust every substep beyond
   BDC-to-transfer-close, a characteristic valve, finer transfer coupling (none
   of them real time); un-gating exhaust oxidation before scavenging is right

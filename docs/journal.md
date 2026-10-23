@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Performance: what this Linux box can and cannot say
+
+- Refuted: whole-project link-time optimisation (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`, GCC 13): bit-identical CSVs; CP2 sweep 6.65 -> 6.42 s best of 3, LS3+K20+Hayabusa 40.8 -> 39.1 s, within the run-to-run spread (39.1-42.1 for both).
+- Test duration is simulation CPU: 3,485 s of tests packed into 1,742-1,803 s at `-j 2`, the ideal. The ten slowest (IdleStabilityRegression 382 s, LiveCylinderResize 274, IntakeTuning 258...) are half of it; splitting them cannot help at two-wide.
+- Designed 6 L V12 (`PhysicsPerfHarness`, one run): 2,256 / 4,580 / 7,129 us per 240 Hz frame at 990 / 4,345 / 7,110 rpm (budget 4,167). perf: 24 % self time in `CylinderWorkerPool` workers plus 6.5 % in `attachNetworkParallelFor` (spin, then yield, then park, by design); FV duct + Riemann + primitive recovery ~14 %; `pow` 3 %.
+- Not changed: the pool's spin/park balance and the duct numerics. Both move the real-time factor, which is valid only on the reference Windows machine, interleaved (`.claude/CLAUDE.md`); Linux scheduling differs by construction.
+
 ## 2026-10-23 — Build: JUCE compiled once
 
 - JUCE's modules are interface libraries carrying their sources, and `EngineLabAudio` linked four of them PUBLIC: every executable that linked audio compiled JUCE again (6 units each, 15 for the app); 130 of the tree's 390 compile units were JUCE.
