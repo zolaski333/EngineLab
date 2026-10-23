@@ -195,7 +195,7 @@ file's header says which question it answers and lists its options.
 | `LoadedAccelerationHarness` | a wide-open-throttle pull held in one gear, without shifts, to attribute a torque collapse |
 | `OfflineAudioExporter` | high-quality WAV render with stems ([offline rendering](offline-hq-rendering.md)) |
 | `PhysicsPerfHarness` | gas-exchange trace at crank-degree resolution; `--trace 1 --idle` is a real idle |
-| `RealtimeBudgetHarness` | the real-time factor on the runtime thread (`--free-run` for capacity); back-to-back comparisons only. `--designer-probe` runs the engine designer's own check (`RealtimeCapacityProbe`) on each engine |
+| `RealtimeBudgetHarness` | the real-time factor on the runtime thread (`--free-run` for capacity); back-to-back comparisons only. `--designer-probe` runs the engine designer's own check (`RealtimeCapacityProbe`) on each engine; `--power-throttled` runs it under EcoQoS, as Windows may treat a background app, instead of opting out (`ThreadScheduling.hpp`) |
 | `SceneExport` | the 3-D scene of the catalogue (or `--catalog-root` another, e.g. designs) as JSON, with the route check issues per engine |
 | `ShiftTransientHarness` | the exhaust mass-flow step (the "crack") of a clutchless full-throttle upshift, and with `--audio-output` its sound |
 | `ThermalHarness` | coolant and oil temperatures over repeated dyno passes, tied to the power lost from pass to pass |

@@ -50,6 +50,8 @@
  * must be called from the same thread for the pool's lifetime.
  */
 
+#include <enginelab/foundation/ThreadScheduling.hpp>
+
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -153,6 +155,9 @@ private:
     }
 
     void workerLoop() noexcept {
+        // Every dispatch waits for the slowest worker, so a worker the OS
+        // parks on an efficiency core slows the whole step to that core's pace.
+        (void)platform::requestLatencyCriticalThread();
         // Deliberately NOT `generation_.load()`. A worker thread that has not
         // started yet when the first job is published would latch that job's
         // generation as already seen, never arrive, and hang the master

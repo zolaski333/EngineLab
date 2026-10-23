@@ -52,6 +52,25 @@ run therefore keeps `SCHED_OTHER` and can report a lower real-time factor than
 Windows for the same engine. That is a scheduling difference, not a slower
 solver.
 
+### Hybrid processors (Intel 12th generation and later)
+
+Priority does not decide which core a thread runs on. On a processor with
+performance and efficiency cores, Windows 11 places threads by quality of
+service, which it infers from window focus and visibility, and Intel's Thread
+Director steers a thread that spins on `pause` -- as the resident workers do
+between dispatches -- towards an efficiency core. Every dispatch of
+`CylinderWorkerPool` waits for its slowest worker, so one worker on an
+efficiency core sets the pace of the whole step. Under EcoQoS (a process judged
+in the background) the clock drops as well.
+
+`ThreadScheduling.hpp` therefore opts the process out of power throttling,
+keeps the timer resolution it asked for while the window is hidden, and holds
+the physics thread and the pool workers to the fastest class of CPU sets when
+the machine has more than one class. On a uniform processor (the Ryzen 7
+8840U reference) nothing is restricted. Nothing of this changes what is computed.
+`EngineLabRealtimeBudgetHarness --power-throttled` measures the throttled case
+on any machine; no hybrid machine has measured the fix itself.
+
 ### Stack size
 
 An `EngineRuntime` embeds a `SpscQueue<CylinderPressureSample, 8192>` and

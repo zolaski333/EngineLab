@@ -1,5 +1,6 @@
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/runtime/MonotonicPublicationTimeline.hpp>
+#include <enginelab/foundation/ThreadScheduling.hpp>
 #include <algorithm>
 #include <chrono>
 #include <limits>
@@ -1130,6 +1131,11 @@ void EngineRuntime::run(std::stop_token stopToken) {
     // is made and its failure ignored: an unprivileged Linux run keeps
     // SCHED_OTHER and can report a lower real-time factor than Windows for
     // the same engine, which is a scheduling difference, not a slower solver.
+    // Priority alone does not keep a thread on a fast core: Windows 11 on a
+    // hybrid processor places threads by QoS, and may clock a process it
+    // judges in the background down to EcoQoS (ThreadScheduling.hpp).
+    platform::requestLatencyCriticalProcess();
+    (void)platform::requestLatencyCriticalThread();
 #if defined(_WIN32)
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 #elif defined(__unix__) || defined(__APPLE__)

@@ -61,7 +61,11 @@ file formats, always with an in-memory migration).
   columns are headed *Quantity* and *Value*.
 - A carburetted engine no longer draws, or offers to edit, injectors it does
   not have.
-
+- On a processor with performance and efficiency cores (Intel 12th generation
+  and later), the physics thread and its workers are held to the performance
+  cores, and the process opts out of the power throttling Windows applies to
+  an app it judges in the background, which costs 41 % of the real-time
+  factor on the reference machine. Not yet measured on a hybrid processor.
 - A designed V or W engine shares one crank pin between the cylinders of a
   row, as real ones do; each had its own pin. A 90 deg V-twin now fires
   270-450 and a 45 deg one 315-405. Where a shared pin cannot fire six

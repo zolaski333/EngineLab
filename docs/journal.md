@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Performance on a hybrid processor (a 14th-gen i9 below real time)
+
+- Report: the 0.3.1 zip falls below real time on a 2JZ on an i9-14xxx, while the Ryzen 7 8840U reference holds it. The zip is built with the same preset and Release config as the reference tree; the cylinder pool is 2-3 workers whatever the core count, so many cores do not dilute it.
+- Mechanism (not measured, no hybrid machine here): the pool's barrier waits for its slowest worker, and Thread Director steers a `pause`-spinning thread to an efficiency core; Windows 11 also puts an app it judges in the background under EcoQoS.
+- `ThreadScheduling.hpp`: process and threads opt out of power throttling; the physics thread and the workers are held to the fastest CPU-set class when there is more than one (nothing restricted on a uniform CPU; unit-tested on recorded topologies).
+- `RealtimeBudgetHarness --free-run`, 2JZ at 5,000 rpm, interleaved, round 0 discarded, rounds 1-7: base (the 2026-10-22 knock tree with Woschni's term, not the one merged) min 2.154 / median 2.190; with the change 2.160 / 2.186 (neutral); with `--power-throttled` 1.287 / 1.296: EcoQoS alone costs 41 %.
+- Not measured: the fix on a hybrid processor; whether the i9 was under EcoQoS (window hidden or unfocused) or on E-cores.
+
 ## 2026-10-23 — Editing on the engine: checked on screen (Linux, Xvfb)
 
 - Compression ratio on a 2JZ piston, 8.7 -> 9.5 by the stepper: taken live (the engine shows modified, the field reads it back). `LiveCylinderResize`: K20A +1.5 held at 60 % redline settles like one built so, with more torque.

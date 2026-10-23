@@ -106,7 +106,7 @@ and `ctest` wraps the GUI test in Xvfb itself (no `xvfb-run` prefix needed).
   running binary by its CPU delta, never by a file's mtime (stdio to a file
   flushes in 4 KB blocks, so a CSV lags the work by minutes). A very short time
   can be a failure (`EngineLab.Core` passes in ~43 s on 14.44, aborts in ~8).
-  The whole suite is 89 tests in ~33 min. **Never run it beside a harness or
+  The whole suite is 90 tests in ~33 min. **Never run it beside a harness or
   sweep** (a WSL suite included: shared CPUs): `CoreTests` waits on wall-clock
   deadlines nothing scales by load, so a loaded host invents failures.
 - **Release**: bump `project(EngineLab VERSION ...)`, date the `[Unreleased]`

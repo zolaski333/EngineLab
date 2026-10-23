@@ -29,6 +29,7 @@
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
+#include <enginelab/foundation/ThreadScheduling.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -995,6 +996,8 @@ int main(int argc, char** argv) {
         else if (argument == "--seconds" && index + 1 < argc) measureSeconds = std::stod(argv[++index]);
         else if (argument == "--enforce" && index + 1 < argc) failBelow = std::stod(argv[++index]);
         else if (argument == "--free-run") freeRun = true;
+        else if (argument == "--power-throttled")
+            enginelab::platform::simulateBackgroundThrottlingForMeasurement();
         else if (argument == "--designer-probe") designerProbe = true;
         else if (argument == "--with-audio") withAudio = true;
         else if (argument == "--gas-view") gasView = true;
@@ -1033,6 +1036,8 @@ int main(int argc, char** argv) {
                          "[--audio-rate HZ] [--audio-block N]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
+                         "  --power-throttled  put the process under EcoQoS, as Windows may do\n"
+                         "                     to a background app, instead of opting out of it.\n"
                          "  --designer-probe  run the engine designer's real-time check\n"
                          "                    (RealtimeCapacityProbe) on each engine and stop.\n"
                          "  --with-audio  run the production renderer on a fixed-period\n"
