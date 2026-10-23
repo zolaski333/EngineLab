@@ -17,6 +17,12 @@ struct PortAnchor final {
     float diameterMm {};
     /** Inside the head, where the port starts behind the valves. */
     Vec3 inner;
+    /** A two-stroke's: `position` is the reed's mouth on the barrel and
+        `direction` the way its carburettor points; this is the transfer duct,
+        from the crankcase up to the transfer window, in gas-flow order. */
+    std::vector<Vec3> transferDuct;
+    /** The way a carburettor's slide rises (a two-stroke's). */
+    Vec3 carburettorUp { 0.0F, 1.0F, 0.0F };
 };
 
 /** What a laid-out duct stands for, so it can later be coloured from the solver. */
@@ -188,6 +194,13 @@ void appendTurboWheel(Mesh& mesh, float radius, float width, int blades, float n
  * With `supercharger` given and a supercharger configured, the first path
  * with a single throttle gets it between its throttle and its airbox (see
  * SuperchargerPlacement).
+ *
+ * A two-stroke's paths are its crankcases, so its intake is drawn as a real
+ * one is built instead: each cylinder's transfer duct (the runner) inside the
+ * barrel, then out of the barrel a reed block, a short manifold, the
+ * carburettor (the throttle) a few centimetres from the reeds and a rubber
+ * boot into one airbox all the carburettors share. The crankcase itself is
+ * the block's, and is not drawn again as a plenum.
  */
 [[nodiscard]] std::vector<DuctPiece> layoutIntake(const EngineConfig& config,
                                                   const std::vector<PortAnchor>& ports,

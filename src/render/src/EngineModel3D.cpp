@@ -497,6 +497,19 @@ void EngineModel3D::buildStructure() {
 void EngineModel3D::buildDucts() {
     Mesh exhaust;
     float bore = 0.0F;
+    // A two-stroke V's carburettors stand in the valley between its banks,
+    // pointing out of it, as on every V-twin and V4 two-stroke built.
+    std::optional<Vec3> valley;
+    if (config_.cycle == EngineCycle::twoStroke && !radialLike_) {
+        std::vector<Vec3> bankAxes;
+        for (const auto& c : cylinders_) {
+            const auto axis = normalise(Vec3 { c.axis.x, c.axis.y, 0.0F });
+            if (std::none_of(bankAxes.begin(), bankAxes.end(), [&](Vec3 seen) { return dot(seen, axis) > 0.999F; }))
+                bankAxes.push_back(axis);
+        }
+        if (bankAxes.size() == 2U && dot(bankAxes[0], bankAxes[1]) > -0.95F)
+            valley = normalise(bankAxes[0] + bankAxes[1]);
+    }
     for (std::size_t i = 0; i < cylinders_.size(); ++i) {
         const auto& cylinder = cylinders_[i];
         const auto& config = config_.cylinders[i];
@@ -509,10 +522,31 @@ void EngineModel3D::buildDucts() {
         // itself is laid out from the intake path.
         const auto intakeDiameter = config.intakeRunnerDiameterMm > 0.0
             ? static_cast<float>(config.intakeRunnerDiameterMm) : 0.36F * b;
-        const auto intakePort = cylinder.deckCentre + axis * (0.42F * b) - side * (0.70F * b);
-        const auto intakeOut = radialLike_ ? -side : normalise(axis * 0.35F - side);
-        intakePorts_.push_back({ config.id, intakePort, intakeOut, intakeDiameter,
-                                 cylinder.deckCentre + axis * (0.12F * b) - side * (0.22F * b) });
+        auto intakePort = cylinder.deckCentre + axis * (0.42F * b) - side * (0.70F * b);
+        auto intakeOut = radialLike_ ? -side : normalise(axis * 0.35F - side);
+        if (config_.cycle == EngineCycle::twoStroke && !radialLike_) {
+            // A two-stroke breathes through the barrel's back, below the
+            // transfers: a reed into the crankcase, and from there the
+            // transfer duct up the barrel's wall to its window.
+            const auto at = evaluateCylinderKinematics(config_, reference_, i,
+                reference_.topDeadCentreAngleDegrees[i] + 180.0, 0.0);
+            const auto crown = world(at.wristPinXMm, at.wristPinYMm, cylinder.z) + axis * cylinder.compressionHeight;
+            const auto lateral = normalise(cross(side, axis));
+            const auto stroke = static_cast<float>(config.strokeMm);
+            intakePort = crown - axis * (0.30F * b) - side * (0.62F * b);
+            intakeOut = valley ? *valley : normalise(-side);
+            PortAnchor anchor { config.id, intakePort, intakeOut, intakeDiameter,
+                                crown + axis * (0.12F * stroke) - side * (0.62F * b) + lateral * (0.5F * b) };
+            anchor.transferDuct = { crown - axis * (0.95F * b) - side * (0.30F * b) + lateral * (0.5F * b),
+                                    crown - axis * (0.45F * b) - side * (0.66F * b) + lateral * (0.5F * b),
+                                    anchor.inner };
+            // Upright in a valley, a slide rises along the crank.
+            anchor.carburettorUp = valley ? zAxis : yAxis;
+            intakePorts_.push_back(std::move(anchor));
+        } else {
+            intakePorts_.push_back({ config.id, intakePort, intakeOut, intakeDiameter,
+                                     cylinder.deckCentre + axis * (0.12F * b) - side * (0.22F * b) });
+        }
 
         // Exhaust port stub: out of the head on the exhaust side.
         const auto exhaustDiameter = 0.34F * b;
@@ -535,11 +569,15 @@ void EngineModel3D::buildDucts() {
             });
         if (carburetted) continue;
         const auto direct = config_.injection.mode == InjectionMode::direct;
+        // A ported two-stroke's sprays from its reed manifold through the reeds.
+        const auto reeds = !direct && !intakePorts_.back().transferDuct.empty();
         auto& drawn = cylinders_[i];
         drawn.injectorTip = direct ? cylinder.deckCentre + axis * (0.10F * b) - side * (0.42F * b)
-                                   : intakePort + intakeOut * (0.30F * b) + axis * (0.22F * b);
+            : reeds ? intakePort + intakeOut * (0.45F * b) + intakePorts_.back().carburettorUp * (0.30F * b)
+                    : intakePort + intakeOut * (0.30F * b) + axis * (0.22F * b);
         const auto target = direct ? cylinder.deckCentre - axis * (0.35F * b) + side * (0.10F * b)
-                                   : intakePorts_.back().inner;
+            : reeds ? intakePort
+                    : intakePorts_.back().inner;
         drawn.injectorAim = normalise(target - drawn.injectorTip);
         Mesh injector;
         const auto nozzle = 0.10F * b;
@@ -685,8 +723,75 @@ void EngineModel3D::buildGearbox() {
         auto back = cylinders_.front().exhaustSide * -1.0F;
         back = Vec3 { back.x, back.y, 0.0F };
         back = length(back) > 1.0e-3F ? normalise(back) : Vec3 { -1.0F, 0.0F, 0.0F };
-        gearbox_.inputAxis = Vec3 { origin.x, origin.y, 0.0F } + back * (flywheelRadius_ + 0.45F * b) - yAxis * (0.1F * b);
-        gearbox_.outputAxis = gearbox_.inputAxis + normalise(back * 0.55F - yAxis * 0.85F) * centre;
+        // Behind a V's front bank stands its rear bank: the box turns about
+        // the crank, the least it can, until its case clears every barrel
+        // (a V-twin's or a V4's sits under the rear cylinders).
+        float smallestRatio = 1.0e9F, largestRatio = 0.0F, stroke = 0.0F;
+        for (const auto ratio : ratios) {
+            smallestRatio = std::min(smallestRatio, static_cast<float>(std::max(0.2, ratio)));
+            largestRatio = std::max(largestRatio, static_cast<float>(std::max(0.2, ratio)));
+        }
+        for (const auto& cylinder : config_.cylinders) stroke = std::max(stroke, static_cast<float>(cylinder.strokeMm));
+        const auto reachMargin = 0.12F * b / pi + 0.12F * b;
+        const auto inputReachEstimate = centre / (1.0F + smallestRatio) + reachMargin;
+        const auto outputReachEstimate = centre * largestRatio / (1.0F + largestRatio) + reachMargin;
+        const auto axesFor = [&](Vec3 direction) {
+            const auto input = Vec3 { origin.x, origin.y, 0.0F } + direction * (flywheelRadius_ + 0.45F * b)
+                - yAxis * (0.1F * b);
+            return std::pair { input, input + normalise(direction * 0.55F - yAxis * 0.85F) * centre };
+        };
+        // Least distance in the crank's plane from the case to a barrel
+        // (from above the crank's sweep to the deck), less the barrel's radius.
+        const auto clearance = [&](Vec3 direction) {
+            const auto [input, output] = axesFor(direction);
+            const auto along = normalise(output - input);
+            const auto across = Vec3 { -along.y, along.x, 0.0F };
+            const auto low = -inputReachEstimate, high = centre + outputReachEstimate;
+            const auto middle = input + along * (0.5F * (low + high));
+            const auto halfAlong = 0.5F * (high - low);
+            const auto halfAcross = std::max(inputReachEstimate, outputReachEstimate);
+            auto least = 1.0e9F;
+            for (const auto& c : cylinders_) {
+                const auto axis = normalise(Vec3 { c.axis.x, c.axis.y, 0.0F });
+                const auto start = Vec3 { origin.x, origin.y, 0.0F } + axis * (0.5F * stroke + 0.25F * c.bore);
+                const auto end = Vec3 { c.deckCentre.x, c.deckCentre.y, 0.0F };
+                for (int k = 0; k <= 16; ++k) {
+                    const auto point = start + (end - start) * (static_cast<float>(k) / 16.0F) - middle;
+                    const auto u = std::max(0.0F, std::abs(dot(point, along)) - halfAlong);
+                    const auto v = std::max(0.0F, std::abs(dot(point, across)) - halfAcross);
+                    least = std::min(least, std::sqrt(u * u + v * v) - 0.6F * c.bore);
+                }
+            }
+            return least;
+        };
+        const auto turned = [](Vec3 direction, float radians) {
+            const auto cosine = std::cos(radians), sine = std::sin(radians);
+            return Vec3 { cosine * direction.x - sine * direction.y, sine * direction.x + cosine * direction.y, 0.0F };
+        };
+        auto chosen = back;
+        if (clearance(back) < 0.0F) {
+            auto best = clearance(back);
+            bool clear = false;
+            for (int step = 1; step <= 36 && !clear; ++step) {
+                const auto angle = static_cast<float>(step) * (5.0F * pi / 180.0F);
+                // Either way round, downwards first at the same angle.
+                auto first = turned(back, angle), second = turned(back, -angle);
+                if (second.y < first.y) std::swap(first, second);
+                for (const auto candidate : { first, second }) {
+                    const auto room = clearance(candidate);
+                    if (room >= 0.0F) {
+                        chosen = candidate;
+                        clear = true;
+                        break;
+                    }
+                    if (room > best) {
+                        best = room;
+                        chosen = candidate;
+                    }
+                }
+            }
+        }
+        std::tie(gearbox_.inputAxis, gearbox_.outputAxis) = axesFor(chosen);
         zStart = 0.5F * (zMin + zMax) - 0.5F * span;
         inputSense_ = -crankSense;
     } else {
@@ -901,8 +1006,10 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
             continue;
         float draw = 0.0F;
         int runners = 0;
+        // A two-stroke's airbox is every crankcase's.
+        const auto shared = duct.kind == DuctKind::intakeAirbox && config_.cycle == EngineCycle::twoStroke;
         for (const auto& other : ducts_)
-            if (other.kind == DuctKind::intakeRunner && other.pathId == duct.pathId) {
+            if (other.kind == DuctKind::intakeRunner && (shared || other.pathId == duct.pathId)) {
                 draw += out[other.part].intensity;
                 ++runners;
             }

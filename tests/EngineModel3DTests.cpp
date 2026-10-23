@@ -1,4 +1,5 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
@@ -622,6 +623,52 @@ void checkGearbox(const EngineModel3D& model) {
         }
 }
 
+/** Least distance, across the crank, from the drawn gearbox case to a barrel
+    (from above the crank's sweep to the deck, a bore wide), mm; negative is
+    the case inside a cylinder. Infinite without a gearbox. */
+float gearboxBarrelClearance(const EngineModel3D& model) {
+    const auto& box = model.gearbox();
+    if (!box.placed) return std::numeric_limits<float>::infinity();
+    std::vector<SceneInstance> instances;
+    model.pose({}, instances);
+    const auto along = normalise(Vec3 { box.outputAxis.x - box.inputAxis.x, box.outputAxis.y - box.inputAxis.y, 0.0F });
+    const Vec3 across { -along.y, along.x, 0.0F };
+    float lowAlong = 1.0e9F, highAlong = -1.0e9F, lowAcross = 1.0e9F, highAcross = -1.0e9F;
+    for (const auto& instance : instances) {
+        if (model.identify(instance.part).role != PartRole::gearbox
+            || model.parts()[instance.part].material != SceneMaterial::blockShell)
+            continue;
+        for (const auto& vertex : model.parts()[instance.part].mesh.vertices) {
+            const auto p = instance.transform.transformPoint(vertex.position) - box.inputAxis;
+            lowAlong = std::min(lowAlong, dot(p, along));
+            highAlong = std::max(highAlong, dot(p, along));
+            lowAcross = std::min(lowAcross, dot(p, across));
+            highAcross = std::max(highAcross, dot(p, across));
+        }
+    }
+    const auto& config = model.config();
+    float least = std::numeric_limits<float>::infinity();
+    for (std::size_t i = 0; i < config.cylinders.size(); ++i) {
+        const auto& cylinder = config.cylinders[i];
+        const auto top = model.probe(i, 0.0), bottom = model.probe(i, 180.0);
+        const auto crank = (top.bigEnd + bottom.bigEnd) * 0.5F;
+        const auto axis = normalise(Vec3 { top.axis.x, top.axis.y, 0.0F });
+        const auto bore = static_cast<float>(cylinder.boreMm);
+        const auto start = Vec3 { crank.x, crank.y, 0.0F }
+            + axis * static_cast<float>(0.5 * cylinder.strokeMm + 0.25 * cylinder.boreMm);
+        const Vec3 end { top.deckCentre.x, top.deckCentre.y, 0.0F };
+        for (int k = 0; k <= 32; ++k) {
+            const auto p = start + (end - start) * (static_cast<float>(k) / 32.0F)
+                - Vec3 { box.inputAxis.x, box.inputAxis.y, 0.0F };
+            const auto a = dot(p, along), c = dot(p, across);
+            const auto u = std::max({ 0.0F, lowAlong - a, a - highAlong });
+            const auto v = std::max({ 0.0F, lowAcross - c, c - highAcross });
+            least = std::min(least, std::sqrt(u * u + v * v) - 0.5F * bore);
+        }
+    }
+    return least;
+}
+
 int superchargersDrawn = 0;
 
 /** A supercharger is drawn where one is configured: fed by the airbox or the
@@ -806,6 +853,14 @@ void checkInjectors(const EngineModel3D& model) {
             require(length(offset - probe.axis * height) < 0.5F * bore, label + "a direct injector sits within the bore");
             require(dot(aim, probe.axis) < -0.5F, label + "a direct injector sprays into the cylinder");
             ++directInjectorsDrawn;
+        } else if (config.cycle == EngineCycle::twoStroke && !intake.transferDuct.empty()) {
+            // Out of the barrel, on the reed manifold, spraying through the reeds.
+            const auto offset = tip - probe.deckCentre;
+            require(length(offset - probe.axis * dot(offset, probe.axis)) > 0.5F * bore,
+                    label + "a two-stroke's port injector sits out of the barrel");
+            require(dot(aim, normalise(intake.position - tip)) > 0.99F,
+                    label + "a two-stroke's port injector sprays through the reeds");
+            ++portInjectorsDrawn;
         } else {
             // Out of the head (above the port's inner end) and spraying at the valves.
             require(dot(tip - probe.deckCentre, probe.axis) > 0.3F * bore, label + "a port injector sits out of the head");
@@ -1052,11 +1107,13 @@ void checkSoundSources(const EngineConfig& config) {
     for (const auto& mouth : sources.intakeMouths) {
         require(std::hypot(mouth.positionM.x, mouth.positionM.y, mouth.positionM.z) > 0.05,
                 config.name + ": a drawn intake mouth is away from the origin");
-        // With an inlet duct, the mouth is its open end, the air coming in
+        // With an open inlet duct, the mouth is its open end, the air coming in
         // along it.
         const auto pathId = config.intakePaths.empty() ? 1U : config.intakePaths[mouth.pathIndex].id;
         for (const auto& duct : scene.ducts()) {
-            if (duct.kind != DuctKind::intakeInletDuct || duct.pathId != pathId || duct.centreline.size() < 2U) continue;
+            if (duct.kind != DuctKind::intakeInletDuct || !duct.opensToAtmosphere || duct.pathId != pathId
+                || duct.centreline.size() < 2U)
+                continue;
             const auto open = frame.acoustic(duct.centreline.front());
             const auto inward = frame.acoustic(duct.centreline[1]);
             const AcousticPoint3M out { open.x - inward.x, open.y - inward.y, open.z - inward.z };
@@ -1154,6 +1211,42 @@ int main() {
         checkInjectors(EngineModel3D(other));
     }
     require(portInjectorsDrawn > 0 && directInjectorsDrawn > 0, "port and direct injectors are both checked");
+    // A motorcycle's gearbox stands behind the crank, clear of every barrel:
+    // behind a V's front bank stands its rear one (owner's report 2026-10-24,
+    // a designed V's box inside its cylinders).
+    {
+        std::vector<EngineConfig> motorcycles;
+        for (const auto& entry : catalogue.entries)
+            if (entry.config.vehicle.massKg < 500.0) motorcycles.push_back(entry.config);
+        const auto design = [](EngineCycle cycle, EngineLayout layout, std::uint32_t cylinders, double bankAngle,
+                               double bore, double stroke) {
+            EngineSpec spec;
+            spec.name = "Designed " + std::to_string(cylinders) + "-cylinder at " + std::to_string(bankAngle) + " deg";
+            spec.cycle = cycle;
+            spec.use = EngineUse::sportMotorcycle;
+            spec.layout = layout;
+            spec.cylinderCount = cylinders;
+            spec.bankAngleDegrees = bankAngle;
+            spec.boreMm = bore;
+            spec.strokeMm = stroke;
+            const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+            require(designed.config.has_value(), "a motorcycle V designs: " + designed.error);
+            return *designed.config;
+        };
+        motorcycles.push_back(design(EngineCycle::fourStroke, EngineLayout::vLayout, 2, 90.0, 88.0, 66.0));
+        motorcycles.push_back(design(EngineCycle::fourStroke, EngineLayout::vLayout, 2, 45.0, 98.0, 96.0));
+        motorcycles.push_back(design(EngineCycle::fourStroke, EngineLayout::vLayout, 4, 65.0, 81.0, 53.5));
+        motorcycles.push_back(design(EngineCycle::fourStroke, EngineLayout::inlineLayout, 4, 0.0, 76.0, 55.0));
+        motorcycles.push_back(design(EngineCycle::twoStroke, EngineLayout::vLayout, 4, 90.0, 54.0, 54.0));
+        for (const auto& motorcycle : motorcycles) {
+            const EngineModel3D model(motorcycle);
+            const auto clearance = gearboxBarrelClearance(model);
+            std::cout << "EngineModel3D: " << motorcycle.name << " gearbox clears its barrels by " << clearance
+                      << " mm\n";
+            require(clearance >= 0.0F, motorcycle.name + ": the gearbox case clears every barrel ("
+                                           + std::to_string(clearance) + " mm)");
+        }
+    }
     for (const auto& entry : catalogue.entries) checkListenerFrame(entry.config);
     for (const auto& entry : catalogue.entries) checkSoundSources(entry.config);
     require(listenersChecked >= 12, "most catalogue engines have a drawn tailpipe to listen behind ("

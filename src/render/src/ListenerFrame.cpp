@@ -94,6 +94,13 @@ AcousticSourcePlacements ListenerFrame::sources(const EngineModel3D& scene) cons
             if (!path) continue;
             placement.pathIndex = *path;
             result.intakeMouths.push_back(placement);
+            // A two-stroke's crankcases all breathe through one airbox.
+            if (duct.kind == DuctKind::intakeAirbox && config.cycle == EngineCycle::twoStroke)
+                for (std::uint32_t other = 0; other < config.intakePaths.size(); ++other)
+                    if (other != *path) {
+                        placement.pathIndex = other;
+                        result.intakeMouths.push_back(placement);
+                    }
         }
     }
     if (scene.turbo().placed)

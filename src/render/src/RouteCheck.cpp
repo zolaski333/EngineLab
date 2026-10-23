@@ -160,6 +160,10 @@ RouteReport checkRoutes(const EngineModel3D& model) {
     // Ducts against the engine's solids.
     const auto& solids = model.solids();
     for (const auto& tube : tubes) {
+        // A two-stroke's transfer duct is cast in its barrel's wall.
+        if (ducts[static_cast<std::size_t>(tube.duct)].kind == DuctKind::intakeRunner
+            && model.config().cycle == EngineCycle::twoStroke)
+            continue;
         for (std::size_t s = 0; s < solids.size(); ++s) {
             RouteIssue worst { RouteIssueKind::engineClash, tube.duct, static_cast<int>(s), {}, 0.0F };
             for (std::size_t i = 0; i < tube.points->size(); ++i) {

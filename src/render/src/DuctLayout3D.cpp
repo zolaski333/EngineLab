@@ -986,6 +986,23 @@ SuperchargerPlacement placeSupercharger(const ForcedInductionConfig& forced, std
     return result;
 }
 
+/** One throttle bore of `throttle` diameter from `face` along `direction`,
+    1.1 bores long; a slide carburettor's slide tower towards `up` and its
+    float bowl opposite. */
+void appendThrottleBore(Mesh& mesh, Vec3 face, Vec3 direction, float throttle, bool carburettor, Vec3 up) {
+    const auto bodyLength = 1.1F * throttle;
+    const auto frame = Mat4::frameAlongY(face, direction);
+    appendCylinder(mesh, frame, 0.62F * throttle, 0.62F * throttle, bodyLength, 28);
+    appendTorus(mesh, frame * Mat4::translation({ 0.0F, 0.15F * throttle, 0.0F }), 0.66F * throttle,
+                0.06F * throttle, 28, 8);
+    if (!carburettor) return;
+    const auto middle = face + direction * (0.5F * bodyLength);
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (0.45F * throttle), up), 0.42F * throttle, 0.42F * throttle,
+                   0.75F * throttle, 20);
+    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (0.45F * throttle), -up), 0.58F * throttle,
+                   0.58F * throttle, 0.70F * throttle, 24);
+}
+
 /** Throttle bores, airbox and inlet duct upstream of a plenum, in the order
     the air crosses them from the atmosphere; a supercharger between the
     throttle and the airbox when `supercharger` is given. */
@@ -1001,21 +1018,11 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
     std::vector<Vec3> mouths;
     Vec3 mouthCentre {};
     for (const auto face : faces) {
-        const auto frame = Mat4::frameAlongY(face, direction);
-        appendCylinder(bodies.mesh, frame, 0.62F * throttle, 0.62F * throttle, bodyLength, 28);
-        appendTorus(bodies.mesh, frame * Mat4::translation({ 0.0F, 0.15F * throttle, 0.0F }), 0.66F * throttle,
-                    0.06F * throttle, 28, 8);
-        if (geometry.carburettor.enabled) {
-            // A slide carburettor: the slide's tower above the bore, the
-            // float bowl under it.
-            auto up = -downAxis - direction * dot(-downAxis, direction);
-            up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
-            const auto middle = face + direction * (0.5F * bodyLength);
-            appendCylinder(bodies.mesh, Mat4::frameAlongY(middle + up * (0.45F * throttle), up), 0.42F * throttle,
-                           0.42F * throttle, 0.75F * throttle, 20);
-            appendCylinder(bodies.mesh, Mat4::frameAlongY(middle - up * (0.45F * throttle), -up), 0.58F * throttle,
-                           0.58F * throttle, 0.70F * throttle, 24);
-        }
+        // A slide carburettor: the slide's tower above the bore, the float
+        // bowl under it.
+        auto up = -downAxis - direction * dot(-downAxis, direction);
+        up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
+        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
         mouths.push_back(face + direction * bodyLength);
         mouthCentre += mouths.back();
     }
@@ -1083,12 +1090,170 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
     outermost.openAxis = normalise(direction);
 }
 
+/** A two-stroke's intake, cylinder by cylinder from the crankcase out, then
+    the airbox every carburettor shares (layoutIntake). */
+std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const std::vector<PortAnchor>& ports) {
+    std::vector<DuctPiece> pieces;
+    // Measured off real reed engines: a reed block about 20 mm deep, the
+    // carburettor on a 25 mm rubber manifold behind it (3-4 cm from the
+    // petals), a boot of at least 25 mm into the airbox.
+    constexpr float reedDepth = 20.0F;
+    constexpr float manifoldLength = 25.0F;
+    constexpr float bootClearance = 25.0F;
+    struct Mouth final {
+        Vec3 point;
+        Vec3 direction;
+        float throttle {};
+        std::uint32_t pathId {};
+    };
+    std::vector<Mouth> mouths;
+    float airboxLitres = 0.0F;
+    for (const auto& path : config.intakePaths) {
+        if (path.cylinderIds.empty()) continue;
+        const auto* port = portOf(ports, path.cylinderIds.front());
+        if (port == nullptr || port->transferDuct.size() < 2U) continue;
+        const auto& geometry = path.geometry;
+        const auto throttle = std::max(5.0F, mm(geometry.throttleDiameterMm));
+        airboxLitres = std::max(airboxLitres, mm(geometry.airboxVolumeLitres));
+
+        // The transfer duct is the path's runner in the solver.
+        const auto& cylinder = *std::find_if(config.cylinders.begin(), config.cylinders.end(),
+            [&path](const CylinderConfig& c) { return c.id == path.cylinderIds.front(); });
+        DuctPiece runner;
+        runner.kind = DuctKind::intakeRunner;
+        runner.pathId = path.id;
+        runner.elementId = cylinder.id;
+        runner.nearEngine = true;
+        runner.authoredLengthMm = std::max(1.0F, mm(cylinder.intakeRunnerLengthMm > 1.0 ? cylinder.intakeRunnerLengthMm
+                                                                                       : geometry.runnerLengthMm));
+        const auto runnerDiameter = cylinder.intakeRunnerDiameterMm > 1.0 ? mm(cylinder.intakeRunnerDiameterMm)
+                                                                          : mm(geometry.runnerDiameterMm);
+        // Cast in the barrel's wall: no wider than the wall holds.
+        const auto runnerRadius = std::min(0.5F * std::max(5.0F, runnerDiameter), 0.18F * mm(cylinder.boreMm));
+        // Its authored length, taken or given at the crankcase end.
+        auto duct = smoothCurve(port->transferDuct, 8);
+        auto excess = polylineLength(duct) - runner.authoredLengthMm;
+        if (excess < 0.0F) {
+            duct.insert(duct.begin(), duct.front() + normalise(duct.front() - duct[1]) * -excess);
+        } else {
+            while (duct.size() > 2U && length(duct[1] - duct[0]) <= excess) {
+                excess -= length(duct[1] - duct[0]);
+                duct.erase(duct.begin());
+            }
+            duct.front() += normalise(duct[1] - duct[0]) * std::min(excess, 0.9F * length(duct[1] - duct[0]));
+        }
+        runner.centreline = resample(duct, 8.0F);
+        runner.radii.assign(runner.centreline.size(), runnerRadius);
+        appendTube(runner.mesh, runner.centreline, runner.radii, 16, true, true);
+        pieces.push_back(std::move(runner));
+
+        // Reed block on the barrel, the manifold, the carburettor.
+        DuctPiece bodies;
+        bodies.kind = DuctKind::intakeThrottle;
+        bodies.pathId = path.id;
+        bodies.nearEngine = true;
+        const auto direction = normalise(port->direction);
+        const auto up = normalise(port->carburettorUp - direction * dot(port->carburettorUp, direction));
+        const auto across = normalise(cross(direction, up));
+        addBox(bodies, across, direction, up, port->position + direction * (0.5F * reedDepth),
+               { 1.35F * throttle, reedDepth, 1.15F * throttle });
+        const auto manifoldStart = port->position + direction * reedDepth;
+        appendCylinder(bodies.mesh, Mat4::frameAlongY(manifoldStart, direction), 0.6F * throttle, 0.58F * throttle,
+                       manifoldLength, 24);
+        const auto face = manifoldStart + direction * manifoldLength;
+        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
+        bodies.centreline = { port->position, face + direction * (1.1F * throttle) };
+        pieces.push_back(std::move(bodies));
+        mouths.push_back({ face + direction * (1.1F * throttle), direction, throttle, path.id });
+    }
+    if (mouths.empty()) return pieces;
+
+    // Without an airbox each carburettor breathes through its own mouth.
+    const auto airbox = airboxLitres * litre;
+    if (airbox <= 0.0F) {
+        for (auto& piece : pieces) {
+            if (piece.kind != DuctKind::intakeThrottle) continue;
+            piece.opensToAtmosphere = true;
+            piece.openEnd = piece.centreline.back();
+            piece.openAxis = normalise(piece.centreline.back() - piece.centreline.front());
+        }
+        return pieces;
+    }
+
+    // One airbox for them all, out where the carburettors point (above a
+    // V's valley, behind an inline engine's barrels).
+    Vec3 out {};
+    float widestThrottle = 0.0F;
+    for (const auto& mouth : mouths) {
+        out += mouth.direction;
+        widestThrottle = std::max(widestThrottle, mouth.throttle);
+    }
+    out = length(out) > 0.3F * static_cast<float>(mouths.size()) ? normalise(out) : -downAxis;
+    const auto acrossAxis = std::abs(dot(out, zAxis)) > 0.9F ? normalise(cross(out, Vec3 { 1.0F, 0.0F, 0.0F }))
+                                                             : zAxis;
+    const auto sideAxis = normalise(cross(acrossAxis, out));
+    float floor = -1.0e9F;
+    for (const auto& mouth : mouths) floor = std::max(floor, dot(mouth.point, out));
+    floor += bootClearance + 0.6F * widestThrottle;
+    float lowA = 1.0e9F, highA = -1.0e9F, lowS = 1.0e9F, highS = -1.0e9F;
+    for (const auto& mouth : mouths) {
+        lowA = std::min(lowA, dot(mouth.point, acrossAxis));
+        highA = std::max(highA, dot(mouth.point, acrossAxis));
+        lowS = std::min(lowS, dot(mouth.point, sideAxis));
+        highS = std::max(highS, dot(mouth.point, sideAxis));
+    }
+    auto spanA = highA - lowA + 2.4F * widestThrottle;
+    auto spanS = highS - lowS + 2.4F * widestThrottle;
+    auto height = airbox / (spanA * spanS);
+    // A deep narrow box is drawn squatter and wider, at the same volume.
+    if (const auto squat = std::max(spanA, spanS); height > squat) {
+        const auto grow = std::sqrt(height / squat);
+        spanA *= grow;
+        spanS *= grow;
+        height = airbox / (spanA * spanS);
+    }
+    // A box too flat for its boots is drawn narrower, at the same volume.
+    if (const auto lowest = 1.2F * widestThrottle; height < lowest) {
+        const auto shrink = std::sqrt(height / lowest);
+        spanA *= shrink;
+        spanS *= shrink;
+        height = airbox / (spanA * spanS);
+    }
+    const auto centre = acrossAxis * (0.5F * (lowA + highA)) + sideAxis * (0.5F * (lowS + highS))
+        + out * (floor + 0.5F * height);
+    for (const auto& mouth : mouths) {
+        DuctPiece boot;
+        boot.kind = DuctKind::intakeInletDuct;
+        boot.pathId = mouth.pathId;
+        boot.nearEngine = true;
+        const auto entry = mouth.point + out * (floor - dot(mouth.point, out));
+        const auto lead = 0.35F * (floor - dot(mouth.point, out));
+        boot.centreline = resample(smoothCurve({ entry, entry - out * lead, mouth.point + mouth.direction * lead,
+                                                 mouth.point }, 10), 8.0F);
+        boot.radii.assign(boot.centreline.size(), 0.62F * mouth.throttle);
+        appendTube(boot.mesh, boot.centreline, boot.radii, segmentsFor(1.24F * mouth.throttle));
+        pieces.push_back(std::move(boot));
+    }
+    DuctPiece box;
+    box.kind = DuctKind::intakeAirbox;
+    box.pathId = mouths.front().pathId;
+    addBox(box, acrossAxis, out, sideAxis, centre, { spanA, height, spanS });
+    box.opensToAtmosphere = true;
+    box.openEnd = centre + out * (0.5F * height);
+    box.openAxis = out;
+    pieces.push_back(std::move(box));
+    return pieces;
+}
+
 } // namespace
 
 std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
                                     bool radial, const std::vector<EngineSolid>& solids,
                                     SuperchargerPlacement* supercharger) {
     if (supercharger != nullptr) *supercharger = {};
+    if (config.cycle == EngineCycle::twoStroke && !radial
+        && std::all_of(ports.begin(), ports.end(), [](const PortAnchor& port) { return port.transferDuct.size() >= 2U; }))
+        return layoutTwoStrokeIntake(config, ports);
     const auto& forced = config.forcedInduction;
     const auto superchargerWanted = forced.enabled && forced.type == ForcedInductionType::supercharger;
     std::vector<DuctPiece> pieces;
