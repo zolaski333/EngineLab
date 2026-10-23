@@ -199,14 +199,19 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   of head, so flow is the number times the root of the head available. The
   designer sizes them from the engine and not from a table -- the fuel peak
   power needs at AFR 12.8 over the root of the venturi head there, and the
-  fuel the idle needs at AFR 13.5 over the root of the crankcase head -- and on
-  an RD350-sized design that returns a 287 main and a 41 pilot against the
-  bike's 260-290 and 30-40, neither of which was fitted to it. The main jet is
-  very nearly its circuit's only restriction so its number is used directly;
-  the pilot's is not, because the emulsion passage, the air screw's bleed and
-  the outlet all throttle it further, and `pilotCircuitFactor` is that lumped
-  restriction (0.14, the one value fitted to a real pair: an RD350's 35 pilot
-  idling at AFR 13 on about 21 kPa).
+  fuel the idle air needs at AFR 13.5 over the root of the crankcase head. The
+  idle air is what the idle path passes at that head (the slide's leak and the
+  bypass at the idle governor's neutral opening), and as the ECU opens or
+  shuts that path, standing in for the slide's idle stop, the pilot follows it
+  the way progression holes do: the idle mixture holds through cranking and
+  idle. On an RD350-sized design the main comes out at 287 against the bike's
+  260-290. The main jet is very nearly its circuit's only restriction so its
+  number is used directly; the pilot's is not, because the emulsion passage,
+  the air screw's bleed and the outlet all throttle it further, and
+  `pilotCircuitFactor` is that lumped restriction (0.026, the one value fitted
+  to a real pair: an RD350's 35 pilot feeding its idle air at AFR 13.5 on about
+  20 kPa). A pilot sized for an idle delivery ratio of 0.35, about eight times
+  what the model's RD350 idles on, flooded every designed twin.
 
   Two things a real carburettor has are deliberately absent, both of which act
   at the top of the range: there is no emulsion tube or air corrector, so the

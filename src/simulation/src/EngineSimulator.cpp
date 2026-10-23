@@ -251,6 +251,19 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
 
 /** What feeds the plenum: the throttle, or with individual throttles the bores
  *  held fully open, the plenum being the airbox and the plates in the runners. */
+/** A carburettor's idle air path against the one its pilot was sized at:
+ *  the closed-slide leak plus the bypass at the idle governor's neutral
+ *  opening. The ECU's idle air stands in for the slide's idle stop, and
+ *  opening that stop uncovers the progression holes, so the pilot follows. */
+[[nodiscard]] double carburettorIdleCircuitOpening(const IntakeConfig& intake,
+                                                   double idleAirOpening) noexcept {
+    const auto leak = closedThrottleLeakageAreaM2(intake);
+    const auto bypass = std::max(0.0, intake.idleBypassAreaMm2) * 1.0e-6;
+    const auto neutral = leak + bypass * carburettorPilotSizingIdleOpening;
+    if (!(neutral > 0.0)) return 1.0;
+    return (leak + bypass * std::clamp(idleAirOpening, 0.0, 1.0)) / neutral;
+}
+
 [[nodiscard]] double plenumInletAreaM2(const IntakeConfig& intake,
                                        double throttleAreaM2,
                                        double throttlePlateAreaM2) noexcept {
@@ -2083,7 +2096,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         plenumInflowKg / subDt, boundaryDensityKgPerM3,
                         intakeSourcePressureKpa,
                         intakePlenumGas_[pathIndex].pressureKpa(),
-                        intake.throttleDiameterMm, state_.throttle, subDt);
+                        intake.throttleDiameterMm, state_.throttle, subDt,
+                        carburettorIdleCircuitOpening(intake, ecuCommand.idleAirOpening));
                     if (metering.deliveredMoles > 0.0)
                         intakePlenumGas_[pathIndex].injectFuelMoles(
                             metering.deliveredMoles,

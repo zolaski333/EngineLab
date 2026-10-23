@@ -672,8 +672,14 @@ void theDefaultJetsGiveTheRealEngineItsMixture() {
     std::cout << "  full throttle, 8,000 rpm: AFR " << wideOpenAfr << '\n';
     require(wideOpenAfr > 11.5 && wideOpenAfr < 14.5,
         "the stock main jet gives a full-load mixture a two-stroke can run");
-    const auto idleAfr = rig.settledAirFuelRatio(
-        rig.airFlowKgPerSecond(1'300.0, 0.35), 80.0, 0.0);
+    // At idle the air is what the bike's idle path passes, not a share of
+    // what the cylinder could swallow: its 3 mm2 per carburettor, at the idle
+    // governor's neutral opening, plus the 26 mm slide's 0.26 mm2 leak, under
+    // the crankcase's 21 kPa.
+    const auto idleAirKgPerSecond = 0.72
+        * (3.0 * carburettorPilotSizingIdleOpening + 0.26) * 1.0e-6
+        * std::sqrt(2.0 * rig.airDensityKgPerM3 * (101.325 - 80.0) * 1'000.0);
+    const auto idleAfr = rig.settledAirFuelRatio(idleAirKgPerSecond, 80.0, 0.0);
     std::cout << "  idle, 1,300 rpm: AFR " << idleAfr << '\n';
     require(idleAfr > 11.0 && idleAfr < 17.0,
         "the stock pilot jet idles in the band a carburetted two-stroke idles in");

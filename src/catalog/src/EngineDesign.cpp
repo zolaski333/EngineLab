@@ -568,8 +568,14 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             std::max(minimumPlenumVolumeLitres, plenum), plenum < minimumPlenumVolumeLitres
                 ? "per litre gives " + format(plenum) + ", raised to the simulator's floor"
                 : std::string("per litre of displacement"));
+        // A two-stroke's carburettor feeds one cylinder, so its idle air goes
+        // with that cylinder: the RD350 runs 3 mm2 per carburettor on 175 cc.
+        // Per litre of the whole engine, a four's carburettors each had a
+        // twin's idle air and their pilots were sized to match (#63).
         intake.idleBypassAreaMm2 = derive("idle_bypass_area_mm2", "Idle bypass", "mm2",
-            diesel ? 0.0 : (twoStroke ? 9.0 : 12.0) * litres, diesel ? "none: a diesel is unthrottled" : "per litre");
+            diesel ? 0.0 : twoStroke ? 18.0 * litres / std::max(1.0, countD) : 12.0 * litres,
+            diesel ? "none: a diesel is unthrottled"
+                : twoStroke ? "per litre of the cylinder its carburettor feeds" : "per litre");
         // The plate-in-bore gap leaks in proportion to the bore's rim. Held at
         // the simulator's 0.6 mm2 on a small bore, the leak alone outran a
         // 50 cc engine's idle air: 2,042 rpm for 1,350; 0.1 mm2 gave 1,329
@@ -632,9 +638,17 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
 
             // Pilot circuit, at idle: the depression is the whole drop from the
             // float bowl to a crankcase pumping about 20 kPa below ambient.
-            const auto idleAirKgPerSecond = displacementPerBoreM3 * 0.35
-                * (std::max(1.0, config.idleRpm) / 60.0) * ambientDensityKgPerM3;
+            // The air it meters for is what the idle air path passes at that
+            // drop, the closed-slide leak and the bypass at the governor's
+            // neutral opening; the pilot then follows that path as it opens.
+            // Sized instead for a delivery ratio of 0.35 at idle, about three
+            // times what a two-stroke idles on, it fed a 350 cc twin AFR ~7
+            // and the twin flooded (journal 2026-10-23).
             constexpr double idleCrankcaseDropPa = 20'000.0;
+            const auto idleAirAreaM2 = (intake.closedThrottleLeakageAreaMm2 * bores
+                + intake.idleBypassAreaMm2 * carburettorPilotSizingIdleOpening) * 1.0e-6;
+            const auto idleAirKgPerSecond = intake.throttleDischargeCoefficient * idleAirAreaM2
+                * std::sqrt(2.0 * ambientDensityKgPerM3 * idleCrankcaseDropPa);
             const auto idleHeadM = idleCrankcaseDropPa
                 / (fuelDensityKgPerM3 * gravityMPerS2);
             constexpr double idleAirFuelRatio = 13.5;

@@ -86,6 +86,12 @@ file formats, always with an in-memory migration).
   about a degree while the engine knocks and gives it back at 1 deg/s, so an
   engine settles at its knock limit instead of sitting in light knock. The
   Audi I5 gets the intercooler its real engine has.
+- A designed carburetted two-stroke idles: its pilot jet was sized for about
+  eight times the air a two-stroke idles on, so twins and triples flooded and
+  stalled. The pilot is now sized from the air the idle path passes and
+  follows it as the idle air opens, and each carburettor's idle bypass goes
+  with the cylinder it feeds. Designed 1-4 cylinder two-strokes idle at their
+  1,300 rpm; an RD350-sized design keeps a 35 pilot.
 - A two-stroke's idle no longer hunts: the idle governor runs at half the
   gain on two-strokes, whose idle air passes the crankcase first. The RD350
   held 1,175-1,398 rpm with a 5 s period; now 1,284-1,325.

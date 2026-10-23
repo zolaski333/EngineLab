@@ -5,13 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
-## 2026-10-23 — Two-stroke idle: the governor's gains halved; designed carburetted twins flood
+## 2026-10-23 — Two-stroke idle: the governor's gains halved; designed carburetted engines idle
 
 - RD350 (injected) free idle, std over 16-40 s: the idle gate failed on drift 66 rpm (baseline 64.4, gate 65): a 5 s limit cycle, trim 0.68-1.16, air per cycle 34-49 mg. No end-gas event in it (the old model had 4).
 - Lambda trim gain x0 / x0.5 / x1 / x2: std 165 / 125 / 66 / 16: the trim damps the hunt, it does not make it. The cycle-correct trim gain (360 deg, half the speed) made it worse (std 69, drift 78): not kept.
 - Governor P,I x0.5: std 13.6 (trim on), 15.8 (trim frozen); D x2 helps only with the trim (16.7 vs 152). Kept for two-strokes: idle gate std 13.4, drift 0.8; WOT-blip recovery settles at 1,489 rpm (was 1,336).
 - Designed carburetted 2T (sport, 54-64 x 54 mm): the 1-, 2- and 3-cylinder designs do not idle; the 4-cylinder idles 1,131 rpm, std 31. The twin's pilot meters ~AFR 7 against the air its bypass can pass (it is sized for an idle delivery ratio of 0.35); `airFlowGramsPerSecond` reads trapped mass x cycle rate, ~4 g/s of a misfiring charge, not throttle flow.
-- Refuted: sizing the pilot from the idle path's air at the governor's neutral 0.42: the single idles (1,241, std 60) but the twin cranks at AFR 30-100 on the 0.88 post-start air and never fires. The ECU's idle air moves 0.4-1.0 while the pilot cannot follow it: a carburettor's idle air must pass its own idle circuit. Open, item 2.
+- Sizing the pilot from the idle path's air at the governor's neutral 0.42 alone: the twin cranks at AFR 30-100 on the 0.88 post-start air and never fires. With the pilot also following the idle path's opening (progression holes), the bypass per carburettor at 18 mm2 per litre of its cylinder (a four had 6.25 each) and the pilot factor refitted 0.14 -> 0.026 (RD350 #35): designed 1/2/3/4-cylinder engines idle 1,310/1,303/1,303/1,302 rpm, std 73/26/20/18, pilots #25/35/35/35. The rig's RD350 idles at delivery ratio 0.041.
 
 ## 2026-10-23 — Knock: Douaud-Eyzat's prefactor doubled; Woschni's combustion term backed out
 

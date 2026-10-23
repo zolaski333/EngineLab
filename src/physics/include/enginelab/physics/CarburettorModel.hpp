@@ -87,6 +87,11 @@ public:
      * `airMassFlowKgPerSecond` is the air actually crossing the bore, and the
      * fuel follows from the depression that moved it, so this is an amount per
      * step and never a gain on a flow it goes on to change.
+     *
+     * `idleCircuitOpening` is the idle air path's opening against its
+     * neutral one. Opening a slide's idle stop uncovers progression holes
+     * as it lets air by, so the pilot's fuel follows the idle air; 1 is the
+     * opening the pilot jet was sized at.
      */
     [[nodiscard]] static CarburettorMetering meter(const CarburettorConfig& carburettor,
                                                    const FuelConfig& fuel,
@@ -97,7 +102,8 @@ public:
                                                    double crankcasePressureKpa,
                                                    double throttleDiameterMm,
                                                    double throttleFraction,
-                                                   double dtSeconds) noexcept;
+                                                   double dtSeconds,
+                                                   double idleCircuitOpening = 1.0) noexcept;
 };
 
 } // namespace enginelab

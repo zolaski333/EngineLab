@@ -210,6 +210,10 @@ struct ExhaustConfig final {
     double midpipeDiameterMm { 0.0 };
 };
 
+/** The idle-air opening a carburettor's pilot jet is sized at: the idle
+ *  governor's neutral command (its feed-forward), where a warm engine idles. */
+inline constexpr double carburettorPilotSizingIdleOpening = 0.42;
+
 /** A slide carburettor: the fuel system that meters from the air itself.
  *
  * An injector is told how much fuel to deliver. A carburettor is not told
@@ -256,11 +260,13 @@ struct CarburettorConfig final {
      * through a small outlet at the slide's edge, and all of that throttles it
      * further. Driving a bare 35 jet with the whole crankcase depression gives
      * AFR 1.5 at idle, so the lumping is not optional; this factor is the
-     * series restriction of everything after the jet. 0.14 is what an RD350's
-     * 35 pilot and its ~21 kPa idle depression need to idle at AFR 13, which
-     * is the one real pair the value is fitted to. A circuit resolved passage
-     * by passage would replace it. */
-    double pilotCircuitFactor { 0.14 };
+     * series restriction of everything after the jet. 0.026 is what an
+     * RD350's 35 pilot and its ~20 kPa idle depression need to feed the air
+     * its idle path passes at AFR 13.5, which is the one real pair the value
+     * is fitted to (0.14 belonged to an idle delivery ratio of 0.35, about
+     * three times a real one). A circuit resolved passage by passage would
+     * replace it. */
+    double pilotCircuitFactor { 0.026 };
     /** Needle clip position, 1 (needle highest, richest) to 5. The taper in
      * the needle jet is what meters between the pilot and the main. */
     double needleClipPosition { 3.0 };

@@ -235,7 +235,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // integration step before the plate has opened and creates a real air
         // gap during tip-in.
         const auto driverOverride = std::clamp(1.0 - state.throttle * 12.0, 0.0, 1.0);
-        constexpr double feedForward = 0.42;
+        constexpr double feedForward = carburettorPilotSizingIdleOpening;
         // The gains were set on four-strokes. On a two-stroke, whose idle air
         // goes through the crankcase first, they hunt: the RD350 swung
         // 1,006-1,565 rpm with its fuel trim frozen (std 165) and 1,175-1,398
