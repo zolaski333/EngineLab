@@ -25,8 +25,9 @@ without the owner's explicit agreement.
    chaotic and neither the behaviour nor the sound is a real two-stroke's. Free
    rein to add what a 2T needs (carburettor, reed and power valves) or to rework
    the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
-   and a carburettor exists (2026-10-22); open are reed and power valves and the
-   3,500/7,000/7,500 rpm holding band, the engine's own and not the dyno's.
+   and a carburettor exists (2026-10-22); open are reed and power valves, the
+   3,500/7,000/7,500 rpm holding band, the engine's own and not the dyno's, and
+   designed carburetted 1-3 cylinder two-strokes that do not idle (2026-10-23).
 3. **Performance**: test duration, build time, real-time factor.
 4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
    that would destroy a real one. Fix the knock PHYSICS, not the damage model.

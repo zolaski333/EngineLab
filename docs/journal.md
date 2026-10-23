@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Two-stroke idle: the governor's gains halved; designed carburetted twins flood
+
+- RD350 (injected) free idle, std over 16-40 s: the idle gate failed on drift 66 rpm (baseline 64.4, gate 65): a 5 s limit cycle, trim 0.68-1.16, air per cycle 34-49 mg. No end-gas event in it (the old model had 4).
+- Lambda trim gain x0 / x0.5 / x1 / x2: std 165 / 125 / 66 / 16: the trim damps the hunt, it does not make it. The cycle-correct trim gain (360 deg, half the speed) made it worse (std 69, drift 78): not kept.
+- Governor P,I x0.5: std 13.6 (trim on), 15.8 (trim frozen); D x2 helps only with the trim (16.7 vs 152). Kept for two-strokes: idle gate std 13.4, drift 0.8; WOT-blip recovery settles at 1,489 rpm (was 1,336).
+- Designed carburetted 2T (sport, 54-64 x 54 mm): the 1-, 2- and 3-cylinder designs do not idle (stall by 4 s; twin AFR 4-6 read, metered 15-22, telemetry air ~4 g/s against a bypass that chokes near 1.6). The 4-cylinder idles 1,131 rpm, std 31. Open, item 2.
+
 ## 2026-10-23 — Knock: Douaud-Eyzat's prefactor doubled; Woschni's combustion term backed out
 
 - Linux, `linux-gcc-release`. The 2026-10-22 knock work failed 8 ctest gates its baseline (91c04d3) passes. Ablation by switches, one ingredient each.

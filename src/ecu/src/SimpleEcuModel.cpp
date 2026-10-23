@@ -236,8 +236,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // gap during tip-in.
         const auto driverOverride = std::clamp(1.0 - state.throttle * 12.0, 0.0, 1.0);
         constexpr double feedForward = 0.42;
-        constexpr double proportionalGain = 0.90;
-        constexpr double integralGain = 0.55;
+        // The gains were set on four-strokes. On a two-stroke, whose idle air
+        // goes through the crankcase first, they hunt: the RD350 swung
+        // 1,006-1,565 rpm with its fuel trim frozen (std 165) and 1,175-1,398
+        // with it; at half the gain, 1,271-1,349 and 1,279-1,325 (journal
+        // 2026-10-23).
+        const auto governorGainShare = config.cycle == EngineCycle::twoStroke ? 0.5 : 1.0;
+        const auto proportionalGain = 0.90 * governorGainShare;
+        const auto integralGain = 0.55 * governorGainShare;
         constexpr double derivativeGainSeconds = 0.12;
         constexpr double minimumIntegral = -0.20;
         if (effectiveThrottle > 0.02) {

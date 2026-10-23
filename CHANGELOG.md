@@ -85,7 +85,10 @@ file formats, always with an in-memory migration).
   control now works as a production one: it pulls the spark back in steps of
   about a degree while the engine knocks and gives it back at 1 deg/s, so an
   engine settles at its knock limit instead of sitting in light knock. The
-  2JZ, EJ25 and Audi I5 get the intercoolers their real engines have.
+  Audi I5 gets the intercooler its real engine has.
+- A two-stroke's idle no longer hunts: the idle governor runs at half the
+  gain on two-strokes, whose idle air passes the crankcase first. The RD350
+  held 1,175-1,398 rpm with a 5 s period; now 1,284-1,325.
 - Boost no longer burns the charge faster: the flame's turbulence follows the
   piston, not the intake pressure, so a boosted cylinder burns like a full
   unboosted one.
