@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Performance: a 4K window costs 1.3 cores and does not take the 2JZ below real time
+
+- Hypothesis for the 14th-gen i9 report: a gaming PC's 1440p/4K screen. The app (VS tree, 6c90081+), 2JZ running free at 20 % throttle (~6,800 rpm), 30 s settle, then six alternating 30 s phases, window forced to 3840x2159 or 1600x900 (DPI-aware MoveWindow), engine started from its own buttons.
+- Process CPU: 4.31-4.32 cores at 3840x2159 against 2.84-3.16 at 1600x900, every phase.
+- Real-time factor 0.997-1.001 in every phase. Overruns per 30 s: big 4,946 / 4,701 / 4,660, small 4,560 / 3,385 / 3,646 (about +23 % at 4K). An overrun is any step finishing past its deadline, however slightly; the loop catches up, which is why the factor holds while over half the 240 steps/s count one.
+- Ruled out on this machine (8 cores / 16 threads): the window's size taking the physics below real time. Not measured: the frame-rate cap (`frameRateCap`, 0 = unlimited) at 4K, a real 4K monitor (the window here is mostly off screen), a hybrid processor.
+
 ## 2026-10-23 — `UserDynoHighRpmStart` fails under CPU load, before and after the hybrid change
 
 - Full ctest (VS tree, 39c1185): 90/91, the one failure the CP2 "crossed the running threshold during preparation" (minimum 508 rpm, recover 294). Alone: 18/18 pass, start 3,241-4,083 rpm (it is wall-clock paced, so not deterministic).
