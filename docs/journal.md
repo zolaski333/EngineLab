@@ -10,7 +10,8 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Full ctest (VS tree, 39c1185): 90/91, the one failure the CP2 "crossed the running threshold during preparation" (minimum 508 rpm, recover 294). Alone: 18/18 pass, start 3,241-4,083 rpm (it is wall-clock paced, so not deterministic).
 - With 16 busy-loop jobs on the 16 logical CPUs: 3/10 fail, the same signature (minimum 536-554, recover 293-294).
 - Same load, Ninja builds of e1b2260 (before `ThreadScheduling`) and 9b882b1+, interleaved, 12 rounds each: base 1/12 fail, head 2/12, every failure min 549-553 / recover 293-294. Not separable at this count: the sensitivity predates the change.
-- Not measured: why a late physics thread lets the CP2 dip to ~550 rpm during preparation; whether a hybrid CPU makes it likelier.
+- Cause: not the scheduling. The dyno runs in simulated time; only the moment the harness presses D is wall-clock (1 ms polling against a free-running runtime), so load picks the start state. From some states the sweep drops below `max(350, 0.55 x idle)` and the recovery re-prepares and drops again: 293 recoveries, no point, until the 90 s deadline (13 s against ~1 s for a pass). A user pressing D at that moment would hit the same loop. Open, not fixed (outside the mandate).
+- After 6c90081: full ctest 91/91 in 32 min.
 - Diagnostics rows checked on screen (Windows, 125 % scaling): 48.0 / 48.0 kHz, "any of 16, no throttling"; the callback load printed full precision (`juce::String(x, 0)`), now one decimal.
 
 ## 2026-10-23 — Performance: the audio device's rate
