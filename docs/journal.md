@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — `UserDynoHighRpmStart` fails under CPU load, before and after the hybrid change
+
+- Full ctest (VS tree, 39c1185): 90/91, the one failure the CP2 "crossed the running threshold during preparation" (minimum 508 rpm, recover 294). Alone: 18/18 pass, start 3,241-4,083 rpm (it is wall-clock paced, so not deterministic).
+- With 16 busy-loop jobs on the 16 logical CPUs: 3/10 fail, the same signature (minimum 536-554, recover 293-294).
+- Same load, Ninja builds of e1b2260 (before `ThreadScheduling`) and 9b882b1+, interleaved, 12 rounds each: base 1/12 fail, head 2/12, every failure min 549-553 / recover 293-294. Not separable at this count: the sensitivity predates the change.
+- Not measured: why a late physics thread lets the CP2 dip to ~550 rpm during preparation; whether a hybrid CPU makes it likelier.
+- Diagnostics rows checked on screen (Windows, 125 % scaling): 48.0 / 48.0 kHz, "any of 16, no throttling"; the callback load printed full precision (`juce::String(x, 0)`), now one decimal.
+
 ## 2026-10-23 — Performance: the audio device's rate
 
 - The audio work scales with the device rate, and WASAPI shared mode offers only the mixer's rate (96/192 kHz on many headsets and DACs). `RealtimeBudgetHarness --with-audio`, 2JZ at 5,000 rpm, free-run, interleaved: audio load 21 % at 48 kHz, 41 % at 96, 90 % at 192 with ~180k dropped samples per run (INVALID).

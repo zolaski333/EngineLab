@@ -487,7 +487,7 @@ std::vector<std::pair<juce::String, juce::String>> DiagnosticsPanel::debugRows()
         // performance cores and opted out of power throttling.
         { "Audio device / synthesis", juce::String(health.audioDeviceSampleRate / 1000.0, 1) + " / "
               + juce::String(health.audioSynthesisSampleRate / 1000.0, 1) + " kHz" },
-        { "Audio callback load", juce::String(health.audioCallbackLoad * 100.0, 0) + " %" },
+        { "Audio callback load", juce::String(health.audioCallbackLoad * 100.0, 1) + " %" },
         { "Physics cores", (health.physicsCpuSets == 0
               ? juce::String("any of ") + count(health.logicalProcessors)
               : juce::String("held to ") + count(health.physicsCpuSets) + " of "
