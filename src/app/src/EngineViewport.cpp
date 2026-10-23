@@ -1215,16 +1215,16 @@ void EngineViewport::applyPartChoice(int index) {
 }
 
 void EngineViewport::applyCylinderEdit(const std::vector<double>& values, bool gradual) {
-    if (!scene_ || !cylinderEditor_ || selectedPart_ < 0 || values.size() < 3U) return;
+    if (!scene_ || !cylinderEditor_ || selectedPart_ < 0 || values.empty()) return;
     auto edited = scene_->config();
-    const auto boreMm = values[0];
-    const auto strokeMm = values[1];
-    const auto ratio = values[2];
+    // The ratio alone when the cylinders are not one size (cylinderEdit).
+    const auto ratio = values.back();
     // Only what was edited: a chamber-geometry engine's ratio follows its
     // bore and stroke, and the field still holds the ratio from before.
     std::string error;
-    if (const auto size = cylinderSize(edited); size && (boreMm != size->boreMm || strokeMm != size->strokeMm))
-        error = resizeCylinders(edited, boreMm, strokeMm);
+    if (const auto size = cylinderSize(edited);
+        size && values.size() >= 3U && (values[0] != size->boreMm || values[1] != size->strokeMm))
+        error = resizeCylinders(edited, values[0], values[1]);
     if (error.empty() && ratio != scene_->config().cylinders.front().compressionRatio)
         error = setCompressionRatio(edited, ratio);
     sendCylinderEdit(edited, error, gradual);
@@ -1623,17 +1623,53 @@ void EngineViewport::updateInspector() {
     // Bore and stroke are one engine-wide edit, offered on any cylinder.
     const auto cylinderEdit = [this, &config]() -> std::optional<PartInspector::Edit> {
         const auto size = cylinderSize(config);
-        if (!cylinderEditor_ || !size) return std::nullopt;
+        if (!cylinderEditor_ || config.cylinders.empty()) return std::nullopt;
         PartInspector::Edit result;
         result.key = std::uint64_t { 1 } << 63U;
-        result.length("Bore", size->boreMm, 1.0, 0.1, 20.0, 200.0);
-        result.length("Stroke", size->strokeMm, 1.0, 0.1, 20.0, 200.0);
+        // Cylinders of different sizes are resized one design at a time; the
+        // ratio is still one engine-wide value.
+        if (size) {
+            result.length("Bore", size->boreMm, 1.0, 0.1, 20.0, 200.0);
+            result.length("Stroke", size->strokeMm, 1.0, 0.1, 20.0, 200.0);
+        } else {
+            result.key |= 1U;
+        }
         result.value("Compression ratio", config.cylinders.front().compressionRatio, utf8(" : 1"), 1, 0.5, 0.1, 5.0,
                      20.0);
         result.offersRamp = true;
-        result.note = "Every cylinder changes, each crank throw at its gas-exchange TDC. A new bore or stroke keeps "
-                      "the compression ratio; a higher ratio gives more torque, and knocks sooner.";
+        result.note = size ? "Every cylinder changes, each crank throw at its gas-exchange TDC. A new bore or stroke "
+                             "keeps the compression ratio; a higher ratio gives more torque, and knocks sooner."
+                           : "Every cylinder takes the ratio: a higher one gives more torque, and knocks sooner. The "
+                             "cylinders are not all one size, so bore and stroke are not offered here.";
         return result;
+    };
+    // A two-stroke's timing is where its ports' top edges sit: a new engine
+    // (the restart), every cylinder alike.
+    const auto portTimingEdit = [&config]() {
+        const auto& ports = config.twoStroke;
+        PartInspector::Edit result;
+        result.key = std::uint64_t { 11 } << 60U;
+        result.heading = "PORT TIMING";
+        result.value("Exhaust opens", ports.exhaustPortOpenDegrees, utf8("\xc2\xb0 ATDC"), 0, 2.0, 0.5, 60.0, 120.0);
+        result.value("Transfers open", ports.transferPortOpenDegrees, utf8("\xc2\xb0 ATDC"), 0, 2.0, 0.5, 64.0, 150.0);
+        result.restarts = true;
+        result.note = "Degrees after TDC where the piston uncovers each port; every cylinder changes. A higher "
+                      "exhaust port (fewer degrees) gives a longer blowdown and a peakier engine. The transfers open "
+                      "at least 4 deg after the exhaust. The engine restarts to take them.";
+        return result;
+    };
+    // The first two values are the exhaust's and the transfers' opening; a
+    // power valve keeps how far it lowers the port.
+    const auto portTimingEditor = []() {
+        return [](EngineConfig& edited, const std::vector<double>& values) {
+            if (values.size() < 2U) return std::string("The ports changed meanwhile.");
+            auto& ports = edited.twoStroke;
+            if (ports.powerValveClosedExhaustPortOpenDegrees != 0.0)
+                ports.powerValveClosedExhaustPortOpenDegrees += values[0] - ports.exhaustPortOpenDegrees;
+            ports.exhaustPortOpenDegrees = values[0];
+            ports.transferPortOpenDegrees = values[1];
+            return std::string();
+        };
     };
     const auto injectorEdit = [this, &config]() -> std::optional<PartInspector::Edit> {
         if (!configEditor_) return std::nullopt;
@@ -1787,6 +1823,23 @@ void EngineViewport::updateInspector() {
             add("Exhaust opens", degrees(ports.exhaustPortOpenDegrees) + " ATDC");
             add("Transfers open", degrees(ports.transferPortOpenDegrees) + " ATDC");
             add("Blowdown", degrees(ports.transferPortOpenDegrees - ports.exhaustPortOpenDegrees));
+            add("Compression ratio", juce::String(config.cylinders.front().compressionRatio, 1) + utf8(" : 1"));
+            if (cylinderEditor_) {
+                edit = portTimingEdit();
+                edit->restarts = false;
+                edit->value("Compression ratio", config.cylinders.front().compressionRatio, utf8(" : 1"), 1, 0.5, 0.1,
+                            5.0, 20.0);
+                edit->note = "Degrees after TDC where the piston uncovers each port; every cylinder changes. A port "
+                             "change restarts the engine; the compression ratio alone is taken live.";
+                const auto ratioNow = config.cylinders.front().compressionRatio;
+                partEditor_ = [ports = portTimingEditor(), ratioNow](EngineConfig& edited,
+                                                                      const std::vector<double>& values) {
+                    if (values.size() < 3U) return std::string("The head changed meanwhile.");
+                    auto error = ports(edited, values);
+                    if (error.empty() && values.back() != ratioNow) error = setCompressionRatio(edited, values.back());
+                    return error;
+                };
+            }
             break;
         }
         const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
@@ -1798,23 +1851,28 @@ void EngineViewport::updateInspector() {
         if (cylinderEditor_) {
             PartInspector::Edit timing;
             timing.key = std::uint64_t { 7 } << 60U;
-            timing.heading = "CAM TIMING";
+            timing.heading = "CAMS AND CHAMBER";
             timing.value("Intake centreline", cams.intakeCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0, 1.0, 60.0, 160.0);
             timing.value("Exhaust centreline", cams.exhaustCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0, 1.0, 60.0,
                          160.0);
+            timing.value("Compression ratio", config.cylinders.front().compressionRatio, utf8(" : 1"), 1, 0.5, 0.1,
+                         5.0, 20.0);
             timing.offersRamp = true;
             timing.note = "Degrees after TDC for the intake, before it for the exhaust: smaller centrelines, more "
-                          "overlap. Every camshaft moves by as much. The running engine takes it.";
+                          "overlap. Every camshaft moves by as much, every cylinder takes the ratio (a higher one "
+                          "gives more torque, and knocks sooner). The running engine takes them.";
             edit = timing;
             const auto intakeNow = cams.intakeCenterlineDegrees;
             const auto exhaustNow = cams.exhaustCenterlineDegrees;
+            const auto ratioNow = config.cylinders.front().compressionRatio;
             partEditor_ = [=](EngineConfig& edited, const std::vector<double>& values) {
+                if (values.size() < 3U) return std::string("The head changed meanwhile.");
                 const auto intakeCentreline = values[0];
                 const auto exhaustCentreline = values[1];
                 shiftCamshafts(edited, &CamshaftConfig::intakeCenterlineDegrees, nullptr, intakeCentreline - intakeNow);
                 shiftCamshafts(edited, &CamshaftConfig::exhaustCenterlineDegrees, nullptr,
                                exhaustCentreline - exhaustNow);
-                return std::string();
+                return values[2] != ratioNow ? setCompressionRatio(edited, values[2]) : std::string();
             };
         }
         break;
@@ -1893,6 +1951,25 @@ void EngineViewport::updateInspector() {
             if (cylinder != nullptr)
                 add("Width", millimetres(model_.units, intake ? transferPortWidthMm(config.twoStroke, *cylinder)
                                                               : exhaustPortWidthMm(config.twoStroke, *cylinder)));
+            if (cylinderEditor_ && cylinder != nullptr) {
+                edit = portTimingEdit();
+                edit->key |= intake ? 1U : 2U;
+                edit->length(intake ? "Transfer width" : "Exhaust width",
+                             intake ? transferPortWidthMm(config.twoStroke, *cylinder)
+                                    : exhaustPortWidthMm(config.twoStroke, *cylinder),
+                             1.0, 0.5, 5.0, 500.0);
+                const auto widthNow = intake ? transferPortWidthMm(config.twoStroke, *cylinder)
+                                             : exhaustPortWidthMm(config.twoStroke, *cylinder);
+                partEditor_ = [ports = portTimingEditor(), intake, widthNow](EngineConfig& edited,
+                                                                              const std::vector<double>& values) {
+                    if (values.size() < 3U) return std::string("The ports changed meanwhile.");
+                    auto error = ports(edited, values);
+                    // Unchanged, a width derived from the bore stays derived.
+                    if (error.empty() && values[2] != widthNow)
+                        (intake ? edited.twoStroke.transferPortWidthMm : edited.twoStroke.exhaustPortWidthMm) = values[2];
+                    return error;
+                };
+            }
             break;
         }
         title = intake ? "Intake valve" : "Exhaust valve";
@@ -2154,6 +2231,7 @@ void EngineViewport::updateInspector() {
         }
         add("Input shaft", juce::String(juce::roundToInt(gear == -1 ? state.rpm : state.rpm - state.clutchSlipRpm)) + " rpm");
         add("Clutch slip", juce::String(juce::roundToInt(gear == -1 ? 0.0 : state.clutchSlipRpm)) + " rpm");
+        add("Clutch capacity", juce::String(juce::roundToInt(transmission.maxClutchTorqueNm)) + utf8(" N\xc2\xb7m"));
         add("Road speed", model_.units.text(units::Quantity::speed, state.vehicleSpeedMps));
         if (state.shiftInProgress) add("Shifting", juce::String(juce::roundToInt(state.shiftProgress * 100.0)) + " %");
         note = "Each pair turns at its own ratio; the blue collar locks the engaged gear to the output shaft. "
@@ -2168,14 +2246,17 @@ void EngineViewport::updateInspector() {
             edit->value("Ignition cut", std::round(transmission.quickshifterCutSeconds * 1'000.0), " ms", 0, 10.0,
                         1.0, 10.0, 500.0);
             edit->value("Final drive", transmission.finalDriveRatio, utf8(" : 1"), 3, 0.1, 0.01, 0.5, 20.0);
+            edit->value("Clutch capacity", std::round(transmission.maxClutchTorqueNm), utf8(" N\xc2\xb7m"), 0, 10.0, 1.0,
+                        10.0, 10'000.0);
             for (int index = 0; index < gears; ++index)
                 edit->value("Gear " + juce::String(index + 1),
                             transmission.gearRatios[static_cast<std::size_t>(index)], utf8(" : 1"), 3, 0.05, 0.005,
                             0.05, 10.0);
             edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over). "
                          "Ignition cut: the quickshifter's, on the way up. Ratios: input over output, the final "
-                         "drive multiplies each; the next gear must be taller (a smaller ratio). The running engine "
-                         "takes them, in the gear it is in.";
+                         "drive multiplies each; the next gear must be taller (a smaller ratio). Clutch capacity: "
+                         "the most torque the engaged clutch carries before it slips (hot, it carries less). The "
+                         "running engine takes them, in the gear it is in.";
             const auto index = style == ShiftStyle::manual ? 0 : style == ShiftStyle::dualClutch ? 3
                 : style == ShiftStyle::cvt ? (transmission.centrifugalClutch ? 5 : 4)
                 : transmission.autoBlipper ? 2 : 1;
@@ -2204,10 +2285,11 @@ void EngineViewport::updateInspector() {
                 auto& box = edited.transmission;
                 box.shiftDurationSeconds = shiftMs / 1'000.0;
                 box.quickshifterCutSeconds = cutMs / 1'000.0;
-                if (values.size() != 3 + box.gearRatios.size()) return std::string("The gearbox changed meanwhile.");
+                if (values.size() != 4 + box.gearRatios.size()) return std::string("The gearbox changed meanwhile.");
                 box.finalDriveRatio = values[2];
+                box.maxClutchTorqueNm = values[3];
                 for (std::size_t gearIndex = 0; gearIndex < box.gearRatios.size(); ++gearIndex) {
-                    box.gearRatios[gearIndex] = values[3 + gearIndex];
+                    box.gearRatios[gearIndex] = values[4 + gearIndex];
                     // Each gear taller than the one below: the scheduler and
                     // the shift protection count on it.
                     if (gearIndex > 0 && box.gearRatios[gearIndex] >= box.gearRatios[gearIndex - 1])
@@ -2229,6 +2311,13 @@ void EngineViewport::updateInspector() {
         case render::DuctKind::intakeThrottle: title = "Throttle body"; break;
         case render::DuctKind::intakeAirbox: title = "Airbox"; break;
         case render::DuctKind::intakeInletDuct: title = "Air inlet"; break;
+        }
+        // A two-stroke's runner is its transfer duct, its throttle the reed
+        // block and carburettor, its inlet duct the boot to the airbox.
+        if (config.cycle == EngineCycle::twoStroke) {
+            if (duct.kind == render::DuctKind::intakeRunner) title = "Transfer duct";
+            else if (duct.kind == render::DuctKind::intakeThrottle) title = "Reed block";
+            else if (duct.kind == render::DuctKind::intakeInletDuct) title = "Intake boot";
         }
         const auto exhaust = duct.kind == render::DuctKind::exhaustComponent || duct.kind == render::DuctKind::exhaustFeeder;
         if (duct.kind == render::DuctKind::exhaustFeeder) edit = joinEdit(duct.pathId);
