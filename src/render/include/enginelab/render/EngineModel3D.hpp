@@ -132,6 +132,8 @@ struct PartIdentity final {
     int cylinder { -1 };
     /** Index in EngineModel3D::ducts(); -1 when not a duct. */
     int duct { -1 };
+    /** Index in EngineModel3D::turbos(); -1 when not a turbocharger. */
+    int turbo { -1 };
 };
 
 /**
@@ -162,9 +164,14 @@ public:
     /** Block, heads, crankcase, sump, liners, pulley and flywheel, as simple
         solids the ducts must stay out of. */
     [[nodiscard]] const std::vector<EngineSolid>& solids() const noexcept { return solids_; }
-    /** The turbocharger as drawn; `placed` is false without one. Its solids
-        are at the end of solids(). */
-    [[nodiscard]] const TurboPlacement& turbo() const noexcept { return turbo_; }
+    /** The turbochargers as drawn, one per unit an exhaust path feeds. Their
+        solids are at the end of solids(). */
+    [[nodiscard]] const std::vector<TurboPlacement>& turbos() const noexcept { return turbos_; }
+    /** The first turbocharger as drawn; `placed` is false without one. */
+    [[nodiscard]] const TurboPlacement& turbo() const noexcept {
+        static const TurboPlacement none {};
+        return turbos_.empty() ? none : turbos_.front();
+    }
     /** Cylinder `index`'s injector: its part, nozzle tip and spray direction. */
     [[nodiscard]] std::uint16_t injectorPart(std::size_t index) const noexcept {
         return index < cylinders_.size() ? cylinders_[index].injectorPart : std::uint16_t { 0xFFFFU };
@@ -277,9 +284,10 @@ private:
     std::vector<PortAnchor> intakePorts_;
     std::vector<PortAnchor> exhaustPorts_;
     std::vector<SceneDuct> ducts_;
-    TurboPlacement turbo_;
-    /** Turbine housing, compressor housing, turbine wheel, compressor wheel. */
-    std::array<std::uint16_t, 4> turboParts_ { 0xFFFFU, 0xFFFFU, 0xFFFFU, 0xFFFFU };
+    std::vector<TurboPlacement> turbos_;
+    /** Per turbo: turbine housing, compressor housing, turbine wheel,
+        compressor wheel. */
+    std::vector<std::array<std::uint16_t, 4>> turboParts_;
     SuperchargerPlacement supercharger_;
     /** Housing (with the charge pipe) and impeller. */
     std::array<std::uint16_t, 2> superchargerParts_ { 0xFFFFU, 0xFFFFU };

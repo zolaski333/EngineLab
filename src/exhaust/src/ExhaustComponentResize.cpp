@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace enginelab {
@@ -140,6 +142,103 @@ std::string resizeExhaustComponent(EngineConfig& config, std::uint32_t pathId, s
         component.lengthMm = lengthMm;
         component.diameterMm = diameterMm;
     }
+    config = std::move(edited);
+    return {};
+}
+
+std::string joinExhaustPaths(EngineConfig& config, std::uint32_t keptId, std::uint32_t joinedId) {
+    if (keptId == joinedId) return "A path cannot be joined to itself.";
+    const auto* keptPath = findPath(config, keptId);
+    const auto* joinedPath = findPath(config, joinedId);
+    if (keptPath == nullptr || joinedPath == nullptr) return "The engine has no such exhaust paths.";
+    if (config.forcedInduction.enabled && config.forcedInduction.type == ForcedInductionType::turbocharger
+        && config.forcedInduction.turbochargerCount + 1U > config.exhaustPaths.size())
+        return "Each turbocharger needs an exhaust path of its own.";
+    auto network = keptPath->network ? *keptPath->network : makeEditableExhaustNetwork(*keptPath);
+    if (network.cylinderConnections.empty()) return "The exhaust path has no primary to copy.";
+
+    std::unordered_map<std::uint32_t, std::size_t> incoming;
+    std::unordered_map<std::uint32_t, std::vector<const ExhaustComponentConnectionConfig*>> outgoing;
+    for (const auto& connection : network.cylinderConnections) ++incoming[connection.componentId];
+    for (const auto& connection : network.connections) {
+        ++incoming[connection.toComponentId];
+        outgoing[connection.fromComponentId].push_back(&connection);
+    }
+    // The first cylinder's own run: each component fed by the one before
+    // alone, up to the junction several pipes meet at.
+    // Copied out: the network grows below.
+    std::vector<std::uint32_t> run { network.cylinderConnections.front().componentId };
+    std::vector<ExhaustComponentConnectionConfig> runLinks;
+    ExhaustComponentConnectionConfig intoJunction;
+    while (true) {
+        const auto& next = outgoing[run.back()];
+        if (next.empty()) return "The primary meets no other pipe before its outlet.";
+        if (next.size() != 1U) return "The primary splits before it meets the others.";
+        if (incoming[next.front()->toComponentId] > 1U) {
+            intoJunction = *next.front();
+            break;
+        }
+        if (run.size() >= network.components.size()) return "The exhaust graph loops.";
+        runLinks.push_back(*next.front());
+        run.push_back(next.front()->toComponentId);
+    }
+
+    auto nextId = std::uint32_t { 1 };
+    for (const auto& component : network.components) nextId = std::max(nextId, component.id + 1U);
+    for (const auto cylinderId : joinedPath->cylinderIds) {
+        std::uint32_t previous = 0;
+        for (std::size_t index = 0; index < run.size(); ++index) {
+            const auto* source = findComponent(network, run[index]);
+            if (source == nullptr) return "The exhaust graph names a missing component.";
+            auto copy = *source;
+            copy.id = nextId++;
+            if (index == 0) {
+                network.cylinderConnections.push_back({ cylinderId, copy.id });
+            } else {
+                // The same ports as the run it copies.
+                auto link = runLinks[index - 1];
+                link.fromComponentId = previous;
+                link.toComponentId = copy.id;
+                network.connections.push_back(link);
+            }
+            previous = copy.id;
+            network.components.push_back(std::move(copy));
+        }
+        auto link = intoJunction;
+        link.fromComponentId = previous;
+        network.connections.push_back(link);
+    }
+
+    auto edited = config;
+    auto* kept = findPath(edited, keptId);
+    kept->cylinderIds.insert(kept->cylinderIds.end(), joinedPath->cylinderIds.begin(), joinedPath->cylinderIds.end());
+    kept->network = std::move(network);
+    kept->inheritsGlobalGeometry = false;
+    std::erase_if(edited.exhaustPaths, [joinedId](const ExhaustPathConfig& path) { return path.id == joinedId; });
+    for (auto& bank : edited.banks)
+        if (bank.exhaustPathId == joinedId) bank.exhaustPathId = keptId;
+    // A turbocharger chosen by path index moves with the paths after the one
+    // removed: name the units the paths drove.
+    for (std::size_t index = 0; index < edited.exhaustPaths.size(); ++index) {
+        auto& path = edited.exhaustPaths[index];
+        if (path.turbocharger >= 0 || config.forcedInduction.turbochargerCount < 2U) continue;
+        const auto was = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+            [&path](const ExhaustPathConfig& item) { return item.id == path.id; });
+        path.turbocharger = static_cast<std::int32_t>(static_cast<std::size_t>(was - config.exhaustPaths.begin())
+                                                      % config.forcedInduction.turbochargerCount);
+    }
+    if (config.forcedInduction.enabled && config.forcedInduction.type == ForcedInductionType::turbocharger)
+        for (std::uint32_t unit = 0; unit < config.forcedInduction.turbochargerCount; ++unit) {
+            const auto driven = std::any_of(edited.exhaustPaths.begin(), edited.exhaustPaths.end(),
+                [&](const ExhaustPathConfig& candidate) {
+                    const auto index = static_cast<std::size_t>(&candidate - edited.exhaustPaths.data());
+                    const auto drives = candidate.turbocharger >= 0 ? static_cast<std::uint32_t>(candidate.turbocharger)
+                        : static_cast<std::uint32_t>(index % config.forcedInduction.turbochargerCount);
+                    return drives == unit;
+                });
+            if (!driven) return "Turbocharger " + std::to_string(unit + 1U) + " would have no exhaust path.";
+        }
+    if (edited.exhaustPaths.size() == 1U) edited.exhaust = edited.exhaustPaths.front().geometry;
     config = std::move(edited);
     return {};
 }

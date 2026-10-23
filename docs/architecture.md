@@ -223,11 +223,14 @@ peak-power speed. Silencers, gearboxes and vehicles come from the family parts
 An engine file may hold `design:` (the spec, same keys) instead of `engine:`;
 the catalogue loads it through the same function, so every harness runs a
 designed engine. The window (`EngineDesignerWindow`) shows the derived values
-and their rules as the spec changes; *Advanced* adds firing order, crank
+and their rules as the spec changes, and names it from its cycle, fuel,
+layout and cylinder count until a name is typed; *Advanced* adds firing order, crank
 pins, crank offsets, W bank angles and setting any value by hand. *Build and run* first
 runs the design off-screen for a few seconds with the live engine paused
 (`measureRealtimeCapacity()`, `runtime/RealtimeCapacityProbe.hpp`: the
-physics-only factor at the realtime harness's speed) and asks before building
+physics-only factor at the realtime harness's speed; the engine is cranked
+with the throttle shut until it runs, at most 5 s simulated, then held on the
+dyno, since a carburetted two-stroke never catches at full throttle) and asks before building
 below `realtimeCapacityMargin` (1.14: the sound and the 3-D view cost 3-12 %
 on top). Cost grows with cylinders and speed: a 12-cylinder sport car is at
 the limit on the reference machine, a quad-turbo W16 at half. Then it saves the
@@ -280,7 +283,11 @@ piston-to-deck clearance and its compression ratio follows.
 `resizeConnectingRods` gives every cylinder one rod length (at least 1.2
 strokes; a radial's articulated rods are refused) and keeps the compression
 ratio: one authored by chamber geometry keeps its piston-to-deck clearance,
-its deck moving by the added length.
+its deck moving by the added length. `setCompressionRatio` gives every
+cylinder one compression ratio (5 to 20): an engine authored by ratio takes
+it as is; one authored by chamber geometry keeps its head chamber, gasket and
+piston and moves its deck (a decked or shimmed block), refused when the
+crown would have to rise past the gasket.
 `EngineRuntime::applyLiveCylinderResize` hands the sizes to the simulation
 thread, where `EngineSimulator::beginCylinderResize` applies them one crank
 journal at a time, at the gas-exchange TDC (phase 360) of the first of its
@@ -496,10 +503,12 @@ issues as JSON, to look at them outside the app.
 **Turbocharger.** The gas solver's turbine is a restriction face on the
 outgoing face of the first junction where all of a path's cylinders have met
 (see [simulation-model.md](simulation-model.md#forced-induction)). The view
-draws it at the same place (`TurboPlacement`), in the first path that has
-one. The view draws one turbo, so every catalogue turbo engine has a single
-path that all its cylinders exhaust into (`EngineLab.EngineModel3D` checks
-it). Gas bends out of the collector, enters the volute
+draws one turbo per unit at the same place (`TurboPlacement`, `turbos()`):
+each unit on the collector of the first path that drives it, the path's own
+unit or its index modulo the count, as the simulator assigns them. A unit no
+path drives gets no gas and is not drawn; two units on a flat six's two banks
+are both drawn, each clickable with its own inspector (`EngineLab.EngineModel3D`
+checks it). Gas bends out of the collector, enters the volute
 tangentially and leaves the exducer along the trunk, where the path resumes;
 the shaft runs along the crankshaft, the compressor on the far side of the
 bearing housing, far enough out to clear the collector. Wheel sizes come from
@@ -626,7 +635,9 @@ reads. A stepper press reaches the running engine 250 ms after the last one
 had when it was selected. The camera stays and the part stays selected.
 
 A cylinder liner or piston offers the engine's bore and stroke the same way
-(1 mm, 0.1 mm with Shift), with a choice between a 3 s ramp (the default) and
+(1 mm, 0.1 mm with Shift), and its compression ratio (0.5, 0.1 with Shift;
+only the values edited are applied, so a chamber-geometry engine's ratio
+still follows its bore and stroke), with a choice between a 3 s ramp (the default) and
 the next cycle (a live bore and stroke change, see above). The view shows the target
 size at once. A connecting rod offers the rods' length the same way (5 mm,
 0.5 mm with Shift).
@@ -637,7 +648,22 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 - an intake runner (length and diameter, its own if the cylinder has one,
   else the path's, which every runner on it shares), a plenum (volume) and a
   throttle (bore): `resizeIntakePart` (foundation), which mirrors a single
-  path into `EngineConfig::intake` and the legacy fields;
+  path into `EngineConfig::intake` and the legacy fields. On a path metered
+  by a carburettor the throttle is drawn as one (the slide's tower above the
+  bore, the float bowl under it) and named *Carburettor*: it also offers the
+  main and pilot jets as stamped flow numbers, the needle clip (1 richest to
+  5) and the air screw's turns out (`tuneCarburettor`, mirrored the same
+  way), which the running engine takes as an intake edit;
+- the exhaust ports of a cylinder, and a junction, when the engine has
+  another exhaust path that can join this one: a `choice` between
+  *Separate* and *Joined* that restarts the engine with
+  `joinExhaustPaths` (exhaust library). Each cylinder of the next path gets
+  a copy of this path's first primary run (its components up to the first
+  junction several pipes meet at), feeding that junction; the other path's
+  pipes, silencers and outlet go, and banks that fed it feed this one. A
+  boxer six's two 3-into-1 banks so become one 6-into-1; the collector keeps
+  its size. Refused (not offered) when the primary meets no other pipe
+  before its outlet, or when a turbocharger would be left without a path;
 - the injectors, on each drawn injector (`PartRole::injector`: in the runner
   out of the head for port injection, in the chamber's roof on the intake side
   for direct injection), and also on the intake ports or the combustion: flow

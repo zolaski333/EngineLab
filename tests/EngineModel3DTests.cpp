@@ -24,6 +24,7 @@
 #include <numbers>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 namespace {
 using namespace enginelab;
@@ -1163,7 +1164,8 @@ int main() {
     // A turbo fitted to an engine without forced induction is drawn the same
     // way where one exhaust path takes every cylinder through a collector.
     // Measured 2026-10-13: the Aircooled's two banks get a turbine each in the
-    // simulation and the view draws the first; the LS3's X-pipe and the Big
+    // simulation and the view draws the first (both since 2026-10-23, with two
+    // units: below); the LS3's X-pipe and the Big
     // Twin's two pipes have no collector, so the turbine sits at the outlets
     // and is not drawn.
     auto turbosFitted = 0, turbosFittedDrawn = 0;
@@ -1182,6 +1184,95 @@ int main() {
     require(turbosFitted >= 10 && turbosFittedDrawn >= turbosFitted - 2,
             "a fitted turbo is drawn on all but two of the engines without one (" + std::to_string(turbosFittedDrawn)
                 + " of " + std::to_string(turbosFitted) + ")");
+    // Two turbochargers on the Aircooled's two banks: each unit sits on its
+    // own bank's collector, where the simulator puts its turbine, and both
+    // are drawn and clickable. With one unit, one turbo.
+    {
+        const auto selected = selectSingleEngineCatalogEntry(catalogue.entries, "Aircooled");
+        require(static_cast<bool>(selected), "the catalogue has the Aircooled flat six");
+        const auto& flatSix = selected.entry->config;
+        const EngineModel3D single(withTurbocharger(flatSix));
+        const EngineModel3D twin(withTurbochargerCount(withTurbocharger(flatSix), 2U));
+        const auto& turbos = twin.turbos();
+        std::cout << "EngineModel3D: Aircooled with two turbochargers draws " << turbos.size() << '\n';
+        require(single.turbos().size() == 1U, "one turbocharger is drawn once");
+        require(turbos.size() == 2U && turbos[0].placed && turbos[1].placed
+                    && turbos[0].unit != turbos[1].unit && turbos[0].pathId != turbos[1].pathId
+                    && length(turbos[0].turbineCentre - turbos[1].turbineCentre) > 50.0F,
+            "two turbochargers on two banks are both drawn, each on its own bank");
+        auto clickable = 0;
+        for (std::uint16_t part = 0; part < twin.parts().size(); ++part)
+            if (const auto identity = twin.identify(part); identity.role == PartRole::turbo && identity.turbo == 1)
+                ++clickable;
+        require(clickable == 4, "the second turbocharger's housings and wheels identify as it");
+    }
+    // The Aircooled's two 3-into-1 banks joined into one 6-into-1: each
+    // cylinder of the second bank gets a copy of the first's primary into the
+    // first's collector, the second path goes, and the engine is drawn, bound
+    // to its solver and idles. Pipes that meet no other, or a turbocharger
+    // that would lose its path, are refused and change nothing.
+    {
+        const auto selected = selectSingleEngineCatalogEntry(catalogue.entries, "Aircooled");
+        require(static_cast<bool>(selected), "the catalogue has the Aircooled flat six");
+        const auto& flatSix = selected.entry->config;
+        require(flatSix.exhaustPaths.size() == 2U, "the Aircooled has one exhaust path per bank");
+        const auto keptId = flatSix.exhaustPaths[0].id;
+        const auto joinedId = flatSix.exhaustPaths[1].id;
+        auto joined = flatSix;
+        const auto error = joinExhaustPaths(joined, keptId, joinedId);
+        require(error.empty(), "the Aircooled's banks join: " + error);
+        const auto invalid = validateEngineConfig(joined);
+        require(!invalid, "the joined Aircooled is valid: " + invalid.value_or(""));
+        require(joined.exhaustPaths.size() == 1U && joined.exhaustPaths.front().cylinderIds.size() == 6U
+                    && joined.exhaustPaths.front().network
+                    && joined.exhaustPaths.front().network->cylinderConnections.size() == 6U,
+                "one path with six primaries");
+        std::size_t intoJunction = 0;
+        const auto& network = *joined.exhaustPaths.front().network;
+        const auto& original = *flatSix.exhaustPaths.front().network;
+        std::unordered_map<std::uint32_t, std::size_t> incoming;
+        for (const auto& connection : network.connections) ++incoming[connection.toComponentId];
+        for (const auto& [id, count] : incoming) intoJunction = std::max(intoJunction, count);
+        require(intoJunction == 6U && network.components.size() > original.components.size(),
+                "six pipes meet at one collector");
+        const EngineModel3D drawn(joined);
+        auto exhaustPieces = 0;
+        for (const auto& duct : drawn.ducts())
+            if (duct.kind == DuctKind::exhaustComponent || duct.kind == DuctKind::exhaustFeeder) {
+                require(duct.pathId == keptId, "every drawn exhaust piece is the joined path's");
+                ++exhaustPieces;
+            }
+        require(exhaustPieces > 0, "the joined exhaust is drawn");
+        checkGasFieldBinding(drawn);
+        Bench bench(joined);
+        EngineState state;
+        for (auto frame = 0; frame < 4 * 240; ++frame) {
+            EngineControls controls;
+            controls.ignitionEnabled = true;
+            controls.starterEngaged = frame < 360;
+            state = bench.simulator->step(1.0 / 240.0, controls).state;
+        }
+        std::cout << "EngineModel3D: Aircooled 6-into-1 idles at " << state.rpm << " rpm (idle "
+                  << joined.idleRpm << ")\n";
+        require(state.rpm > 0.5 * joined.idleRpm, "the 6-into-1 Aircooled idles");
+
+        auto same = flatSix;
+        require(!joinExhaustPaths(same, keptId, keptId).empty(), "a path is not joined to itself");
+        auto twinTurbo = withTurbochargerCount(withTurbocharger(flatSix), 2U);
+        const auto before = twinTurbo.exhaustPaths.size();
+        require(!joinExhaustPaths(twinTurbo, keptId, joinedId).empty() && twinTurbo.exhaustPaths.size() == before,
+                "two turbochargers keep their two paths");
+        auto singleTurbo = withTurbocharger(flatSix);
+        require(joinExhaustPaths(singleTurbo, keptId, joinedId).empty() && !validateEngineConfig(singleTurbo),
+                "one turbocharger takes the joined path");
+        const auto bigTwin = selectSingleEngineCatalogEntry(catalogue.entries, "Big Twin");
+        require(static_cast<bool>(bigTwin) && bigTwin.entry->config.exhaustPaths.size() == 2U,
+                "the catalogue has the Big Twin and its two pipes");
+        auto pipes = bigTwin.entry->config;
+        require(!joinExhaustPaths(pipes, pipes.exhaustPaths[0].id, pipes.exhaustPaths[1].id).empty()
+                    && pipes.exhaustPaths.size() == 2U,
+                "a pipe that meets no other has no collector to join into");
+    }
     const auto withGears = std::count_if(catalogue.entries.begin(), catalogue.entries.end(),
         [](const auto& entry) { return entry.config.transmission.gearRatios.size() >= 2U; });
     require(gearboxesDrawn == static_cast<int>(withGears) && gearboxesDrawn >= 10,

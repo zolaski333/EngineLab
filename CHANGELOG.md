@@ -52,6 +52,16 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **The designer's real-time check failed every carburetted two-stroke**
+  ("did not hold 5000 rpm"): it cranked the engine at full throttle, where a
+  carburettor cannot start it. It now cranks with the throttle shut until the
+  engine runs.
+- The designer names the engine from what it is (*Two-stroke Inline Twin*)
+  until a name is typed, instead of keeping *Inline Seven*, and its table's
+  columns are headed *Quantity* and *Value*.
+- A carburetted engine no longer draws, or offers to edit, injectors it does
+  not have.
+
 - A designed V or W engine shares one crank pin between the cylinders of a
   row, as real ones do; each had its own pin. A 90 deg V-twin now fires
   270-450 and a 45 deg one 315-405. Where a shared pin cannot fire six
@@ -86,6 +96,21 @@ file formats, always with an in-memory migration).
   about a degree while the engine knocks and gives it back at 1 deg/s, so an
   engine settles at its knock limit instead of sitting in light knock. The
   Audi I5 gets the intercooler its real engine has.
+- **The compression ratio is edited by clicking the engine**: a cylinder
+  liner or piston offers it beside the bore and stroke, and the running
+  engine takes it (at once or over the ramp).
+- **A carburettor is drawn and tuned in the 3-D view**: on a carburetted
+  engine the throttle body becomes a carburettor (slide tower, float bowl),
+  and clicking it offers its main and pilot jets, needle clip and air screw,
+  taken by the running engine.
+- **Two exhaust paths can be joined into one**: the exhaust ports or a
+  junction offer *Joined*, which gives the other path's cylinders a copy of
+  this path's primary into its collector (a boxer six's two banks become a
+  6-into-1) and restarts the engine.
+- **Every turbocharger is drawn.** With two or more units the 3-D view drew
+  only the first; now each unit an exhaust path drives sits on that path's
+  collector (a flat six's two banks get one each), and clicking one opens its
+  own inspector, titled with its number and its path.
 - **Two-strokes can have a power valve** (`two_stroke.power_valve_*`): it
   lowers the exhaust port at low speed and lifts as the pipe comes in. The
   designer fits one to sport two-strokes; a designed 500 cc twin gains 20-39 %

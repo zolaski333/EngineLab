@@ -68,6 +68,11 @@ public:
         }
 
         addField(name_, "Name", "Inline Seven");
+        // A typed name stays; cleared, the name follows the engine again.
+        name_.editor.onTextChange = [this] {
+            nameTyped_ = name_.editor.getText().trim().isNotEmpty();
+            startTimer(250);
+        };
         addChoice(cycle_, "Cycle", { "Four-stroke", "Two-stroke" });
         addChoice(fuel_, "Fuel", { "Petrol", "Diesel" });
         addChoice(use_, "Built for",
@@ -95,8 +100,8 @@ public:
 
         table_.setModel(this);
         table_.setRowHeight(24);
-        table_.getHeader().addColumn("Value", 1, 210);
-        table_.getHeader().addColumn("", 2, 90);
+        table_.getHeader().addColumn("Quantity", 1, 210);
+        table_.getHeader().addColumn("Value", 2, 90);
         table_.getHeader().addColumn("Set by", 3, 70);
         table_.getHeader().addColumn("Rule", 4, 420);
         table_.getHeader().setStretchToFitActive(true);
@@ -328,7 +333,33 @@ private:
         return spec;
     }
 
+    /** A name from what the engine is ("Two-stroke Inline Twin"), until one
+        is typed. */
+    void suggestName() {
+        if (nameTyped_) return;
+        static constexpr std::array<const char*, 16> counts { "Single", "Twin", "Three", "Four", "Five", "Six",
+            "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen" };
+        static constexpr std::array<const char*, 5> layoutNames { "Inline", "V", "Flat", "Radial", "W" };
+        const auto count = numberOf(cylinders_.editor.getText()).value_or(0.0);
+        juce::String name;
+        if (fuel_.combo.getSelectedItemIndex() == 1) name << "Diesel ";
+        if (cycle_.combo.getSelectedItemIndex() == 1) name << "Two-stroke ";
+        if (count == 1.0) {
+            name << "Single";
+        } else {
+            name << layoutNames[static_cast<std::size_t>(
+                        std::clamp(layout_.combo.getSelectedItemIndex(), 0, static_cast<int>(layoutNames.size()) - 1))]
+                 << " ";
+            if (count >= 2.0 && count <= 16.0 && count == std::round(count))
+                name << counts[static_cast<std::size_t>(count) - 1U];
+            else
+                name << juce::String(juce::roundToInt(count));
+        }
+        name_.editor.setText(name, false);
+    }
+
     void redesign() {
+        suggestName();
         designed_ = {};
         juce::String error;
         if (!partsError_.empty()) error = utf8("The parts library did not load: ") + utf8(partsError_.c_str());
@@ -511,6 +542,7 @@ private:
     static constexpr const char* utf8Times = "\xc3\x97";
 
     std::filesystem::path catalogRoot_;
+    bool nameTyped_ { false };
     BuildCallback buildCallback_;
     PauseCallback pauseLive_;
     std::function<void()> close_;

@@ -61,8 +61,8 @@ struct DuctPiece final {
 
 /**
  * Where a turbocharger sits on the exhaust: bolted to the collector of the
- * first path, the trunk resuming at its turbine outlet. The simulator puts
- * its turbine on the same collector's outgoing face.
+ * first path it serves, the trunk resuming at its turbine outlet. The
+ * simulator puts its turbine on the same collector's outgoing face.
  *
  * The shaft runs along the crankshaft (+Z). Gas leaves the collector, bends
  * outwards and enters the turbine volute tangentially; it leaves through the
@@ -70,6 +70,8 @@ struct DuctPiece final {
  */
 struct TurboPlacement final {
     bool placed {};
+    /** The turbocharger unit (ForcedInductionConfig::turbochargerCount). */
+    std::uint32_t unit {};
     std::uint32_t pathId {};
     /** The collector it is bolted to. */
     std::uint32_t collectorId {};
@@ -148,16 +150,18 @@ void appendSuperchargerHousing(Mesh& mesh, const SuperchargerPlacement& supercha
  * A pipe that must span more than its authored length is drawn straight and
  * therefore longer; tests measure how often that happens.
  *
- * With `turbo` given and a turbocharger configured, the turbo is placed after
- * the first path's collector (see TurboPlacement) and the pipes are routed
- * clear of it.
+ * With `turbos` given and turbochargers configured, each unit an exhaust path
+ * feeds is placed after the collector of the first path it serves, the path
+ * each unit's turbine face sits on in the simulator (see TurboPlacement), and
+ * the pipes are routed clear of them. A unit no path feeds gets no gas in the
+ * simulator and is not drawn.
  */
 [[nodiscard]] std::vector<DuctPiece> layoutExhaust(const EngineConfig& config,
                                                    const std::vector<PortAnchor>& ports,
                                                    float boreMm,
                                                    const std::vector<RouteTube>& avoid = {},
                                                    const std::vector<EngineSolid>& solids = {},
-                                                   TurboPlacement* turbo = nullptr);
+                                                   std::vector<TurboPlacement>* turbos = nullptr);
 
 /** The solids a placed turbo occupies (turbine housing centre, bearing
     housing, compressor), for the router and the route check. */

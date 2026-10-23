@@ -367,7 +367,7 @@ private:
     void updateScope();
     void applyEdit(const std::vector<double>& values, bool gradual);
     void applyExhaustEdit(double lengthMm, double diameterMm);
-    void applyCylinderEdit(double boreMm, double strokeMm, bool gradual);
+    void applyCylinderEdit(const std::vector<double>& values, bool gradual);
     void applyRodEdit(double rodMm, bool gradual);
     /** A valve's cam or the heads' cam timing, through the ramped editor. */
     void applyCamshaftEdit(const std::vector<double>& values, bool gradual);

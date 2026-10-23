@@ -41,11 +41,11 @@ without the owner's explicit agreement.
    prefactor (x2) puts the catalogue's maps at their limit (2026-10-23). Open:
    the I5 holds 8-12 deg of retard at its maker's boost; Woschni's combustion
    term (right for the TDI's BSFC, it stalls lugged engines) was backed out.
-5. **Editing on the engine**: compression ratio by clicking the engine, every
-   turbo visible when two or more are fitted, carburettor parameters by
-   clicking (if one is added), and two exhaust paths joinable into one (a
-   boxer six cannot be made 6-into-1 today). The designer window built on
-   2026-10-19 has never been checked on screen: do that here.
+5. **Editing on the engine** -- done 2026-10-23, each checked on screen
+   (journal): compression ratio on the liner/piston, every turbo drawn, the
+   carburettor drawn and jetted by clicking, two exhaust paths joined into one
+   (*Joined* on the ports or a junction), and the designer window. Open: the
+   designer lists valve and injector rows a two-stroke does not use.
 
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads

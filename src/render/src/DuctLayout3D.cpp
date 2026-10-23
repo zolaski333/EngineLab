@@ -3,6 +3,7 @@
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -146,6 +147,8 @@ struct Node final {
     /** A turbo is bolted to its outlet: the trunk resumes at `exitLane`,
         `exitZ`, past the turbine. */
     bool turbo {};
+    /** With `turbo`, its placement in the caller's list. */
+    std::size_t turboSlot {};
     Vec3 exitLane;
     float exitZ {};
 };
@@ -422,11 +425,12 @@ void placeTurbo(const PathLayout& layout, Node& node, const TurboSpec& spec, Tur
 }
 
 void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float clearance, const TurboSpec& spec,
-               TurboPlacement* turbo) {
+               std::vector<TurboPlacement>* turbos) {
     auto& nodes = layout.nodes;
     for (const auto i : layout.order) {
         auto& node = nodes[i];
-        if (node.firstJunction && node.turbo && turbo != nullptr) placeTurbo(layout, node, spec, *turbo);
+        if (node.firstJunction && node.turbo && turbos != nullptr)
+            placeTurbo(layout, node, spec, (*turbos)[node.turboSlot]);
         if (node.stack || node.firstJunction) continue;
         if (node.routed) {
             if (node.ins.empty()) {
@@ -493,7 +497,7 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         node.lane = lanes > 0 ? laneSum * (1.0F / static_cast<float>(lanes)) : Vec3 {};
         node.zIn = z;
         node.zOut = z + node.drawLength;
-        if (node.turbo && turbo != nullptr) placeTurbo(layout, node, spec, *turbo);
+        if (node.turbo && turbos != nullptr) placeTurbo(layout, node, spec, (*turbos)[node.turboSlot]);
     }
 }
 
@@ -631,7 +635,7 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
 
 std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
                                      const std::vector<RouteTube>& avoid, const std::vector<EngineSolid>& solids,
-                                     TurboPlacement* turbo) {
+                                     std::vector<TurboPlacement>* turbos) {
     const auto clearance = std::max(60.0F, 0.8F * boreMm);
     const RouteSettings routing;
     std::vector<PathLayout> layouts(config.exhaustPaths.size());
@@ -710,11 +714,17 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         }
     }
 
-    // The turbo goes on the first junction where every primary of a path has
-    // met, in the first path that has one.
+    // Each turbocharger goes on the first junction where every primary of a
+    // path has met, in the first path it serves: the simulator gives path p
+    // its own unit, or unit p modulo the count.
     const auto spec = turboSpec(config);
-    if (turbo != nullptr) *turbo = {};
-    for (std::size_t p = 0; turbo != nullptr && spec.wanted && p < layouts.size(); ++p) {
+    if (turbos != nullptr) turbos->clear();
+    const auto units = std::clamp<std::size_t>(config.forcedInduction.turbochargerCount, 1U, maximumTurbochargers);
+    std::array<bool, maximumTurbochargers> unitPlaced {};
+    for (std::size_t p = 0; turbos != nullptr && spec.wanted && p < layouts.size(); ++p) {
+        const auto authored = layouts[p].path->turbocharger;
+        const auto unit = authored >= 0 ? std::min(static_cast<std::size_t>(authored), units - 1U) : p % units;
+        if (unitPlaced[unit]) continue;
         auto& nodes = layouts[p].nodes;
         std::size_t total = 0;
         for (const auto& node : nodes) total += node.cylinders.size();
@@ -728,10 +738,14 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
                 || fed[i] < total)
                 continue;
             node.turbo = true;
+            node.turboSlot = turbos->size();
+            TurboPlacement placement;
+            placement.unit = static_cast<std::uint32_t>(unit);
+            turbos->push_back(std::move(placement));
             found = true;
             break;
         }
-        if (found) break;
+        if (found) unitPlaced[unit] = true;
     }
     for (std::size_t a = 0; a < junctions.size(); ++a) {
         auto& node = layouts[junctions[a].path].nodes[junctions[a].node];
@@ -760,7 +774,7 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
     std::vector<RoutedPipe> routes;
     for (std::size_t l = 0; l < layouts.size(); ++l) {
         auto& layout = layouts[l];
-        placePath(layout, ports, clearance, spec, turbo);
+        placePath(layout, ports, clearance, spec, turbos);
         assignSlots(layout, ports);
         auto& nodes = layout.nodes;
         const auto pathId = layout.path->id;
@@ -872,10 +886,12 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         if (piece.radii.size() == piece.centreline.size() && piece.centreline.size() >= 2U)
             obstacles.push_back({ piece.centreline, piece.radii });
     auto blocks = solids;
-    if (turbo != nullptr && turbo->placed) {
-        obstacles.push_back({ turbo->scroll, turbo->scrollRadii });
-        for (const auto& solid : turboSolids(*turbo)) blocks.push_back(solid);
-    }
+    if (turbos != nullptr)
+        for (const auto& turbo : *turbos) {
+            if (!turbo.placed) continue;
+            obstacles.push_back({ turbo.scroll, turbo.scrollRadii });
+            for (const auto& solid : turboSolids(turbo)) blocks.push_back(solid);
+        }
     relaxRoutes(routes, obstacles, blocks, routing);
     for (std::size_t r = 0; r < pending.size(); ++r) {
         auto& item = pending[r];
@@ -989,6 +1005,17 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
         appendCylinder(bodies.mesh, frame, 0.62F * throttle, 0.62F * throttle, bodyLength, 28);
         appendTorus(bodies.mesh, frame * Mat4::translation({ 0.0F, 0.15F * throttle, 0.0F }), 0.66F * throttle,
                     0.06F * throttle, 28, 8);
+        if (geometry.carburettor.enabled) {
+            // A slide carburettor: the slide's tower above the bore, the
+            // float bowl under it.
+            auto up = -downAxis - direction * dot(-downAxis, direction);
+            up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
+            const auto middle = face + direction * (0.5F * bodyLength);
+            appendCylinder(bodies.mesh, Mat4::frameAlongY(middle + up * (0.45F * throttle), up), 0.42F * throttle,
+                           0.42F * throttle, 0.75F * throttle, 20);
+            appendCylinder(bodies.mesh, Mat4::frameAlongY(middle - up * (0.45F * throttle), -up), 0.58F * throttle,
+                           0.58F * throttle, 0.70F * throttle, 24);
+        }
         mouths.push_back(face + direction * bodyLength);
         mouthCentre += mouths.back();
     }

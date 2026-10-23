@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Editing on the engine: checked on screen (Linux, Xvfb)
+
+- Compression ratio on a 2JZ piston, 8.7 -> 9.5 by the stepper: taken live (the engine shows modified, the field reads it back). `LiveCylinderResize`: K20A +1.5 held at 60 % redline settles like one built so, with more torque.
+- Aircooled flat six, *Joined* on its exhaust ports: one path, six primaries into one collector, one tailpipe; it idles at 744 rpm. The ports are one part for all cylinders (no cylinder to name a path), so the first path is offered the next.
+- The designer window (built 2026-10-19), first time on screen: it works. Fixed: the names' column was headed "Value" and the values' none; the name stayed "Inline Seven" for any engine. Not fixed: a two-stroke lists "Valves per side" and "Injector flow", which it does not use.
+- Designed two-stroke twin (64 x 54): its real-time check failed ("did not hold 5000 rpm; mean 673"): cranked at full throttle, a carburettor's pilot is dead and its venturi draws nothing, so it never catches. The probe now cranks shut until it runs (<= 5 s simulated): 1.90 x real time here (test fails without, 1,397 rpm mean).
+- The same twin catches only after ~3.1 s of cranking at closed throttle (lambda 6.8 -> 1.4 first), against ~1 s for an injected engine. A real cold two-stroke is started on its choke, which the model has not: not changed, recorded.
+- Carburettor jetting live: main #288 -> #431 at ~5,800 rpm full throttle, lambda 0.80 -> 0.53. Its injectors were still drawn (and offered) on a carburetted engine; both removed.
+
 ## 2026-10-23 — Performance: what this Linux box can and cannot say
 
 - Refuted: whole-project link-time optimisation (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`, GCC 13): bit-identical CSVs; CP2 sweep 6.65 -> 6.42 s best of 3, LS3+K20+Hayabusa 40.8 -> 39.1 s, within the run-to-run spread (39.1-42.1 for both).

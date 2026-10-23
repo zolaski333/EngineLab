@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <numbers>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -738,11 +739,77 @@ void rodChangeSettlesLikeARestart() {
     }
 }
 
+/** A compression ratio typed in the inspector (setCompressionRatio()): the
+ * running engine settles like one built with it, and more torque than at its
+ * own ratio. An engine authored by chamber geometry moves its deck and stays
+ * valid; a ratio its chamber cannot reach is refused, changing nothing. */
+void compressionRatioChangeSettlesLikeARestart() {
+    const auto original = catalogueEngine("K20A");
+    const auto before = original.cylinders.front().compressionRatio;
+    auto raised = original;
+    const auto error = setCompressionRatio(raised, before + 1.5);
+    require(error.empty(), "K20A: " + error);
+    const auto invalid = validateEngineConfig(raised);
+    require(!invalid, "K20A: " + invalid.value_or(""));
+
+    auto chamber = original;
+    for (auto& cylinder : chamber.cylinders) {
+        const auto areaMm2 = std::numbers::pi * cylinder.boreMm * cylinder.boreMm * 0.25;
+        const auto clearanceCc = areaMm2 * cylinder.strokeMm / 1'000.0 / (cylinder.compressionRatio - 1.0);
+        cylinder.headGasketThicknessMm = 1.0;
+        cylinder.compressionHeightMm = 30.0;
+        // A 0.5 mm piston-to-deck gap; the head chamber holds the rest.
+        cylinder.deckHeightMm = cylinder.strokeMm * 0.5 + cylinder.connectingRodMm + 30.0 + 0.5;
+        cylinder.headChamberVolumeCc = clearanceCc - areaMm2 * 1.5 / 1'000.0;
+    }
+    require(!validateEngineConfig(chamber), "the chamber-geometry K20A is valid");
+    const auto deckBefore = chamber.cylinders.front().deckHeightMm;
+    auto decked = chamber;
+    require(setCompressionRatio(decked, before + 0.5).empty() && !validateEngineConfig(decked)
+                && decked.cylinders.front().deckHeightMm < deckBefore,
+            "a chamber-geometry engine takes a higher ratio by lowering its deck, and stays valid");
+    auto unreachable = chamber;
+    require(!setCompressionRatio(unreachable, 20.0).empty()
+                && unreachable.cylinders.front().deckHeightMm == deckBefore
+                && unreachable.cylinders.front().compressionRatio == chamber.cylinders.front().compressionRatio,
+            "a ratio the chamber cannot reach is refused and changes nothing");
+
+    Rig built(raised);
+    Rig instant(original);
+    Rig untouched(original);
+    constexpr auto swapFrame = 5 * 240;
+    constexpr auto frames = 12 * 240;
+    constexpr auto settled = frames - 3 * 240;
+    std::array<Rig*, 3> rigs { &built, &instant, &untouched };
+    std::array<double, 3> rpm {};
+    std::array<double, 3> brakeSum {};
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        if (frame == swapFrame)
+            require(instant.simulator->beginCylinderResize(raised, 0.0), "K20A: compression ratio change");
+        for (std::size_t index = 0; index < rigs.size(); ++index) {
+            const auto controls = heldAt(t, rpm[index], original);
+            rpm[index] = rigs[index]->simulator->step(frameSeconds, controls).state.rpm;
+            if (frame >= settled) brakeSum[index] += controls.dynamometerTorqueNm;
+        }
+    }
+    const auto mean = [&brakeSum](std::size_t index) { return brakeSum[index] / (frames - settled); };
+    std::cout << "  K20A: compression " << before << " -> " << before + 1.5 << "; settled brake torque, Nm: built "
+              << mean(0) << ", changed " << mean(1) << ", untouched " << mean(2) << "\n";
+    require(instant.simulator->config().cylinders.back().compressionRatio == before + 1.5,
+            "K20A: the running engine takes the new ratio");
+    const auto effect = mean(0) - mean(2);
+    require(effect > 0.01 * mean(2), "K20A: a higher compression ratio gives more torque");
+    require(std::abs(mean(1) - mean(0)) <= std::max(0.25 * effect, 0.005 * mean(0)),
+            "K20A: the ratio changed live, the engine settles like one built that way");
+}
+
 void liveCylinderResizeRegression() {
     identicalResizeIsInvisible();
     resizeHappensAtGasExchangeTdc();
     resizeSettlesLikeARestart();
     rodChangeSettlesLikeARestart();
+    compressionRatioChangeSettlesLikeARestart();
     resizeAtIdleKeepsEveryEngineRunning();
 }
 

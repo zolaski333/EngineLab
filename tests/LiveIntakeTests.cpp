@@ -6,6 +6,7 @@
 // deterministically.
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -527,8 +528,89 @@ void intakePartsResize() {
             "the running engine takes the inspector's intake edits");
 }
 
+/** The 3-D view's carburettor jetting: read and written where the engine
+ * meters from, refused without a carburettor or out of range, and taken by
+ * the running engine (a bigger main jet richens full throttle). */
+void carburettorIsTunedLive() {
+    EngineSpec spec;
+    spec.name = "Two-stroke Twin";
+    spec.cycle = EngineCycle::twoStroke;
+    spec.use = EngineUse::sportMotorcycle;
+    spec.cylinderCount = 2;
+    spec.boreMm = 64.0;
+    spec.strokeMm = 54.0;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "the two-stroke twin is designed");
+    auto config = *designed.config;
+    normaliseEngineConfig(config);
+    const auto pathId = config.intakePaths.front().id;
+    const auto& fitted = config.intakePaths.front().geometry.carburettor;
+    const auto tune = carburettorTune(config, pathId);
+    require(tune && tune->mainJetFlowNumber == fitted.mainJetFlowNumber
+                && tune->pilotJetFlowNumber == fitted.pilotJetFlowNumber
+                && tune->needleClipPosition == fitted.needleClipPosition
+                && tune->airScrewTurns == fitted.airScrewTurns,
+            "a designed two-stroke's carburettor reads its jetting");
+    const auto injected = catalogueEngine("Yamaha CP2");
+    auto untouchedCp2 = injected;
+    require(!carburettorTune(injected, injected.intakePaths.front().id)
+                && !tuneCarburettor(untouchedCp2, injected.intakePaths.front().id, *tune).empty(),
+            "an injected engine has no carburettor to tune");
+
+    auto richer = config;
+    auto bigger = *tune;
+    bigger.mainJetFlowNumber *= 1.5;
+    // One carburettor per cylinder: the inspector jets them all alike.
+    require(config.intakePaths.size() == config.cylinders.size(), "a two-stroke has a carburettor per cylinder");
+    for (const auto& path : config.intakePaths)
+        require(tuneCarburettor(richer, path.id, bigger).empty(), "a main jet in range is taken");
+    auto single = richer;
+    single.intakePaths.resize(1);
+    require(tuneCarburettor(single, pathId, *tune).empty()
+                && single.intake.carburettor.mainJetFlowNumber == tune->mainJetFlowNumber,
+            "a single path keeps the engine-wide intake mirrored");
+    require(!validateEngineConfig(richer), "the jetted engine is valid");
+    const auto scope = engineEditScope(config, richer);
+    require(scope.intake && !scope.other, "a jetting edit is an intake edit only");
+    auto refused = config;
+    auto clip = *tune;
+    clip.needleClipPosition = 7.0;
+    require(!tuneCarburettor(refused, pathId, clip).empty() && !engineEditScope(config, refused).any(),
+            "a clip out of range is refused and changes nothing");
+
+    Rig untouched(config);
+    Rig jetted(config);
+    constexpr auto swapFrame = 4 * 240;
+    constexpr auto frames = 8 * 240;
+    constexpr auto measured = frames - 2 * 240;
+    std::array<Rig*, 2> rigs { &untouched, &jetted };
+    std::array<double, 2> rpm {};
+    std::array<double, 2> lambda {};
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        if (frame == swapFrame) swapIntake(jetted, richer);
+        for (std::size_t index = 0; index < rigs.size(); ++index) {
+            // A designed two-stroke catches after ~3 s of cranking (journal
+            // 2026-10-23): the starter turns it to 3.5 s, full throttle at 4.
+            auto controls = heldAt(t - 2.0, rpm[index], config);
+            controls.starterEngaged = t < 3.5;
+            const auto state = rigs[index]->simulator->step(frameSeconds, controls).state;
+            rpm[index] = state.rpm;
+            if (frame >= measured) lambda[index] += state.lambda / (frames - measured);
+        }
+    }
+    std::cout << "  designed two-stroke twin at full throttle: lambda " << lambda[0] << " on a "
+              << tune->mainJetFlowNumber << " main jet, " << lambda[1] << " on a " << bigger.mainJetFlowNumber
+              << " fitted live; " << rpm[0] << " and " << rpm[1] << " rpm\n";
+    require(jetted.simulator->config().intakePaths.back().geometry.carburettor.mainJetFlowNumber
+                == bigger.mainJetFlowNumber,
+            "the running engine takes the new jet");
+    require(lambda[1] < lambda[0] - 0.05, "a bigger main jet richens full throttle");
+}
+
 void liveIntakeRegression() {
     intakePartsResize();
+    carburettorIsTunedLive();
     plenumKeepsItsState();
     editScopeSortsIntakeEdits();
     identicalIntakeIsInvisible();
