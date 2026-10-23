@@ -357,7 +357,7 @@ target_include_directories(EngineLabAudioWorkshopTests PRIVATE
     "${CMAKE_SOURCE_DIR}/src/app/include")
 target_link_libraries(EngineLabAudioWorkshopTests PRIVATE
     EngineLab::Audio EngineLab::Catalog
-    juce::juce_gui_extra
+    EngineLabJuce
     juce::juce_recommended_config_flags)
 target_compile_definitions(EngineLabAudioWorkshopTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}"

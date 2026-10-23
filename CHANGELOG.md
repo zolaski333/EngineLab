@@ -111,6 +111,8 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The build compiles JUCE once instead of once per executable: a clean
+  Linux build takes 6 minutes instead of 15 on four cores.
 - Engines with eight cylinders or more simulate their cylinders in parallel,
   with exactly the same result: 22-33 % more real-time headroom (a designed
   6 L V12 at 7,500 rpm 0.71 -> 0.93, the LS3 1.17 -> 1.43, the Merlin

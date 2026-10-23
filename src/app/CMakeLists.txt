@@ -33,7 +33,7 @@ target_include_directories(EngineLabApp PRIVATE include)
 target_link_libraries(EngineLabApp PRIVATE
     EngineLab::Audio EngineLab::Runtime EngineLab::Diagnostics EngineLab::Serialization EngineLab::Catalog
     EngineLab::Calibration EngineLab::Render EngineLab::Scripting EngineLabFonts
-    juce::juce_audio_utils juce::juce_gui_extra juce::juce_opengl
+    EngineLabJuce
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
 target_compile_definitions(EngineLabApp PRIVATE
     JUCE_WEB_BROWSER=0

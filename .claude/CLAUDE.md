@@ -27,7 +27,8 @@ without the owner's explicit agreement.
    the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
    and a carburettor exists (2026-10-22); the 3,500/7,000/7,500 rpm holding
    band was the 240 Hz frame's alias of the firing ripple, and a power valve
-   exists (2026-10-23); open is the reed (a perfect check valve today).
+   exists (2026-10-23). The reed stays a perfect check valve until a measured
+   gap asks for its petals (VISION.md's decision rule).
 3. **Performance**: test duration, build time, real-time factor.
 4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
    that would destroy a real one. Fix the knock PHYSICS, not the damage model.

@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Build: JUCE compiled once
+
+- JUCE's modules are interface libraries carrying their sources, and `EngineLabAudio` linked four of them PUBLIC: every executable that linked audio compiled JUCE again (6 units each, 15 for the app); 130 of the tree's 390 compile units were JUCE.
+- `EngineLabJuce` (top-level `CMakeLists.txt`) links every module PRIVATE and re-exports their include directories (as SYSTEM) and definitions; all targets link it.
+- Linux, 4 cores, clean configure + build at `-j 4`, `linux-gcc-release` flags: 14 min 46 s wall / 53 min 40 s CPU (390 units) -> 6 min 08 s / 20 min 50 s (255 units). Full ctest green on the new tree.
+- Profile of a CP2 dyno sweep for the next step: `pow` 9 % (open ends, `GasCell::dynamicPressureKpa`, valve fluxes), the FV duct (cache, Riemann flux, primitive recovery) ~20 %. Not changed: each costs bit-exactness.
+- Not measured: Windows (the reference) build time; incremental builds.
+
 ## 2026-10-23 — Two-stroke: a power valve
 
 - Added: `two_stroke.power_valve_*` (the exhaust's opening with the valve shut, the speeds it lifts between, 0.25 s servo lag); the port's roof and so its area follow the valve. The designer fits one to sport designs: 12 deg later shut, lifting from 65 to 90 % of peak power speed.

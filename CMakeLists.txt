@@ -131,6 +131,26 @@ if(NOT MSVC)
     enginelab_vendor_headers_are_system(${enginelab_vendor_targets})
 endif()
 
+# JUCE's modules arrive as interface sources, so every target that linked one
+# compiled JUCE again: about 130 of the Linux tree's 390 compile units were
+# JUCE, six to fifteen per executable. They are compiled once here, linked
+# PRIVATE so their sources stay in this library, and their include directories
+# and definitions are re-exported (JUCE's own pattern for a shared code
+# library). Our targets link this, never a `juce::` module directly.
+add_library(EngineLabJuce STATIC)
+target_link_libraries(EngineLabJuce
+    PRIVATE
+        juce::juce_audio_basics juce::juce_audio_devices juce::juce_audio_formats
+        juce::juce_audio_utils juce::juce_dsp juce::juce_gui_extra juce::juce_opengl
+        juce::juce_cryptography
+        juce::juce_recommended_config_flags)
+target_compile_definitions(EngineLabJuce
+    PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+    INTERFACE $<TARGET_PROPERTY:EngineLabJuce,COMPILE_DEFINITIONS>)
+target_include_directories(EngineLabJuce SYSTEM
+    INTERFACE $<TARGET_PROPERTY:EngineLabJuce,INCLUDE_DIRECTORIES>)
+set_target_properties(EngineLabJuce PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+
 add_subdirectory(src/foundation)
 add_subdirectory(src/calibration)
 add_subdirectory(src/events)
