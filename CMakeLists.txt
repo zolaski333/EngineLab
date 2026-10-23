@@ -150,6 +150,14 @@ target_compile_definitions(EngineLabJuce
 target_include_directories(EngineLabJuce SYSTEM
     INTERFACE $<TARGET_PROPERTY:EngineLabJuce,INCLUDE_DIRECTORIES>)
 set_target_properties(EngineLabJuce PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+# MSBuild runs projects in parallel but compiles one project's units one after
+# another, so a single JUCE project put its fifteen heavy units in series on
+# the critical path: the CI build went 25 to 32 min on Windows while Linux
+# went 18 to 4.5. Two compilers inside this one project, on top of the two
+# MSBuild nodes CI runs (more ran out of compiler heap, C1060).
+if(MSVC)
+    target_compile_options(EngineLabJuce PRIVATE /MP2)
+endif()
 
 add_subdirectory(src/foundation)
 add_subdirectory(src/calibration)
