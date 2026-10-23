@@ -11,7 +11,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - `EngineLabJuce` (top-level `CMakeLists.txt`) links every module PRIVATE and re-exports their include directories (as SYSTEM) and definitions; all targets link it.
 - Linux, 4 cores, clean configure + build at `-j 4`, `linux-gcc-release` flags: 14 min 46 s wall / 53 min 40 s CPU (390 units) -> 6 min 08 s / 20 min 50 s (255 units). Full ctest green on the new tree.
 - Profile of a CP2 dyno sweep for the next step: `pow` 9 % (open ends, `GasCell::dynamicPressureKpa`, valve fluxes), the FV duct (cache, Riemann flux, primitive recovery) ~20 %. Not changed: each costs bit-exactness.
-- Not measured: Windows (the reference) build time; incremental builds.
+- CI, Build step: Linux 17 min 47 s -> 4 min 33 s; Windows 25 min 21 s -> 32 min 05 s: MSBuild compiles one project's units in series and CI runs two nodes, so the one JUCE project sits on the critical path. `/MP2` on that project failed the build with C1060 (out of heap) on two harnesses beside the app's LTCG link: reverted. Not measured: a local many-core Windows build, where JUCE no longer compiles ~20 times.
 
 ## 2026-10-23 — Two-stroke: a power valve
 
