@@ -25,8 +25,9 @@ without the owner's explicit agreement.
    chaotic and neither the behaviour nor the sound is a real two-stroke's. Free
    rein to add what a 2T needs (carburettor, reed and power valves) or to rework
    the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
-   and a carburettor exists (2026-10-22); open are reed and power valves, the
-   3,500/7,000/7,500 rpm holding band, the engine's own and not the dyno's.
+   and a carburettor exists (2026-10-22); the 3,500/7,000/7,500 rpm holding
+   band was the 240 Hz frame's alias of the firing ripple (2026-10-23); open
+   are reed and power valves.
 3. **Performance**: test duration, build time, real-time factor.
 4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
    that would destroy a real one. Fix the knock PHYSICS, not the damage model.
@@ -129,9 +130,10 @@ masks everything); `EngineLabPhysicsPerfHarness` needs `--idle` beside
 `--trace 1` (`--trace <low rpm>` alone is full-load lugging, not an idle).
 
 **Flags that separate a real effect from an artefact**:
-`EngineLabDynoSweepHarness` `--crank-degrees` and `--coupling-us` resize the
-mechanical substep and the exhaust flush clock, and a gas-dynamic feature stays
-where it is when either changes; `EngineLabGeometrySensitivityHarness` says
+`EngineLabDynoSweepHarness` `--crank-degrees`, `--coupling-us` and
+`--frame-hz` resize the mechanical substep, the exhaust flush clock and the
+240 Hz outer frame, and a gas-dynamic feature stays where it is when any one
+changes; `EngineLabGeometrySensitivityHarness` says
 whether an exhaust change moved the timbre (`shape`) or only the level
 (`level`).
 
@@ -212,8 +214,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   crankcase); a transit-vs-window scavenging race (monotonic in rpm by
   construction); a scavenging bias from ONE pressure sample at port opening (a
   hunting limit cycle over 4,500-6,250 rpm: integrate the front); "the trapped
-  residual is too low" (a unit error). The 3,500/7,000/7,500 rpm holding band
-  is none of pipe length, settle, step, crank step, flush clock or carburettor.
+  residual is too low" (a unit error). A holding band locked to crank speed is
+  first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it.
 - **Intake**: four inertance formulations (unstable or out of phase); the charge
   bias as the MUSCL limiter, the finite plenum, wall heat or valve linearisation
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or

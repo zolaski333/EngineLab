@@ -1888,6 +1888,11 @@ struct EngineState final {
     bool airFuelRatioValid { false };
     /** The electric radiator fan, realistic temperatures only. */
     bool coolingFanOn { false };
+    /** Crankshaft speed averaged over the last step: `rpm` is the speed at
+     *  its end, which carries the firing ripple. Sampled once per 240 Hz
+     *  frame, a ripple near that rate aliases into a slow wander; a
+     *  two-stroke twin fires at 233 Hz at 7,000 rpm. Zero before a step. */
+    double frameAveragedRpm { 0.0 };
 };
 
 struct EcuCommand final {

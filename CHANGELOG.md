@@ -86,6 +86,10 @@ file formats, always with an in-memory migration).
   about a degree while the engine knocks and gives it back at 1 deg/s, so an
   engine settles at its knock limit instead of sitting in light knock. The
   Audi I5 gets the intercooler its real engine has.
+- A two-stroke twin no longer fails to hold 3,500, 7,000 and 7,500 rpm on the
+  dyno: the brake answered the crankshaft speed sampled at the end of each
+  240 Hz frame, where a firing rate near 240 Hz (or 120) aliases into a slow
+  wander. The dyno now holds the speed averaged over the frame.
 - A designed carburetted two-stroke idles: its pilot jet was sized for about
   eight times the air a two-stroke idles on, so twins and triples flooded and
   stalled. The pilot is now sized from the air the idle path passes and

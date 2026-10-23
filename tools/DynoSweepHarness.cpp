@@ -37,6 +37,11 @@
 #include <vector>
 
 namespace {
+
+// The outer frame the absorber and the controls step at, 240 Hz as in the
+// application. A feature locked to a crank speed whose firing frequency sits
+// near this rate or its half can be its alias: `--frame-hz` moves it.
+double frameSeconds = 1.0 / 240.0;
 constexpr std::array<std::string_view, 37> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
@@ -209,7 +214,7 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
                  const enginelab::EngineConfig& config,
                  double targetRpm, double settleSeconds,
                  double sampleSeconds) {
-    constexpr double dt = 1.0 / 240.0;
+    const double dt = frameSeconds;
     const auto settleSteps = static_cast<int>(settleSeconds / dt);
     const auto sampleSteps = static_cast<int>(sampleSeconds / dt);
     enginelab::DynoAbsorberController absorber(config);
@@ -436,7 +441,7 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     enginelab::EngineSimulator simulator(
         config, ecu, physics, events, exhaust, simulatorOptions);
 
-    constexpr double dt = 1.0 / 240.0;
+    const double dt = frameSeconds;
     // Cold start and idle briefly before the first hold point.
     for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
         const auto time = static_cast<double>(step) * dt;
@@ -525,7 +530,7 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
             !useWellMixedExhaustJunctions;
         enginelab::EngineSimulator simulator(
             config, ecu, physics, events, exhaust, simulatorOptions);
-        constexpr double dt = 1.0 / 240.0;
+        const double dt = frameSeconds;
         for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
             const auto time = static_cast<double>(step) * dt;
             (void)simulator.step(dt, { true, time < 1.5, 0.55, 0.0 });
@@ -657,6 +662,8 @@ int main(int argc, char** argv) {
             crankDegreesPerStep = std::stod(argv[++index]);
         else if (argument == "--coupling-us" && index + 1 < argc)
             couplingMicroseconds = std::stod(argv[++index]);
+        else if (argument == "--frame-hz" && index + 1 < argc)
+            frameSeconds = 1.0 / std::clamp(std::stod(argv[++index]), 30.0, 4'000.0);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
@@ -665,7 +672,7 @@ int main(int argc, char** argv) {
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm]"
-                         " [--crank-degrees deg] [--coupling-us us]\n";
+                         " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]\n";
             return EXIT_FAILURE;
         }
     }

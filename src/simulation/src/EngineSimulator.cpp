@@ -1596,6 +1596,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     double frameMaximumAfterfireInductionIntegral = 0.0;
     double frameMinimumAfterfireInductionDelaySeconds = 0.0;
     double frameMaximumAfterfireInductionDelaySeconds = 0.0;
+    double frameTravelledDegrees = 0.0;
+    double frameIntegratedSeconds = 0.0;
 
     while (remainingStepSeconds > 0.0) {
         // Predict with this frame's known external/starter commands rather
@@ -5141,6 +5143,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.angularVelocityRadPerSecond = 0.0;
         }
         const auto subTravelled = (subPreviousRpm + state_.rpm) * 0.5 * 6.0 * subDt;
+        frameTravelledDegrees += subTravelled;
+        frameIntegratedSeconds += subDt;
         maximumIntegratedCrankStep = std::max(maximumIntegratedCrankStep, std::abs(subTravelled));
         cycleNumericalFault_ = cycleNumericalFault_
             || state_.solverResolutionLimited
@@ -5834,6 +5838,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         | static_cast<std::uint32_t>(ActiveLimit::coolantProtection)
         | static_cast<std::uint32_t>(ActiveLimit::launchControl);
     state_.activeLimits = (state_.activeLimits & ecuLimitBits) | publishedSimulatorLimits();
+    state_.frameAveragedRpm = frameIntegratedSeconds > 0.0
+        ? frameTravelledDegrees / (6.0 * frameIntegratedSeconds) : state_.rpm;
     frame.state = state_;
     return frame;
 }

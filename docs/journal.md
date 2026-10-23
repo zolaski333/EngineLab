@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-23 — Two-stroke: the 3,500/7,000/7,500 rpm holding band is the 240 Hz frame's alias
+
+- Designed t2_twin_500 (sport, 0.5 L), DynoSweep step 250, settle 8, with a new `--frame-hz`. `held_rpm_stddev` at 240 Hz: 3,500 2.3, 7,000 6.6, 7,500 2.6, elsewhere 0.2-1.1; at 300 Hz the three are gone (0.2-0.4); at 200 Hz the band moves to 5,750-6,250 (2.7-3.1), where the twin fires at 200 Hz. A twin two-stroke fires at 233 Hz at 7,000 rpm, 117 at 3,500, 250 at 7,500.
+- Mechanism: `EngineState::rpm` is the speed at the frame's end, with the firing ripple in it (+-50 rpm here). Sampled once a frame it beats at 6-7 Hz, which the absorber's 8 rad/s filter passes in part: the brake swung 40-58 N.m with the alias. Spark, AFR and trim were steady, so the engine itself held.
+- Fix: the simulator publishes `frameAveragedRpm` (crank travel over the frame) and the absorber holds that. 240 Hz after: 3,500 0.2, 7,000 0.3, 7,500 0.2; torque within 1 %. Left: 1.4-1.8 rpm at 5,750-6,000, present at 200/240/300 Hz alike, so the engine's own.
+- Not measured: the application's continuous-ramp dyno, which reads the same controller; Windows.
+
 ## 2026-10-23 — Two-stroke idle: the governor's gains halved; designed carburetted engines idle
 
 - RD350 (injected) free idle, std over 16-40 s: the idle gate failed on drift 66 rpm (baseline 64.4, gate 65): a 5 s limit cycle, trim 0.68-1.16, air per cycle 34-49 mg. No end-gas event in it (the old model had 4).
