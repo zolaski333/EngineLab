@@ -1,7 +1,8 @@
 add_library(EngineLabGasDynamics STATIC
     src/FiniteVolumeDuct.cpp
     src/ExhaustNetworkLayout.cpp
-    src/ExhaustGasNetwork.cpp)
+    src/ExhaustGasNetwork.cpp
+    src/PartitionedExhaustNetwork.cpp)
 add_library(EngineLab::GasDynamics ALIAS EngineLabGasDynamics)
 target_include_directories(EngineLabGasDynamics PUBLIC include)
 target_link_libraries(EngineLabGasDynamics PUBLIC

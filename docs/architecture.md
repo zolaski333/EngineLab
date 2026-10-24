@@ -53,16 +53,22 @@ UI, slow telemetry through atomics and two SPSC streams: discrete events and
 continuous pressure frames.
 
 Inside a step, `EngineSimulator` may borrow a small `CylinderWorkerPool` (on
-engines with three cylinders or more: at most half the reported hardware
-threads, two workers, three from ten cylinders). Per-runner intakes advance
-their runners on it; the exhaust network and a joint intake manifold use it
-through `ExhaustGasNetwork::setParallelFor` for each duct's share of an RK
-stage: its update, cache, wall heat, interior residual and the face fluxes of
-its ports, outlets and the interfaces it owns (the upstream duct's). What
-couples ducts (junctions, restrictions, applying the fluxes, the shared
+engines with three cylinders or more, and on a two-stroke twin: at most half
+the reported hardware threads, two workers, three from ten cylinders).
+Per-runner intakes advance their runners on it; the exhaust network and a
+joint intake manifold use it through `ExhaustGasNetwork::setParallelFor` for
+each duct's share of an RK stage, handed out as one contiguous run of ducts
+per thread: its update, cache, wall heat, interior residual and the face
+fluxes of its ports, outlets and the interfaces it owns (the upstream duct's).
+What couples ducts (junctions, restrictions, applying the fluxes, the shared
 plenum) stays serial in a fixed order, so the result is bit-identical
 whatever the worker count, including none
-(`EngineLab.GasDynamics` checks a reversed dispatch order). From eight
+(`EngineLab.GasDynamics` checks a reversed dispatch order). A two-stroke's
+exhaust is a `PartitionedExhaustNetwork` instead: its unconnected pipes are
+networks of their own, each with its own CFL step, and one dispatch per
+advance runs one pipe per claim (`EngineLab.PartitionedExhaustNetwork` checks
+each pipe against a network of that pipe alone). A four-stroke's stays one
+network. From eight
 cylinders up, where each sub-step reads a frozen copy of the shared plenum,
 the per-cylinder pass (`processCylinder`) and the end-of-sub-step publish of
 each cylinder's state also run on the pool, one cylinder per item: it writes only that cylinder's state, and its engine-wide events

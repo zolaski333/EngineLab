@@ -70,6 +70,9 @@ file formats, always with an in-memory migration).
   from the last cycle, and it now misfires on it, lighting about one
   revolution in three as a real one does, instead of firing every revolution
   like a four-stroke. Four-stroke idles and the default sound are unchanged.
+- `EngineLabRealtimeBudgetHarness --free-run` measures designed two-strokes
+  again: it cranked them at the dyno's full throttle, where they never
+  caught, and every one read "hold not stable".
 - **A two-stroke's intake is drawn as one is built**: per cylinder the
   transfer duct inside the barrel, then out of it a reed block, a short
   manifold and the carburettor a few centimetres from the reeds, and a rubber
@@ -200,6 +203,13 @@ file formats, always with an in-memory migration).
   2-14 % stronger; the catalogue RD350's curve now rises steadily to its peak
   instead of dipping at 5,750 rpm, at 12 % less mean torque, and it sounds
   different.
+- Two-strokes simulate faster: each cylinder's expansion chamber is solved on
+  its own thread, and a twin now uses a second thread. On a 6-core desktop,
+  free-running, a designed twin goes from 1.53 to about 2.1 times real time,
+  a triple from 1.30 to about 1.65, a V4 from 0.97 (slow motion) to about
+  1.25. Torque moves by less than 1 %. Four-strokes are unchanged, to the bit.
+  `EngineLabDynoSweepHarness` and `EngineLabRealtimeBudgetHarness
+  --exhaust-whole` keep a two-stroke's exhaust as one network for comparison.
 
 ### Removed
 

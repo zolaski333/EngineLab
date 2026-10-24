@@ -939,6 +939,10 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
     ductInletAssigned_.resize(ducts_.size());
     ductOutletAssigned_.resize(ducts_.size());
     ductSucceeded_.assign(ducts_.size(), std::uint8_t { 1 });
+    // Reserved here so that building the chunks inside a noexcept stage never
+    // allocates.
+    ductChunkBegin_.clear();
+    ductChunkBegin_.reserve(ducts_.size() + 1);
     ductStageRejected_.assign(ducts_.size(), std::uint8_t { 0 });
     ductWallHeatRejectedJ_.assign(ducts_.size(), 0.0);
     portFluxes_.assign(layout_.cylinderPorts().size(), BoundaryFlux {});
@@ -1749,18 +1753,48 @@ bool ExhaustGasNetwork::forEachDuct(const Body& body) noexcept {
             succeeded = body(index) && succeeded;
         return succeeded;
     }
+    if (ductChunkBegin_.empty()) buildDuctChunks();
     struct Context final {
         const Body* body;
         std::uint8_t* succeeded;
-    } context { &body, ductSucceeded_.data() };
-    parallelFor_.run(parallelFor_.executor, count,
-        [](void* raw, std::size_t index) noexcept {
+        const std::size_t* chunkBegin;
+    } context { &body, ductSucceeded_.data(), ductChunkBegin_.data() };
+    parallelFor_.run(parallelFor_.executor, ductChunkBegin_.size() - 1,
+        [](void* raw, std::size_t chunk) noexcept {
             const auto& job = *static_cast<Context*>(raw);
-            job.succeeded[index] = (*job.body)(index) ? 1 : 0;
+            for (auto index = job.chunkBegin[chunk]; index < job.chunkBegin[chunk + 1]; ++index)
+                job.succeeded[index] = (*job.body)(index) ? 1 : 0;
         },
         &context);
     return std::all_of(ductSucceeded_.begin(), ductSucceeded_.end(),
         [](std::uint8_t succeeded) { return succeeded != 0; });
+}
+
+void ExhaustGasNetwork::buildDuctChunks() noexcept {
+    // One contiguous run of ducts per thread. Handed out one duct at a time,
+    // a two-stroke's expansion chamber (cones of two or three cells) cost an
+    // atomic claim per few cells: one chunk per thread ran the designed
+    // two-stroke triple and V4 5 % faster and the LS3 2.5 %; two per thread
+    // gained nothing more (journal 2026-10-24). The ducts and their order are
+    // unchanged, so the result is bit-identical.
+    const auto count = ducts_.size();
+    ductChunkBegin_.clear();
+    const auto chunks = std::clamp<std::size_t>(parallelFor_.threads, 1, count);
+    // A duct's work is its cells plus a fixed part (its two end faces, its
+    // caches): weigh both, so a chain of two-cell cones is not one chunk.
+    constexpr double fixedCellsPerDuct = 2.0;
+    auto total = 0.0;
+    for (const auto& duct : ducts_) total += static_cast<double>(duct.cells_.size()) + fixedCellsPerDuct;
+    ductChunkBegin_.push_back(0);
+    auto accumulated = 0.0;
+    for (std::size_t index = 0; index < count; ++index) {
+        accumulated += static_cast<double>(ducts_[index].cells_.size()) + fixedCellsPerDuct;
+        const auto filled = ductChunkBegin_.size();
+        if (filled < chunks && index + 1 < count
+            && accumulated >= total * static_cast<double>(filled) / static_cast<double>(chunks))
+            ductChunkBegin_.push_back(index + 1);
+    }
+    ductChunkBegin_.push_back(count);
 }
 
 bool ExhaustGasNetwork::evaluateStage(

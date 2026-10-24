@@ -520,7 +520,7 @@ private:
     struct LiveExhaustChange final {
         EngineConfig config;
         ExhaustGraph graph;
-        std::unique_ptr<gasdynamics::ExhaustGasNetwork> network;
+        std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> network;
     };
     EngineConfig config_;
     SimpleEcuModel ecu_;

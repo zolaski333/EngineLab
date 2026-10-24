@@ -700,11 +700,21 @@ void EngineSimulator::configureIntakeWorkerPool() {
     // hardware cap is still lower when necessary, and half the reported
     // concurrency remains reserved for the audio callback, UI and OS. Explicit
     // harness overrides deliberately bypass this production policy.
+    //
+    // A two-stroke takes one thread per cylinder, up to four: three quarters
+    // of its time is the exhaust (an expansion chamber per cylinder at the
+    // 100 mm mesh), whose pipes are advanced one per thread. One worker ran
+    // the designed twin at 1.84 x real time against 1.53 without, and three
+    // the designed V4 at 1.24-1.28 against 1.05-1.13 with two (journal
+    // 2026-10-24). A four-stroke twin keeps none.
     const auto cylinderCount = config_.cylinders.size();
     if (options_.intakeStaircaseRounds.has_value())
         intakeStaircaseRounds_ = std::clamp<std::size_t>(
             *options_.intakeStaircaseRounds, 0, 4);
-    if (cylinderCount < 3) return;
+    const auto twoStrokeTwin = cylinderCount == 2 && config_.cycle == EngineCycle::twoStroke;
+    if (cylinderCount < 2
+        || (cylinderCount < 3 && !twoStrokeTwin && !options_.intakeWorkerCount.has_value()))
+        return;
     std::size_t workerCount = 0;
     if (options_.intakeWorkerCount.has_value()) {
         workerCount = std::min(*options_.intakeWorkerCount, cylinderCount - 1);
@@ -712,7 +722,8 @@ void EngineSimulator::configureIntakeWorkerPool() {
         const auto reportedConcurrency = std::thread::hardware_concurrency();
         if (reportedConcurrency < 4) return;
         const auto usableThreads = std::max<std::size_t>(1, reportedConcurrency / 2);
-        const std::size_t workloadWorkerCap = cylinderCount >= 10 ? 3 : 2;
+        const std::size_t workloadWorkerCap =
+            cylinderCount >= 10 || config_.cycle == EngineCycle::twoStroke ? 3 : 2;
         workerCount = std::min(
             { cylinderCount - 1, usableThreads - 1, workloadWorkerCap });
     }
@@ -735,6 +746,7 @@ void EngineSimulator::attachNetworkParallelFor() noexcept {
             static_cast<CylinderWorkerPool*>(executor)->runIndices(count, body, context);
         };
         parallelFor.executor = intakeWorkerPool_.get();
+        parallelFor.threads = intakeWorkerPool_->workerCount() + 1;
     }
     if (physicalExhaustNetwork_) physicalExhaustNetwork_->setParallelFor(parallelFor);
     if (!jointIntakeManifold()) return;
@@ -1069,7 +1081,7 @@ bool EngineSimulator::replaceIntake(LiveIntake& intake, EngineConfig& config) no
     return true;
 }
 
-std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalExhaustNetwork(
+std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> EngineSimulator::buildPhysicalExhaustNetwork(
     const EngineConfig& config, double targetCellLengthM) const {
     const auto physicalGraph = ExhaustGraph::makeForEngine(config);
     auto feedbackMesh =
@@ -1096,7 +1108,7 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalEx
         for (const auto& face : collectorTurbineFaces(layout))
             if (!layout.makeRestriction(face.interfaceIndex))
                 throw std::runtime_error("failed to place the turbine");
-    auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(
+    auto network = std::make_unique<gasdynamics::PartitionedExhaustNetwork>(
         exhaustThermodynamicsFor(config));
     gasdynamics::ExhaustGasNetworkConfig networkConfig;
     networkConfig.initialPressurePa = config.ambientPressureKpa * 1'000.0;
@@ -1135,7 +1147,13 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalEx
         ductWallHeatUpdateIntervalSeconds;
     networkConfig.evolveJunctionAxialMomentum =
         options_.evolveExhaustJunctionAxialMomentum.value_or(true);
-    if (!network->configure(layout, networkConfig))
+    // A two-stroke's pipes share nothing (one expansion chamber per cylinder,
+    // each to its own outlet), and advanced as networks of their own they run
+    // on separate threads with a CFL step each (journal 2026-10-24). A
+    // four-stroke stays one network, so its numerics and sound are unchanged.
+    const auto partition = options_.partitionExhaustNetwork.value_or(
+        config.cycle == EngineCycle::twoStroke);
+    if (!network->configure(layout, networkConfig, partition))
         throw std::runtime_error("failed to configure conservative exhaust network");
     return network;
 }
@@ -1202,9 +1220,9 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     physicalExhaustNetwork_ = std::move(network);
 }
 
-std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildLiveExhaustNetwork(
+std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> EngineSimulator::buildLiveExhaustNetwork(
     const EngineConfig& config, std::optional<double> targetCellLengthM) const {
-    std::unique_ptr<gasdynamics::ExhaustGasNetwork> network;
+    std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> network;
     try {
         network = buildPhysicalExhaustNetwork(
             config, targetCellLengthM.value_or(constructionExhaustCellLengthM_));
@@ -1382,7 +1400,7 @@ void EngineSimulator::advanceCamshaftChange() {
 }
 
 bool EngineSimulator::replaceExhaustNetwork(
-    std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
+    std::unique_ptr<gasdynamics::PartitionedExhaustNetwork>& network,
     const EngineConfig& config) {
     // The turbine faces are shared out between turbochargers when the network
     // is built: another sharing takes a restart.
@@ -4682,7 +4700,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     const auto& outlet = physicalExhaustNetwork.layout()
                         .interfaces()[face.interfaceIndex].downstream;
                     outletPressureKpa += face.cylinderShare * 0.001
-                        * physicalExhaustNetwork.ducts()[outlet.elementIndex]
+                        * physicalExhaustNetwork.duct(outlet.elementIndex)
                             .cellPrimitives().front().pressurePa;
                 }
                 for (std::size_t turbocharger = 0; turbocharger < maximumTurbochargers; ++turbocharger)
@@ -4870,14 +4888,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // read the local gas state, and it varies by hundreds of kelvin
             // between the port and the tailpipe.
             if (publishExhaustAcousticState) {
-                const auto networkDucts = physicalExhaustNetwork.ducts();
-                exhaustDuctMediumCount_ = std::min(networkDucts.size(),
+                exhaustDuctMediumCount_ = std::min(physicalExhaustNetwork.ductCount(),
                     ExhaustAcousticSample::maximumDucts);
                 for (std::size_t index = 0;
                      index < exhaustDuctMediumCount_; ++index) {
                     auto densityKgPerM3 = 0.0;
                     auto speedOfSoundMps = 0.0;
-                    if (!networkDucts[index].meanAcousticMedium(
+                    if (!physicalExhaustNetwork.duct(index).meanAcousticMedium(
                             densityKgPerM3, speedOfSoundMps)) {
                         // Leave the previous sample in place rather than publish
                         // a zero the renderer would have to special-case.
@@ -6010,11 +6027,11 @@ double EngineSimulator::gasFieldPressurePa(std::size_t element, std::size_t samp
     };
     switch (kind) {
     case GasFieldElementKind::exhaustDuct:
-        return physicalExhaustNetwork_ ? cellPressure(physicalExhaustNetwork_->ducts()[index], false) : 0.0;
+        return physicalExhaustNetwork_ ? cellPressure(physicalExhaustNetwork_->duct(index), false) : 0.0;
     case GasFieldElementKind::exhaustJunction: {
         if (!physicalExhaustNetwork_) return 0.0;
         const auto primitive = physicalExhaustNetwork_->mixtureModel().primitiveFromConservative(
-            physicalExhaustNetwork_->junctionStates()[index]);
+            physicalExhaustNetwork_->junctionState(index));
         return primitive ? primitive->pressurePa : 0.0;
     }
     case GasFieldElementKind::intakeRunner: {
@@ -6088,11 +6105,11 @@ void EngineSimulator::captureGasField() noexcept {
     for (auto& element : gasField_.elements) {
         switch (element.kind) {
         case GasFieldElementKind::exhaustDuct:
-            sampleDuct(element, physicalExhaustNetwork_->ducts()[ductIndex++], false);
+            sampleDuct(element, physicalExhaustNetwork_->duct(ductIndex++), false);
             break;
         case GasFieldElementKind::exhaustJunction: {
             const auto primitive = physicalExhaustNetwork_->mixtureModel().primitiveFromConservative(
-                physicalExhaustNetwork_->junctionStates()[junctionIndex++]);
+                physicalExhaustNetwork_->junctionState(junctionIndex++));
             element.sampleCount = 1;
             element.pressurePa[0] = primitive ? static_cast<float>(primitive->pressurePa) : 0.0F;
             element.gasTemperatureK[0] = primitive ? static_cast<float>(primitive->temperatureK) : 0.0F;

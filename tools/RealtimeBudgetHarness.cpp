@@ -63,6 +63,8 @@ int exhaustIntegrationOverride = -1;
  * reconstructs across interfaces by default). */
 std::optional<bool> exhaustReconstructAcrossInterfacesOverride;
 std::optional<bool> exhaustFineCouplingWhileScavengingOverride;
+/** --exhaust-whole: a two-stroke's pipes as one network (A/B). */
+std::optional<bool> partitionExhaustNetworkOverride;
 /** --inline-cylinders: keep the per-cylinder pass off the workers (A/B). */
 std::optional<bool> parallelCylinderPassOverride;
 /** --serial-publish: publish each cylinder's end-of-sub-step state inline (A/B). */
@@ -572,6 +574,7 @@ private:
         exhaustReconstructAcrossInterfacesOverride;
     simulatorOptions.exhaustFineCouplingWhileScavenging =
         exhaustFineCouplingWhileScavengingOverride;
+    simulatorOptions.partitionExhaustNetwork = partitionExhaustNetworkOverride;
     simulatorOptions.parallelCylinderPass = parallelCylinderPassOverride;
     simulatorOptions.parallelCylinderPublish = parallelCylinderPublishOverride;
     simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
@@ -615,6 +618,16 @@ private:
     runtime->setDynoHoldRpm(holdRpm);
     result.targetRpm = runtime->dynoHoldRpm();
     runtime->start();
+    // Cranked with the throttle shut until it runs, as the designer's probe
+    // (RealtimeCapacityProbe) does: a carburetted engine cranked at the
+    // dyno's full throttle never catches, and every designed two-stroke
+    // read "hold not stable" at 630-760 rpm.
+    const auto crankWallDeadline = Clock::now() + std::chrono::seconds(30);
+    while (Clock::now() < crankWallDeadline) {
+        const auto state = runtime->snapshot();
+        if (state.rpm > 0.8 * config.idleRpm || state.simulationTimeSeconds > 5.0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     runtime->startDyno();
     std::unique_ptr<GasViewEmulator> gasViewer;
     if (gasView) gasViewer = std::make_unique<GasViewEmulator>(*runtime);
@@ -987,6 +1000,8 @@ int main(int argc, char** argv) {
             exhaustReconstructAcrossInterfacesOverride = false;
         else if (argument == "--exhaust-coarse-scavenging")
             exhaustFineCouplingWhileScavengingOverride = false;
+        else if (argument == "--exhaust-whole")
+            partitionExhaustNetworkOverride = false;
         else if (argument == "--inline-cylinders")
             parallelCylinderPassOverride = false;
         else if (argument == "--serial-publish")
@@ -1032,7 +1047,7 @@ int main(int argc, char** argv) {
                          "[--intake-cell-mm N] "
                          "[--exhaust-cell-mm N] "
                          "[--exhaust-coupling-us N] [--exhaust-cfl C] [--exhaust-rk2|--exhaust-euler|--exhaust-hancock] "
-                         "[--exhaust-interface-first-order] [--exhaust-coarse-scavenging] "
+                         "[--exhaust-interface-first-order] [--exhaust-coarse-scavenging] [--exhaust-whole] "
                          "[--inline-cylinders] [--serial-publish] "
                          "[--intake-euler|--intake-rk2] "
                          "[--intake-wall-us N] "

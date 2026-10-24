@@ -27,8 +27,10 @@ without the owner's explicit agreement.
    the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
    and a carburettor exists (2026-10-22); the 3,500/7,000/7,500 rpm holding
    band was the 240 Hz frame's alias of the firing ripple, and a power valve
-   exists (2026-10-23). The reed stays a perfect check valve until a measured
-   gap asks for its petals (VISION.md's decision rule).
+   exists (2026-10-23). The idle misfires on its diluted charge, and the pipes
+   run one per thread (twin 2.1, triple 1.65, V4 1.25 x real time; 2026-10-24).
+   The reed stays a perfect check valve until a measured gap asks for its
+   petals (VISION.md's decision rule).
 3. **Performance**: test duration, build time, real-time factor. JUCE compiles
    once since 2026-10-23 (Linux CI build 18 -> 4.5 min, Windows 25 -> 32: one
    serial MSBuild project). Open, and measurable only on the reference machine:

@@ -468,6 +468,8 @@ public:
         void (*run)(void* executor, std::size_t count, Body body,
                     void* context) noexcept { nullptr };
         void* executor { nullptr };
+        /** Threads that take part in a dispatch, the caller's included. */
+        std::size_t threads { 1 };
     };
 
     /** Spreads the per-duct part of every RK stage over `parallelFor`: the
@@ -478,7 +480,10 @@ public:
      * reservoir) stays serial in a fixed order, so the result is bit-identical
      * to the serial path whatever the schedule. The executor must outlive the
      * network, or be cleared with a default ParallelFor. */
-    void setParallelFor(ParallelFor parallelFor) noexcept { parallelFor_ = parallelFor; }
+    void setParallelFor(ParallelFor parallelFor) noexcept {
+        parallelFor_ = parallelFor;
+        ductChunkBegin_.clear();
+    }
 
     /** Add species mass as a source in the duct cell adjacent to a cylinder
      * port, together with its sensible internal energy at temperatureK and an
@@ -549,6 +554,11 @@ private:
     };
 
     ParallelFor parallelFor_ {};
+    /** First duct of each contiguous chunk a dispatch hands out, then the
+     *  duct count; built on first use, cleared when the ducts or the executor
+     *  change. */
+    std::vector<std::size_t> ductChunkBegin_;
+    void buildDuctChunks() noexcept;
     /** Half the trial step while the first stage of a Hancock substep is
      * evaluated, zero otherwise. */
     double hancockHalfStepSeconds_ { 0.0 };

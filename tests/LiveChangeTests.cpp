@@ -231,7 +231,7 @@ void remeshSettlesLikeARestart() {
         std::array<double, 3> torque {};
         std::size_t productionCells = 0;
         std::size_t fineCells = 0;
-        const auto cellsOf = [](const gasdynamics::ExhaustGasNetwork& network) {
+        const auto cellsOf = [](const gasdynamics::PartitionedExhaustNetwork& network) {
             std::size_t cells = 0;
             for (const auto& duct : network.layout().ducts()) cells += duct.cellCount;
             return cells;

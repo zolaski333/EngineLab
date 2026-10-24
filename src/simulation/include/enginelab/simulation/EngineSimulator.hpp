@@ -23,6 +23,7 @@
 #include <enginelab/events/ExhaustAcousticSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
+#include <enginelab/gasdynamics/PartitionedExhaustNetwork.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -131,6 +132,9 @@ struct EngineSimulatorOptions final {
     std::optional<double> exhaustMaximumHeadAreaFraction;
     /** A/B override for directed exhaust-collector momentum. Production uses it. */
     std::optional<bool> evolveExhaustJunctionAxialMomentum;
+    /** A/B override: advance the exhaust's unconnected parts as networks of
+     * their own (PartitionedExhaustNetwork). Absent: on for a two-stroke. */
+    std::optional<bool> partitionExhaustNetwork;
     /** Historical Euler diagnostic. Production uses SSP-RK2: omitting its
      * corrector with MUSCL can amplify passive acoustic modes. */
     std::optional<bool> intakeFirstOrderTimeIntegration;
@@ -232,7 +236,7 @@ public:
      * the topology the simulator was built with: a live change may resize and
      * remesh the exhaust, never reconnect it. Not realtime-safe; any thread,
      * since it reads only what construction fixed. */
-    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildLiveExhaustNetwork(
+    [[nodiscard]] std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> buildLiveExhaustNetwork(
         const EngineConfig& config,
         std::optional<double> targetCellLengthM = {}) const;
     /** Swap in a network from buildLiveExhaustNetwork() for `config`'s exhaust,
@@ -241,7 +245,7 @@ public:
      * `network` holds the previous network; on failure nothing changes.
      * Simulation thread only, like step(). */
     [[nodiscard]] bool replaceExhaustNetwork(
-        std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
+        std::unique_ptr<gasdynamics::PartitionedExhaustNetwork>& network,
         const EngineConfig& config);
     /** Whether `edited`'s injectors and forced induction can replace
      * `running`'s in a running engine (replaceSettings): the same injection
@@ -357,7 +361,7 @@ private:
     void recordGasProbe() noexcept;
     /** Compile and allocate the mandatory nonlinear exhaust network. */
     void configurePhysicalExhaustNetwork();
-    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildPhysicalExhaustNetwork(
+    [[nodiscard]] std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> buildPhysicalExhaustNetwork(
         const EngineConfig& config, double targetCellLengthM) const;
     /** Assemble one 1-D finite-volume runner duct per cylinder.
      *
@@ -808,7 +812,7 @@ private:
     std::array<TwoStrokeScavengeState, 32> scavengeStates_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     bool previousAfrObservationCommandEnabled_ { false };
-    std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;
+    std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> physicalExhaustNetwork_;
     /** The exhaust layout at construction. Live changes keep its topology, so
      * it stays the reference a new network is checked against, from any
      * thread. */

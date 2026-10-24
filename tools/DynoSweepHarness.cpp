@@ -31,6 +31,7 @@
 #include <iostream>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -42,6 +43,8 @@ namespace {
 // application. A feature locked to a crank speed whose firing frequency sits
 // near this rate or its half can be its alias: `--frame-hz` moves it.
 double frameSeconds = 1.0 / 240.0;
+// --exhaust-whole: a two-stroke's pipes as one network, one CFL step for all.
+std::optional<bool> partitionExhaustNetworkOverride;
 constexpr std::array<std::string_view, 37> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
@@ -418,6 +421,7 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     enginelab::EngineSimulatorOptions simulatorOptions;
     simulatorOptions.evolveExhaustJunctionAxialMomentum =
         !useWellMixedExhaustJunctions;
+    simulatorOptions.partitionExhaustNetwork = partitionExhaustNetworkOverride;
     // A convergence knob, not a setting: an expansion chamber's cones are two
     // or three cells at the production two-stroke mesh, and the shortest
     // element sets the whole network's time step, so a finer mesh costs both
@@ -664,6 +668,8 @@ int main(int argc, char** argv) {
             couplingMicroseconds = std::stod(argv[++index]);
         else if (argument == "--frame-hz" && index + 1 < argc)
             frameSeconds = 1.0 / std::clamp(std::stod(argv[++index]), 30.0, 4'000.0);
+        else if (argument == "--exhaust-whole")
+            partitionExhaustNetworkOverride = false;
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
@@ -672,7 +678,8 @@ int main(int argc, char** argv) {
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm]"
-                         " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]\n";
+                         " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
+                         " [--exhaust-whole]\n";
             return EXIT_FAILURE;
         }
     }

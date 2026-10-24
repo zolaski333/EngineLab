@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Two-stroke cost: its pipes as networks of their own
+
+- `RealtimeBudgetHarness --free-run` read every designed two-stroke "hold not stable": it cranked at the dyno's full throttle and they never caught (a binary without the idle limit did the same). It now cranks shut. Then (6-core desktop, free run, interleaved, min of three after a discarded run; control: a designed four-stroke twin, 3.05-3.07 throughout): single 2.7-3.1, twin 1.53, triple 1.30, V4 0.97 (slow motion), LS3 1.70.
+- Profile (ninja-prof tree, `/Z7`): 78 % of the twin is `ExhaustGasNetwork::advance`; on the V4 the workers spin 73 % of their time, as the main thread runs the serial coupling between per-duct dispatches, one duct per atomic claim (a chamber cone is 2-3 cells).
+- Bit-identical steps (`DynoSweepHarness` CSVs equal to HEAD's: twin, triple, RD350, LS3): one contiguous run of ducts per thread, triple 1.33 -> 1.41, V4 1.00 -> 1.06, LS3 1.70 -> 1.75 (two runs per thread gained nothing); a worker for a two-stroke twin, 1.53 -> 1.84 (a four-stroke twin lost 4 % with one, and keeps none).
+- `PartitionedExhaustNetwork`: a two-stroke's unconnected pipes are networks of their own, each with its own CFL step, one per claim. Whole vs partitioned: twin 1.82-1.84 / 2.05-2.09, triple 1.37-1.40 / 1.62-1.67, V4 1.02-1.05 / 1.13-1.14, with three workers 1.24-1.28 (V4 sweep identical with two or three). Torque against `--exhaust-whole`: within 0.15 %, but -0.66 % on the triple at 2,500 rpm. LS3 identical to HEAD; four-strokes are never partitioned.
+- `AudioRenderHarness`: 22 of 23 files byte-identical (CP2 included); the RD350 differs, level -0.02 dB, octave bands 22 Hz-22 kHz within 0.21 dB. Full `ctest` 92/92 (44 min).
+- Not measured: a two-stroke with joined pipes (one part, so as before), any machine but this one. The V4 at 1.25 still has little headroom with audio and the gas view on.
+
 ## 2026-10-24 — Two-stroke idle: a dilution misfire limit, so it four-strokes
 
 - Owner: a real two-stroke idles firing every 3-5 revolutions; the model fired every one. New instrument `PhysicsPerfHarness --idle-firing 20 --settle 8` (sparks lit, longest misfire run, Heywood diluent `1 - (O2/0.2095 + fuel)/total` at the spark). Before: two-strokes trap 0.72-0.87 diluent at idle and the twin, triple and RD350 light 100 % of sparks (the single and the V4 already skip 20-30 % on the AFR terms). Four-stroke idles: 0.21-0.35, Hayabusa and Flat-6 0.49, CP4 0.56.
