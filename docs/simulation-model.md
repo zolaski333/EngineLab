@@ -257,6 +257,11 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   the RD350 lean and stalling. There is no overrun fuel cut (a cut scavenges
   the cylinder clean, and each resume fires a full charge), and lambda learning
   is held through a closed-throttle overrun and for 2 s after it.
+- **Idle**: a shut throttle delivers a few percent of the swept volume, so the
+  trapped charge is mostly the last cycle's burned gas, and the dilution misfire
+  limit (*Ignition, flame and knock*) makes the engine fire about one
+  revolution in three, with runs of up to a dozen misfires; the designed
+  engines idle 1,240-1,340 rpm with dips to 800-1,150 rpm.
 - **Load**: a two-stroke's "manifold" is its crankcase, which pumps about
   ambient at any throttle (75-87 kPa at idle), so its load is the delivery
   ratio of its last cycle, not the manifold pressure; the ECU's load axis
@@ -349,6 +354,16 @@ piston speed adds turbulence, while dilution reduces speed and efficiency. The
 turbulence term grows with load up to a full cylinder and no further: the
 piston stirs the charge, not the intake pressure, so boost does not burn it
 faster.
+
+A spark misfires at random, with a probability built from the mixture's
+distance to its lean and rich limits, cranking speed, and the charge's
+dilution: everything that is neither fresh air nor fuel at the spark
+(`CylinderState::diluentFractionAtSpark`). Dilution adds nothing below 0.60
+and rises smoothly to the 0.92 cap by 0.70. This is what makes a two-stroke
+idle four-stroke: its idle traps 0.75-0.85 of burned gas, a misfire leaves a
+fresher charge behind, and a later cycle lights. The onset sits above the
+catalogue's most diluted four-stroke idle (CP4, 0.56), so four-stroke idles do
+not draw differently.
 
 The current progression geometry is a cylindrical effective volume:
 

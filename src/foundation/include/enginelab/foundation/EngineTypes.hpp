@@ -1396,6 +1396,14 @@ struct CylinderState final {
      */
     double residualGasFractionAtSpark { 0.0 };
     /**
+     * Heywood's burned-gas fraction when the spark was commanded, misfire or
+     * not: the share of the charge that is neither fresh air (oxygen with its
+     * nitrogen) nor fuel, so a combustion product's nitrogen counts as
+     * diluent. About 3.8 x `residualGasFractionAtSpark` for a stoichiometric
+     * residual, read directly here. Zero before the first spark.
+     */
+    double diluentFractionAtSpark { 0.0 };
+    /**
      * Equivalence ratio in the chamber at the instant of ignition -- the mixture
      * the flame model actually evaluated, which is what sets the mixture factor
      * of `combustionEfficiency`. Distinct from `airFuelRatio`, a completed-cycle

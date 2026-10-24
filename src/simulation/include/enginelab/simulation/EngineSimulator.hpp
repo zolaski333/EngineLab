@@ -777,6 +777,7 @@ private:
      *  burned yet at that point, so it is the residual left by gas exchange --
      *  the quantity the flame model has always consumed and nothing published. */
     std::array<double, 32> residualGasFractionAtSpark_ {};
+    std::array<double, 32> diluentFractionAtSpark_ {};
     /** Equivalence ratio the flame actually saw at ignition. Not the same as
      *  the cycle AFR the ECU reports: with a late injection window the charge
      *  can still be arriving when the spark fires. */

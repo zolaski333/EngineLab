@@ -9,6 +9,7 @@
 #include <enginelab/physics/CombustionCycleVariation.hpp>
 #include <enginelab/physics/DuctWallHeatTransferModel.hpp>
 #include <algorithm>
+#include <cstdlib>
 #include <bit>
 #include <array>
 #include <cmath>
@@ -3229,14 +3230,42 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     portFuelResumePrepared_[cylinderIndex] = false;
                     portFuelResumePurgeCycleSeen_[cylinderIndex] = false;
                 }
+                {
+                    // Everything that is neither fresh air nor fuel dilutes.
+                    const auto& sparkMixture = cylinderGas_[cylinderIndex].mixture();
+                    const auto sparkMoles = sparkMixture.totalMoles();
+                    diluentFractionAtSpark_[cylinderIndex] = sparkMoles > 1.0e-15
+                        ? std::clamp(1.0 - (sparkMixture.oxygenMoles / 0.2095 + sparkMixture.fuelMoles)
+                              / sparkMoles, 0.0, 1.0)
+                        : 0.0;
+                }
                 const auto stoichiometricAfr = config_.fuelProperties.stoichiometricAirFuelRatio;
                 const auto flammabilityPenalty = std::max(0.0,
                     mixtureAfr - stoichiometricAfr * 1.12) / (stoichiometricAfr * 0.35)
                     + std::max(0.0, stoichiometricAfr * 0.68 - mixtureAfr)
                         / (stoichiometricAfr * 0.28);
+                // The dilution limit: a kernel in a charge that is mostly burned
+                // gas does not grow, whatever its AFR. A two-stroke's idle
+                // traps 0.75-0.85 of it and, without this limit, fired every
+                // revolution; a real one four-strokes, the misfire leaving a
+                // fresher charge that lights a revolution or two later. The
+                // flame model's own dilution terms burn such a charge slowly
+                // but surely, so the limit is here, in the misfire draw. Its
+                // onset sits above the most diluted four-stroke idle in the
+                // catalogue (CP4 0.56; CP2 0.26), so no four-stroke idle draws
+                // differently. With the draw rising to its 0.92 cap by 0.70,
+                // the designed two-strokes fire 28-36 % of their sparks at
+                // idle, about every third revolution (journal 2026-10-24).
+                constexpr double dilutionMisfireOnset = 0.60;
+                constexpr double dilutionMisfireFull = 0.70;
+                const auto dilutionShare = std::clamp(
+                    (diluentFractionAtSpark_[cylinderIndex] - dilutionMisfireOnset)
+                        / (dilutionMisfireFull - dilutionMisfireOnset), 0.0, 1.0);
+                const auto dilutionMisfire = dilutionShare * dilutionShare * (3.0 - 2.0 * dilutionShare);
                 const auto actualMisfireProbability = std::clamp(
                     flammabilityPenalty * 0.72
-                    + std::max(0.0, 380.0 - state_.rpm) / 1'400.0,
+                    + std::max(0.0, 380.0 - state_.rpm) / 1'400.0
+                    + dilutionMisfire,
                     0.0, 0.92);
                 // A departure from the commanded AFR is a control error, not a
                 // combustion limit. The former implementation added a misfire
@@ -5533,6 +5562,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 highLoadClosedLoopFuelTrim_[index],
                 highLoadTrimBlend);
             cylinderState.residualGasFractionAtSpark = residualGasFractionAtSpark_[index];
+            cylinderState.diluentFractionAtSpark = diluentFractionAtSpark_[index];
             cylinderState.equivalenceRatioAtSpark = equivalenceRatioAtSpark_[index];
             cylinderState.endGasPeakTemperatureK = compressionIgnition
                 ? 0.0 : endGasKnockStates_[index].lastCyclePeakUnburnedTemperatureK;

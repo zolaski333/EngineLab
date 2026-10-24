@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -332,6 +333,84 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
 }
 
 /**
+ * A free idle's firing, spark by spark (`--idle-firing seconds`).
+ *
+ * Starter until the engine catches, then shut throttle and no load, as
+ * `--trace 1 --idle` and EngineLab.IdleStabilityRegression do; after
+ * `--settle` seconds it counts, over the given seconds, the sparks commanded
+ * and the misfires among them, and prints one line per engine: speed (mean,
+ * standard deviation, lowest), the share of sparks that fired, the longest run
+ * of consecutive misfires, the mean Heywood burned-gas fraction at the spark
+ * (`diluentFractionAtSpark`, fresh air and fuel excluded) and the first 80
+ * sparks as a pattern, `F` fired and `.` misfired. Engine-wide counters, so a
+ * multi-cylinder pattern interleaves its cylinders.
+ */
+void traceIdleFiring(const enginelab::EngineConfig& baseConfig, double seconds, double settleSeconds) {
+    auto config = baseConfig;
+    enginelab::normaliseEngineConfig(config);
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    auto simulator = std::make_unique<enginelab::EngineSimulator>(config, ecu, physics, events, exhaust);
+    constexpr double dt = 1.0 / 240.0;
+    const auto drive = [&] {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = simulator->state().rpm < config.idleRpm * 0.85
+            && simulator->state().simulationTimeSeconds < 4.0;
+        controls.throttle = 0.0;
+        controls.load = 0.0;
+        return simulator->step(dt, controls);
+    };
+    for (auto t = 0.0; t < settleSeconds; t += dt) drive();
+    auto sparks = simulator->state().commandedSparkEventCount;
+    auto misfires = simulator->state().misfireEventCount;
+    const auto firstSparks = sparks;
+    const auto firstMisfires = misfires;
+    std::string pattern;
+    double rpmSum = 0.0, rpmSquares = 0.0, rpmLowest = 1.0e9, diluentSum = 0.0;
+    std::size_t samples = 0, diluentSamples = 0, misfireRun = 0, longestMisfireRun = 0;
+    for (auto t = 0.0; t < seconds; t += dt) {
+        const auto frame = drive();
+        const auto rpm = frame.state.rpm;
+        rpmSum += rpm;
+        rpmSquares += rpm * rpm;
+        rpmLowest = std::min(rpmLowest, rpm);
+        ++samples;
+        const auto newSparks = frame.state.commandedSparkEventCount - sparks;
+        auto newMisfires = frame.state.misfireEventCount - misfires;
+        sparks = frame.state.commandedSparkEventCount;
+        misfires = frame.state.misfireEventCount;
+        if (newSparks == 0) continue;
+        // The state holds a fixed number of cylinder slots: read the engine's.
+        for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+            diluentSum += frame.state.cylinderStates[index].diluentFractionAtSpark;
+            ++diluentSamples;
+        }
+        for (std::uint64_t spark = 0; spark < newSparks; ++spark) {
+            const auto misfired = newMisfires > 0;
+            if (misfired) --newMisfires;
+            misfireRun = misfired ? misfireRun + 1 : 0;
+            longestMisfireRun = std::max(longestMisfireRun, misfireRun);
+            if (pattern.size() < 80) pattern += misfired ? '.' : 'F';
+        }
+    }
+    const auto sparkCount = static_cast<double>(sparks - firstSparks);
+    const auto misfireCount = static_cast<double>(misfires - firstMisfires);
+    const auto samplesCount = static_cast<double>(std::max<std::size_t>(1, samples));
+    const auto mean = rpmSum / samplesCount;
+    const auto deviation = std::sqrt(std::max(0.0, rpmSquares / samplesCount - mean * mean));
+    std::cout << std::quoted(config.name) << ',' << (config.cycle == enginelab::EngineCycle::twoStroke ? 2 : 4)
+              << ',' << config.idleRpm << ',' << mean << ',' << deviation << ',' << rpmLowest
+              << ',' << sparkCount << ',' << (sparkCount > 0.0 ? 1.0 - misfireCount / sparkCount : 0.0)
+              << ',' << longestMisfireRun
+              << ',' << diluentSum / static_cast<double>(std::max<std::size_t>(1, diluentSamples))
+              << ',' << pattern << '\n';
+    std::cout.flush();
+}
+
+/**
  * Free-rev a hot engine at a FIXED throttle with no load (`--freerev 0..1`).
  *
  * This is the condition a user actually operates in the application and which
@@ -574,6 +653,7 @@ int main(int argc, char** argv) {
     auto freeRevSeconds = 12.0;
     auto freeRevReleaseSeconds = -1.0;
     auto freeRevSettleSeconds = 6.0;
+    auto idleFiringSeconds = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -593,17 +673,31 @@ int main(int argc, char** argv) {
             freeRevSeconds = std::max(1.0, std::stod(argv[++index]));
         else if (argument == "--release" && index + 1 < argc)
             freeRevReleaseSeconds = std::max(0.0, std::stod(argv[++index]));
+        else if (argument == "--idle-firing" && index + 1 < argc)
+            idleFiringSeconds = std::max(1.0, std::stod(argv[++index]));
         else if (argument == "--settle" && index + 1 < argc)
             freeRevSettleSeconds = std::max(1.0, std::stod(argv[++index]));
         else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--runs count] [--trace rpm [--exhaust-cell-mm mm]]"
                          " [--throttle 0..1] [--idle] [--overrun seconds]"
-                         " [--freerev 0..1 [--seconds S] [--release S]]\n";
+                         " [--freerev 0..1 [--seconds S] [--release S]]"
+                         " [--idle-firing S [--settle S]]\n";
             return EXIT_FAILURE;
         }
     }
 
+    // --idle-firing walks the whole catalogue (or the filtered part of it).
+    if (idleFiringSeconds > 0.0) {
+        const auto all = enginelab::loadEngineCatalog(catalogRoot);
+        std::cout << std::fixed << std::setprecision(3)
+                  << "engine,strokes,idle_target,rpm,rpm_sd,rpm_min,sparks,fired,longest_misfire_run,"
+                     "diluent_at_spark,pattern\n";
+        for (const auto& entry : all.entries)
+            if (filter.empty() || containsCaseInsensitive(entry.config.name, filter))
+                traceIdleFiring(entry.config, idleFiringSeconds, freeRevSettleSeconds);
+        return EXIT_SUCCESS;
+    }
     std::vector<enginelab::EngineConfig> engines {
         enginelab::makeDefaultInlineTwo(), enginelab::makeDefaultV8()
     };

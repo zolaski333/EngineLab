@@ -66,6 +66,10 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **A two-stroke idles like one**: its idle charge is mostly burned gas left
+  from the last cycle, and it now misfires on it, lighting about one
+  revolution in three as a real one does, instead of firing every revolution
+  like a four-stroke. Four-stroke idles and the default sound are unchanged.
 - **A two-stroke's intake is drawn as one is built**: per cylinder the
   transfer duct inside the barrel, then out of it a reed block, a short
   manifold and the carburettor a few centimetres from the reeds, and a rubber

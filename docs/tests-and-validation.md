@@ -194,7 +194,7 @@ file's header says which question it answers and lists its options.
 | `IntakeDuctBench` | bit-exact checksum of the duct solver: unchanged means the physics is untouched |
 | `LoadedAccelerationHarness` | a wide-open-throttle pull held in one gear, without shifts, to attribute a torque collapse |
 | `OfflineAudioExporter` | high-quality WAV render with stems ([offline rendering](offline-hq-rendering.md)) |
-| `PhysicsPerfHarness` | gas-exchange trace at crank-degree resolution; `--trace 1 --idle` is a real idle |
+| `PhysicsPerfHarness` | gas-exchange trace at crank-degree resolution; `--trace 1 --idle` is a real idle; `--idle-firing S [--settle S]` idles every engine (or `--filter`, under `--catalog-root`) and prints the share of sparks that lit, the longest misfire run, the diluent at the spark and the firing pattern |
 | `RealtimeBudgetHarness` | the real-time factor on the runtime thread (`--free-run` for capacity); back-to-back comparisons only. `--designer-probe` runs the engine designer's own check (`RealtimeCapacityProbe`) on each engine; `--power-throttled` runs it under EcoQoS, as Windows may treat a background app, instead of opting out (`ThreadScheduling.hpp`); `--with-audio --audio-rate HZ` adds the audio consumer at a device rate, synthesised at 48 kHz and upsampled as in the application unless `--native-rate-audio` |
 | `SceneExport` | the 3-D scene of the catalogue (or `--catalog-root` another, e.g. designs) as JSON, with the route check issues per engine; `--two-stroke-intake crankcase_reed\|cylinder_port` draws every two-stroke with that intake |
 | `ShiftTransientHarness` | the exhaust mass-flow step (the "crack") of a clutchless full-throttle upshift, and with `--audio-output` its sound |

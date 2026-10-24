@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -171,6 +172,8 @@ void thePowerValveLowersThePortAtLowSpeed() {
         controls.starterEngaged = frame * frameSeconds < 1.5;
         last = rig->simulator->step(frameSeconds, controls).state;
     }
+    std::cout << "power-valve twin after 6 s of idle: " << last.rpm << " rpm, valve "
+              << last.powerValveOpening << '\n';
     require(last.rpm > 600.0 && last.powerValveOpening < 1.0e-6, "idling, the power valve is shut");
 }
 
@@ -409,20 +412,56 @@ void loadIsTheDeliveredCharge() {
         "the idle load is the delivery ratio, far below the crankcase's pressure");
 }
 
-/** Left at idle, it keeps running. */
-void catalogueTwinIdles() {
-    auto rig = std::make_unique<Rig>(catalogueTwoStroke());
-    auto lowest = 1.0e9;
+struct IdleFiring final {
+    double lowestRpm { 1.0e9 };
+    double firedShare { 0.0 };
+};
+
+/** Idles `config` for 12 s and counts, after 4 s, the sparks that lit. */
+[[nodiscard]] IdleFiring idleFiring(EngineConfig config) {
+    auto rig = std::make_unique<Rig>(std::move(config));
+    IdleFiring idle;
+    std::uint64_t sparksAtStart = 0;
+    std::uint64_t misfiresAtStart = 0;
+    std::uint64_t sparks = 0;
+    std::uint64_t misfires = 0;
     for (auto frame = 0; frame < 12 * 240; ++frame) {
         const auto t = frame * frameSeconds;
         EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.5;
-        const auto rpm = rig->simulator->step(frameSeconds, controls).state.rpm;
-        if (t > 4.0) lowest = std::min(lowest, rpm);
+        const auto& state = rig->simulator->step(frameSeconds, controls).state;
+        if (frame == 4 * 240) {
+            sparksAtStart = state.commandedSparkEventCount;
+            misfiresAtStart = state.misfireEventCount;
+        }
+        if (t > 4.0) idle.lowestRpm = std::min(idle.lowestRpm, state.rpm);
+        sparks = state.commandedSparkEventCount - sparksAtStart;
+        misfires = state.misfireEventCount - misfiresAtStart;
     }
-    std::cout << "RD350LC-like idle: lowest " << lowest << " rpm after 4 s\n";
-    require(lowest > 600.0, "the twin idles without stalling");
+    idle.firedShare = sparks > 0 ? 1.0 - static_cast<double>(misfires) / static_cast<double>(sparks) : 0.0;
+    return idle;
+}
+
+/** Left at idle, it keeps running, and it four-strokes: a real two-stroke's
+ *  idle charge is so diluted by what stayed behind that it fires every few
+ *  revolutions, while a four-stroke's lights every spark (journal 2026-10-24). */
+void catalogueTwinIdles() {
+    const auto twoStroke = idleFiring(catalogueTwoStroke());
+    std::cout << "RD350LC-like idle: lowest " << twoStroke.lowestRpm << " rpm after 4 s, "
+              << twoStroke.firedShare << " of the sparks fired\n";
+    require(twoStroke.lowestRpm > 600.0, "the twin idles without stalling");
+    require(twoStroke.firedShare > 0.15 && twoStroke.firedShare < 0.75,
+        "the two-stroke's idle skips: its diluted charge does not light every spark");
+
+    static const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
+    const auto selected = selectSingleEngineCatalogEntry(catalogue.entries, "Yamaha CP2");
+    require(static_cast<bool>(selected), "the catalogue has the CP2");
+    auto fourStrokeConfig = selected.entry->config;
+    normaliseEngineConfig(fourStrokeConfig);
+    const auto fourStroke = idleFiring(std::move(fourStrokeConfig));
+    std::cout << "CP2 idle: " << fourStroke.firedShare << " of the sparks fired\n";
+    require(fourStroke.firedShare > 0.999, "the four-stroke's idle lights every spark");
 }
 
 /** Instrument: `--trace <rpm> [--single] [--exhaust-cell <m>] [--cylinder-port <deg BTDC>]` holds full

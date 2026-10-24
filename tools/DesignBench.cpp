@@ -17,13 +17,15 @@
  *
  * Keys: key, name, cycle (2t/4t), fuel (gasoline/diesel), use, layout,
  * cylinders, bank_count, bank_angle, bore, stroke, displacement, induction
- * (natural/turbo/super), boost, turbo_count. Anything else is a DesignValue
+ * (natural/turbo/super), boost, turbo_count, intake (crankcase_reed/cylinder_port),
+ * intake_reed (yes/no). Anything else is a DesignValue
  * override by key, so `expansion_chamber_tuned_length_mm=900` or
  * `exhaust_port_open_deg=88` work exactly as the designer's own fields do, and
  * a typo surfaces as the designer's own "unknown key" error.
  */
 
 #include <enginelab/catalog/EngineDesign.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 
 #include <filesystem>
@@ -116,6 +118,16 @@ struct SpecLine final {
             else if (value == "turbo") spec.induction = enginelab::Induction::turbocharged;
             else if (value == "super") spec.induction = enginelab::Induction::supercharged;
             else result.error = "the induction is natural, turbo or super";
+            continue;
+        }
+        if (name == "intake") {
+            if (const auto intake = enginelab::parseTwoStrokeIntake(value)) spec.twoStrokeIntake = *intake;
+            else result.error = "the intake is crankcase_reed or cylinder_port";
+            continue;
+        }
+        if (name == "intake_reed") {
+            if (value == "yes" || value == "no") spec.twoStrokeIntakeReed = value == "yes";
+            else result.error = "intake_reed is yes or no";
             continue;
         }
         double number = 0.0;

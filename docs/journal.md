@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Two-stroke idle: a dilution misfire limit, so it four-strokes
+
+- Owner: a real two-stroke idles firing every 3-5 revolutions; the model fired every one. New instrument `PhysicsPerfHarness --idle-firing 20 --settle 8` (sparks lit, longest misfire run, Heywood diluent `1 - (O2/0.2095 + fuel)/total` at the spark). Before: two-strokes trap 0.72-0.87 diluent at idle and the twin, triple and RD350 light 100 % of sparks (the single and the V4 already skip 20-30 % on the AFR terms). Four-stroke idles: 0.21-0.35, Hayabusa and Flat-6 0.49, CP4 0.56.
+- Nothing stopped them: the flame model only slows a diluted charge, and the misfire draw had AFR and cranking terms but no dilution term. Added: a smoothstep from 0.60 to 0.70 diluent, on top of the 0.92 cap.
+- One factor, same binary, six designed two-strokes plus the catalogue. Onset/full 0.40/0.70: two-strokes 22-29 %, but CP4 0.78, Hayabusa and Flat-6 0.89 misfire. 0.60/0.85: 41-52 %. 0.60/0.75: 32-43 %. 0.60/0.70 (kept): 28-37 % (about one firing in three revolutions), idle 1,240-1,336 rpm, sd 37-92, lowest dip 806-1,152. 0.58/0.68: 26-35 %. Above a 0.58 onset every four-stroke row is identical to the digit.
+- The onset is set against the model's most diluted four-stroke idle (CP4), not a literature limit. Homogeneous-charge limits are usually given lower (about 0.3-0.4, from memory of the textbooks; no page was checked), so the model's four-stroke idles are probably over-diluted; that was not looked into.
+- `EngineLab.TwoStroke`: the RD350 idle lights 0.34 of its sparks and the CP2 every one; without the limit it lights 0.98 and the test fails. `AudioRenderHarness`: every file byte-identical, CP2 and the RD350 point included.
+- Not measured: the idle sound against a recording, or a real engine's firing pattern (the owner's 3-5 revolutions is the only reference).
+
 ## 2026-10-24 — Two-stroke: cylinder-port intake, drawing, power valve, jets
 
 - Intake as a choice: crankcase reed (default, solver path unchanged) or a cylinder port in series with the carburettor (zero while the skirt covers it), with or without a reed. `EngineLab.TwoStroke`, catalogue twin: delivery ratio at 8,000 rpm 0.88 reed / 0.50 a 110 deg port; 3,000 rpm, 190 deg port 0.88 with a reed / 0.69 without (blow-back). A port engine does not catch on a shut throttle at cranking (the window passes about half the idle air): the test cranks at 0.12. Idle sizing for it is not done (the idle pass is deferred).
