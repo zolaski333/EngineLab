@@ -210,6 +210,19 @@ file formats, always with an in-memory migration).
   1.25. Torque moves by less than 1 %. Four-strokes are unchanged, to the bit.
   `EngineLabDynoSweepHarness` and `EngineLabRealtimeBudgetHarness
   --exhaust-whole` keep a two-stroke's exhaust as one network for comparison.
+- **Backfires are switched on in the Audio workshop only**, for the engine
+  running, and every engine loads with them off: a catalogue engine, a saved
+  one, a script or a designed engine never turns on the overrun afterfire or
+  the wet limiter, and switching them is not an edit to save. The *Audio
+  Physics Lab 689 Twin* no longer pops or fires a wet limiter until you switch
+  them on.
+- The *AFTERFIRE* switch now fires the charge late (30 degrees after top dead
+  centre by default) instead of chopping retained fuel at 2 Hz, and the
+  exhaust keeps the unburnt charge as pockets that burn in the pipe. The
+  physics group shows the spark angle and the pocket mixing time instead of
+  the overrun fuel and the pop rate, duty and jitter. The overrun now burns
+  far more of its fuel in the pipe, but it does not yet pop the way a real
+  exhaust does.
 
 ### Removed
 

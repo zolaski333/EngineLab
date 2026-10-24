@@ -49,6 +49,10 @@ without the owner's explicit agreement.
    (*Joined* on the ports or a junction), and the designer window. Open: the
    designer lists valve and injector rows a two-stroke does not use.
 
+**Backfires** (owner's go-ahead, 2026-10-24): switched on in the Audio workshop
+only, never by an engine, and off on every load (`disableBackfires`). Open: no
+render reaches a real pop yet (`docs/physical-afterfire.md`, journal).
+
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
 are the ~3.8 kHz ceiling (`docs/physical-afterfire.md`) and the plane-mode
@@ -229,10 +233,14 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   trajectory-resolved forward delivery; individual throttles as a small 0-D cell
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
   belongs inside the 1-D runner).
+- **Backfire** (journal 2026-10-24): "1-D cannot carry a front" (it rises in
+  0.2-0.8 ms); for pops on the Lab Twin, one at a time, a later spark alone,
+  faster chemistry, burn COV, a hot wall, skipped sparks, flame contact between cells or between
+  pockets, a 0.10 lean limit, a 50 mm mesh (the last two burn 70-97 % of the
+  exhaust fuel, continuously). A cell averages the unburnt charge below the lean
+  limit: the pockets fix the burn (11.5 dB peaks), not yet the pop (16-22).
 - **Combustion and fuel**: closing cyclic variability through dilution (it
-  exists, 1.7-12.9 %); afterfire by faster chemistry (shape unchanged) and "1-D
-  cannot carry a backfire front" (it rises in 0.2-0.8 ms; the lock is the
-  ~3.8 kHz bandwidth); continuous fuel below ~45 % of demand (below the lean
+  exists, 1.7-12.9 %); continuous fuel below ~45 % of demand (below the lean
   limit, packets burn); crediting port vapour to the port-injection pulse (a
   stationary reservoir, delivered/demanded 0.47-0.77: 8 DFCO-recovery variants
   fail, 5 more trade the lean first cycle for rich or misfires); seeding the

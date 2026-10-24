@@ -72,8 +72,9 @@ factor is shown in the diagnostics.
 - **Emergent cycle-to-cycle variability**: the coupling between gas dynamics,
   fuel film, wave action and the ECU makes consecutive cycles genuinely
   different, with no authored random dispersion.
-- **Exhaust afterfire** fed by unburned fuel on overrun and ignited by the pipe
-  wall — which has to heat up first, as on a real engine.
+- **Exhaust afterfire**, switched on in the Audio workshop: a late spark on
+  overrun sends unburnt charge down the pipe, where it burns as pockets once
+  hot enough. It does not yet pop like a real exhaust.
 - **Petrol and diesel, four-stroke and two-stroke**: port or direct injection,
   a common-rail diesel whose burn follows its rail pressure, and piston-ported
   two-strokes pumped by their crankcase.

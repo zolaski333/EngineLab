@@ -6,7 +6,8 @@ The **Audio** button in the top bar opens a separate workshop without stopping t
 This window brings together:
 
 - the real-time mix faders;
-- the physical afterfire switch, applied immediately (see
+- the physical afterfire switch, applied immediately and the only way to turn
+  backfires on; every engine loads with them off (see
   [physical-afterfire.md](physical-afterfire.md));
 - `MUTE` and `SOLO` for the four source families;
 - a choice of 48/96/192 kHz and 24-bit PCM / 32-bit float;

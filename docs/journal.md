@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Backfires: a late spark and unburnt pockets, still short of a pop
+
+- Owner: backfires only from the Audio workshop, off by default. `disableBackfires` clears them when an engine is switched, reloaded, saved, read back or compared; engine 16 and `physical-audio-lab.els` no longer switch them on. The workshop installs `late_spark_overrun`; the 2 Hz slugs and the anti-lag are no longer offered.
+- Lab Twin, `AfterfireHarness --liftoff-rpm 6000 --audio`, overrun 38.4-40.9 s, 1 ms peak over the +/-1 s median (real pops 16-22 dB). Late spark alone, -20/-30/-40 deg: 7/25/35 % of the exhaust fuel burns, as a continuous afterburn; peak 8.5 dB, 0 pops. The model misfires 0 of 240 late sparks; COV 0.20 and a 622 degC wall (60 s warm-up) change nothing.
+- Why: a ~0.25 m cell averages the cylinder's unburnt phi ~1.2 with the air the tailpipe draws in to 0.3-0.45, under the 0.45 lean limit. A 0.10 limit burns 67-71 %, a 50 mm mesh 92-97 %; both are continuous, 0 pops.
+- Unburnt pockets (own composition and temperature, 10 ms mixing): 58-78 % burns, source peaks 55-73 kW, peak 11.3-11.5 dB, twice as often over 6 dB, 0 pops. The loaded part is bit-identical; the step costs 35 % mean against 34 %.
+- One factor each, no gain: skipped sparks 0.1-0.5, flame contact between cells at 10/30 m/s, pocket-to-pocket ignition, 40 ms mixing (10.3-11.8 dB). A 0.3 ms reaction: +1 dB (12.3). Without the reaction voices: 11.6 dB, so they add nothing to the peaks, and the pockets' gain comes through the FV gas.
+- Kept: late spark -30 deg and 10 ms pockets as the workshop profile. Removed: the skip and flame-contact knobs. Not measured: any engine but the Lab Twin (the CP2 included), the render against a recording by ear.
+
 ## 2026-10-24 — A backfire target from three real recordings
 
 - Owner's go-ahead for the backfire work. Three CC0 Freesound recordings (`references/real-engine-audio/backfire-manifest.json`): a motorbike drive-by (Yoyodaman234, 12 pops), a large motorbike (mudflea2, 3), a car's anti-lag (modusmogulus, 34). New `scripts/pop_metrics.py` measures any file, real or rendered, the same way.
