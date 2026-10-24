@@ -27,12 +27,11 @@ namespace {
 }
 [[nodiscard]] ExhaustAfterfireStrategy decodeAfterfireStrategy(
     std::string_view value) {
-    if (value == "clean_dfco")
+    // The anti-lag and chopped-fuel strategies were removed: files that still
+    // name them read as a clean fuel cut.
+    if (value == "clean_dfco" || value == "continuous_anti_lag"
+        || value == "discrete_afterfire")
         return ExhaustAfterfireStrategy::cleanDfco;
-    if (value == "continuous_anti_lag")
-        return ExhaustAfterfireStrategy::continuousAntiLag;
-    if (value == "discrete_afterfire")
-        return ExhaustAfterfireStrategy::discreteAfterfire;
     if (value == "late_spark_overrun")
         return ExhaustAfterfireStrategy::lateSparkOverrun;
     throw std::invalid_argument(
@@ -1040,12 +1039,8 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(afterfire, "ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK);
         assignIfPresent(afterfire, "reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds);
         assignIfPresent(afterfire, "reaction_efficiency", config.exhaustAfterfire.reactionEfficiency);
-        assignIfPresent(afterfire, "overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction);
         assignIfPresent(afterfire, "overrun_minimum_rpm", config.exhaustAfterfire.overrunMinimumRpm);
         assignIfPresent(afterfire, "overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle);
-        assignIfPresent(afterfire, "overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz);
-        assignIfPresent(afterfire, "overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle);
-        assignIfPresent(afterfire, "overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation);
         assignIfPresent(afterfire, "induction_time_s", config.exhaustAfterfire.inductionTimeSeconds);
         assignIfPresent(afterfire, "induction_reference_pressure_kpa", config.exhaustAfterfire.inductionReferencePressureKpa);
         assignIfPresent(afterfire, "induction_activation_temperature_k", config.exhaustAfterfire.inductionActivationTemperatureK);

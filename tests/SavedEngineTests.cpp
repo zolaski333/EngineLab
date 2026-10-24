@@ -193,6 +193,21 @@ void checkCalibrationSaved(const EngineConfig& source) {
                         == ExhaustAfterfireStrategy::cleanDfco,
                 "a saved engine reads back with backfires off");
     }
+    {
+        // An edit made from a copy taken before the workshop switched them
+        // on keeps the running engine's backfires and its own change.
+        auto resized = edited(config);
+        keepBackfires(backfiring, resized);
+        require(resized.exhaustAfterfire.enabled && resized.ignition.limiterKeepsFuel
+                    && resized.exhaustAfterfire.strategy
+                        == ExhaustAfterfireStrategy::lateSparkOverrun
+                    && baseline.configDiffers(resized),
+                "a resized engine keeps the backfires it was running");
+        auto quiet = backfiring;
+        keepBackfires(config, quiet);
+        require(!quiet.exhaustAfterfire.enabled && !quiet.ignition.limiterKeepsFuel,
+                "an edit cannot switch backfires on");
+    }
 
     const auto file = savedEngineFile(folder.path, "Tuned " + config.name);
     require(!saveEngine(file, config, store->snapshot().get()), config.name + ": the tuned engine saves");

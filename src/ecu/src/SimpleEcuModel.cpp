@@ -43,50 +43,6 @@ double interpolateTimingCurve(const std::vector<IgnitionMapSample>& curve, doubl
     return curve.back().advanceDegrees;
 }
 
-/** Boundary of a fuel-slug interval relative to the lift-off edge.
- *
- * A golden-angle phase gives a deterministic low-discrepancy sequence instead
- * of a PRNG or a short repeating table. The amplitude is derived so adjacent
- * boundaries differ by no more than `variation * nominalPeriod`; every actual
- * interval is therefore in [(1-v)T, (1+v)T] and remains strictly positive for
- * the validated v <= 0.45. */
-[[nodiscard]] double afterfirePulseBoundarySeconds(
-    std::int64_t pulseIndex, double nominalPeriod,
-    double variation) noexcept {
-    if (pulseIndex <= 0) return 0.0;
-    constexpr double goldenAngleRadians =
-        2.3999632297286533222; // pi * (3 - sqrt(5))
-    const auto boundedVariation = std::clamp(variation, 0.0, 0.45);
-    if (!(boundedVariation > 0.0))
-        return static_cast<double>(pulseIndex) * nominalPeriod;
-    const auto boundaryAmplitude = boundedVariation
-        / (2.0 * std::abs(std::sin(goldenAngleRadians * 0.5)));
-    const auto index = static_cast<double>(pulseIndex);
-    return index * nominalPeriod
-        + boundaryAmplitude * nominalPeriod
-            * std::sin(index * goldenAngleRadians);
-}
-
-[[nodiscard]] bool afterfirePulseOpen(
-    double elapsed, double pulseHz, double duty,
-    double timingVariation) noexcept {
-    const auto nominalPeriod = 1.0 / pulseHz;
-    auto pulseIndex = std::max<std::int64_t>(0,
-        static_cast<std::int64_t>(std::floor(elapsed / nominalPeriod)));
-    while (pulseIndex > 0
-        && elapsed < afterfirePulseBoundarySeconds(
-            pulseIndex, nominalPeriod, timingVariation))
-        --pulseIndex;
-    while (elapsed >= afterfirePulseBoundarySeconds(
-        pulseIndex + 1, nominalPeriod, timingVariation))
-        ++pulseIndex;
-    const auto start = afterfirePulseBoundarySeconds(
-        pulseIndex, nominalPeriod, timingVariation);
-    const auto end = afterfirePulseBoundarySeconds(
-        pulseIndex + 1, nominalPeriod, timingVariation);
-    const auto actualPeriod = std::max(1.0e-9, end - start);
-    return elapsed - start < actualPeriod * std::clamp(duty, 0.0, 1.0);
-}
 }
 
 SimpleEcuModel::SimpleEcuModel()
@@ -533,19 +489,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // lasts longest. Gate on it rather than adding a second timer -- the
     // comment on the start-mode retard above makes the same point: this belongs
     // on the ECU's run/start state, not on a speed threshold.
-    // A pops-and-bangs map keeps the full charge and fires it late; it meters
-    // no reduced fraction, so `overrunFuelFraction` does not author it.
+    // A pops-and-bangs map keeps the full charge and fires it late.
     const auto lateSparkOverrun = config.exhaustAfterfire.strategy
         == ExhaustAfterfireStrategy::lateSparkOverrun;
     auto overrunAfterfireArmed = overrunAfterfireArmed_.load(
         std::memory_order_relaxed);
     if (!controls.ignitionEnabled || controls.starterEngaged) {
         overrunAfterfireArmed = false;
-    } else if (((afterfireRetainsFuel(config.exhaustAfterfire.strategy)
-                    || (config.exhaustAfterfire.enabled
-                        && config.exhaustAfterfire.overrunFuelFraction > 0.0))
-                && (lateSparkOverrun
-                    || config.exhaustAfterfire.overrunFuelFraction > 0.0))
+    } else if (lateSparkOverrun
             && effectiveThrottle > 0.20
             && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm) {
         // The post-start air floor can remain above its normal DFCO-inhibit
@@ -626,58 +577,17 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         : std::max(0.0, lambdaLearningHold - idleDt);
     lambdaLearningHoldSeconds_.store(lambdaLearningHold,
                                      std::memory_order_relaxed);
-    // This is an ECU calibration, not a pop scheduler. It only retains a small
-    // authored fraction of the normal fuel request while the existing DFCO
-    // state proves that the engine is in closed-throttle overrun. Spark is cut,
-    // but the downstream chemistry must still find oxygen and sufficient gas
-    // temperature before any heat or sound can be produced.
-    // Chopping the retained fuel is what separates the two real strategies.
-    // Continuous retained fuel with the spark cut is anti-lag: the exhaust
-    // burns steadily, because a continuously fuelled and continuously ignited
-    // flow is supposed to. Pops come from discrete SLUGS, so a pop-and-bang
-    // calibration gates delivery on a duty cycle. Zero keeps every cycle
-    // fuelled, which is the historical behaviour and every shipped engine.
-    //
-    const auto retainedFuelStrategy = afterfireRetainsFuel(
-        config.exhaustAfterfire.strategy)
-        || (config.exhaustAfterfire.enabled
-            && config.exhaustAfterfire.overrunFuelFraction > 0.0);
-    const auto overrunFuelAuthored = lateSparkOverrun
-        || config.exhaustAfterfire.overrunFuelFraction > 0.0;
-    const auto overrunBaseActive =
+    // An ECU calibration, not a pop scheduler: while the DFCO state proves a
+    // closed-throttle overrun, the map keeps fuelling and fires late, and the
+    // downstream chemistry must still find oxygen and a hot enough gas before
+    // any heat or sound comes of it.
+    const auto overrunAfterfireActive =
         config.fuel == FuelType::gasoline
-        && retainedFuelStrategy
-        && overrunFuelAuthored
+        && lateSparkOverrun
         && decelerationFuelCut && !limiterActive
         && controls.ignitionEnabled && !controls.starterEngaged
         && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
         && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle;
-    const auto wasInOverrunWindow = afterfireOverrunWindow_.exchange(
-        overrunBaseActive, std::memory_order_relaxed);
-    if (overrunBaseActive && !wasInOverrunWindow)
-        afterfirePulseEpochSeconds_.store(
-            state.simulationTimeSeconds, std::memory_order_relaxed);
-    // A discrete map starts a new deterministic slug schedule at the actual
-    // lift-off edge. A calibrated zero timing variation remains an exact square
-    // wave for compatibility; a non-zero value uses bounded low-discrepancy
-    // intervals, so the chemistry is not driven by an audible metronome.
-    const auto discreteStrategy = config.exhaustAfterfire.strategy
-            == ExhaustAfterfireStrategy::discreteAfterfire
-        || (config.exhaustAfterfire.enabled
-            && config.exhaustAfterfire.strategy
-                == ExhaustAfterfireStrategy::cleanDfco
-            && config.exhaustAfterfire.overrunPulseHz > 0.0);
-    const auto overrunPulseOpen = !discreteStrategy
-        || !(config.exhaustAfterfire.overrunPulseHz > 0.0)
-        || [&] {
-            const auto elapsed = std::max(0.0, state.simulationTimeSeconds
-                - afterfirePulseEpochSeconds_.load(std::memory_order_relaxed));
-            return afterfirePulseOpen(
-                elapsed, config.exhaustAfterfire.overrunPulseHz,
-                config.exhaustAfterfire.overrunPulseDutyCycle,
-                config.exhaustAfterfire.overrunPulseTimingVariation);
-        }();
-    const auto overrunAfterfireActive = overrunBaseActive && overrunPulseOpen;
     // Publish WHY, not just whether. Every clause above is an independent
     // precondition and they are indistinguishable from the outside: an
     // afterfire that never fires produces exactly the same silence whether it
@@ -685,9 +595,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // its after-start flare. Mirror the conjunction term by term rather than
     // deriving a reason afterwards, so the two can never disagree.
     const auto overrunAfterfireBlockers = static_cast<std::uint32_t>(
-        (config.fuel == FuelType::gasoline
-             && retainedFuelStrategy
-             && overrunFuelAuthored
+        (config.fuel == FuelType::gasoline && lateSparkOverrun
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notAuthored))
         | (controls.ignitionEnabled
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::ignitionOff))
@@ -704,32 +612,17 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         | (limiterActive
              ? static_cast<std::uint32_t>(AfterfireBlocker::revLimiterActive)
              : 0U)
-        | (overrunPulseOpen
-             ? 0U
-             : static_cast<std::uint32_t>(AfterfireBlocker::pulseChopClosed))
         // Not part of the conjunction: arming gates the DFCO inhibit rather
         // than the afterfire directly, so it is reported as the upstream
         // explanation for a `fuelCutInactive` that would otherwise look
         // inexplicable on a warm engine at a shut throttle.
-        | (overrunAfterfireArmed
-               || !retainedFuelStrategy
-               || !overrunFuelAuthored
+        | (overrunAfterfireArmed || !lateSparkOverrun
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notArmed)));
-    const auto fuelCorrection = overrunAfterfireActive && lateSparkOverrun
+    const auto fuelCorrection = overrunAfterfireActive
         // The late-spark map keeps the normal charge: what it changes is the
         // spark, not the fuel. The resume ramp is zero across the fuel cut
         // this overrun replaces, and the tip-in reserve is excluded as above.
         ? warmupCorrection * crankingCorrection
-        : overrunAfterfireActive
-        // This is a bounded fraction of the normal charge request. Do not let
-        // the preceding tip-in reserve or cold-start correction multiply it:
-        // both can still be decaying at lift-off and would turn a conservative
-        // 12% strategy into an uncontrolled rich pulse.
-        ? std::min(1.0, config.exhaustAfterfire.overrunFuelFraction
-            / (discreteStrategy
-                ? std::clamp(config.exhaustAfterfire.overrunPulseDutyCycle,
-                    0.02, 1.0)
-                : 1.0))
         : warmupCorrection * crankingCorrection
             // Cranking is the one phase in which the dry runner/port film has
             // no preceding cycle to estimate, so the reserve is kept only while
@@ -745,9 +638,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             * decelerationFuelResume;
     const auto commandedFuelEnabled = overrunAfterfireActive
         || (fuelEnabled && !decelerationFuelCut);
-    const auto commandedSparkEnabled =
-        (!overrunAfterfireActive || lateSparkOverrun)
-        && sparkEnabled && !alternatingCut;
+    const auto commandedSparkEnabled = sparkEnabled && !alternatingCut;
     const auto wetSparkCutActive =
         config.fuel == FuelType::gasoline
         && config.ignition.limiterKeepsFuel
@@ -788,7 +679,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // top dead centre is still burning when the exhaust valve opens, and that
     // late, hot, partly burnt charge is what a pops-and-bangs map sends down
     // the pipe. The spark schedule carries up to 260 deg of travel.
-    if (overrunAfterfireActive && lateSparkOverrun)
+    if (overrunAfterfireActive)
         command.ignitionAdvanceDegrees =
             config.exhaustAfterfire.overrunSparkAdvanceDegrees;
     if (config.forcedInduction.enabled

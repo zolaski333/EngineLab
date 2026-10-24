@@ -119,9 +119,6 @@ void applyAudioPhysicsSettings(
         settings.cycleVariationCoefficientOfVariation;
     engine.combustionCalibration.cycleVariationCorrelation =
         settings.cycleVariationCorrelation;
-    // The 2 Hz chopped slugs and the continuous anti-lag are no longer offered
-    // (docs/journal.md 2026-10-24): the rhythm was the chopper's, and the
-    // retained charge, mixed into 0.25 m cells, never burned.
     engine.exhaustAfterfire.strategy = settings.afterfireEnabled
         ? ExhaustAfterfireStrategy::lateSparkOverrun
         : ExhaustAfterfireStrategy::cleanDfco;

@@ -349,33 +349,6 @@ int main() {
         "a refused switch shows the afterfire state that is actually live");
     refusePhysics = false;
 
-    {
-        // Measured (docs/journal.md 2026-09-23): below the chemistry's lean
-        // limit the retained charge never ignites.
-        enginelab::ExhaustAfterfireConfig afterfire;
-        afterfire.enabled = true;
-        afterfire.strategy =
-            enginelab::ExhaustAfterfireStrategy::continuousAntiLag;
-        afterfire.overrunFuelFraction = 0.18;
-        require(enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
-                "continuous 18 % retained fuel is flagged as unburnable");
-        afterfire.strategy =
-            enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
-        afterfire.overrunFuelFraction = 0.08;
-        afterfire.overrunPulseHz = 2.0;
-        afterfire.overrunPulseDutyCycle = 0.08;
-        require(!enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire)
-                    && near(enginelab::afterfireRetainedChargeEquivalenceRatio(
-                                afterfire), 1.0),
-                "the discrete pop profile retains a stoichiometric charge");
-        afterfire.overrunPulseDutyCycle = 0.25;
-        require(enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
-                "8 % fuel spread over a 25 % duty is flagged as unburnable");
-        afterfire.enabled = false;
-        require(!enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
-                "a disabled afterfire is never flagged");
-    }
-
     window.setMix(base);
     require(callbackCount > 0, "mix synchronisation publishes to MainComponent");
     require(

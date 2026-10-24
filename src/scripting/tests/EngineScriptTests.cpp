@@ -94,11 +94,9 @@ set injection.rail_pressure_bar = 20 MPa
 set injection.wall_film_fraction = 8 percent
 set combustion.cycle_variation_cov = 4 percent
 set combustion.cycle_variation_correlation = 0.55 ratio
-set exhaust_afterfire.enabled = 1 ratio
 set exhaust_afterfire.ignition_temperature_c = 627 c
 set exhaust_afterfire.reaction_time_constant_s = 10 ms
 set exhaust_afterfire.reaction_efficiency = 95 percent
-set exhaust_afterfire.overrun_fuel_fraction = 12 percent
 set exhaust_afterfire.overrun_minimum_rpm = 3000 rpm
 set exhaust_afterfire.overrun_maximum_throttle = 2 percent
 set solver.gas_substeps = 3
@@ -163,15 +161,12 @@ ignition point 1000 rpm, 14 deg
                 "combustion variation COV should be script-authorable");
     requireNear(config.combustionCalibration.cycleVariationCorrelation, 0.55, 1.0e-12,
                 "combustion variation correlation should be script-authorable");
-    require(config.exhaustAfterfire.enabled, "afterfire should be script-authorable");
     requireNear(config.exhaustAfterfire.ignitionTemperatureK, 900.15, 1.0e-12,
                 "afterfire ignition temperature should convert from Celsius");
     requireNear(config.exhaustAfterfire.reactionTimeConstantSeconds, 0.010, 1.0e-12,
                 "afterfire reaction time should convert from milliseconds");
     requireNear(config.exhaustAfterfire.reactionEfficiency, 0.95, 1.0e-12,
                 "afterfire efficiency should accept percentages");
-    requireNear(config.exhaustAfterfire.overrunFuelFraction, 0.12, 1.0e-12,
-                "overrun afterfire fuel fraction should accept percentages");
     requireNear(config.exhaustAfterfire.overrunMinimumRpm, 3'000.0, 1.0e-12,
                 "overrun afterfire minimum speed should accept RPM");
     requireNear(config.exhaustAfterfire.overrunMaximumThrottle, 0.02, 1.0e-12,

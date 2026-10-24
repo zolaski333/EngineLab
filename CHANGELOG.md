@@ -215,7 +215,9 @@ file formats, always with an in-memory migration).
   one, a script or a designed engine never turns on the overrun afterfire or
   the wet limiter, and switching them is not an edit to save. The *Audio
   Physics Lab 689 Twin* no longer pops or fires a wet limiter until you switch
-  them on.
+  them on. Editing the running engine (a bigger bore, a designer, the JSON
+  editor, a script reload) keeps them as the workshop left them; only another
+  engine turns them off.
 - The *AFTERFIRE* switch now fires the charge late (30 degrees after top dead
   centre by default) instead of chopping retained fuel at 2 Hz, and the
   exhaust keeps the unburnt charge as pockets that burn in the pipe. The
@@ -228,6 +230,12 @@ file formats, always with an in-memory migration).
 
 - The old *New engine…* that changed the size of an existing engine: the
   designer replaces it.
+- The `continuous_anti_lag` and `discrete_afterfire` afterfire strategies, with
+  `overrun_fuel_fraction` and the `overrun_pulse_*` chopper: a file naming them
+  loads with a clean fuel cut, and its old keys are ignored. A script that sets
+  `exhaust_afterfire.enabled` or `exhaust_afterfire.overrun_fuel_fraction` is
+  now rejected (unknown property). `EngineLabAfterfireHarness` loses
+  `--force-demo`, `--fuel-fraction` and the `--pulse-*` flags.
 
 ## [0.3.1] — 2026-10-18
 

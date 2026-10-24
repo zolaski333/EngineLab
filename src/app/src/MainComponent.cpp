@@ -435,7 +435,11 @@ void MainComponent::toggleDatalog() {
     topBar_.logButton.setTooltip(utf8("Recording to ") + file.getFullPathName() + utf8(" (key 9 stops)"));
 }
 
-bool MainComponent::applyEngineEdit(const EngineConfig& edited, double rampSeconds) {
+bool MainComponent::applyEngineEdit(const EngineConfig& requested, double rampSeconds) {
+    // The view, the designers and the A/B versions hold copies made before
+    // the Audio workshop's last change: none of them switches backfires.
+    auto edited = requested;
+    keepBackfires(config_, edited);
     constexpr double seaLevelPressureKpa = 101.325;
     const auto boostStepKpa = (edited.forcedInduction.wastegatePressureRatio
         - config_.forcedInduction.wastegatePressureRatio) * seaLevelPressureKpa;
@@ -1056,14 +1060,10 @@ void MainComponent::pollEngineScript() {
         // once the run has stopped, without requiring another file save.
         if (runtime_ && runtime_->dynoRunning()) return;
         scriptAttempt_ = reload->attempt;
-        // A script cannot switch backfires; a reload keeps the switch where
-        // the Audio workshop left it.
+        // A script cannot switch backfires; a reload keeps them where the
+        // Audio workshop left them.
         auto reloaded = *reload->config;
-        disableBackfires(reloaded);
-        if (config_.exhaustAfterfire.enabled || config_.ignition.limiterKeepsFuel) {
-            reloaded.exhaustAfterfire = config_.exhaustAfterfire;
-            reloaded.ignition.limiterKeepsFuel = config_.ignition.limiterKeepsFuel;
-        }
+        keepBackfires(config_, reloaded);
         if (applyConfig(reloaded, true, true)) {
             scriptRevision_ = reload->revision;
             resetAbVersions();
