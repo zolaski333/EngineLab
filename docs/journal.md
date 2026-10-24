@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — A backfire target from three real recordings
+
+- Owner's go-ahead for the backfire work. Three CC0 Freesound recordings (`references/real-engine-audio/backfire-manifest.json`): a motorbike drive-by (Yoyodaman234, 12 pops), a large motorbike (mudflea2, 3), a car's anti-lag (modusmogulus, 34). New `scripts/pop_metrics.py` measures any file, real or rendered, the same way.
+- A pop is a 1 ms RMS peak 15-18 dB over the +/-1 s median: an engine's own firing pulses stand 12-16 dB over it, so a lower threshold counts the firing (239 "pops" at 18-47 ms intervals on the drive-by).
+- Energy share by band is the wrong metric: the real pops, like the engines, hold >95 % of their energy below 2 kHz (2-8 kHz 0.07-0.4 % of the files). So the 2026-09-23 "0.2-0.5 % between 4 and 8 kHz" was not by itself a sign of a missing crack. What differs is each band's rise over its own background.
+- Medians, motorbikes / anti-lag: over the engine +15.8-17.1 / +21.7 dB; rise (10-90 %) 0.5-0.9 / 0.3 ms; decay to 10 % 1.0-1.1 / 0.4 ms; band rise 20-120 Hz +3-5 / +10, 120-500 +7-8 / +12, 500-2k +6-8 / +15, 2k-8k +3.5-5 / +3, 8k-16k +1-4 / 0 dB. The drive-by pops come in bursts 38-143 ms apart (p10-p50), the anti-lag 25-151 ms; none at a fixed 500 ms.
+- Not known: rpm, distance, microphone gain; the previews are lossy transcodes. None is a CP2 or an overrun pop on a stock ECU.
+
 ## 2026-10-24 — Two-stroke cost: its pipes as networks of their own
 
 - `RealtimeBudgetHarness --free-run` read every designed two-stroke "hold not stable": it cranked at the dyno's full throttle and they never caught (a binary without the idle limit did the same). It now cranks shut. Then (6-core desktop, free run, interleaved, min of three after a discarded run; control: a designed four-stroke twin, 3.05-3.07 throughout): single 2.7-3.1, twin 1.53, triple 1.30, V4 0.97 (slow motion), LS3 1.70.
