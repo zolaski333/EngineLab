@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Backfires: intermittent overrun burns, still one slug at a time
+
+- Owner's go-ahead: model intermittent overrun combustion. Lab Twin as below, a spark trace at every spark and EVO (experiment code, reverted).
+- Late spark -30: 98 % of cycles leave burning, 18 % burnt, 800 K; 97 % of the pipe's heat is in the port-side cell of each primary, at 1,400-1,700 K, so it holds itself whatever the chemistry: a 10x or 125x slower autoignition (500 ms at 800 K, the Shaqiri exponents anchored on ~1 ms at 20 atm, 1,000 K) or a flame carried away with its gas leave 100 % duty and 9.3-12.1 dB.
+- Spark +10 (fuel kept): 6 % natural misfires, each a 450 K, phi 0.85, 47 J slug. Bradley's K (u'=0.5 Sp, l=2.5 mm, Metghalchi-Keck with dilution) is 0.7 median on both overruns against 0.3 under load, i.e. K Le ~1.5, the quench limit; but it reaches 20-85 on the CP4 and two-stroke idles (dilution 0.44-0.58, past the correlation's range), so it cannot go in as is.
+- With 50 / 80 % overrun misfires standing in for it: heat modulation 170-430x (was 5x), bursts up to 135-460 J, yet the 1 ms peak stays 38-53 J and the render 10.0-11.9 dB. Each slug lights at the port on the next fired cycle's gas.
+- Calibration: 28 J per ms reads -2 dB re the median (voices alone), so a 16 dB pop needs ~220 J within 1 ms, 4-5 slugs at once. A 47 J slug burnt in 0.3 ms (147 kW, a 58 kPa jump) gives 12.1 dB.
+- Not built: somewhere slugs pile up unburnt (the 2 L muffler gets 0 % of the heat) and burn together. Not measured: any engine but the Lab Twin.
+
 ## 2026-10-24 — Backfires: the heat is continuous, not too slow to become a wave
 
 - Owner: backfires survive an edit of the running engine (`keepBackfires`) and reset only on another engine; the anti-lag and chopped strategies and their keys are removed.

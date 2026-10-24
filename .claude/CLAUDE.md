@@ -52,8 +52,8 @@ without the owner's explicit agreement.
 **Backfires** (owner's go-ahead, 2026-10-24): switched on in the Audio workshop
 only, never by an engine, off on every load (`disableBackfires`), kept across
 an edit of the running engine (`keepBackfires`). Open: no render reaches a real
-pop yet; the overrun burns continuously, so nothing accumulates to pop
-(`docs/physical-afterfire.md`, journal).
+pop yet; a pop is ~220 J released within 1 ms (4-5 cycles' fuel), and every
+slug burns on its own at the port (`docs/physical-afterfire.md`, journal).
 
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
@@ -239,7 +239,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   0.2-0.8 ms); "the heat is too slow to become a wave" (the source is a
   continuous afterburn at 100 % duty); for pops on the Lab Twin, one at a
   time, pockets at the unburnt zone's temperature or born lit at EVO, a 950 or
-  1,100 K ignition, a later spark alone,
+  1,100 K ignition, a 125x slower autoignition, a flame carried with its gas,
+  50-80 % overrun misfires (intermittent, but one slug of ~50 J at a time; a
+  pop needs ~220 J within 1 ms), a later spark alone,
   faster chemistry, burn COV, a hot wall, skipped sparks, flame contact between cells or between
   pockets, a 0.10 lean limit, a 50 mm mesh (the last two burn 70-97 % of the
   exhaust fuel, continuously). A cell averages the unburnt charge below the lean

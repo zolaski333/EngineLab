@@ -11,7 +11,10 @@ real pops measured on three recordings. Their 1 ms peaks stand 16-22 dB over
 the running median; the best profile reaches 11-12 dB, against 8.5 dB without
 pockets. The heat-to-pressure path is not what holds it back: the overrun's
 heat is a continuous afterburn (100 % duty), every late-spark cycle burning its
-own charge, so no unburnt charge collects to burn at once.
+own charge, so no unburnt charge collects to burn at once. Measured on the
+voices, a 16 dB pop needs about 220 J released within 1 ms, the fuel of four
+or five overrun cycles; misfires make the burn intermittent but each slug
+(~50 J) still lights alone, at the port, on the next fired cycle's gas.
 
 ## Backfires are a listening switch, not an engine property
 
