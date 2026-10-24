@@ -178,6 +178,10 @@ struct AcousticExhaustNetwork::Impl final {
     std::vector<EndpointOwner> owners;
     std::vector<float> incident;
     std::vector<float> outgoing;
+    /** Samples left during which every line reads linearly, re-armed by each
+     *  reaction source strong enough to break the amplitude warp. */
+    std::size_t linearSamplesLeft {};
+    std::size_t linearHoldSamples {};
     std::array<Medium, maximumPaths> media {};
     std::array<Medium, maximumPaths> mediaTarget {};
     std::array<StereoPressure, maximumPaths> lastJetNoise {};
@@ -935,7 +939,8 @@ struct AcousticExhaustNetwork::Impl final {
     [[nodiscard]] float readDelayed(const std::vector<float>& line,
                                     std::size_t write,
                                     float delaySamples,
-                                    float stiffnessRhoC2) const noexcept {
+                                    float stiffnessRhoC2,
+                                    bool linear) const noexcept {
         const auto linearRead = [&line, write](float delay) {
             const auto delay0 = static_cast<std::size_t>(delay);
             const auto fraction = delay - static_cast<float>(delay0);
@@ -944,6 +949,7 @@ struct AcousticExhaustNetwork::Impl final {
             const auto read1 = (write + line.size() - delay0 - 1U) & mask;
             return std::lerp(line[read0], line[read1], fraction);
         };
+        if (linear) return linearRead(delaySamples);
         return NonlinearDuctAcoustics::steepenedRead(
             linearRead, delaySamples, static_cast<float>(line.size() - 2U),
             stiffnessRhoC2);
@@ -1047,6 +1053,9 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
         duct.reverse.assign(length, 0.0F);
         duct.mask = length - 1U;
     }
+    impl_->linearHoldSamples = static_cast<std::size_t>(
+        std::ceil(reactionLinearHoldSeconds * sampleRateHz));
+    impl_->linearSamplesLeft = 0;
     for (auto& outlet : impl_->outlets) {
         const auto radiusM = std::sqrt(outlet.areaM2 / std::numbers::pi);
         // Radiation produces its reference pressure at one metre. Geometric
@@ -1114,6 +1123,7 @@ void AcousticExhaustNetwork::placeOutlets(std::span<const AcousticSourcePlacemen
 
 void AcousticExhaustNetwork::reset() noexcept {
     if (!impl_) return;
+    impl_->linearSamplesLeft = 0;
     for (auto& duct : impl_->ducts) {
         std::fill(duct.forward.begin(), duct.forward.end(), 0.0F);
         std::fill(duct.reverse.begin(), duct.reverse.end(), 0.0F);
@@ -1378,6 +1388,8 @@ AcousticExhaustNetwork::process(
         outlet.convectiveReflection =
             (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach);
     }
+    const auto linear = impl_->linearSamplesLeft > 0U;
+    if (linear) --impl_->linearSamplesLeft;
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
         auto& duct = impl_->ducts[index];
         duct.delaySamples += ramp
@@ -1412,13 +1424,13 @@ AcousticExhaustNetwork::process(
             DuctWallLoss::process(
                 duct.wallLoss, duct.reverseLoss,
                 impl_->readDelayed(duct.reverse, duct.write,
-                    duct.delaySamples, stiffness)));
+                    duct.delaySamples, stiffness, linear)));
         impl_->incident[index * 2U + 1U] = DuctWallLoss::process(
             duct.linerLoss, duct.forwardLinerLoss,
             DuctWallLoss::process(
                 duct.wallLoss, duct.forwardLoss,
                 impl_->readDelayed(duct.forward, duct.write,
-                    duct.delaySamples, stiffness)));
+                    duct.delaySamples, stiffness, linear)));
     }
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
 
@@ -1609,10 +1621,28 @@ bool AcousticExhaustNetwork::injectReactionPressure(
     const auto boundedPressure = std::clamp(
         sourcePressurePa, -maximumReactionSourcePressurePa,
         maximumReactionSourcePressurePa);
+    // The amplitude warp of the lines is a first-order simple-wave relation
+    // for the kilopascal blowdown waves. A burning slug's pulse reaches
+    // 0.4-1x the ambient pressure, where the warp sits at its clamp and its
+    // read jumps whole samples of the wave, and in a reacting duct to an age
+    // younger than where the pulse was injected. Measured on the Lab Twin
+    // (journal 2026-10-25), that removed 4-9 dB of a pop by where it burned.
+    // While such a pulse rings in the network every line reads linearly.
+    const auto armLinear = [this](float halfPressurePa,
+                                  const Medium& medium) noexcept {
+        const auto stiffness = medium.densityKgPerM3
+            * medium.soundSpeedMps * medium.soundSpeedMps;
+        if (NonlinearDuctAcoustics::coefficientOfNonlinearity
+                * std::abs(halfPressurePa)
+            >= reactionLinearMachThreshold * stiffness)
+            impl_->linearSamplesLeft = impl_->linearHoldSamples;
+    };
     if (!found->duct) {
         if (found->index >= impl_->junctions.size()) return false;
-        impl_->junctions[found->index].pendingSourcePressurePa +=
-            boundedPressure;
+        auto& junction = impl_->junctions[found->index];
+        junction.pendingSourcePressurePa += boundedPressure;
+        if (junction.pathIndex < impl_->media.size())
+            armLinear(0.5F * boundedPressure, impl_->media[junction.pathIndex]);
         return true;
     }
     if (found->ductCount == 0U || found->index >= impl_->ducts.size()
@@ -1645,6 +1675,7 @@ bool AcousticExhaustNetwork::injectReactionPressure(
     };
     // Half the compact heat-addition pressure travels in each direction.
     const auto halfPressure = 0.5F * boundedPressure;
+    armLinear(halfPressure, duct.medium);
     addHistorical(duct.forward, axial * duct.delaySamples, halfPressure);
     addHistorical(duct.reverse,
         (1.0F - axial) * duct.delaySamples, halfPressure);

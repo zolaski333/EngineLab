@@ -6,19 +6,15 @@ releases energy in the cell or junction where the conditions are met. The
 pressure rise travels through the same acoustic DAG, the same collectors,
 mufflers and outlets as the normal blowdown.
 
-**Status (2026-10-24, `docs/journal.md`):** no rendered overrun yet reaches the
-real pops measured on three recordings. Their 1 ms peaks stand 16-22 dB over
-the running median; the best profile reaches 11-12 dB, against 8.5 dB without
-pockets. The heat-to-pressure path is not what holds it back: the overrun's
-heat is a continuous afterburn (100 % duty), every late-spark cycle burning its
-own charge, so no unburnt charge collects to burn at once. Measured on the
-voices, a 16 dB pop needs about 220 J released within 1 ms, the fuel of four
-or five overrun cycles; misfires make the burn intermittent but each slug
-(~50 J) still lights alone, at the port, on the next fired cycle's gas. No
-element holds that fuel: the muffler is tailpipe air (phi ~0.03, at most
-50 J), and a primary holds at most ~230 J, too lean to light, which would give
-~90 J in its first millisecond if it did. That 220 J includes the silencer's
-loss between the primaries and the outlet, which is the next thing to measure.
+**Status (2026-10-25, `docs/journal.md`):** the workshop's late-spark profile
+still renders no pop. Its overrun heat is a continuous afterburn (100 % duty):
+every late-spark cycle burns its own charge, so nothing collects to burn at
+once. What does pop, so far only in experiment code (not in the tree), is an overrun on which
+most cycles do not fire (fuel kept) and the next fired cycle's exhaust lights
+the slug the misfire left in the primary. On the Lab Twin at 3,400 rpm that
+gives 13.5 dB over the median against the real bike's 15.8, a 0.6 ms rise
+(0.5) and 131 ms between pops (143). That figure needed a fix in the acoustic
+lines (below), which had been deleting 4-9 dB of every pop by where it burned.
 
 ## Backfires are a listening switch, not an engine property
 
@@ -141,10 +137,17 @@ locked to the voice's jump: 0.1 ms attack, 0.5 ms release, at `defaultCrackRatio
 1.0 × that jump, uncalibrated). `EngineLabAfterfireHarness --no-reaction-crack`
 renders the same trajectory without it.
 
-Measured on the lab Twin with pockets (journal 2026-10-24): the reaction voices
-change the overrun's 1 ms peaks by nothing measurable (11.3 dB with them,
-11.6 dB without). What the pockets add reaches the observer through the
-finite-volume gas itself.
+The acoustic lines steepen a wave by its own amplitude (`steepenedRead`, a
+first-order simple-wave relation for the kilopascal blowdown waves). A
+burning slug's pulse reaches 0.4-1x the ambient pressure, where that warp sits
+at its clamp and reads the line at an age younger than where the pulse was
+injected: 4-9 dB of a pop vanished, by where it burned, and the earlier
+reading that the voices "add nothing to the peaks" came from that (journal
+2026-10-25). While a reaction half-wave above Mach 0.03
+(`reactionLinearMachThreshold`) rings in the network, every line reads
+linearly for `reactionLinearHoldSeconds` (20 ms, re-armed by each such
+source). Without backfires there is no reaction voice, so the default sound
+is unchanged.
 
 ## Using it in the Audio workshop
 

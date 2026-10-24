@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-25 — Backfires: the lines' amplitude warp deleted the pops
+
+- The silencer lead, measured with a fixed heat pulse (experiment code, reverted): 200 J over 0.5 ms in a Lab Twin primary read -28.0 to -34.6 dBFS depending on where along the duct it was injected, with no pattern; with the warp off, -23.9 to -29.4, smooth. `steepenedRead` re-reads a line at delay x scale(p), and at 50-100 kPa the scale sits at its 0.3 clamp: the read lands younger than the injection point, and the pulse is never output.
+- Not it: the 100 kPa bound (300 kPa: +1.3 dB), c and A in the source term, voices overwriting each other, EVO timing (a pulse 0-20 ms after a fired EVO 16.2 dB vs a random phase 15.6).
+- Fix: while a reaction half-wave above Mach 0.03 rings (20 ms, re-armed), every line reads linearly. Without backfires there is no reaction voice, so the default sound cannot change. A 100 kPa pulse at five positions now spans 2.9 dB (12.4 without, `strongReactionPositionRegression`).
+- Recipe (experiment flags): 70 % of overrun cycles misfire (fuel kept), +10 deg on the others, 800 K, a 0.5 ms reaction, 40 ms pockets lit by the next fired cycle's exhaust, no crack. On the Lab Twin at 3,400 rpm the heat peaks go -37.0 -> -30.6 dBFS (8.2 -> 12.9 dB over the median). On the MT-07 at 4,400 rpm, -37.0 -> -33.2 and 1 -> 7 pops; on the Lab at 6,200 rpm, -34.1 -> -32.0.
+- Lab Twin at 3,400 rpm against the bike (667592): 15 pops in 2.2 s; 13.5 / 15.8 dB over the median; rise 0.6 / 0.5 ms; decay 0.88 / 1.12 ms; intervals p50 131 / 143 ms; 120-500 Hz +4.6 / +7.4; 500-2k +24 / +8 (the model's background is thin there).
+- One factor each: 10 ms mixing gives 0 pops (the slug must survive about a cycle); 2 ms reaction 7; spark -30 11, weak; misfires 0.5 12, 0.3 6. The production profile (-30, 10 ms, 2 ms, no misfires) gives 0, on the Lab and the MT-07.
+- No pop: the Hayabusa at 6,800 rpm (a continuous 10 kW burn) and the K20A (its overrun ends within 0.3 s). Every pop reaches the 100 kPa bound, so the harness calls each such run INVALID. Not measured: a CP2 overrun recording.
+
 ## 2026-10-24 — Backfires: no volume holds a pop's fuel
 
 - Owner's go-ahead: a volume where slugs collect and burn together (the muffler). Not built: measured first with a per-element inventory trace (fuel energy, phi, temperature every 0.25 ms; experiment code, reverted), Lab Twin as below. The gas network has no 2 L chamber: a perforated-core muffler is its 54 x 240 mm core (0.55 L, one cell); the packed can exists only acoustically.
