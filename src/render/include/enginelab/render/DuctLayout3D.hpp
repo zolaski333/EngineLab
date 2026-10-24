@@ -23,6 +23,11 @@ struct PortAnchor final {
     std::vector<Vec3> transferDuct;
     /** The way a carburettor's slide rises (a two-stroke's). */
     Vec3 carburettorUp { 0.0F, 1.0F, 0.0F };
+    /** A two-stroke's transfers come in a pair, one on each flank: the
+        other is the transfer duct mirrored in the plane through this point
+        with this normal (zero: no pair). */
+    Vec3 transferMirrorPoint;
+    Vec3 transferMirrorNormal;
 };
 
 /** What a laid-out duct stands for, so it can later be coloured from the solver. */

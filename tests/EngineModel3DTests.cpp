@@ -1198,12 +1198,69 @@ void checkCrankClock() {
 }
 } // namespace
 
+/** A two-stroke is drawn as one is built (owner's report 2026-10-24: its
+    exhaust left from the head, its carburettor faced the barrel and a pipe ran
+    from it to the crankcase). The exhaust leaves from its window in the
+    barrel; a reed on the crankcase feeds it below the barrel, a cylinder port
+    through the barrel's back; the transfers rise in the flanks; a power valve
+    is a blade that drops into the port's roof as it shuts. */
+void checkTwoStrokeDrawing(EngineConfig config) {
+    const auto label = config.name + ": ";
+    config.twoStroke.powerValveClosedExhaustPortOpenDegrees = config.twoStroke.exhaustPortOpenDegrees + 10.0;
+    config.twoStroke.powerValveOpeningStartRpm = 5'000.0;
+    config.twoStroke.powerValveFullyOpenRpm = 8'000.0;
+    for (const auto intake : { TwoStrokeIntake::crankcaseReed, TwoStrokeIntake::cylinderPort }) {
+        config.twoStroke.intake = intake;
+        const EngineModel3D model(config);
+        for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+            const auto bore = static_cast<float>(config.cylinders[c].boreMm);
+            const auto stroke = static_cast<float>(config.cylinders[c].strokeMm);
+            const auto probe = model.probe(c, 0.0);
+            const auto crank = (probe.bigEnd + model.probe(c, 180.0).bigEnd) * 0.5F;
+            const auto axis = probe.axis;
+            const auto deck = dot(probe.deckCentre - crank, axis);
+            const auto& exhaust = model.exhaustPorts()[c];
+            const auto& port = model.intakePorts()[c];
+            const auto side = normalise(exhaust.inner - crank - axis * dot(exhaust.inner - crank, axis));
+            require(dot(exhaust.inner - probe.deckCentre, axis) < -0.25F * stroke,
+                    label + "the exhaust leaves from its window in the barrel, not from the head");
+            const auto window = port.inner - crank - axis * dot(port.inner - crank, axis);
+            require(std::abs(dot(normalise(window), side)) < 0.5F, label + "the transfers open on the bore's flanks");
+            const auto height = dot(port.position - crank, axis);
+            if (intake == TwoStrokeIntake::crankcaseReed) {
+                require(height < 0.5F * deck && dot(port.position - crank, side) < 0.0F,
+                        label + "the reed is on the crankcase's back, under the barrel");
+            } else {
+                require(height > 0.5F * deck && dot(port.position - crank, side) < -0.6F * bore,
+                        label + "a cylinder port's carburettor is on the barrel's back");
+            }
+            const auto blade = model.powerValvePart(c);
+            require(blade < model.parts().size() && model.identify(blade).role == PartRole::powerValve,
+                    label + "a fitted power valve is drawn and named by a click");
+            std::vector<SceneInstance> open, shut;
+            ScenePoseInput pose;
+            model.pose(pose, open);
+            pose.powerValveOpening = 0.0;
+            model.pose(pose, shut);
+            const auto& a = open[blade].transform.m;
+            const auto& b = shut[blade].transform.m;
+            const auto travel = dot(Vec3 { b[12] - a[12], b[13] - a[13], b[14] - a[14] }, axis);
+            require(travel < -1.0F, label + "shut, the power valve's blade drops into the port's roof");
+        }
+    }
+    config.twoStroke.powerValveClosedExhaustPortOpenDegrees = 0.0;
+    const EngineModel3D without(config);
+    require(without.powerValvePart(0) == 0xFFFFU, label + "without a power valve no blade is drawn");
+}
+
 int main() {
     checkTubeContact();
     checkRouter();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    for (const auto& entry : catalogue.entries)
+        if (entry.config.cycle == EngineCycle::twoStroke) checkTwoStrokeDrawing(entry.config);
     // Both kinds of injection are checked, on a direct-injection copy of the first engine if the catalogue has none.
     if (directInjectorsDrawn == 0 || portInjectorsDrawn == 0) {
         auto other = catalogue.entries.front().config;
@@ -1394,7 +1451,10 @@ int main() {
     // the RD350LC-like adds 4 and 6, its two 110 mm expansion-chamber
     // bellies laid side by side at the cylinder pitch (the real bike spreads
     // them apart under the frame).
-    const std::array<std::size_t, 5> measured { 9, 4, 0, 48, 7 };
+    // 2026-10-24: its barrels 1.5 bores apart for the transfers in their
+    // flanks, its ports leaving from their windows: those bellies touch at 6
+    // places, and it has 2 tight bends instead of 6.
+    const std::array<std::size_t, 5> measured { 11, 4, 0, 44, 7 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

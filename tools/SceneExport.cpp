@@ -2,14 +2,16 @@
 // laid-out geometry outside the app (a three.js page, a script).
 //
 //   EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]
-//                        [--catalog-root <directory>]
+//                        [--catalog-root <directory>] [--two-stroke-intake <crankcase_reed|cylinder_port>]
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
 // port anchors, and the route check (RouteCheck) issues; plus index.json
-// listing the files. Prints the issue counts per engine.
+// listing the files. Prints the issue counts per engine. `--two-stroke-intake`
+// redraws every two-stroke with that intake, so both layouts can be looked at.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
 #include <enginelab/render/RouteCheck.hpp>
 
@@ -18,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -154,16 +157,24 @@ int main(int argc, char** argv) {
     std::string filter;
     double crank = 0.0;
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
+    std::optional<TwoStrokeIntake> twoStrokeIntake;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string_view key = argv[i];
         if (key == "--out") outDirectory = argv[i + 1];
         else if (key == "--filter") filter = argv[i + 1];
         else if (key == "--crank") crank = std::stod(argv[i + 1]);
         else if (key == "--catalog-root") catalogRoot = argv[i + 1];
+        else if (key == "--two-stroke-intake") {
+            twoStrokeIntake = parseTwoStrokeIntake(argv[i + 1]);
+            if (!twoStrokeIntake) {
+                std::cerr << "--two-stroke-intake is crankcase_reed or cylinder_port\n";
+                return 2;
+            }
+        }
     }
     if (outDirectory.empty()) {
         std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]"
-                     " [--catalog-root <directory>]\n";
+                     " [--catalog-root <directory>] [--two-stroke-intake <crankcase_reed|cylinder_port>]\n";
         return 2;
     }
     const auto catalogue = loadEngineCatalog(catalogRoot);
@@ -177,7 +188,8 @@ int main(int argc, char** argv) {
     int written = 0;
     std::array<std::size_t, 5> totals {};
     for (std::size_t e = 0; e < catalogue.entries.size(); ++e) {
-        const auto& config = catalogue.entries[e].config;
+        auto config = catalogue.entries[e].config;
+        if (twoStrokeIntake && config.cycle == EngineCycle::twoStroke) config.twoStroke.intake = *twoStrokeIntake;
         if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
         const auto file = std::to_string(e + 1U) + ".json";
         const auto report = writeEngine(config, crank, outDirectory / file);

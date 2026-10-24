@@ -115,7 +115,8 @@ EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
     radialLike_ = config_.layout == EngineLayout::radial;
     float bore = 0.0F;
     for (const auto& cylinder : config_.cylinders) bore = std::max(bore, static_cast<float>(cylinder.boreMm));
-    pitch_ = bore * 1.25F;
+    // A two-stroke's barrels stand apart: its transfers are cast in their flanks.
+    pitch_ = bore * (config_.cycle == EngineCycle::twoStroke && !radialLike_ ? 1.5F : 1.25F);
     buildCylinders();
     buildCrankshaft();
     buildStructure();
@@ -262,36 +263,75 @@ void EngineModel3D::buildCylinders() {
             return mesh;
         };
         // A two-stroke has no valves: its ports are windows in the cylinder
-        // wall, from where the piston crown uncovers them down to its bottom
-        // dead centre, the exhaust on the exhaust side, the transfers facing.
-        const auto port = [&](double openDegrees, double widthMm, float sideSign) {
-            const auto crown = [&](double fromTopDegrees) {
-                const auto at = evaluateCylinderKinematics(config_, reference_, i,
-                    reference_.topDeadCentreAngleDegrees[i] + fromTopDegrees, 0.0);
-                return world(at.wristPinXMm, at.wristPinYMm, cylinder.z) + axis * cylinder.compressionHeight;
-            };
-            const auto upper = crown(openDegrees);
-            const auto lower = crown(180.0);
-            const auto height = std::max(1.0F, length(upper - lower));
-            const auto width = static_cast<float>(widthMm);
-            Mesh mesh;
-            // A duct leaving the bore: as wide as the window, as tall as its
-            // open height.
-            const auto out = side * sideSign;
-            const auto centre = (upper + lower) * 0.5F + out * (0.5F * b + 0.175F * b);
-            appendBox(mesh, Mat4::basis(lateral, out, cross(lateral, out), centre),
-                      { std::max(1.0F, width), 0.35F * b, height });
-            return mesh;
+        // wall, each from where the piston uncovers it down to where it is
+        // fully open. The exhaust faces the exhaust side; the transfers come
+        // in a pair on the flanks, turned a little to the back, half their
+        // width each; a cylinder intake port is on the back wall, uncovered by
+        // the skirt's lower edge, its top where that edge stands at top dead
+        // centre (TwoStrokePorts' intakePortOpenAreaMm2).
+        const auto wristAt = [&](double fromTopDegrees) {
+            const auto at = evaluateCylinderKinematics(config_, reference_, i,
+                reference_.topDeadCentreAngleDegrees[i] + fromTopDegrees, 0.0);
+            return world(at.wristPinXMm, at.wristPinYMm, cylinder.z);
+        };
+        const auto crownAt = [&](double fromTopDegrees) { return wristAt(fromTopDegrees) + axis * cylinder.compressionHeight; };
+        const auto window = [&](Mesh& mesh, Vec3 facing, double widthMm, Vec3 upper, Vec3 lower) {
+            const auto tangent = normalise(cross(axis, facing));
+            const auto centre = (upper + lower) * 0.5F + facing * (0.52F * b);
+            appendBox(mesh, Mat4::basis(tangent, facing, cross(tangent, facing), centre),
+                      { std::clamp(static_cast<float>(widthMm), 1.0F, 0.9F * b), 0.05F * b,
+                        std::max(1.0F, length(upper - lower)) });
+            return (upper + lower) * 0.5F + facing * (0.5F * b);
         };
         const auto twoStrokeCycle = config_.cycle == EngineCycle::twoStroke;
-        cylinder.intakeValvePart = addPart(twoStrokeCycle
-                ? port(config_.twoStroke.transferPortOpenDegrees, transferPortWidthMm(config_.twoStroke, config), -1.0F)
-                : valves(config.intakeValveCount, config.intakeValveDiameterMm, cylinder.intakeValveAxis, -1.0F, true),
-            SceneMaterial::intakeValve, layerValves);
-        cylinder.exhaustValvePart = addPart(twoStrokeCycle
-                ? port(config_.twoStroke.exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, config), 1.0F)
-                : valves(config.exhaustValveCount, config.exhaustValveDiameterMm, cylinder.exhaustValveAxis, 1.0F, false),
-            SceneMaterial::exhaustValve, layerValves);
+        if (twoStrokeCycle) {
+            const auto& ports = config_.twoStroke;
+            const auto atBottom = crownAt(180.0);
+            Mesh transfers, exhaust;
+            // About 100 degrees round from the exhaust.
+            cylinder.transferFacing = normalise(side * -0.17F + lateral * 0.98F);
+            const auto transferWidth = 0.5 * transferPortWidthMm(ports, config);
+            const auto transferTop = crownAt(ports.transferPortOpenDegrees);
+            cylinder.transferWindowCentre = window(transfers, cylinder.transferFacing, transferWidth, transferTop, atBottom);
+            (void)window(transfers, normalise(side * -0.17F - lateral * 0.98F), transferWidth, transferTop, atBottom);
+            if (ports.intake == TwoStrokeIntake::cylinderPort)
+                cylinder.intakeWindowCentre = window(transfers, -side, intakePortWidthMm(ports, config),
+                    wristAt(0.0) - axis * skirt, wristAt(ports.intakePortOpenDegreesBtdc) - axis * skirt);
+            const auto exhaustTop = crownAt(ports.exhaustPortOpenDegrees);
+            const auto exhaustWidth = exhaustPortWidthMm(ports, config);
+            cylinder.exhaustWindowCentre = window(exhaust, side, exhaustWidth, exhaustTop, atBottom);
+            cylinder.intakeValvePart = addPart(std::move(transfers), SceneMaterial::intakeValve, layerValves);
+            cylinder.exhaustValvePart = addPart(std::move(exhaust), SceneMaterial::exhaustValve, layerValves);
+            if (hasPowerValve(ports)) {
+                // A guillotine just outside the window, its lower edge on
+                // the port's roof when open; shut, it drops to the roof the
+                // valve gives, which opens the port later.
+                const auto drop = crownAt(ports.exhaustPortOpenDegrees) - crownAt(ports.powerValveClosedExhaustPortOpenDegrees);
+                const auto height = length(drop) + 0.16F * b;
+                const auto tangent = normalise(cross(axis, side));
+                Mesh blade;
+                appendBox(blade, Mat4::basis(tangent, side, axis, exhaustTop + axis * (0.5F * height) + side * (0.58F * b)),
+                          { std::clamp(static_cast<float>(exhaustWidth), 1.0F, 0.9F * b) * 1.04F, 0.04F * b, height });
+                cylinder.powerValvePart = addPart(std::move(blade), SceneMaterial::steel, layerValves);
+                cylinder.powerValveDrop = drop;
+            }
+            // The crank's centre level with this cylinder, and the crankcase
+            // round it just clear of the webs (buildCrankshaft's counterweight).
+            const auto k = evaluateCylinderKinematics(config_, reference_, i, 0.0, 0.0);
+            const auto crankshaft = std::find_if(config_.crankshafts.begin(), config_.crankshafts.end(),
+                [&k](const CrankshaftConfig& item) { return item.id == k.crankshaftId; });
+            cylinder.crankCentre = crankshaft == config_.crankshafts.end() ? Vec3 { 0.0F, 0.0F, cylinder.z }
+                : world(crankshaft->positionXMm, crankshaft->positionYMm, cylinder.z);
+            const auto throwRadius = 0.5F * static_cast<float>(config.strokeMm);
+            const auto counterweight = std::min(0.62F * b, (static_cast<float>(config.connectingRodMm) - throwRadius - 0.32F * b) * 0.9F);
+            crankcaseRadius_ = std::max(crankcaseRadius_, std::max(counterweight, throwRadius + 0.27F * b) + 0.1F * b);
+            cylinder.barrelRadius = 0.70F * b;
+        } else {
+            cylinder.intakeValvePart = addPart(valves(config.intakeValveCount, config.intakeValveDiameterMm,
+                cylinder.intakeValveAxis, -1.0F, true), SceneMaterial::intakeValve, layerValves);
+            cylinder.exhaustValvePart = addPart(valves(config.exhaustValveCount, config.exhaustValveDiameterMm,
+                cylinder.exhaustValveAxis, 1.0F, false), SceneMaterial::exhaustValve, layerValves);
+        }
 
         Mesh flame;
         appendSphere(flame, Mat4::identity(), 0.42F * b, 24, 12);
@@ -428,6 +468,10 @@ void EngineModel3D::buildCrankshaft() {
 }
 
 void EngineModel3D::buildStructure() {
+    if (config_.cycle == EngineCycle::twoStroke && !radialLike_) {
+        buildTwoStrokeStructure();
+        return;
+    }
     // Group the cylinders of each bank; a radial gets one group per cylinder.
     std::vector<std::vector<std::size_t>> groups;
     for (std::size_t i = 0; i < cylinders_.size(); ++i) {
@@ -494,6 +538,69 @@ void EngineModel3D::buildStructure() {
     (void)addPart(std::move(heads), SceneMaterial::headShell, layerStructure);
 }
 
+void EngineModel3D::buildTwoStrokeStructure() {
+    // A two-stroke is a round crankcase with no sump (the crankcase is its
+    // charge pump, the oil comes with the fuel), a separate barrel on it for
+    // each cylinder with the transfers cast in its flanks, and a thin head
+    // over each with only its plug in it.
+    Mesh heads, block;
+    std::vector<std::vector<std::size_t>> cranks;
+    for (std::size_t i = 0; i < cylinders_.size(); ++i) {
+        const auto centre = cylinders_[i].crankCentre;
+        const auto same = std::find_if(cranks.begin(), cranks.end(), [&](const std::vector<std::size_t>& group) {
+            const auto other = cylinders_[group.front()].crankCentre;
+            return std::abs(other.x - centre.x) < 0.5F && std::abs(other.y - centre.y) < 0.5F;
+        });
+        if (same == cranks.end()) cranks.push_back({ i });
+        else same->push_back(i);
+    }
+    const auto radius = crankcaseRadius_;
+    for (const auto& group : cranks) {
+        float zMin = 1.0e9F, zMax = -1.0e9F, b = 0.0F;
+        for (const auto index : group) {
+            zMin = std::min(zMin, cylinders_[index].z);
+            zMax = std::max(zMax, cylinders_[index].z);
+            b = std::max(b, cylinders_[index].bore);
+        }
+        // To just short of the main shaft's ends, where the pulley and the
+        // flywheel stand outside it.
+        const auto start = zMin - 0.45F * pitch_;
+        const auto span = zMax - zMin + 0.9F * pitch_;
+        const auto centre = cylinders_[group.front()].crankCentre;
+        const auto base = Vec3 { centre.x, centre.y, start };
+        appendCylinder(block, cylinderFrame(base, zAxis), radius, radius, span, 48);
+        solids_.push_back(cylinderSolid(base, zAxis, radius, span));
+    }
+    for (auto& c : cylinders_) {
+        const auto b = c.bore;
+        const auto axis = c.axis;
+        const auto side = c.exhaustSide;
+        const auto tangent = normalise(cross(axis, side));
+        // Standing in the crankcase's top, so the two read as one casting.
+        c.barrelBottom = 0.8F * radius;
+        const auto bottom = c.crankCentre + axis * c.barrelBottom;
+        const auto height = std::max(0.2F * b, dot(c.deckCentre - bottom, axis));
+        appendCylinder(block, cylinderFrame(bottom, axis), c.barrelRadius, c.barrelRadius, height, 40, false, false);
+        solids_.push_back(cylinderSolid(bottom, axis, c.barrelRadius, height));
+        // The base flange it is bolted down by.
+        const auto flange = bottom + axis * (0.2F * radius + 0.03F * b);
+        appendBox(block, Mat4::basis(side, axis, tangent, flange), { 1.55F * b, 0.06F * b, 1.4F * b });
+        if (c.powerValvePart != 0xFFFFU) {
+            // The valve's housing and actuator over the exhaust spigot.
+            const auto housing = c.exhaustWindowCentre + side * (0.78F * b) + axis * (0.36F * b);
+            appendBox(block, Mat4::basis(tangent, side, axis, housing), { 0.9F * b, 0.32F * b, 0.26F * b });
+            solids_.push_back(boxSolid(tangent, side, axis, housing, { 0.9F * b, 0.32F * b, 0.26F * b }));
+        }
+        constexpr float headHeight = 0.26F;
+        appendCylinder(heads, cylinderFrame(c.deckCentre, axis), 0.72F * b, 0.64F * b, headHeight * b, 40);
+        appendCylinder(heads, cylinderFrame(c.deckCentre + axis * (headHeight * b), axis), 0.09F * b, 0.09F * b,
+                       0.16F * b, 12);
+        solids_.push_back(cylinderSolid(c.deckCentre, axis, 0.72F * b, headHeight * b));
+    }
+    (void)addPart(std::move(block), SceneMaterial::blockShell, layerStructure);
+    (void)addPart(std::move(heads), SceneMaterial::headShell, layerStructure);
+}
+
 void EngineModel3D::buildDucts() {
     Mesh exhaust;
     float bore = 0.0F;
@@ -524,22 +631,39 @@ void EngineModel3D::buildDucts() {
             ? static_cast<float>(config.intakeRunnerDiameterMm) : 0.36F * b;
         auto intakePort = cylinder.deckCentre + axis * (0.42F * b) - side * (0.70F * b);
         auto intakeOut = radialLike_ ? -side : normalise(axis * 0.35F - side);
-        if (config_.cycle == EngineCycle::twoStroke && !radialLike_) {
-            // A two-stroke breathes through the barrel's back, below the
-            // transfers: a reed into the crankcase, and from there the
-            // transfer duct up the barrel's wall to its window.
-            const auto at = evaluateCylinderKinematics(config_, reference_, i,
-                reference_.topDeadCentreAngleDegrees[i] + 180.0, 0.0);
-            const auto crown = world(at.wristPinXMm, at.wristPinYMm, cylinder.z) + axis * cylinder.compressionHeight;
-            const auto lateral = normalise(cross(side, axis));
-            const auto stroke = static_cast<float>(config.strokeMm);
-            intakePort = crown - axis * (0.30F * b) - side * (0.62F * b);
-            intakeOut = valley ? *valley : normalise(-side);
-            PortAnchor anchor { config.id, intakePort, intakeOut, intakeDiameter,
-                                crown + axis * (0.12F * stroke) - side * (0.62F * b) + lateral * (0.5F * b) };
-            anchor.transferDuct = { crown - axis * (0.95F * b) - side * (0.30F * b) + lateral * (0.5F * b),
-                                    crown - axis * (0.45F * b) - side * (0.66F * b) + lateral * (0.5F * b),
-                                    anchor.inner };
+        const auto twoStrokeBarrel = config_.cycle == EngineCycle::twoStroke && !radialLike_;
+        if (twoStrokeBarrel) {
+            // The transfer duct, in gas-flow order: out of the crankcase's
+            // top into the barrel's flank, up its wall and in at the window;
+            // its twin is the mirror image on the other flank.
+            const auto facing = cylinder.transferFacing;
+            const auto wall = 0.5F * (0.56F * b + cylinder.barrelRadius) + 0.04F * b;
+            const auto base = cylinder.crankCentre + axis * (0.55F * crankcaseRadius_) + facing * wall;
+            const auto window = cylinder.transferWindowCentre;
+            const auto belowWindow = window + facing * (wall - 0.5F * b) - axis * (0.30F * b);
+            const auto startOfRise = cylinder.crankCentre + axis * (cylinder.barrelBottom + 0.10F * b) + facing * wall;
+            const auto lateral = normalise(cross(axis, side));
+            if (config_.twoStroke.intake == TwoStrokeIntake::cylinderPort) {
+                // Through the back wall of the barrel, under the transfers;
+                // the carburettor on its spigot, a reed in it if fitted.
+                intakeOut = valley ? normalise(*valley - side * 0.5F) : -side;
+                intakePort = cylinder.intakeWindowCentre - side * (cylinder.barrelRadius - 0.5F * b + 0.04F * b);
+            } else {
+                // A reed block on the crankcase's back, under the barrel,
+                // the carburettor behind it pointing back and up; in a V's
+                // valley, out of the valley clear of both barrels.
+                intakeOut = valley ? *valley : normalise(-side + axis * 0.5F);
+                auto reach = crankcaseRadius_;
+                if (valley) {
+                    const auto sine = std::sqrt(std::max(0.05F, 1.0F - dot(*valley, axis) * dot(*valley, axis)));
+                    reach = std::max(reach, (cylinder.barrelRadius + 0.6F * intakeDiameter) / sine);
+                }
+                intakePort = cylinder.crankCentre + intakeOut * reach;
+            }
+            PortAnchor anchor { config.id, intakePort, intakeOut, intakeDiameter, window };
+            anchor.transferDuct = { base, startOfRise, belowWindow, window };
+            anchor.transferMirrorPoint = cylinder.crankCentre;
+            anchor.transferMirrorNormal = lateral;
             // Upright in a valley, a slide rises along the crank.
             anchor.carburettorUp = valley ? zAxis : yAxis;
             intakePorts_.push_back(std::move(anchor));
@@ -548,14 +672,26 @@ void EngineModel3D::buildDucts() {
                                      cylinder.deckCentre + axis * (0.12F * b) - side * (0.22F * b) });
         }
 
-        // Exhaust port stub: out of the head on the exhaust side.
-        const auto exhaustDiameter = 0.34F * b;
-        const auto exhaustInner = cylinder.deckCentre + axis * (0.1F * b) + side * (0.22F * b);
-        const auto exhaustPort = cylinder.deckCentre + axis * (0.3F * b) + side * (0.70F * b);
-        const auto exhaustOut = normalise(side - axis * 0.25F);
-        const auto exhaustEnd = exhaustPort + exhaustOut * (0.6F * b);
-        appendTube(exhaust, catmullRom({ exhaustInner, exhaustPort, exhaustEnd }, 10), { exhaustDiameter * 0.5F }, 18);
-        exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner });
+        if (twoStrokeBarrel) {
+            // Exhaust port: out of its window through the barrel's wall to the
+            // spigot the pipe is clamped on, sloping a little down.
+            const auto exhaustDiameter = 0.45F * b;
+            const auto exhaustInner = cylinder.exhaustWindowCentre;
+            const auto spigot = exhaustInner + side * (cylinder.barrelRadius - 0.5F * b + 0.06F * b);
+            const auto exhaustOut = normalise(side - axis * 0.2F);
+            const auto exhaustEnd = spigot + exhaustOut * (0.35F * b);
+            appendTube(exhaust, catmullRom({ exhaustInner, spigot, exhaustEnd }, 10), { exhaustDiameter * 0.5F }, 18);
+            exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner });
+        } else {
+            // Exhaust port stub: out of the head on the exhaust side.
+            const auto exhaustDiameter = 0.34F * b;
+            const auto exhaustInner = cylinder.deckCentre + axis * (0.1F * b) + side * (0.22F * b);
+            const auto exhaustPort = cylinder.deckCentre + axis * (0.3F * b) + side * (0.70F * b);
+            const auto exhaustOut = normalise(side - axis * 0.25F);
+            const auto exhaustEnd = exhaustPort + exhaustOut * (0.6F * b);
+            appendTube(exhaust, catmullRom({ exhaustInner, exhaustPort, exhaustEnd }, 10), { exhaustDiameter * 0.5F }, 18);
+            exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner });
+        }
 
         // The injector. A port injector sits in the runner just out of the
         // head, above it, spraying at the back of the intake valves; a direct
@@ -957,8 +1093,19 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
                                                          cylinder.chamberCentre);
         out[cylinder.flamePart].intensity = burn;
         const auto maximumLift = std::max(0.1, high ? cams.highIntakeLiftMm : cams.intakeLiftMm);
-        if (cylinder.runnerPart < out.size())
-            out[cylinder.runnerPart].intensity = static_cast<float>(std::clamp(intakeLift / maximumLift, 0.0, 1.0));
+        auto opening = std::clamp(intakeLift / maximumLift, 0.0, 1.0);
+        if (!valves) {
+            // A two-stroke's transfer duct glows as far as its window is open.
+            const auto& config = config_.cylinders[i];
+            const auto open = config_.twoStroke.transferPortOpenDegrees;
+            const auto fromTop = std::fmod(std::fmod(angle - reference_.topDeadCentreAngleDegrees[i], 360.0) + 360.0, 360.0);
+            opening = std::clamp(portOpenAreaMm2(config, open, 1.0, 1.0, fromTop)
+                / std::max(1.0e-6, portOpenAreaMm2(config, open, 1.0, 1.0, 180.0)), 0.0, 1.0);
+        }
+        if (cylinder.runnerPart < out.size()) out[cylinder.runnerPart].intensity = static_cast<float>(opening);
+        if (cylinder.powerValvePart < out.size())
+            out[cylinder.powerValvePart].transform = Mat4::translation(cylinder.powerValveDrop
+                * -static_cast<float>(1.0 - std::clamp(input.powerValveOpening, 0.0, 1.0)));
     }
     for (const auto part : outletFlameParts_) out[part].intensity = std::clamp(input.afterfire, 0.0F, 1.0F);
     for (std::size_t index = 0; index < turbos_.size(); ++index) {
@@ -1029,6 +1176,7 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
         if (part == c.flamePart) return { PartRole::combustion, cylinder, -1 };
         if (part == c.linerPart) return { PartRole::liner, cylinder, -1 };
         if (part == c.injectorPart) return { PartRole::injector, cylinder, -1 };
+        if (part == c.powerValvePart) return { PartRole::powerValve, cylinder, -1 };
     }
     for (std::size_t d = 0; d < ducts_.size(); ++d)
         if (ducts_[d].part == part) {

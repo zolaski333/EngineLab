@@ -1145,9 +1145,17 @@ std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const s
         runner.centreline = resample(duct, 8.0F);
         runner.radii.assign(runner.centreline.size(), runnerRadius);
         appendTube(runner.mesh, runner.centreline, runner.radii, 16, true, true);
+        // Its twin on the other flank carries the same flow: one duct in the
+        // solver, two passages in the casting.
+        if (const auto normal = port->transferMirrorNormal; length(normal) > 0.5F) {
+            auto twin = runner.centreline;
+            for (auto& point : twin) point = point - normal * (2.0F * dot(point - port->transferMirrorPoint, normal));
+            appendTube(runner.mesh, twin, runner.radii, 16, true, true);
+        }
         pieces.push_back(std::move(runner));
 
-        // Reed block on the barrel, the manifold, the carburettor.
+        // The reed block (on the crankcase, or in a cylinder port that has
+        // one), the manifold, the carburettor.
         DuctPiece bodies;
         bodies.kind = DuctKind::intakeThrottle;
         bodies.pathId = path.id;
@@ -1155,9 +1163,11 @@ std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const s
         const auto direction = normalise(port->direction);
         const auto up = normalise(port->carburettorUp - direction * dot(port->carburettorUp, direction));
         const auto across = normalise(cross(direction, up));
-        addBox(bodies, across, direction, up, port->position + direction * (0.5F * reedDepth),
-               { 1.35F * throttle, reedDepth, 1.15F * throttle });
-        const auto manifoldStart = port->position + direction * reedDepth;
+        const auto reed = config.twoStroke.intake != TwoStrokeIntake::cylinderPort || config.twoStroke.intakePortReed;
+        if (reed)
+            addBox(bodies, across, direction, up, port->position + direction * (0.5F * reedDepth),
+                   { 1.35F * throttle, reedDepth, 1.15F * throttle });
+        const auto manifoldStart = port->position + direction * (reed ? reedDepth : 0.0F);
         appendCylinder(bodies.mesh, Mat4::frameAlongY(manifoldStart, direction), 0.6F * throttle, 0.58F * throttle,
                        manifoldLength, 24);
         const auto face = manifoldStart + direction * manifoldLength;

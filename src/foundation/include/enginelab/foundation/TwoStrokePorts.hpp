@@ -79,10 +79,10 @@ namespace enginelab {
 
 /** The geometric open area, mm^2, of a cylinder intake port (TwoStrokeIntake::
  *  cylinderPort) at cycle phase `phaseDegrees`. The skirt's lower edge
- *  uncovers it `intakePortOpenDegreesBtdc` before top dead centre and travels
- *  with the piston, so the uncovered height is how far the piston is above
- *  where it stood then; the port's bottom is where the skirt reaches at top
- *  dead centre. Zero for a crankcase reed. */
+ *  passes the port's lower edge `intakePortOpenDegreesBtdc` before top dead
+ *  centre and travels with the piston, so the uncovered height is how far the
+ *  piston is above where it stood then; the port's top edge is where the skirt
+ *  reaches at top dead centre. Zero for a crankcase reed. */
 [[nodiscard]] inline double intakePortOpenAreaMm2(const TwoStrokeConfig& ports, const CylinderConfig& cylinder,
                                                   double phaseDegrees) noexcept {
     if (ports.intake != TwoStrokeIntake::cylinderPort) return 0.0;

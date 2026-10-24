@@ -1938,6 +1938,41 @@ void EngineViewport::updateInspector() {
             add("Mass", juce::String(juce::roundToInt(cylinder->connectingRodMassGrams)) + " g");
         }
         break;
+    case render::PartRole::powerValve: {
+        const auto& ports = config.twoStroke;
+        title = "Power valve";
+        add("Shut: exhaust opens", juce::String(juce::roundToInt(ports.powerValveClosedExhaustPortOpenDegrees))
+                                       + utf8("\xc2\xb0 ATDC"));
+        add("Open: exhaust opens", juce::String(juce::roundToInt(ports.exhaustPortOpenDegrees)) + utf8("\xc2\xb0 ATDC"));
+        add("Starts opening", juce::String(juce::roundToInt(ports.powerValveOpeningStartRpm)) + " rpm");
+        add("Fully open", juce::String(juce::roundToInt(ports.powerValveFullyOpenRpm)) + " rpm");
+        add("Now", juce::String(juce::roundToInt(100.0 * state.powerValveOpening)) + " % open");
+        if (cylinderEditor_) {
+            PartInspector::Edit valveEdit;
+            valveEdit.key = std::uint64_t { 12 } << 60U;
+            valveEdit.heading = "POWER VALVE";
+            valveEdit.value("Shut: exhaust opens", ports.powerValveClosedExhaustPortOpenDegrees, utf8("\xc2\xb0 ATDC"),
+                            0, 1.0, 0.5, ports.exhaustPortOpenDegrees + 1.0, ports.transferPortOpenDegrees - 4.0);
+            valveEdit.value("Starts opening", ports.powerValveOpeningStartRpm, " rpm", 0, 250.0, 50.0, 0.0, 30'000.0);
+            valveEdit.value("Fully open", ports.powerValveFullyOpenRpm, " rpm", 0, 250.0, 50.0, 100.0, 30'000.0);
+            valveEdit.restarts = true;
+            valveEdit.note = "Shut, the blade lowers the port's roof so the exhaust opens later: more of the stroke "
+                             "at low speed. Its servo lifts it between the two speeds. Every cylinder changes; the "
+                             "engine restarts to take it. The exhaust port's own choice takes it off.";
+            edit = valveEdit;
+            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+                if (values.size() < 3U) return std::string("The power valve changed meanwhile.");
+                if (values[2] < values[1] + 100.0)
+                    return std::string("The power valve is fully open at least 100 rpm after it starts to open.");
+                auto& ports = edited.twoStroke;
+                ports.powerValveClosedExhaustPortOpenDegrees = values[0];
+                ports.powerValveOpeningStartRpm = values[1];
+                ports.powerValveFullyOpenRpm = values[2];
+                return std::string();
+            };
+        }
+        break;
+    }
     case render::PartRole::intakeValve:
     case render::PartRole::exhaustValve: {
         const auto intake = identity.role == render::PartRole::intakeValve;
@@ -1960,16 +1995,65 @@ void EngineViewport::updateInspector() {
                              1.0, 0.5, 5.0, 500.0);
                 const auto widthNow = intake ? transferPortWidthMm(config.twoStroke, *cylinder)
                                              : exhaustPortWidthMm(config.twoStroke, *cylinder);
-                partEditor_ = [ports = portTimingEditor(), intake, widthNow](EngineConfig& edited,
-                                                                              const std::vector<double>& values) {
-                    if (values.size() < 3U) return std::string("The ports changed meanwhile.");
+                const auto cylinderPort = intake && config.twoStroke.intake == TwoStrokeIntake::cylinderPort;
+                const auto intakeWidthNow = intakePortWidthMm(config.twoStroke, *cylinder);
+                if (cylinderPort) {
+                    edit->value("Intake opens", config.twoStroke.intakePortOpenDegreesBtdc, utf8("\xc2\xb0 BTDC"), 0, 2.0,
+                                0.5, 30.0, 110.0);
+                    edit->length("Intake width", intakeWidthNow, 1.0, 0.5, 5.0, 500.0);
+                    edit->note += " The intake port is uncovered by the skirt as far either side of TDC as it opens "
+                                  "before it.";
+                }
+                if (!intake) {
+                    // Fitting a power valve, or taking it off, restarts the
+                    // engine; its settings are then on its blade.
+                    const auto fitted = hasPowerValve(config.twoStroke);
+                    edit->choice = PartInspector::Edit::Choice {
+                        { "No power valve", "Power valve" },
+                        "A blade in the port's roof that lowers it at low speed, so the exhaust opens later and keeps "
+                        "more of the stroke, and lifts as the speed rises. Fitted shut 12 deg later than the port, "
+                        "opening from 60 % of the redline to fully open at 85 %, as the designer fits one; click its "
+                        "blade to set it.",
+                        fitted ? 1 : 0 };
+                    partChoice_ = [](EngineConfig& edited, int index) {
+                        auto& ports = edited.twoStroke;
+                        if (index == 1 && !hasPowerValve(ports)) {
+                            ports.powerValveClosedExhaustPortOpenDegrees = std::min(ports.exhaustPortOpenDegrees + 12.0,
+                                ports.transferPortOpenDegrees - 4.0);
+                            ports.powerValveOpeningStartRpm = 0.60 * edited.redlineRpm;
+                            ports.powerValveFullyOpenRpm = 0.85 * edited.redlineRpm;
+                        } else if (index == 0) {
+                            ports.powerValveClosedExhaustPortOpenDegrees = 0.0;
+                            ports.powerValveOpeningStartRpm = 0.0;
+                            ports.powerValveFullyOpenRpm = 0.0;
+                        }
+                    };
+                    partChoiceSelects_ = fitted ? render::PartRole::exhaustValve : render::PartRole::powerValve;
+                }
+                partEditor_ = [ports = portTimingEditor(), intake, widthNow, cylinderPort, intakeWidthNow](
+                                  EngineConfig& edited, const std::vector<double>& values) {
+                    if (values.size() < (cylinderPort ? 5U : 3U)) return std::string("The ports changed meanwhile.");
                     auto error = ports(edited, values);
                     // Unchanged, a width derived from the bore stays derived.
                     if (error.empty() && values[2] != widthNow)
                         (intake ? edited.twoStroke.transferPortWidthMm : edited.twoStroke.exhaustPortWidthMm) = values[2];
+                    if (error.empty() && cylinderPort) {
+                        edited.twoStroke.intakePortOpenDegreesBtdc = values[3];
+                        if (values[4] != intakeWidthNow) edited.twoStroke.intakePortWidthMm = values[4];
+                    }
                     return error;
                 };
             }
+            if (intake && config.twoStroke.intake == TwoStrokeIntake::cylinderPort) {
+                title = "Transfer and intake ports";
+                add("Intake opens", juce::String(juce::roundToInt(config.twoStroke.intakePortOpenDegreesBtdc))
+                                        + utf8("\xc2\xb0 BTDC"));
+                add("Intake open for",
+                    juce::String(juce::roundToInt(2.0 * config.twoStroke.intakePortOpenDegreesBtdc)) + utf8("\xc2\xb0"));
+                add("Reed", config.twoStroke.intakePortReed ? "In the port" : "None (piston port)");
+            }
+            if (!intake && hasPowerValve(config.twoStroke))
+                add("Power valve", juce::String(juce::roundToInt(100.0 * state.powerValveOpening)) + " % open");
             break;
         }
         title = intake ? "Intake valve" : "Exhaust valve";
@@ -2586,6 +2670,7 @@ void EngineViewport::refresh() {
         shared_.sampleSequence = ++sampleSequence_;
         shared_.pose.rpm = state.rpm;
         shared_.pose.throttle = state.throttle;
+        shared_.pose.powerValveOpening = state.powerValveOpening;
         shared_.turboShaftRpm = state.forcedInductionShaftSpeedRpm;
         // In gear the input shaft runs at the clutch's driven side; in
         // neutral the engaged clutch spins it with the crank.

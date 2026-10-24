@@ -75,6 +75,8 @@ struct ScenePoseInput final {
     double gearboxInputDegrees {};
     /** The engaged gear: 0 for first, -1 for neutral, -2 for reverse. */
     int engagedGear { -1 };
+    /** A two-stroke's power valve, 0 shut to 1 open. */
+    double powerValveOpening { 1.0 };
 };
 
 struct SceneBounds final {
@@ -124,6 +126,8 @@ enum class PartRole : std::uint8_t {
     injector,
     /** The gearbox: case, shafts, gear pairs and selector. */
     gearbox,
+    /** A two-stroke's power valve, the blade in its exhaust port's roof. */
+    powerValve,
 };
 
 struct PartIdentity final {
@@ -173,6 +177,10 @@ public:
         return turbos_.empty() ? none : turbos_.front();
     }
     /** Cylinder `index`'s injector: its part, nozzle tip and spray direction. */
+    /** Cylinder `index`'s power valve blade; 0xFFFF without one. */
+    [[nodiscard]] std::uint16_t powerValvePart(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].powerValvePart : std::uint16_t { 0xFFFFU };
+    }
     [[nodiscard]] std::uint16_t injectorPart(std::size_t index) const noexcept {
         return index < cylinders_.size() ? cylinders_[index].injectorPart : std::uint16_t { 0xFFFFU };
     }
@@ -251,6 +259,18 @@ private:
         std::uint16_t linerPart { 0xFFFFU };
         std::uint16_t runnerPart { 0xFFFFU };
         std::uint16_t injectorPart { 0xFFFFU };
+        /** A two-stroke's power valve blade, and how far it drops to shut. */
+        std::uint16_t powerValvePart { 0xFFFFU };
+        Vec3 powerValveDrop;
+        /** A two-stroke's: its crank's centre, level with it, and the round
+            crankcase, barrel and port windows the structure is drawn round. */
+        Vec3 crankCentre;
+        Vec3 exhaustWindowCentre;
+        Vec3 intakeWindowCentre;
+        Vec3 transferWindowCentre;
+        Vec3 transferFacing;
+        float barrelRadius {};
+        float barrelBottom {};
         /** Where the injector sprays from, and the unit direction it sprays. */
         Vec3 injectorTip;
         Vec3 injectorAim;
@@ -267,6 +287,7 @@ private:
     void buildCylinders();
     void buildCrankshaft();
     void buildStructure();
+    void buildTwoStrokeStructure();
     void buildDucts();
     void buildTurbo();
     void buildSupercharger();
@@ -303,6 +324,8 @@ private:
     float inputSense_ { 1.0F };
     /** Where the flywheel ends along +Z, its radius; set by buildCrankshaft(). */
     float flywheelEndZ_ { -1.0e9F };
+    /** A two-stroke's crankcase: round, just clear of the crank's webs. */
+    float crankcaseRadius_ {};
     float flywheelRadius_ {};
     /** Flames at the exhaust outlets, lit by an afterfire. */
     std::vector<std::uint16_t> outletFlameParts_;
