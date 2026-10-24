@@ -14,7 +14,11 @@ heat is a continuous afterburn (100 % duty), every late-spark cycle burning its
 own charge, so no unburnt charge collects to burn at once. Measured on the
 voices, a 16 dB pop needs about 220 J released within 1 ms, the fuel of four
 or five overrun cycles; misfires make the burn intermittent but each slug
-(~50 J) still lights alone, at the port, on the next fired cycle's gas.
+(~50 J) still lights alone, at the port, on the next fired cycle's gas. No
+element holds that fuel: the muffler is tailpipe air (phi ~0.03, at most
+50 J), and a primary holds at most ~230 J, too lean to light, which would give
+~90 J in its first millisecond if it did. That 220 J includes the silencer's
+loss between the primaries and the outlet, which is the next thing to measure.
 
 ## Backfires are a listening switch, not an engine property
 

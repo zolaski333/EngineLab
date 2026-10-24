@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Backfires: no volume holds a pop's fuel
+
+- Owner's go-ahead: a volume where slugs collect and burn together (the muffler). Not built: measured first with a per-element inventory trace (fuel energy, phi, temperature every 0.25 ms; experiment code, reverted), Lab Twin as below. The gas network has no 2 L chamber: a perforated-core muffler is its 54 x 240 mm core (0.55 L, one cell); the packed can exists only acoustically.
+- On the overrun the muffler is tailpipe air: phi 0.01-0.03 at 474-495 K, 4-28 J of fuel median, 50 J at most (outlet 0.5-4 J, 390 K), with or without 50 % misfires. A slug is ~30 cc (the cylinder is at 10-20 kPa at EVO) and Taylor dispersion spreads it ~0.3 m per metre of pipe: nothing physical keeps slugs whole until the muffler.
+- The fuel sits in the primaries: with 50 % misfires 40-110 J median, 226-250 J at most per primary, phi 0.14-0.29 at 950-1,240 K, under the 0.45 lean limit, so it never lights. A lean limit falling with temperature (Zabetakis, x (1 - 0.000721 (T - 298))): 27 -> 36 % burnt, 1 ms peak 30 -> 50 J, render 10.3 -> 10.2 dB (late spark -30: 11.3 -> 10.7). Not kept.
+- Budget: the largest local inventory (226 J) lit at once with the 2 ms reaction gives ~90 J in its first ms (~8 dB); the whole network holds 442 J at most. The overrun charge is not low: 15.6 mg of air per cycle is the idle air of a choked throttle spread over 5x more cycles.
+- Not the median either: 1 ms RMS median -40.1 dBFS without backfires, -41.6 with.
+- Lead, not measured: the 220 J includes what the silencer takes between the primaries and the outlet. A free-field monopole of one cycle's 49 J over 1-2 ms is ~116-128 dB at 1 m (an estimate, no real reference). Measure the source-to-observer transfer of a fixed heat pulse per element first.
+
 ## 2026-10-24 — Backfires: intermittent overrun burns, still one slug at a time
 
 - Owner's go-ahead: model intermittent overrun combustion. Lab Twin as below, a spark trace at every spark and EVO (experiment code, reverted).
