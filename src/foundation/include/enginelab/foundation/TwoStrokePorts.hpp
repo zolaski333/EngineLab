@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
+#include <string_view>
 
 namespace enginelab {
 
@@ -59,6 +61,34 @@ namespace enginelab {
     const auto now = pistonTravelMm(cylinder.strokeMm, cylinder.connectingRodMm, phaseDegrees);
     const auto height = std::clamp(now - top, 0.0, std::max(0.0, cylinder.strokeMm - top));
     return widthMm * height * dischargeCoefficient;
+}
+
+/** A two-stroke intake's name in engine files. */
+[[nodiscard]] inline const char* twoStrokeIntakeName(TwoStrokeIntake intake) noexcept {
+    return intake == TwoStrokeIntake::cylinderPort ? "cylinder_port" : "crankcase_reed";
+}
+[[nodiscard]] inline std::optional<TwoStrokeIntake> parseTwoStrokeIntake(std::string_view name) noexcept {
+    if (name == "crankcase_reed") return TwoStrokeIntake::crankcaseReed;
+    if (name == "cylinder_port") return TwoStrokeIntake::cylinderPort;
+    return std::nullopt;
+}
+
+[[nodiscard]] inline double intakePortWidthMm(const TwoStrokeConfig& ports, const CylinderConfig& cylinder) noexcept {
+    return ports.intakePortWidthMm > 0.0 ? ports.intakePortWidthMm : 0.70 * cylinder.boreMm;
+}
+
+/** The geometric open area, mm^2, of a cylinder intake port (TwoStrokeIntake::
+ *  cylinderPort) at cycle phase `phaseDegrees`. The skirt's lower edge
+ *  uncovers it `intakePortOpenDegreesBtdc` before top dead centre and travels
+ *  with the piston, so the uncovered height is how far the piston is above
+ *  where it stood then; the port's bottom is where the skirt reaches at top
+ *  dead centre. Zero for a crankcase reed. */
+[[nodiscard]] inline double intakePortOpenAreaMm2(const TwoStrokeConfig& ports, const CylinderConfig& cylinder,
+                                                  double phaseDegrees) noexcept {
+    if (ports.intake != TwoStrokeIntake::cylinderPort) return 0.0;
+    const auto opening = pistonTravelMm(cylinder.strokeMm, cylinder.connectingRodMm, ports.intakePortOpenDegreesBtdc);
+    const auto now = pistonTravelMm(cylinder.strokeMm, cylinder.connectingRodMm, phaseDegrees);
+    return intakePortWidthMm(ports, cylinder) * std::clamp(opening - now, 0.0, opening);
 }
 
 /** Crank degrees a port stays open, from the angle at which the piston crown

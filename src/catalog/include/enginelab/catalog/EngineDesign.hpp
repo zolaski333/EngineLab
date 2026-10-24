@@ -74,6 +74,10 @@ struct EngineSpec final {
     std::vector<double> crankOffsetsDegrees;
     /** A V's or a W's crank pins, when crankOffsetsDegrees is empty. */
     CrankPins crankPins { CrankPins::automatic };
+    /** A two-stroke's: where its carburettor delivers, and whether a
+     *  cylinder port has a reed (a crankcase intake always has one). */
+    TwoStrokeIntake twoStrokeIntake { TwoStrokeIntake::crankcaseReed };
+    bool twoStrokeIntakeReed { true };
     /** Values set by hand, by DesignValue key. They win over the derived ones,
      *  and what is derived from them follows. An unknown key is an error. */
     std::map<std::string, double> overrides;

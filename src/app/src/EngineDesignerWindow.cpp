@@ -85,6 +85,11 @@ public:
         addField(stroke_, "Stroke (mm)", "72");
         addField(displacement_, "or displacement (L)", "");
         addChoice(induction_, "Induction", { "Natural", "Turbocharged", "Supercharged" });
+        addChoice(twoStrokeIntake_, "Intake",
+            { "Reed on the crankcase", "Cylinder port with a reed", "Cylinder port (piston port)" });
+        twoStrokeIntake_.combo.setTooltip(utf8("Where the carburettor delivers. A reed on the crankcase lets the "
+            "charge in whenever the crankcase draws. A port in the cylinder wall is uncovered by the piston skirt "
+            "around top dead centre only; without a reed it blows back through the carburettor."));
         addField(boost_, "Boost (absolute ratio)", "");
         addChoice(turbos_, "Turbochargers", { "1", "2", "3", "4" });
         addField(firingOrder_, "Firing order", "");
@@ -243,6 +248,7 @@ private:
         show(bankCount_, layout == EngineLayout::custom);
         const auto boosted = induction_.combo.getSelectedItemIndex() > 0;
         show(boost_, boosted);
+        show(twoStrokeIntake_, cycle_.combo.getSelectedItemIndex() == 1);
         show(turbos_, induction_.combo.getSelectedItemIndex() == 1);
         show(firingOrder_, advanced && layout != EngineLayout::radial);
         show(crankPins_, advanced && (layout == EngineLayout::vLayout || layout == EngineLayout::custom));
@@ -305,6 +311,11 @@ private:
                 return std::nullopt;
             }
             for (const auto id : *order) spec.firingOrder.push_back(static_cast<std::uint32_t>(id));
+        }
+        if (twoStrokeIntake_.label.isVisible()) {
+            const auto intake = twoStrokeIntake_.combo.getSelectedItemIndex();
+            spec.twoStrokeIntake = intake > 0 ? TwoStrokeIntake::cylinderPort : TwoStrokeIntake::crankcaseReed;
+            spec.twoStrokeIntakeReed = intake != 2;
         }
         if (crankPins_.label.isVisible())
             spec.crankPins = static_cast<CrankPins>(std::max(0, crankPins_.combo.getSelectedItemIndex()));
@@ -556,7 +567,7 @@ private:
     std::map<std::string, double> overrides_;
     std::vector<Field*> fields_;
     Field name_, cycle_, fuel_, use_, layout_, cylinders_, bankAngle_, bankCount_, bore_, stroke_, displacement_,
-        induction_, boost_, turbos_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
+        induction_, boost_, turbos_, twoStrokeIntake_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
     juce::TableListBox table_;
     juce::Label overrideLabel_;
     juce::TextEditor overrideEditor_;

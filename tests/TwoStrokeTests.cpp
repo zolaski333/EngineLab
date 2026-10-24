@@ -178,12 +178,13 @@ struct Held final {
     double torqueNm { 0.0 };
     double lambda { 0.0 };
     double firingsPerCylinderRevolution { 0.0 };
+    double deliveredVolumetricEfficiency { 0.0 };
 };
 
-/** Cranked, then full throttle against a dyno holding `rpm`; means over the
- *  last 2 s of 8. */
+/** Cranked with the slide at `crankingThrottle`, then full throttle against a
+ *  dyno holding `rpm`; means over the last 2 s of 8. */
 [[nodiscard]] Held heldFullLoad(const EngineConfig& config, double rpm,
-                                bool exhaustEverySubstep = false) {
+                                bool exhaustEverySubstep = false, double crankingThrottle = 0.0) {
     auto rig = std::make_unique<Rig>(config);
     rig->simulator->setExhaustCouplingEverySubstep(exhaustEverySubstep);
     constexpr int frames = 8 * 240;
@@ -198,13 +199,14 @@ struct Held final {
         EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.5;
-        controls.throttle = t < 2.0 ? 0.0 : 1.0;
+        controls.throttle = t < 2.0 ? crankingThrottle : 1.0;
         if (t >= 2.0) controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (speed - rpm));
         const auto& result = rig->simulator->step(frameSeconds, controls);
         speed = result.state.rpm;
         if (frame < firstMeasured) continue;
         held.torqueNm += result.state.torqueNm * weight;
         held.lambda += result.state.lambda * weight;
+        held.deliveredVolumetricEfficiency += result.state.deliveredVolumetricEfficiency * weight;
         for (std::size_t index = 0; index < result.firingEventCount; ++index)
             if (!result.firingEvents[index].misfire) firings += 1.0;
         revolutions += result.state.rpm / 60.0 * frameSeconds;
@@ -232,6 +234,79 @@ void catalogueTwinMakesItsTorque() {
     require(held.lambda > 0.7 && held.lambda < 1.3, "the full-load mixture is near stoichiometric");
     require(held.torqueNm > 0.0 && held.torqueNm < 1.15 * 40.2,
         "the full-load torque at 8,000 rpm is positive and not above the maker's");
+}
+
+/** A cylinder intake port is a window the piston skirt uncovers around top
+ *  dead centre: shut until its opening angle before it, widest at it, shut
+ *  again as far after. The charge goes through it into the crankcase, so a
+ *  short window starves the engine a crankcase reed would have fed, and
+ *  without a reed the crankcase blows the charge back out of it. */
+void aCylinderPortOnlyBreathesAroundTopDeadCentre() {
+    auto config = catalogueTwoStroke();
+    const auto& cylinder = config.cylinders.front();
+    require(intakePortOpenAreaMm2(config.twoStroke, cylinder, 0.0) == 0.0,
+        "a crankcase reed has no cylinder intake port");
+    auto ported = config;
+    ported.twoStroke.intake = TwoStrokeIntake::cylinderPort;
+    ported.twoStroke.intakePortOpenDegreesBtdc = 75.0;
+    require(!validateEngineConfig(ported), "a cylinder intake port is valid");
+    const auto area = [&](double phase) { return intakePortOpenAreaMm2(ported.twoStroke, cylinder, phase); };
+    require(area(360.0 - 76.0) == 0.0 && area(76.0) == 0.0 && area(180.0) == 0.0,
+        "the skirt covers the port beyond 75 deg either side of top dead centre");
+    require(area(360.0 - 40.0) > 0.0 && area(360.0 - 40.0) < area(0.0) && std::abs(area(330.0) - area(30.0)) < 1.0e-9,
+        "and uncovers it widest at top dead centre, symmetrically");
+    auto early = ported;
+    early.twoStroke.intakePortOpenDegreesBtdc = 20.0;
+    require(validateEngineConfig(early).has_value(), "a cylinder port opening 20 deg before TDC is refused");
+
+    ported.twoStroke.intakePortWidthMm = 41.0;
+    ported.twoStroke.intakePortReed = false;
+    const JsonEngineSerializer json;
+    const YamlEngineSerializer yaml;
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        const auto decoded = serializer->decode(serializer->encode(ported));
+        require(decoded && decoded.config->twoStroke.intake == TwoStrokeIntake::cylinderPort
+                && decoded.config->twoStroke.intakePortOpenDegreesBtdc == 75.0
+                && decoded.config->twoStroke.intakePortWidthMm == 41.0
+                && !decoded.config->twoStroke.intakePortReed,
+            "a file keeps the cylinder intake port");
+        const auto reed = serializer->decode(serializer->encode(config));
+        require(reed && reed.config->twoStroke.intake == TwoStrokeIntake::crankcaseReed,
+            "and a crankcase reed stays one");
+    }
+
+    // A window 110 deg long at 8,000 rpm against the reed that is always
+    // ready; the engine still runs on it. Both are cranked with the slide a
+    // little open: shut, the window passes half the idle air the reed does
+    // (19 mg a cycle for 40 at cranking speed) and the catalogue twin's idle
+    // opening, sized for its reed, does not catch.
+    constexpr double crankingThrottle = 0.12;
+    const auto crankcase = heldFullLoad(config, 8'000.0, false, crankingThrottle);
+    auto shortPort = config;
+    shortPort.twoStroke.intake = TwoStrokeIntake::cylinderPort;
+    shortPort.twoStroke.intakePortOpenDegreesBtdc = 55.0;
+    const auto starved = heldFullLoad(shortPort, 8'000.0, false, crankingThrottle);
+    std::cout << "delivery ratio at 8,000 rpm: crankcase reed " << crankcase.deliveredVolumetricEfficiency
+              << ", cylinder port open 110 deg " << starved.deliveredVolumetricEfficiency << " ("
+              << starved.firingsPerCylinderRevolution << " firings per revolution)\n";
+    require(starved.firingsPerCylinderRevolution > 0.5
+            && starved.deliveredVolumetricEfficiency < 0.9 * crankcase.deliveredVolumetricEfficiency,
+        "a short cylinder port runs, and delivers less than a crankcase reed");
+
+    // At low speed the crankcase is above the carburettor for much of the
+    // window: a reed holds the charge, an open port lets it back out.
+    auto withReed = config;
+    withReed.twoStroke.intake = TwoStrokeIntake::cylinderPort;
+    withReed.twoStroke.intakePortOpenDegreesBtdc = 95.0;
+    auto withoutReed = withReed;
+    withoutReed.twoStroke.intakePortReed = false;
+    const auto held = heldFullLoad(withReed, 3'000.0);
+    const auto blown = heldFullLoad(withoutReed, 3'000.0);
+    std::cout << "delivery ratio at 3,000 rpm, a 190 deg cylinder port: with a reed "
+              << held.deliveredVolumetricEfficiency << ", without " << blown.deliveredVolumetricEfficiency << '\n';
+    require(blown.deliveredVolumetricEfficiency < held.deliveredVolumetricEfficiency,
+        "without a reed, a long cylinder port blows back at low speed");
 }
 
 /** The scavenging model's own switch, measured in one binary on one engine.
@@ -350,12 +425,16 @@ void catalogueTwinIdles() {
     require(lowest > 600.0, "the twin idles without stalling");
 }
 
-/** Instrument: `--trace <rpm> [--single] [--exhaust-cell <m>]` holds full
+/** Instrument: `--trace <rpm> [--single] [--exhaust-cell <m>] [--cylinder-port <deg BTDC>]` holds full
  *  load at `rpm` for 6 s (rpm 0: a free idle, throttle shut), then prints one
  *  cylinder's cycle state and a 0.5-degree trace of one revolution. `--single` runs one cylinder alone
  *  (the manifold pressure is then its crankcase's). */
-int trace(double rpm, bool single, double exhaustCellM) {
+int trace(double rpm, bool single, double exhaustCellM, double cylinderPortBtdc) {
     auto config = catalogueTwoStroke();
+    if (cylinderPortBtdc > 0.0) {
+        config.twoStroke.intake = TwoStrokeIntake::cylinderPort;
+        config.twoStroke.intakePortOpenDegreesBtdc = cylinderPortBtdc;
+    }
     if (single) {
         // One cylinder alone, so the manifold pressure is its crankcase's.
         config.name += " (one cylinder)";
@@ -852,17 +931,21 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string_view(argv[1]) == "--trace") {
         auto single = false;
         auto exhaustCellM = 0.0;
+        auto cylinderPortBtdc = 0.0;
         for (auto index = 3; index < argc; ++index) {
             if (std::string_view(argv[index]) == "--single") single = true;
             if (std::string_view(argv[index]) == "--exhaust-cell" && index + 1 < argc)
                 exhaustCellM = std::stod(argv[++index]);
+            else if (std::string_view(argv[index]) == "--cylinder-port" && index + 1 < argc)
+                cylinderPortBtdc = std::stod(argv[++index]);
         }
-        return trace(std::stod(argv[2]), single, exhaustCellM);
+        return trace(std::stod(argv[2]), single, exhaustCellM, cylinderPortBtdc);
     }
     portsFollowThePiston();
     configurationIsChecked();
     missingCrankOffsetsFollowTheCycle();
     thePowerValveLowersThePortAtLowSpeed();
+    aCylinderPortOnlyBreathesAroundTopDeadCentre();
     loadIsTheDeliveredCharge();
     catalogueTwinIdles();
     catalogueTwinMakesItsTorque();

@@ -684,6 +684,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || !inRange(ports.powerValveFullyOpenRpm, ports.powerValveOpeningStartRpm + 100.0, 30'000.0)))
             return "A two-stroke power valve opens the exhaust port later than the port itself and at least "
                    "4 deg before the transfers, and is fully open at least 100 rpm above where it starts";
+        if (ports.intake == TwoStrokeIntake::cylinderPort
+                && (!inRange(ports.intakePortOpenDegreesBtdc, 30.0, 110.0) || !widthOk(ports.intakePortWidthMm)))
+            return "A two-stroke cylinder intake port opens 30-110 deg before TDC and is 5-500 mm wide "
+                   "(0: from the bore)";
         for (const auto& path : config.intakePaths) {
             if (path.cylinderIds.size() != 1)
                 return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";

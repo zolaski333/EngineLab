@@ -474,6 +474,8 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "two_stroke.power_valve_closed_exhaust_port_open_deg", Dimension::angle, [](auto& c, double v) { c.twoStroke.powerValveClosedExhaustPortOpenDegrees = v; } },
         { "two_stroke.power_valve_opening_start_rpm", Dimension::engineSpeed, [](auto& c, double v) { c.twoStroke.powerValveOpeningStartRpm = v; } },
         { "two_stroke.power_valve_fully_open_rpm", Dimension::engineSpeed, [](auto& c, double v) { c.twoStroke.powerValveFullyOpenRpm = v; } },
+        { "two_stroke.intake_port_open_deg_btdc", Dimension::angle, [](auto& c, double v) { c.twoStroke.intakePortOpenDegreesBtdc = v; } },
+        { "two_stroke.intake_port_width_mm", Dimension::length, [](auto& c, double v) { c.twoStroke.intakePortWidthMm = v; } },
         { "forced_induction.turbine_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.turbineEfficiency = v; } },
         { "forced_induction.shaft_inertia_kg_m2", Dimension::inertia, [](auto& c, double v) { c.forcedInduction.shaftInertiaKgM2 = v; } },
         { "forced_induction.wastegate_pressure_ratio", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.wastegatePressureRatio = v; } },

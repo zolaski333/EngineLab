@@ -1784,6 +1784,31 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
                             + 1'440.0, 360.0)));
             }
+        // A cylinder intake port lets the charge into the crankcase only while
+        // the skirt leaves it open: its window in series with the carburettor,
+        // nothing while it is covered, and a reed only if one is fitted. A
+        // crankcase reed sees the carburettor alone.
+        const auto cylinderPortIntake = twoStrokeCrankcase
+            && config_.twoStroke.intake == TwoStrokeIntake::cylinderPort;
+        const auto reedFitted = twoStrokeCrankcase
+            && (!cylinderPortIntake || config_.twoStroke.intakePortReed);
+        const auto crankcaseInletAreaM2 = [&](std::size_t pathIndex, double inletAreaM2,
+                                              double dischargeCoefficient) {
+            if (!cylinderPortIntake) return inletAreaM2;
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                if (intakePathIndexByCylinder_[index] != pathIndex) continue;
+                const auto& cylinder = config_.cylinders[index];
+                const auto portM2 = intakePortOpenAreaMm2(config_.twoStroke, cylinder,
+                        std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
+                            + 1'440.0, 360.0))
+                    * config_.twoStroke.portDischargeCoefficient * 1.0e-6;
+                const auto carburettorM2 = inletAreaM2 * dischargeCoefficient;
+                if (!(portM2 > 0.0) || !(carburettorM2 > 0.0)) return 0.0;
+                return 1.0 / std::sqrt(1.0 / (carburettorM2 * carburettorM2) + 1.0 / (portM2 * portM2))
+                    / dischargeCoefficient;
+            }
+            return inletAreaM2;
+        };
         // A crank that is not turning passes no gas through its valves. The
         // quasi-steady valve law has an unbounded gain at zero pressure
         // difference, so an open valve held at equilibrium by a stopped crank
@@ -1819,8 +1844,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
-                    plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
-                    intake.throttleDischargeCoefficient, subDt, twoStrokeCrankcase);
+                    crankcaseInletAreaM2(pathIndex, plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
+                        intake.throttleDischargeCoefficient),
+                    intake.throttleDischargeCoefficient, subDt, reedFitted);
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
@@ -2080,11 +2106,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakeThrottleConductanceAreaM2[pathIndex] = throttleAreaM2
                     * intake.throttleDischargeCoefficient;
                 const auto crankcaseMassBeforeKg = intakePlenumGas_[pathIndex].massKg();
+                const auto inletAreaM2 = crankcaseInletAreaM2(pathIndex,
+                    plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
+                    intake.throttleDischargeCoefficient);
+                // A covered cylinder port leaves the carburettor's bore standing
+                // at the airbox's pressure: its pilot sees no drop.
+                const auto intakePortShut = cylinderPortIntake && !(inletAreaM2 > 0.0);
                 throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
-                    intakeSourcePressureKpa, temperatureK,
-                    plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
-                    intake.throttleDischargeCoefficient, subDt, twoStrokeCrankcase);
+                    intakeSourcePressureKpa, temperatureK, inletAreaM2,
+                    intake.throttleDischargeCoefficient, subDt, reedFitted);
                 const auto plenumInflowKg = std::max(0.0,
                     intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg);
                 if (twoStrokeCrankcase)
@@ -2105,7 +2136,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         carburettorStates_[pathIndex],
                         plenumInflowKg / subDt, boundaryDensityKgPerM3,
                         intakeSourcePressureKpa,
-                        intakePlenumGas_[pathIndex].pressureKpa(),
+                        intakePortShut ? intakeSourcePressureKpa : intakePlenumGas_[pathIndex].pressureKpa(),
                         intake.throttleDiameterMm, state_.throttle, subDt,
                         carburettorIdleCircuitOpening(intake, ecuCommand.idleAirOpening));
                     if (metering.deliveredMoles > 0.0)

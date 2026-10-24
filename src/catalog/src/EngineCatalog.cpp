@@ -1,5 +1,6 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/catalog/EngineDesign.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <cctype>
@@ -844,7 +845,8 @@ void applyCrankOffsets(EngineConfig& config) {
 [[nodiscard]] EngineSpec decodeEngineSpec(const YAML::Node& node) {
     requireKnownKeys(node, { "name", "cycle", "fuel", "use", "layout", "cylinders", "bank_count", "bank_angle_deg",
         "bank_angles_deg", "bore_mm", "stroke_mm", "displacement_l", "induction", "boost_pressure_ratio", "turbochargers",
-        "firing_order", "crank_offsets_deg", "crank_pins", "overrides" }, "design");
+        "firing_order", "crank_offsets_deg", "crank_pins", "two_stroke_intake", "two_stroke_intake_reed",
+        "overrides" }, "design");
     EngineSpec spec;
     spec.name = node["name"].as<std::string>();
     const auto cycle = node["cycle"].as<std::string>("four_stroke");
@@ -880,6 +882,14 @@ void applyCrankOffsets(EngineConfig& config) {
     const auto parsedPins = parseCrankPins(pins);
     if (!parsedPins) throw std::runtime_error("Unknown crank pins: " + pins + " (automatic, shared or separate)");
     spec.crankPins = *parsedPins;
+    if (const auto intake = node["two_stroke_intake"]) {
+        const auto name = intake.as<std::string>();
+        const auto parsed = parseTwoStrokeIntake(name);
+        if (!parsed)
+            throw std::runtime_error("Unknown two-stroke intake: " + name + " (crankcase_reed or cylinder_port)");
+        spec.twoStrokeIntake = *parsed;
+    }
+    assignIfPresent(node, "two_stroke_intake_reed", spec.twoStrokeIntakeReed);
     if (const auto overrides = node["overrides"])
         for (const auto& item : overrides) spec.overrides[item.first.as<std::string>()] = item.second.as<double>();
     return spec;
@@ -995,6 +1005,16 @@ void applyCrankOffsets(EngineConfig& config) {
             config.twoStroke.powerValveClosedExhaustPortOpenDegrees);
         assignIfPresent(ports, "power_valve_opening_start_rpm", config.twoStroke.powerValveOpeningStartRpm);
         assignIfPresent(ports, "power_valve_fully_open_rpm", config.twoStroke.powerValveFullyOpenRpm);
+        if (const auto intake = ports["intake"]) {
+            const auto name = intake.as<std::string>();
+            const auto parsed = parseTwoStrokeIntake(name);
+            if (!parsed)
+                throw std::runtime_error("Unknown two-stroke intake: " + name + " (crankcase_reed or cylinder_port)");
+            config.twoStroke.intake = *parsed;
+        }
+        assignIfPresent(ports, "intake_port_open_deg_btdc", config.twoStroke.intakePortOpenDegreesBtdc);
+        assignIfPresent(ports, "intake_port_width_mm", config.twoStroke.intakePortWidthMm);
+        assignIfPresent(ports, "intake_port_reed", config.twoStroke.intakePortReed);
     }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);

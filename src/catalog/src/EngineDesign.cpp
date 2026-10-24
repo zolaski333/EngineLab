@@ -781,6 +781,24 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 sport ? 82.0 : 92.0, sport ? "a sport port (RD350LC: 82)" : "a road port");
             config.twoStroke.transferPortOpenDegrees = derive("transfer_port_open_deg", "Transfer ports open",
                 "deg ATDC", sport ? 116.0 : 118.0, "the use's");
+            config.twoStroke.intake = spec.twoStrokeIntake;
+            if (spec.twoStrokeIntake == TwoStrokeIntake::cylinderPort) {
+                config.twoStroke.intakePortReed = spec.twoStrokeIntakeReed;
+                designed.values.push_back({ "two_stroke_intake", "Intake", "", 0.0, false,
+                    spec.twoStrokeIntakeReed ? "a port in the cylinder wall with a reed in it"
+                                             : "a port in the cylinder wall (piston port)", false });
+                // The skirt uncovers it this far before top dead centre and
+                // covers it as far after: Jennings gives a road engine about
+                // 140-150 deg of inlet duration and a racing one about 190.
+                config.twoStroke.intakePortOpenDegreesBtdc = derive("intake_port_open_deg_btdc",
+                    "Intake port opens", "deg BTDC", sport ? 95.0 : 72.0,
+                    sport ? "a racing port, about 190 deg open" : "a road port, about 145 deg open");
+                config.twoStroke.intakePortWidthMm = derive("intake_port_width_mm", "Intake port width", "mm",
+                    0.70 * bore, "0.70 x bore");
+            } else {
+                designed.values.push_back({ "two_stroke_intake", "Intake", "", 0.0, false,
+                    "a reed block on the crankcase", false });
+            }
             config.twoStroke.crankcaseCompressionRatio = derive("crankcase_compression_ratio",
                 "Crankcase compression", "", 1.35, "1.25-1.5 on road and race engines");
             config.twoStroke.scavengeLoopLengthRatio = derive("scavenge_loop_length_ratio",

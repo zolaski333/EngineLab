@@ -1127,7 +1127,30 @@ struct AudioVoicingConfig final {
  * transfer duct and its "intake valve" the transfer ports. The exhaust port
  * takes the exhaust valve's place on the exhaust network.
  */
+/** Where a two-stroke's carburettor delivers. */
+enum class TwoStrokeIntake : std::uint8_t {
+    /** A reed block on the crankcase (Rotax, Aprilia, most scooters): the
+     *  charge enters whenever the crankcase is below the carburettor,
+     *  whatever the piston is doing. */
+    crankcaseReed,
+    /** A port in the cylinder wall that the piston skirt uncovers on its way
+     *  up and covers again on its way down (piston port), with or without a
+     *  reed in it (Yamaha's torque induction): the charge still reaches the
+     *  crankcase, but only while the skirt leaves the port open. */
+    cylinderPort,
+};
+
 struct TwoStrokeConfig final {
+    TwoStrokeIntake intake { TwoStrokeIntake::crankcaseReed };
+    /** A cylinder port's timing: crank degrees before top dead centre at
+     *  which the skirt starts to uncover it. It is fully open at top dead
+     *  centre and shut the same angle after it. */
+    double intakePortOpenDegreesBtdc { 75.0 };
+    /** A cylinder port's width; zero: 0.70 x bore. */
+    double intakePortWidthMm { 0.0 };
+    /** A reed in the cylinder port. Without one the port blows the charge
+     *  back through the carburettor whenever the crankcase is above it. */
+    bool intakePortReed { true };
     double exhaustPortOpenDegrees { 92.0 };
     double transferPortOpenDegrees { 118.0 };
     /** Zero: 0.65 x bore (one wide window). */

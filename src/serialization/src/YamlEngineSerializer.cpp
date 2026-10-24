@@ -1,4 +1,5 @@
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <yaml-cpp/yaml.h>
 #include <stdexcept>
 
@@ -791,6 +792,12 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                 << config.twoStroke.powerValveClosedExhaustPortOpenDegrees
                 << YAML::Key << "power_valve_opening_start_rpm" << YAML::Value << config.twoStroke.powerValveOpeningStartRpm
                 << YAML::Key << "power_valve_fully_open_rpm" << YAML::Value << config.twoStroke.powerValveFullyOpenRpm;
+        // Only a cylinder port: a crankcase reed's file is unchanged.
+        if (config.twoStroke.intake == TwoStrokeIntake::cylinderPort)
+            out << YAML::Key << "intake" << YAML::Value << twoStrokeIntakeName(config.twoStroke.intake)
+                << YAML::Key << "intake_port_open_deg_btdc" << YAML::Value << config.twoStroke.intakePortOpenDegreesBtdc
+                << YAML::Key << "intake_port_width_mm" << YAML::Value << config.twoStroke.intakePortWidthMm
+                << YAML::Key << "intake_port_reed" << YAML::Value << config.twoStroke.intakePortReed;
         out << YAML::EndMap;
     }
     out << YAML::EndMap << YAML::EndMap;
@@ -903,6 +910,14 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.twoStroke.powerValveClosedExhaustPortOpenDegrees = ports["power_valve_closed_exhaust_port_open_deg"].as<double>(config.twoStroke.powerValveClosedExhaustPortOpenDegrees);
             config.twoStroke.powerValveOpeningStartRpm = ports["power_valve_opening_start_rpm"].as<double>(config.twoStroke.powerValveOpeningStartRpm);
             config.twoStroke.powerValveFullyOpenRpm = ports["power_valve_fully_open_rpm"].as<double>(config.twoStroke.powerValveFullyOpenRpm);
+            if (const auto intake = ports["intake"]) {
+                const auto parsed = parseTwoStrokeIntake(intake.as<std::string>());
+                if (!parsed) throw std::runtime_error("Unknown two-stroke intake (crankcase_reed or cylinder_port)");
+                config.twoStroke.intake = *parsed;
+            }
+            config.twoStroke.intakePortOpenDegreesBtdc = ports["intake_port_open_deg_btdc"].as<double>(config.twoStroke.intakePortOpenDegreesBtdc);
+            config.twoStroke.intakePortWidthMm = ports["intake_port_width_mm"].as<double>(config.twoStroke.intakePortWidthMm);
+            config.twoStroke.intakePortReed = ports["intake_port_reed"].as<bool>(config.twoStroke.intakePortReed);
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

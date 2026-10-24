@@ -1,4 +1,5 @@
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
@@ -671,6 +672,14 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             ports["power_valve_opening_start_rpm"] = config.twoStroke.powerValveOpeningStartRpm;
             ports["power_valve_fully_open_rpm"] = config.twoStroke.powerValveFullyOpenRpm;
         }
+        // Only a cylinder port: a crankcase reed's file is unchanged.
+        if (config.twoStroke.intake == TwoStrokeIntake::cylinderPort) {
+            auto& ports = document["engine"]["two_stroke"];
+            ports["intake"] = twoStrokeIntakeName(config.twoStroke.intake);
+            ports["intake_port_open_deg_btdc"] = config.twoStroke.intakePortOpenDegreesBtdc;
+            ports["intake_port_width_mm"] = config.twoStroke.intakePortWidthMm;
+            ports["intake_port_reed"] = config.twoStroke.intakePortReed;
+        }
     }
     return document.dump(2);
 }
@@ -793,6 +802,14 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.twoStroke.powerValveClosedExhaustPortOpenDegrees = ports.value("power_valve_closed_exhaust_port_open_deg", config.twoStroke.powerValveClosedExhaustPortOpenDegrees);
             config.twoStroke.powerValveOpeningStartRpm = ports.value("power_valve_opening_start_rpm", config.twoStroke.powerValveOpeningStartRpm);
             config.twoStroke.powerValveFullyOpenRpm = ports.value("power_valve_fully_open_rpm", config.twoStroke.powerValveFullyOpenRpm);
+            if (ports.contains("intake")) {
+                const auto parsed = parseTwoStrokeIntake(ports.at("intake").get<std::string>());
+                if (!parsed) throw std::runtime_error("Unknown two-stroke intake (crankcase_reed or cylinder_port)");
+                config.twoStroke.intake = *parsed;
+            }
+            config.twoStroke.intakePortOpenDegreesBtdc = ports.value("intake_port_open_deg_btdc", config.twoStroke.intakePortOpenDegreesBtdc);
+            config.twoStroke.intakePortWidthMm = ports.value("intake_port_width_mm", config.twoStroke.intakePortWidthMm);
+            config.twoStroke.intakePortReed = ports.value("intake_port_reed", config.twoStroke.intakePortReed);
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");
