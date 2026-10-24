@@ -154,7 +154,11 @@ are set with `two_stroke.exhaust_port_open_deg`, `two_stroke.transfer_port_open_
 and `two_stroke.scavenge_loop_length_ratio`. A power valve is
 `two_stroke.power_valve_closed_exhaust_port_open_deg` (the exhaust's opening
 with the valve shut; 0, none), `two_stroke.power_valve_opening_start_rpm` and
-`two_stroke.power_valve_fully_open_rpm`.
+`two_stroke.power_valve_fully_open_rpm`. A cylinder intake port is
+`two_stroke.intake_port_open_deg_btdc` and `two_stroke.intake_port_width_mm`;
+whether the engine breathes through it or through a crankcase reed
+(`intake: crankcase_reed | cylinder_port`, `intake_port_reed`) is set in a
+JSON or YAML engine file or in the designer.
 The final validation applies the two-stroke rules (petrol, one cylinder per
 intake path).
 

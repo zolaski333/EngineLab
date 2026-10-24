@@ -9,6 +9,20 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- **A two-stroke can breathe through a cylinder port**: the designer's
+  *Intake* choice keeps the crankcase reed (the default) or puts the
+  carburettor on a port in the barrel that the piston skirt opens around top
+  dead centre, with or without a reed behind it.
+- The 3-D view draws a two-stroke as one is built: a round crankcase without a
+  sump, the exhaust leaving from its window in the barrel, the transfers in the
+  barrel flanks, the carburettor where the intake is, and a power valve whose
+  blade drops as it shuts. Click the exhaust port to fit or remove a power
+  valve and to set its timing and speeds.
+- The carburettor's jets are edited as the hole a Dellorto or Keihin jet is
+  stamped with (hundredths of a millimetre), with the Mikuni flow number
+  beside it; a new carburettor bore scales the main jet so the mixture holds.
+- `EngineLabSceneExport --two-stroke-intake` draws every two-stroke with
+  either intake.
 - **New engine… designs an engine from nothing**: say what it is (four- or
   two-stroke, petrol or diesel, what it is built for, inline, V, flat, radial
   or W, any number of cylinders, bore and stroke or a displacement, natural,

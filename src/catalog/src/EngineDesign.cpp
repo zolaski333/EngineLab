@@ -1,5 +1,6 @@
 #include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
+#include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
 
 #include <algorithm>
@@ -631,10 +632,16 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             // A two-stroke runs its full load rich: the surplus fuel is what
             // cools the piston and carries the oil.
             constexpr double fullLoadAirFuelRatio = 12.8;
-            carburettor.mainJetFlowNumber = derive("carb_main_jet_flow", "Main jet", "cc/min",
-                std::clamp(jetNumberFor(wotAirKgPerSecond / fullLoadAirFuelRatio, wotHeadM),
-                    20.0, 2'000.0),
-                "the fuel peak power needs at AFR 12.8, over the root of the venturi head there");
+            // The hole a Dellorto or Keihin jet of that flow is stamped with.
+            const auto holeOf = [&carburettor](double flowNumber) {
+                return " (a " + std::to_string(static_cast<int>(std::lround(
+                    jetHoleHundredthsMm(flowNumber, carburettor.jetDischargeCoefficient)))) + " hole)";
+            };
+            const auto mainJetFlow = std::clamp(jetNumberFor(wotAirKgPerSecond / fullLoadAirFuelRatio, wotHeadM),
+                20.0, 2'000.0);
+            carburettor.mainJetFlowNumber = derive("carb_main_jet_flow", "Main jet", "cc/min", mainJetFlow,
+                "the fuel peak power needs at AFR 12.8, over the root of the venturi head there"
+                    + holeOf(mainJetFlow));
 
             // Pilot circuit, at idle: the depression is the whole drop from the
             // float bowl to a crankcase pumping about 20 kPa below ambient.
@@ -656,11 +663,11 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             // it, so the jet itself has to be the larger by that factor.
             const auto pilotCircuitFactor = std::max(0.01,
                 carburettor.pilotCircuitFactor);
-            carburettor.pilotJetFlowNumber = derive("carb_pilot_jet_flow", "Pilot jet", "cc/min",
-                std::clamp(jetNumberFor(idleAirKgPerSecond / idleAirFuelRatio, idleHeadM)
-                    / pilotCircuitFactor, 5.0, 500.0),
+            const auto pilotJetFlow = std::clamp(jetNumberFor(idleAirKgPerSecond / idleAirFuelRatio, idleHeadM)
+                / pilotCircuitFactor, 5.0, 500.0);
+            carburettor.pilotJetFlowNumber = derive("carb_pilot_jet_flow", "Pilot jet", "cc/min", pilotJetFlow,
                 "the fuel the idle needs at AFR 13.5, over the root of the crankcase head, "
-                "divided by the circuit's own restriction");
+                "divided by the circuit's own restriction" + holeOf(pilotJetFlow));
         }
         if (diesel) intake.throttleDischargeCoefficient = 0.86;
         config.plenumVolumeLitres = intake.plenumVolumeLitres;

@@ -122,6 +122,19 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   volume. The throttle is the carburettor bore with a reed check valve (no
   flow out of the crankcase), and the runner is the transfer duct. The piston's
   underside sees the crankcase pressure, not the ambient.
+- **Intake** (`two_stroke.intake`): `crankcase_reed`, the default, feeds the
+  crankcase through the reed whenever it is below the carburettor. A
+  `cylinder_port` feeds it through a port in the barrel wall that the piston
+  skirt uncovers `intake_port_open_deg_btdc` before top dead centre and covers
+  again as far after (width `intake_port_width_mm`, 0: 0.70 x bore). Its open
+  area is in series with the carburettor's, 1/sqrt(1/A_carb^2 + 1/A_port^2),
+  and is zero while the skirt covers it; `intake_port_reed` keeps a reed
+  behind the port (a check valve) or leaves it open, in which case the
+  crankcase blows back through the carburettor when it is above it. Measured
+  (`EngineLab.TwoStroke`): at 8,000 rpm a 110 deg port delivers 0.50 against
+  the reed's 0.88; at 3,000 rpm a 190 deg port delivers 0.88 with a reed and
+  0.69 without. The designer gives a sport cylinder port 95 deg BTDC, a road
+  one 72 deg.
 - **Power valve** (optional): a valve in the exhaust port's roof, Yamaha's
   YPVS and its kind. Shut, it lowers the roof, so the port opens
   `power_valve_closed_exhaust_port_open_deg` after top dead centre instead of
@@ -206,6 +219,12 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
 
   Jets carry the number stamped on them: cc/min of test fluid under one metre
   of head, so flow is the number times the root of the head available. The
+  inspector shows them as the hole Dellorto and Keihin stamp, in hundredths of
+  a millimetre (`jetHoleHundredthsMm`, through the jet's discharge coefficient,
+  0.80: a Mikuni 500 is a 173 hole), and a new carburettor bore scales the main
+  jet with the throat's area, by the bore's square, when the venturi follows
+  the bore (no `venturi_diameter_mm`): the mixture, jet area over throat area,
+  holds. The
   designer sizes them from the engine and not from a table -- the fuel peak
   power needs at AFR 12.8 over the root of the venturi head there, and the
   fuel the idle air needs at AFR 13.5 over the root of the crankcase head. The

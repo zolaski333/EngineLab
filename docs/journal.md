@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Two-stroke: cylinder-port intake, drawing, power valve, jets
+
+- Intake as a choice: crankcase reed (default, solver path unchanged) or a cylinder port in series with the carburettor (zero while the skirt covers it), with or without a reed. `EngineLab.TwoStroke`, catalogue twin: delivery ratio at 8,000 rpm 0.88 reed / 0.50 a 110 deg port; 3,000 rpm, 190 deg port 0.88 with a reed / 0.69 without (blow-back). A port engine does not catch on a shut throttle at cranking (the window passes about half the idle air): the test cranks at 0.12. Idle sizing for it is not done (the idle pass is deferred).
+- Drawing: exhaust from its window (the test fails on the old head stub), transfers in the flanks, round crankcase, power valve blade. Catalogue route check 11 / 4 / 0 / 44 / 7 (clashes 9 -> 11: the RD350's two chambers share a lane, tight bends 46 -> 44). The exhaust headers still loop: the shared exhaust router runs the trunk along the crank.
+- Jets: a Mikuni 500 is a 173 hole at Cd 0.80, so the owner's 500 on a 38 mm carburettor is the Keihin 170-178 of a real 250 mono. The conversion is the model's own (its jet Cd); no maker's cross-reference table was checked against it. A new bore scales the main by the bore's square when the venturi follows the bore (`EngineLab.LiveIntake` fails without it).
+- Not checked on screen (screen access declined): the power valve and port editors, the jets in holes. Not measured: the sound of either intake, a real port engine's curve.
+
 ## 2026-10-24 — Owner reports: V gearbox, two-stroke intake drawing, editors
 
 - Gearbox: `EngineLab.EngineModel3D` now measures, across the crank, the gap from the drawn case to each barrel (top of the crank's sweep to the deck, a bore wide). Without the new turn the catalogue Big Twin-like V2 already fails at -16.6 mm (the test stops at the first failure, so the designed Vs were not read without it). With it (5 deg steps, downwards first, kept where already clear): Big Twin 22.0 mm; designed V2 90 deg 14.7, V2 45 deg 15.6, V4 65 deg 9.6, two-stroke V4 90 deg 9.5, I4 27.0; catalogue inlines and the RD350 25-36 mm (the turn leaves a case its own estimate finds clear where it was).

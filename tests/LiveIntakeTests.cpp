@@ -578,6 +578,31 @@ void carburettorIsTunedLive() {
     require(!tuneCarburettor(refused, pathId, clip).empty() && !engineEditScope(config, refused).any(),
             "a clip out of range is refused and changes nothing");
 
+    // A jet reads as the hole Dellorto and Keihin stamp, and back.
+    constexpr double jetCoefficient = 0.80;
+    require(std::abs(jetHoleHundredthsMm(500.0, jetCoefficient) - 173.05) < 0.1,
+            "a Mikuni 500 is a 173 hole");
+    require(std::abs(jetFlowNumberForHole(jetHoleHundredthsMm(fitted.mainJetFlowNumber, jetCoefficient), jetCoefficient)
+                     - fitted.mainJetFlowNumber) < 1.0e-9 * fitted.mainJetFlowNumber,
+            "a hole reads back its flow number");
+    // A bigger bore keeps the mixture: the main jet grows with the throat.
+    require(fitted.venturiDiameterMm == 0.0, "the designed carburettor's venturi is its bore's");
+    auto rebored = config;
+    rebored.intakePaths.resize(1);
+    const auto bore = rebored.intakePaths.front().geometry.throttleDiameterMm;
+    require(resizeIntakePart(rebored, pathId, IntakePart::throttle, 0, 1.2 * bore).empty()
+                && std::abs(rebored.intakePaths.front().geometry.carburettor.mainJetFlowNumber
+                            - 1.44 * fitted.mainJetFlowNumber) < 1.0e-9 * fitted.mainJetFlowNumber
+                && rebored.intake.carburettor.mainJetFlowNumber
+                    == rebored.intakePaths.front().geometry.carburettor.mainJetFlowNumber,
+            "a carburettor bored 20 % larger takes a main jet 44 % larger");
+    auto authored = config;
+    authored.intakePaths.resize(1);
+    authored.intakePaths.front().geometry.carburettor.venturiDiameterMm = 0.8 * bore;
+    require(resizeIntakePart(authored, pathId, IntakePart::throttle, 0, 1.2 * bore).empty()
+                && authored.intakePaths.front().geometry.carburettor.mainJetFlowNumber == fitted.mainJetFlowNumber,
+            "an authored venturi does not follow the bore, nor does its main jet");
+
     Rig untouched(config);
     Rig jetted(config);
     constexpr auto swapFrame = 4 * 240;

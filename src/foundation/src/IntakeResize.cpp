@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <string>
 
 namespace enginelab {
@@ -28,7 +29,25 @@ void mirrorSinglePath(EngineConfig& config) {
     config.throttleDiameterMm = geometry.throttleDiameterMm;
 }
 
+/** The velocity one metre of head gives, m/s, at which a flow number is
+    measured (CarburettorModel::jetAreaM2). */
+const double jetReferenceVelocityMps = std::sqrt(2.0 * 9.80665);
+
 } // namespace
+
+double jetHoleHundredthsMm(double flowNumber, double dischargeCoefficient) noexcept {
+    if (!(flowNumber > 0.0)) return 0.0;
+    const auto coefficient = std::clamp(dischargeCoefficient, 0.05, 1.0);
+    const auto areaM2 = flowNumber * 1.0e-6 / 60.0 / (coefficient * jetReferenceVelocityMps);
+    return std::sqrt(4.0 * areaM2 / std::numbers::pi) * 1.0e5;
+}
+
+double jetFlowNumberForHole(double holeHundredthsMm, double dischargeCoefficient) noexcept {
+    if (!(holeHundredthsMm > 0.0)) return 0.0;
+    const auto coefficient = std::clamp(dischargeCoefficient, 0.05, 1.0);
+    const auto diameterM = holeHundredthsMm * 1.0e-5;
+    return 0.25 * std::numbers::pi * diameterM * diameterM * coefficient * jetReferenceVelocityMps * 60.0e6;
+}
 
 std::optional<IntakePartSize> intakePartSize(const EngineConfig& config, std::uint32_t pathId,
                                              IntakePart part, std::size_t cylinderIndex) {
@@ -74,10 +93,16 @@ std::string resizeIntakePart(EngineConfig& config, std::uint32_t pathId, IntakeP
         if (!within(first, 0.05, 40.0)) return "A plenum holds 0.05 to 40 litres.";
         geometry.plenumVolumeLitres = first;
         break;
-    case IntakePart::throttle:
+    case IntakePart::throttle: {
         if (!within(first, 10.0, 150.0)) return "A throttle bore is 10 to 150 mm.";
+        auto& carburettor = geometry.carburettor;
+        if (carburettor.enabled && !(carburettor.venturiDiameterMm > 0.0) && geometry.throttleDiameterMm > 0.0) {
+            const auto ratio = first / geometry.throttleDiameterMm;
+            carburettor.mainJetFlowNumber = std::clamp(carburettor.mainJetFlowNumber * ratio * ratio, 5.0, 5'000.0);
+        }
         geometry.throttleDiameterMm = first;
         break;
+    }
     }
     mirrorSinglePath(config);
     return {};
