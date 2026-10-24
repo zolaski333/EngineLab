@@ -533,14 +533,19 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // lasts longest. Gate on it rather than adding a second timer -- the
     // comment on the start-mode retard above makes the same point: this belongs
     // on the ECU's run/start state, not on a speed threshold.
+    // A pops-and-bangs map keeps the full charge and fires it late; it meters
+    // no reduced fraction, so `overrunFuelFraction` does not author it.
+    const auto lateSparkOverrun = config.exhaustAfterfire.strategy
+        == ExhaustAfterfireStrategy::lateSparkOverrun;
     auto overrunAfterfireArmed = overrunAfterfireArmed_.load(
         std::memory_order_relaxed);
     if (!controls.ignitionEnabled || controls.starterEngaged) {
         overrunAfterfireArmed = false;
-    } else if ((afterfireRetainsFuel(config.exhaustAfterfire.strategy)
-                || (config.exhaustAfterfire.enabled
-                    && config.exhaustAfterfire.overrunFuelFraction > 0.0))
-            && config.exhaustAfterfire.overrunFuelFraction > 0.0
+    } else if (((afterfireRetainsFuel(config.exhaustAfterfire.strategy)
+                    || (config.exhaustAfterfire.enabled
+                        && config.exhaustAfterfire.overrunFuelFraction > 0.0))
+                && (lateSparkOverrun
+                    || config.exhaustAfterfire.overrunFuelFraction > 0.0))
             && effectiveThrottle > 0.20
             && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm) {
         // The post-start air floor can remain above its normal DFCO-inhibit
@@ -637,10 +642,12 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         config.exhaustAfterfire.strategy)
         || (config.exhaustAfterfire.enabled
             && config.exhaustAfterfire.overrunFuelFraction > 0.0);
+    const auto overrunFuelAuthored = lateSparkOverrun
+        || config.exhaustAfterfire.overrunFuelFraction > 0.0;
     const auto overrunBaseActive =
         config.fuel == FuelType::gasoline
         && retainedFuelStrategy
-        && config.exhaustAfterfire.overrunFuelFraction > 0.0
+        && overrunFuelAuthored
         && decelerationFuelCut && !limiterActive
         && controls.ignitionEnabled && !controls.starterEngaged
         && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
@@ -680,7 +687,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto overrunAfterfireBlockers = static_cast<std::uint32_t>(
         (config.fuel == FuelType::gasoline
              && retainedFuelStrategy
-             && config.exhaustAfterfire.overrunFuelFraction > 0.0
+             && overrunFuelAuthored
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notAuthored))
         | (controls.ignitionEnabled
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::ignitionOff))
@@ -706,9 +713,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // inexplicable on a warm engine at a shut throttle.
         | (overrunAfterfireArmed
                || !retainedFuelStrategy
-               || !(config.exhaustAfterfire.overrunFuelFraction > 0.0)
+               || !overrunFuelAuthored
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notArmed)));
-    const auto fuelCorrection = overrunAfterfireActive
+    const auto fuelCorrection = overrunAfterfireActive && lateSparkOverrun
+        // The late-spark map keeps the normal charge: what it changes is the
+        // spark, not the fuel. The resume ramp is zero across the fuel cut
+        // this overrun replaces, and the tip-in reserve is excluded as above.
+        ? warmupCorrection * crankingCorrection
+        : overrunAfterfireActive
         // This is a bounded fraction of the normal charge request. Do not let
         // the preceding tip-in reserve or cold-start correction multiply it:
         // both can still be decaying at lift-off and would turn a conservative
@@ -733,7 +745,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             * decelerationFuelResume;
     const auto commandedFuelEnabled = overrunAfterfireActive
         || (fuelEnabled && !decelerationFuelCut);
-    const auto commandedSparkEnabled = !overrunAfterfireActive
+    const auto commandedSparkEnabled =
+        (!overrunAfterfireActive || lateSparkOverrun)
         && sparkEnabled && !alternatingCut;
     const auto wetSparkCutActive =
         config.fuel == FuelType::gasoline
@@ -771,6 +784,13 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              lambdaLearningAllowed,
              decelerationFuelResumeEvent };
     command.revLimitRpm = revLimit;
+    // Past the map's -10 deg floor on purpose: the flame lit 20-40 deg after
+    // top dead centre is still burning when the exhaust valve opens, and that
+    // late, hot, partly burnt charge is what a pops-and-bangs map sends down
+    // the pipe. The spark schedule carries up to 260 deg of travel.
+    if (overrunAfterfireActive && lateSparkOverrun)
+        command.ignitionAdvanceDegrees =
+            config.exhaustAfterfire.overrunSparkAdvanceDegrees;
     if (config.forcedInduction.enabled
             && config.forcedInduction.type == ForcedInductionType::turbocharger) {
         if (const auto boost = calibrationSnapshot->sampleCurve(

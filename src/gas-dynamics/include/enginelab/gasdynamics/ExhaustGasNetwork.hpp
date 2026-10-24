@@ -235,6 +235,10 @@ struct ExhaustFuelReactionConfig final {
     double minimumEquivalenceRatio { 0.45 };
     double maximumEquivalenceRatio { 1.80 };
     double quenchTemperatureK { 520.0 };
+    /** Mixing time of an unburned pocket (see `emitUnburnedPocket`): its
+     * temperature relaxes to the gas around it at this rate, and after three
+     * of them it has mixed into the cells. Zero: no pockets. */
+    double pocketMixingTimeSeconds { 0.0 };
 };
 
 /** One conservative, spatially resolved heat-release source. The finite-volume
@@ -363,6 +367,19 @@ public:
     [[nodiscard]] ExhaustFuelReactionResult reactUnburnedFuel(
         double durationSeconds,
         const ExhaustFuelReactionConfig& reaction) noexcept;
+
+    /** A cylinder's unburned charge leaving at exhaust valve opening, as one
+     * pocket with its own composition and temperature. A cell is far larger
+     * than the pocket, so its mean mixture says nothing about it: the pocket
+     * is carried with the local gas, warms towards it over the mixing time,
+     * and lights from its own temperature or a burning cell. It burns fuel
+     * and oxygen the cells actually hold, so it adds no mass. Returns false
+     * when the cylinder has no port here, the pocket is not flammable or
+     * every slot is taken. */
+    bool emitUnburnedPocket(std::uint32_t cylinderId, double fuelKg,
+                            double oxygenKg, double temperatureK,
+                            const ExhaustFuelReactionConfig& reaction) noexcept;
+    [[nodiscard]] std::size_t activeUnburnedPocketCount() const noexcept;
 
     /** Advance the complete network by exactly durationSeconds when successful.
      * Missing cylinder IDs are treated as closed valves. Duplicate supplied IDs
@@ -661,6 +678,25 @@ private:
     };
     std::vector<std::vector<ReactionSiteState>> ductReactionStates_;
     std::vector<ReactionSiteState> junctionReactionStates_;
+    struct UnburnedPocket final {
+        bool active { false };
+        bool burning { false };
+        bool inJunction { false };
+        std::size_t elementIndex { 0 };
+        /** Metres from the duct inlet; unused in a junction. */
+        double positionM { 0.0 };
+        double fuelKg { 0.0 };
+        double oxygenKg { 0.0 };
+        double temperatureK { 0.0 };
+        double ageSeconds { 0.0 };
+        double inductionIntegral { 0.0 };
+    };
+    static constexpr std::size_t maximumUnburnedPockets { 32 };
+    std::array<UnburnedPocket, maximumUnburnedPockets> unburnedPockets_ {};
+    [[nodiscard]] static std::size_t pocketCellIndex(
+        const UnburnedPocket& pocket, double ductLengthM,
+        std::size_t cellCount) noexcept;
+    void carryPocket(UnburnedPocket& pocket, double durationSeconds) noexcept;
     // One optional well-mixed external reservoir, shared by all outlets. Its
     // scratch inventory is excluded from inventory(); the caller books the
     // returned outlet integrals once into its own reservoir after advance.

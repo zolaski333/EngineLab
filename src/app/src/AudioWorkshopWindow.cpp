@@ -104,19 +104,14 @@ AudioPhysicsSettings audioPhysicsSettingsFor(
         engine.exhaustAfterfire.ignitionTemperatureK,
         engine.exhaustAfterfire.reactionTimeConstantSeconds,
         engine.exhaustAfterfire.reactionEfficiency,
-        engine.exhaustAfterfire.overrunFuelFraction,
-        engine.exhaustAfterfire.overrunPulseHz,
-        engine.exhaustAfterfire.overrunPulseDutyCycle,
-        engine.exhaustAfterfire.overrunPulseTimingVariation,
+        engine.exhaustAfterfire.overrunSparkAdvanceDegrees,
+        engine.exhaustAfterfire.pocketMixingTimeSeconds,
     };
 }
 
 void applyAudioPhysicsSettings(
     EngineConfig& engine, const AudioPhysicsSettings& settings) noexcept {
-    const auto enablingCleanAfterfire = settings.afterfireEnabled
-        && !afterfireRetainsFuel(engine.exhaustAfterfire.strategy)
-        && !(engine.exhaustAfterfire.overrunFuelFraction > 0.0)
-        && !(engine.exhaustAfterfire.overrunPulseHz > 0.0)
+    const auto enablingFlatInduction = settings.afterfireEnabled
         && engine.exhaustAfterfire.inductionActivationTemperatureK == 0.0
         && engine.exhaustAfterfire.inductionPressureExponent == 0.0
         && engine.exhaustAfterfire.inductionEquivalenceRatioExponent == 0.0;
@@ -124,10 +119,11 @@ void applyAudioPhysicsSettings(
         settings.cycleVariationCoefficientOfVariation;
     engine.combustionCalibration.cycleVariationCorrelation =
         settings.cycleVariationCorrelation;
+    // The 2 Hz chopped slugs and the continuous anti-lag are no longer offered
+    // (docs/journal.md 2026-10-24): the rhythm was the chopper's, and the
+    // retained charge, mixed into 0.25 m cells, never burned.
     engine.exhaustAfterfire.strategy = settings.afterfireEnabled
-        ? (settings.overrunPulseHz > 0.0
-            ? ExhaustAfterfireStrategy::discreteAfterfire
-            : ExhaustAfterfireStrategy::continuousAntiLag)
+        ? ExhaustAfterfireStrategy::lateSparkOverrun
         : ExhaustAfterfireStrategy::cleanDfco;
     engine.exhaustAfterfire.enabled = afterfireRetainsFuel(
         engine.exhaustAfterfire.strategy);
@@ -138,26 +134,15 @@ void applyAudioPhysicsSettings(
         settings.afterfireReactionTimeSeconds;
     engine.exhaustAfterfire.reactionEfficiency =
         settings.afterfireEfficiency;
-    // Toggling the feature must denote an executable calibration.  The old UI
-    // left the authored default at zero, making "enabled" indistinguishable
-    // from clean DFCO. Eight percent is the measured discrete-pop command: with
-    // the matching 8%-duty preset it requests one full-fuelling 40 ms slug at
-    // 2 Hz, instead of the old 87.5 ms window that covered many firing events
-    // and became an anti-lag-like roar. An explicit non-zero value still wins.
-    engine.exhaustAfterfire.overrunFuelFraction = settings.afterfireEnabled
-        && !(settings.overrunFuelFraction > 0.0)
-        ? 0.08 : settings.overrunFuelFraction;
-    engine.exhaustAfterfire.overrunPulseHz = settings.overrunPulseHz;
-    engine.exhaustAfterfire.overrunPulseDutyCycle =
-        settings.overrunPulseDutyCycle;
-    engine.exhaustAfterfire.overrunPulseTimingVariation =
-        settings.overrunPulseTimingVariation;
-    if (enablingCleanAfterfire) {
-        // Schema-7 engines intentionally retain their flat legacy induction
-        // timer. A user who enables a completely clean/default calibration for
-        // the first time instead gets the schema-8 thermochemical correlation
-        // used by the measured demo. This makes event spacing depend on local
-        // temperature, pressure and mixture rather than only on a metronome.
+    engine.exhaustAfterfire.overrunSparkAdvanceDegrees =
+        settings.overrunSparkAdvanceDegrees;
+    engine.exhaustAfterfire.pocketMixingTimeSeconds =
+        settings.pocketMixingTimeSeconds;
+    if (enablingFlatInduction) {
+        // A flat legacy induction timer is not what the late-spark profile
+        // was measured with: enabling it installs the schema-8
+        // thermochemical correlation, so ignition depends on the local
+        // temperature, pressure and mixture.
         engine.exhaustAfterfire.inductionActivationTemperatureK = 13'340.0;
         engine.exhaustAfterfire.inductionPressureExponent = 0.989;
         engine.exhaustAfterfire.inductionEquivalenceRatioExponent = -0.577;
@@ -414,12 +399,11 @@ public:
         addAndMakeVisible(proofLabel_);
         addAndMakeVisible(progressBar_);
 
-        const std::array<std::string_view, 9> physicsNames {
+        const std::array<std::string_view, 7> physicsNames {
             "Cycle variation (COV)", "Cycle correlation",
             "Afterfire ignition (K)", "Afterfire reaction (ms)",
-            "Afterfire efficiency", "Overrun fuel",
-            "Pop chop rate (Hz)", "Pop duty cycle",
-            "Pop timing jitter",
+            "Afterfire efficiency", "Overrun spark (deg BTDC)",
+            "Pocket mixing (ms)",
         };
         for (std::size_t index = 0; index < physicsLabels_.size(); ++index) {
             physicsLabels_[index].setText(
@@ -434,19 +418,15 @@ public:
         configureSlider(afterfireTemperatureSlider_, 500.0, 1'800.0, 10.0);
         configureSlider(afterfireReactionSlider_, 2.0, 50.0, 1.0);
         configureSlider(afterfireEfficiencySlider_, 0.0, 1.0, 0.01);
-        configureSlider(overrunFuelSlider_, 0.0, 0.25, 0.005);
-        configureSlider(overrunPulseHzSlider_, 0.0, 20.0, 0.5);
-        configureSlider(overrunPulseDutySlider_, 0.02, 1.0, 0.01);
-        configureSlider(overrunPulseTimingVariationSlider_, 0.0, 0.45, 0.01);
+        configureSlider(overrunSparkSlider_, -45.0, 10.0, 1.0);
+        configureSlider(pocketMixingSlider_, 0.0, 50.0, 1.0);
         cycleVariationSlider_.setTextValueSuffix(" ratio");
         cycleCorrelationSlider_.setTextValueSuffix(" ratio");
         afterfireTemperatureSlider_.setTextValueSuffix(" K");
         afterfireReactionSlider_.setTextValueSuffix(" ms");
         afterfireEfficiencySlider_.setTextValueSuffix(" ratio");
-        overrunFuelSlider_.setTextValueSuffix(" ratio");
-        overrunPulseHzSlider_.setTextValueSuffix(" Hz");
-        overrunPulseDutySlider_.setTextValueSuffix(" ratio");
-        overrunPulseTimingVariationSlider_.setTextValueSuffix(" ratio");
+        overrunSparkSlider_.setTextValueSuffix(" deg");
+        pocketMixingSlider_.setTextValueSuffix(" ms");
 
         afterfireToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
@@ -463,9 +443,9 @@ public:
             juce::ToggleButton::textColourId, juce::Colour(0xffefb08a));
         mixAfterfireToggle_.setComponentID("mix-afterfire");
         mixAfterfireToggle_.setTooltip(
-            "Pops and bangs on overrun (spark cut, fuel kept). "
-            "Applied immediately; fine tuning in "
-            "AUDIO PHYSICS.");
+            "Pops and bangs on overrun: a late spark, whose unburnt charge "
+            "goes on burning in the pipe. Off whenever an engine is loaded. "
+            "Applied immediately; fine tuning in AUDIO PHYSICS.");
         mixAfterfireToggle_.onClick = [this] {
             const auto enabled = mixAfterfireToggle_.getToggleState();
             afterfireToggle_.setToggleState(enabled, juce::dontSendNotification);
@@ -487,8 +467,7 @@ public:
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
             setPhysicsInternal({ 0.06, 0.55, true, true,
-                                 800.0, 0.002, 0.95, 0.08, 2.0, 0.08,
-                                 0.40 });
+                                 800.0, 0.002, 0.95, -30.0, 0.010 });
             applyPhysics();
         };
         bypassPhysicsButton_.onClick = [this] {
@@ -496,7 +475,6 @@ public:
             settings.cycleVariationCoefficientOfVariation = 0.0;
             settings.afterfireEnabled = false;
             settings.limiterKeepsFuel = false;
-            settings.overrunFuelFraction = 0.0;
             setPhysicsInternal(settings);
             applyPhysics();
         };
@@ -679,7 +657,8 @@ public:
         auto secondColumn = physicsBody.removeFromLeft(secondWidth);
         physicsBody.removeFromLeft(12);
         auto thirdColumn = physicsBody;
-        // The afterfire column is the tallest at seven rows; size the row from it
+        // The afterfire column is the tallest at five rows; seven keeps the
+        // rows at their former height. Size the row from it
         // so shrinking the window narrows the rows instead of clipping them.
         const auto physicsRowHeight =
             std::clamp(physicsBody.getHeight() / 7, 24, 35);
@@ -696,11 +675,8 @@ public:
         physicsRow(secondColumn, physicsLabels_[2], afterfireTemperatureSlider_);
         physicsRow(secondColumn, physicsLabels_[3], afterfireReactionSlider_);
         physicsRow(secondColumn, physicsLabels_[4], afterfireEfficiencySlider_);
-        physicsRow(secondColumn, physicsLabels_[5], overrunFuelSlider_);
-        physicsRow(secondColumn, physicsLabels_[6], overrunPulseHzSlider_);
-        physicsRow(secondColumn, physicsLabels_[7], overrunPulseDutySlider_);
-        physicsRow(secondColumn, physicsLabels_[8],
-                   overrunPulseTimingVariationSlider_);
+        physicsRow(secondColumn, physicsLabels_[5], overrunSparkSlider_);
+        physicsRow(secondColumn, physicsLabels_[6], pocketMixingSlider_);
         afterfireToggle_.setBounds(thirdColumn.removeFromTop(27));
         wetLimiterToggle_.setBounds(thirdColumn.removeFromTop(27));
         auto presets = thirdColumn.removeFromTop(32);
@@ -825,10 +801,8 @@ private:
             afterfireTemperatureSlider_.getValue(),
             afterfireReactionSlider_.getValue() * 0.001,
             afterfireEfficiencySlider_.getValue(),
-            overrunFuelSlider_.getValue(),
-            overrunPulseHzSlider_.getValue(),
-            overrunPulseDutySlider_.getValue(),
-            overrunPulseTimingVariationSlider_.getValue(),
+            overrunSparkSlider_.getValue(),
+            pocketMixingSlider_.getValue() * 0.001,
         };
     }
 
@@ -852,44 +826,33 @@ private:
             juce::dontSendNotification);
         afterfireEfficiencySlider_.setValue(
             settings.afterfireEfficiency, juce::dontSendNotification);
-        overrunFuelSlider_.setValue(
-            settings.overrunFuelFraction, juce::dontSendNotification);
-        overrunPulseHzSlider_.setValue(
-            settings.overrunPulseHz, juce::dontSendNotification);
-        overrunPulseDutySlider_.setValue(
-            settings.overrunPulseDutyCycle, juce::dontSendNotification);
-        overrunPulseTimingVariationSlider_.setValue(
-            settings.overrunPulseTimingVariation,
+        overrunSparkSlider_.setValue(
+            settings.overrunSparkAdvanceDegrees, juce::dontSendNotification);
+        pocketMixingSlider_.setValue(
+            settings.pocketMixingTimeSeconds * 1'000.0,
             juce::dontSendNotification);
     }
 
-    /** A completely unauthored catalogue entry describes clean DFCO: 900 K,
-     *  10 ms, no retained fuel, no chopping and no timing variation. Merely
-     *  ticking "afterfire" used to preserve that calibration, which selected
-     *  continuous anti-lag and produced a smooth periodic swell -- and at zero
-     *  fuel, nothing at all. On the first clean enable, prepare the discrete
-     *  pop profile the control promises. Authored calibrations are kept. */
+    /** An engine that never authored an afterfire calibration carries the
+     *  clean defaults (900 K, 10 ms, no pockets), which were never measured
+     *  as a backfire. Turning backfires on installs the measured late-spark
+     *  profile instead (docs/journal.md 2026-10-24); an authored calibration
+     *  is kept. */
     void prepareCleanAfterfireProfile() {
         const auto cleanProfile =
             std::abs(afterfireTemperatureSlider_.getValue() - 900.0) < 0.5
             && std::abs(afterfireReactionSlider_.getValue() - 10.0) < 0.5
-            && overrunFuelSlider_.getValue() <= 0.0
-            && overrunPulseHzSlider_.getValue() <= 0.0
-            && overrunPulseTimingVariationSlider_.getValue() <= 0.0;
+            && pocketMixingSlider_.getValue() <= 0.0;
         if (!cleanProfile) return;
 
         afterfireTemperatureSlider_.setValue(
             800.0, juce::dontSendNotification);
         afterfireReactionSlider_.setValue(
             2.0, juce::dontSendNotification);
-        overrunFuelSlider_.setValue(
-            0.08, juce::dontSendNotification);
-        overrunPulseHzSlider_.setValue(
-            2.0, juce::dontSendNotification);
-        overrunPulseDutySlider_.setValue(
-            0.08, juce::dontSendNotification);
-        overrunPulseTimingVariationSlider_.setValue(
-            0.40, juce::dontSendNotification);
+        overrunSparkSlider_.setValue(
+            -30.0, juce::dontSendNotification);
+        pocketMixingSlider_.setValue(
+            10.0, juce::dontSendNotification);
     }
 
     bool applyPhysics() {
@@ -910,22 +873,9 @@ private:
         applyAudioPhysicsSettings(engine_, settings);
         mixAfterfireToggle_.setToggleState(
             engine_.exhaustAfterfire.enabled, juce::dontSendNotification);
-        if (afterfireRetainedChargeBelowLeanLimit(engine_.exhaustAfterfire)) {
-            // Measured: such a charge dumps raw fuel and never burns.
-            physicsStatusLabel_.setText(
-                "Applied, but the retained fuel is too lean (equivalence ratio "
-                    + juce::String(afterfireRetainedChargeEquivalenceRatio(
-                        engine_.exhaustAfterfire), 2)
-                    + " < " + juce::String(
-                        engine_.exhaustAfterfire.minimumEquivalenceRatio, 2)
-                    + "): it cannot burn. Raise the overrun fuel "
-                      "or lower the duty cycle.",
-                juce::dontSendNotification);
-        } else {
-            physicsStatusLabel_.setText(
-                "Applied live. Thermal state and engine speed kept.",
-                juce::dontSendNotification);
-        }
+        physicsStatusLabel_.setText(
+            "Applied live. Thermal state and engine speed kept.",
+            juce::dontSendNotification);
         return true;
     }
 
@@ -1394,16 +1344,14 @@ private:
     juce::ProgressBar progressBar_;
     std::jthread exportThread_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
-    std::array<juce::Label, 9> physicsLabels_;
+    std::array<juce::Label, 7> physicsLabels_;
     juce::Slider cycleVariationSlider_;
     juce::Slider cycleCorrelationSlider_;
     juce::Slider afterfireTemperatureSlider_;
     juce::Slider afterfireReactionSlider_;
     juce::Slider afterfireEfficiencySlider_;
-    juce::Slider overrunFuelSlider_;
-    juce::Slider overrunPulseHzSlider_;
-    juce::Slider overrunPulseDutySlider_;
-    juce::Slider overrunPulseTimingVariationSlider_;
+    juce::Slider overrunSparkSlider_;
+    juce::Slider pocketMixingSlider_;
     juce::ToggleButton afterfireToggle_ { "PHYSICAL AFTERFIRE ON" };
     juce::ToggleButton wetLimiterToggle_ {
         "SPARK-CUT LIMITER / FUEL KEPT"

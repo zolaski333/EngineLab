@@ -1274,6 +1274,8 @@ OfflineAudioExportResult exportOfflineAudio(
                 return "continuous_anti_lag";
             case ExhaustAfterfireStrategy::discreteAfterfire:
                 return "discrete_afterfire";
+            case ExhaustAfterfireStrategy::lateSparkOverrun:
+                return "late_spark_overrun";
             }
             return "clean_dfco";
         }();

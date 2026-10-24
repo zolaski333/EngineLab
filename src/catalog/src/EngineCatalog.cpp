@@ -33,6 +33,8 @@ namespace {
         return ExhaustAfterfireStrategy::continuousAntiLag;
     if (value == "discrete_afterfire")
         return ExhaustAfterfireStrategy::discreteAfterfire;
+    if (value == "late_spark_overrun")
+        return ExhaustAfterfireStrategy::lateSparkOverrun;
     throw std::invalid_argument(
         "Unknown exhaust afterfire strategy: " + std::string(value));
 }
@@ -1053,6 +1055,8 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(afterfire, "minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio);
         assignIfPresent(afterfire, "maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio);
         assignIfPresent(afterfire, "quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK);
+        assignIfPresent(afterfire, "overrun_spark_advance_deg", config.exhaustAfterfire.overrunSparkAdvanceDegrees);
+        assignIfPresent(afterfire, "pocket_mixing_time_s", config.exhaustAfterfire.pocketMixingTimeSeconds);
     }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);

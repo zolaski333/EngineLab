@@ -7,9 +7,11 @@
 
 A pop is a 1 ms RMS window standing `--threshold-db` above the median 1 ms RMS
 of the surrounding +/-1 s, at a local maximum, at least 20 ms after the
-previous pop, and no more than `--floor-db` below the file's loudest 1 ms
-(fade-in and fade-out tails are not pops). An engine's own firing pulses stand
-12-16 dB above that median, so the default threshold keeps them out.
+previous pop, and no more than `--floor-db` below the loudest 1 ms of the
+measured window (fade-in and fade-out tails are not pops). An engine's own
+firing pulses stand 12-16 dB above that median, so the default threshold keeps
+them out. `--start`/`--end` only choose which pops are kept: the medians are
+taken over the whole file, so the window's edges do not bias them.
 
 Per pop:
 
@@ -40,7 +42,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy import signal
+from scipy import ndimage, signal
 from scipy.io import wavfile
 
 BANDS = [(20.0, 120.0), (120.0, 500.0), (500.0, 2000.0), (2000.0, 8000.0),
@@ -71,18 +73,19 @@ def moving_rms(x: np.ndarray, width: int, hop: int) -> np.ndarray:
 
 
 def running_median(values: np.ndarray, half: int) -> np.ndarray:
-    kernel = 2 * half + 1
-    if len(values) <= kernel:
-        return np.full_like(values, np.median(values) if len(values) else 0.0)
-    return signal.medfilt(values, kernel_size=kernel)
+    # Edge samples repeat rather than pad with zeros: a zero-padded median sinks
+    # over the last second, and every firing pulse there reads as a pop.
+    return ndimage.median_filter(values, size=2 * half + 1, mode="nearest")
 
 
 def analyse(path: Path, start: float, end: float | None,
             threshold_db: float, floor_db: float) -> dict:
     x, rate = load(path)
+    # The whole file is the context; only pops inside [start, end) are kept, so
+    # a window's edge never shortens the background median.
     first = int(start * rate)
     last = len(x) if end is None else min(len(x), int(end * rate))
-    x = x[first:last] - np.mean(x[first:last])
+    x = x - np.mean(x)
     x = signal.sosfilt(signal.butter(2, 20.0, "highpass", fs=rate, output="sos"), x)
 
     ms = max(1, rate // 1000)
@@ -93,7 +96,10 @@ def analyse(path: Path, start: float, end: float | None,
     over = 20.0 * np.log10(np.maximum(rms, 1e-12) / background)
     loud = 20.0 * np.log10(np.maximum(rms, 1e-12) / max(np.max(rms), 1e-12))
     peaks, _ = signal.find_peaks(over, height=threshold_db, distance=20)
-    peaks = [p for p in peaks if loud[p] >= floor_db]
+    window = loud[first // ms:last // ms]
+    loudest = float(np.max(window)) if len(window) else 0.0
+    peaks = [p for p in peaks
+             if first <= p * ms < last and loud[p] - loudest >= floor_db]
 
     nyquist = 0.5 * rate
     band_signals, band_backgrounds = [], []
@@ -136,7 +142,7 @@ def analyse(path: Path, start: float, end: float | None,
             ref = bg[min(len(bg) - 1, peak_at // (10 * ms))]
             band_db.append(20.0 * math.log10(max(level, 1e-15) / ref))
         pops.append({
-            "time_s": round(start + peak_at / rate, 4),
+            "time_s": round(peak_at / rate, 4),
             "over_db": round(float(over[index]), 2),
             "rise_ms": round(float(rise_ms), 3),
             "decay_ms": round(float(decay_ms), 2),
@@ -152,7 +158,7 @@ def analyse(path: Path, start: float, end: float | None,
     return {
         "file": str(path),
         "sample_rate_hz": rate,
-        "seconds": round(len(x) / rate, 3),
+        "seconds": round((last - first) / rate, 3),
         "pop_count": len(pops),
         "median_over_db": median([p["over_db"] for p in pops]),
         "median_rise_ms": median([p["rise_ms"] for p in pops]),

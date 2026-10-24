@@ -22,22 +22,23 @@ struct AudioWorkshopLayerSwitches final {
     std::array<bool, 4> solo {};
 };
 
-/** Authored controls that make the pressure/exhaust audio physics audible. */
+/** Authored controls that make the pressure/exhaust audio physics audible.
+ *  The two switches are the only way to turn backfires on: an engine is
+ *  always loaded with them off (`disableBackfires`). */
 struct AudioPhysicsSettings final {
     double cycleVariationCoefficientOfVariation { 0.0 };
     double cycleVariationCorrelation { 0.45 };
+    /** Overrun backfires: a late-spark map whose late-burning charge goes on
+     *  burning in the pipe (`ExhaustAfterfireStrategy::lateSparkOverrun`). */
     bool afterfireEnabled { false };
     bool limiterKeepsFuel { false };
     double afterfireIgnitionTemperatureK { 900.0 };
     double afterfireReactionTimeSeconds { 0.010 };
     double afterfireEfficiency { 0.95 };
-    double overrunFuelFraction { 0.0 };
-    /** 0 retains fuel on every cycle (anti-lag roar); a rate chops it into
-     *  discrete slugs, which is what a pop-and-bang map does. Append new
-     *  members below this comment: the aggregate is initialised by position. */
-    double overrunPulseHz { 0.0 };
-    double overrunPulseDutyCycle { 0.35 };
-    double overrunPulseTimingVariation { 0.0 };
+    /** Append new members below this comment: the aggregate is initialised
+     *  by position. */
+    double overrunSparkAdvanceDegrees { -30.0 };
+    double pocketMixingTimeSeconds { 0.0 };
 };
 
 /** Live proof that the authored controls are active in the simulator. */

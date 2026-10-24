@@ -524,6 +524,12 @@ enum class ExhaustAfterfireStrategy : std::uint8_t {
     cleanDfco,
     continuousAntiLag,
     discreteAfterfire,
+    /** No fuel cut on overrun and a spark far after top dead centre, as a
+     * "pops and bangs" map does. The late flame is still burning when the
+     * exhaust valve opens, so the unburned rest of the charge leaves premixed
+     * and hot and lights in the header by itself: no wall threshold, no
+     * chopper, the misfires and cycle variation of the overrun set when. */
+    lateSparkOverrun,
 };
 
 /** Optional oxidation of unburned charge inside the physical exhaust network.
@@ -564,6 +570,9 @@ struct ExhaustAfterfireConfig final {
      * low-discrepancy timing sequence while preserving each interval's duty
      * and therefore the calibrated long-run fuel mass. */
     double overrunPulseTimingVariation { 0.0 };
+    /** Spark advance on overrun for `lateSparkOverrun`, degrees before top
+     * dead centre: negative is after it. Only that strategy reads it. */
+    double overrunSparkAdvanceDegrees { -20.0 };
     ExhaustAfterfireStrategy strategy {
         ExhaustAfterfireStrategy::cleanDfco
     };
@@ -590,6 +599,10 @@ struct ExhaustAfterfireConfig final {
     /** Below this bulk-gas temperature an established kernel is quenched unless
      * a sufficiently hot wall continues to supply ignition energy. */
     double quenchTemperatureK { 520.0 };
+    /** Time for the unburnt charge a cylinder exhausts to mix into the gas
+     * around it, s. Until then it is a pocket of its own composition and
+     * temperature carried by the flow; zero mixes it into the cells at once. */
+    double pocketMixingTimeSeconds { 0.0 };
 };
 
 [[nodiscard]] constexpr bool afterfireRetainsFuel(
@@ -603,6 +616,8 @@ struct ExhaustAfterfireConfig final {
  * (fraction / duty, at most a full charge). Zero for clean DFCO. */
 [[nodiscard]] constexpr double afterfireRetainedChargeEquivalenceRatio(
     const ExhaustAfterfireConfig& afterfire) noexcept {
+    if (afterfire.strategy == ExhaustAfterfireStrategy::lateSparkOverrun)
+        return 1.0;
     if (!afterfireRetainsFuel(afterfire.strategy)
         || !(afterfire.overrunFuelFraction > 0.0))
         return 0.0;
@@ -2092,6 +2107,11 @@ struct DynoRun final {
 [[nodiscard]] double peakCylinderPressureLimitBar(const EngineConfig&) noexcept;
 [[nodiscard]] double intakeRunnerVolumeLitres(const CylinderConfig&, const IntakeConfig&) noexcept;
 void normaliseEngineConfig(EngineConfig&);
+/** Backfires (overrun afterfire and the wet limiter) are a listening option
+ *  the Audio workshop turns on for the running engine, never part of an
+ *  engine: every engine is loaded, compared and saved with them off. The
+ *  calibration under the switch is kept. */
+void disableBackfires(EngineConfig&) noexcept;
 [[nodiscard]] double valveFlowCoefficient(double liftMm, double fallback,
                                           const std::vector<ValveFlowSample>&) noexcept;
 [[nodiscard]] ValveControlSample interpolateValveControl(const ValveControlConfig&, double rpm,

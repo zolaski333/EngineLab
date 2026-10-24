@@ -432,6 +432,12 @@ int main() {
 
     auto demoRequest = bypassRequest;
     demoRequest.engine = *audioLab;
+    // The lab engine carries the calibration; the Audio workshop's switches
+    // are what turn its backfires on.
+    demoRequest.engine.exhaustAfterfire.strategy =
+        enginelab::ExhaustAfterfireStrategy::lateSparkOverrun;
+    demoRequest.engine.exhaustAfterfire.enabled = true;
+    demoRequest.engine.ignition.limiterKeepsFuel = true;
     demoRequest.outputDirectory = temporary.path() / "physics-demo";
     const auto demo = enginelab::exportOfflineAudio(demoRequest);
     require(demo.success, demo.error);

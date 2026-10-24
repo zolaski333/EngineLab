@@ -431,6 +431,12 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     return result;
 }
 
+void disableBackfires(EngineConfig& config) noexcept {
+    config.exhaustAfterfire.strategy = ExhaustAfterfireStrategy::cleanDfco;
+    config.exhaustAfterfire.enabled = false;
+    config.ignition.limiterKeepsFuel = false;
+}
+
 void normaliseEngineConfig(EngineConfig& config) {
     // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
     // explicit valve geometry; schema 4 adds SI outlet/observer coordinates;
@@ -874,7 +880,13 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             >= config.exhaustAfterfire.maximumEquivalenceRatio
         || outOfRange("exhaustAfterfire.quenchTemperatureK", config.exhaustAfterfire.quenchTemperatureK,
                     250.0, 1'500.0)
+        || outOfRange("exhaustAfterfire.pocketMixingTimeSeconds",
+                    config.exhaustAfterfire.pocketMixingTimeSeconds, 0.0, 0.2)
+        || outOfRange("exhaustAfterfire.overrunSparkAdvanceDegrees",
+                    config.exhaustAfterfire.overrunSparkAdvanceDegrees, -45.0, 10.0)
         || (afterfireRetainsFuel(config.exhaustAfterfire.strategy)
+            && config.exhaustAfterfire.strategy
+                != ExhaustAfterfireStrategy::lateSparkOverrun
             && !(config.exhaustAfterfire.overrunFuelFraction > 0.0))
         || (config.exhaustAfterfire.strategy
                 == ExhaustAfterfireStrategy::discreteAfterfire

@@ -2,9 +2,9 @@ schema_version: 8
 family: motorcycle
 # Deliberately audible listening-lab variant of engine 15. The base geometry,
 # fuelling, valvetrain and vehicle are unchanged. This variant alone opts into
-# cycle variability, a wet spark-cut limiter, physical exhaust afterfire and
-# representative absorptive packing so users can select one engine and hear the
-# complete feature path. Values are engineering estimates, not Yamaha or any
+# cycle variability and representative absorptive packing, and carries the
+# measured backfire calibration; backfires themselves (overrun afterfire, wet
+# limiter) are switched on in the Audio workshop only, never by an engine file. Values are engineering estimates, not Yamaha or any
 # exhaust manufacturer's calibration. The name intentionally avoids the stock
 # catalogue reference filter (see engine 15).
 engine:
@@ -31,7 +31,6 @@ engine:
   ignition:
     rev_limit_rpm: 10500
     limiter_duration_s: 0.05
-    limiter_keeps_fuel: true
     timing_curve:
       - { rpm: 0, advance_deg: 10 }
       - { rpm: 2000, advance_deg: 18 }
@@ -44,8 +43,6 @@ engine:
     cycle_variation_cov: 0.06
     cycle_variation_correlation: 0.55
   exhaust_afterfire:
-    enabled: true
-    strategy: discrete_afterfire
     ignition_temperature_k: 800
     # Compact burn time of the listening-lab slug.  The former 8 ms value
     # spread the same conservative energy into a low-crest swell; 2 ms remains
@@ -53,23 +50,13 @@ engine:
     # without reaching the 100 kPa linear-network safety bound.
     reaction_time_constant_s: 0.002
     reaction_efficiency: 0.95
-    # Eight percent average fuel with the matching 8% duty commands full normal
-    # fuelling only inside each short slug. The former 18% / 35% / 4 Hz profile
-    # held the injector window open for 87.5 ms and covered many cylinder firing
-    # opportunities; measured heat duty reached 76.6% on this Twin and nearly
-    # 100% on the K20, which was an anti-lag-like roar rather than discrete pops.
-    # The new 40 ms window lowers total retained fuel while remaining locally
-    # combustible. Oxygen, wall heat and the induction gate are still required.
-    overrun_fuel_fraction: 0.08
     overrun_minimum_rpm: 3000
     overrun_maximum_throttle: 0.02
-    # Two fuel slugs per second. Fuel retained during the open 8% window is
-    # normalised by duty, so pulse timing changes texture rather than mass.
-    overrun_pulse_hz: 2.0
-    overrun_pulse_duty: 0.08
-    # Interval scatter is bounded at +/-40%. The duty is recomputed from each
-    # actual interval, so irregular timing does not change average fuel mass.
-    overrun_pulse_timing_variation: 0.40
+    # The late-spark profile measured on this engine (docs/journal.md
+    # 2026-10-24): 30 deg after top dead centre, the unburnt charge a pocket
+    # of its own for 10 ms before it mixes into the 0.25 m cells.
+    overrun_spark_advance_deg: -30
+    pocket_mixing_time_s: 0.010
     # Reference Livengood-Wu delay at 800 K, 101.325 kPa and phi=1. The
     # Arrhenius/pressure/mixture exponents below reproduce the FORM of a global
     # high-temperature gasoline-surrogate correlation (Ea/R=13340 K,

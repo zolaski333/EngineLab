@@ -3519,6 +3519,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 flameEvents_[cylinderIndex].active = false;
                 ignitionPending_[cylinderIndex] = false;
                 ignitionDelayRemainingSeconds_[cylinderIndex] = 0.0;
+                if (config_.exhaustAfterfire.pocketMixingTimeSeconds > 0.0) {
+                    const auto& exhausted = cylinderGas_[cylinderIndex].mixture();
+                    auto& pocket = pendingUnburnedPockets_[cylinderIndex];
+                    pocket.pending = exhausted.fuelMoles > 0.0;
+                    pocket.fuelKg = exhausted.fuelMoles
+                        * config_.fuelProperties.molarMassGramsPerMole * 0.001;
+                    pocket.oxygenKg = exhausted.oxygenMoles * 0.032;
+                    pocket.temperatureK = cylinderGas_[cylinderIndex].temperatureK();
+                }
                 if (compressionIgnitionEngine) {
                     cylinderMisfires_[cylinderIndex] =
                         injectedFuelMolesThisCycle_[cylinderIndex] > 1.0e-15
@@ -4777,6 +4786,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     config_.exhaustAfterfire.maximumEquivalenceRatio;
                 reactionConfig.quenchTemperatureK =
                     config_.exhaustAfterfire.quenchTemperatureK;
+                reactionConfig.pocketMixingTimeSeconds =
+                    config_.exhaustAfterfire.pocketMixingTimeSeconds;
+                for (std::size_t index = 0; index < std::min(
+                         config_.cylinders.size(), pendingUnburnedPockets_.size());
+                     ++index) {
+                    auto& pocket = pendingUnburnedPockets_[index];
+                    if (!pocket.pending) continue;
+                    pocket.pending = false;
+                    if (exhaustReactionOperatingState)
+                        physicalExhaustNetwork.emitUnburnedPocket(
+                            config_.cylinders[index].id, pocket.fuelKg,
+                            pocket.oxygenKg, pocket.temperatureK,
+                            reactionConfig);
+                }
                 exhaustFuelReaction = physicalExhaustNetwork.reactUnburnedFuel(
                     networkAdvance.advancedTimeSeconds,
                     reactionConfig);

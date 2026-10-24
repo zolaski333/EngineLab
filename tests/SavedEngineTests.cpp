@@ -176,6 +176,24 @@ void checkCalibrationSaved(const EngineConfig& source) {
     require(!baseline.configDiffers(config), "the loaded configuration is not a modification");
     require(baseline.configDiffers(edited(config)), "a resized engine is a modification");
 
+    // Backfires are switched in the Audio workshop, on the engine running:
+    // they are neither a modification nor saved.
+    auto backfiring = config;
+    backfiring.exhaustAfterfire.strategy = ExhaustAfterfireStrategy::lateSparkOverrun;
+    backfiring.exhaustAfterfire.enabled = true;
+    backfiring.ignition.limiterKeepsFuel = true;
+    require(!baseline.configDiffers(backfiring), "backfires switched on are not a modification");
+    {
+        const auto backfiringFile = savedEngineFile(folder.path, "Backfiring " + config.name);
+        require(!saveEngine(backfiringFile, backfiring, nullptr), "an engine with backfires on saves");
+        const auto backfiringRead = readSavedEngine(backfiringFile);
+        require(backfiringRead.engine && !backfiringRead.engine->config.exhaustAfterfire.enabled
+                    && !backfiringRead.engine->config.ignition.limiterKeepsFuel
+                    && backfiringRead.engine->config.exhaustAfterfire.strategy
+                        == ExhaustAfterfireStrategy::cleanDfco,
+                "a saved engine reads back with backfires off");
+    }
+
     const auto file = savedEngineFile(folder.path, "Tuned " + config.name);
     require(!saveEngine(file, config, store->snapshot().get()), config.name + ": the tuned engine saves");
     const auto read = readSavedEngine(file);

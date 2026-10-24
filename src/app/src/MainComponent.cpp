@@ -303,7 +303,11 @@ std::optional<std::pair<std::string, MainComponent::SessionEdit>> MainComponent:
 bool MainComponent::switchEngine(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store,
                                  const std::optional<calibration::CalibrationDraft>& loadedTables) {
     auto kept = unsavedEdit();
-    if (!applyConfig(config, false, false, std::move(store))) return false;
+    // Every engine starts without backfires: only the Audio workshop turns
+    // them on, for the engine running.
+    auto entering = config;
+    disableBackfires(entering);
+    if (!applyConfig(entering, false, false, std::move(store))) return false;
     resetAbVersions();
     if (kept && kept->first != config_.name) sessionEdits_.insert_or_assign(kept->first, std::move(kept->second));
     if (selectedPresetIndex_ >= 0) {
@@ -1052,7 +1056,15 @@ void MainComponent::pollEngineScript() {
         // once the run has stopped, without requiring another file save.
         if (runtime_ && runtime_->dynoRunning()) return;
         scriptAttempt_ = reload->attempt;
-        if (applyConfig(*reload->config, true, true)) {
+        // A script cannot switch backfires; a reload keeps the switch where
+        // the Audio workshop left it.
+        auto reloaded = *reload->config;
+        disableBackfires(reloaded);
+        if (config_.exhaustAfterfire.enabled || config_.ignition.limiterKeepsFuel) {
+            reloaded.exhaustAfterfire = config_.exhaustAfterfire;
+            reloaded.ignition.limiterKeepsFuel = config_.ignition.limiterKeepsFuel;
+        }
+        if (applyConfig(reloaded, true, true)) {
             scriptRevision_ = reload->revision;
             resetAbVersions();
         }
