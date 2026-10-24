@@ -50,8 +50,10 @@ without the owner's explicit agreement.
    designer lists valve and injector rows a two-stroke does not use.
 
 **Backfires** (owner's go-ahead, 2026-10-24): switched on in the Audio workshop
-only, never by an engine, and off on every load (`disableBackfires`). Open: no
-render reaches a real pop yet (`docs/physical-afterfire.md`, journal).
+only, never by an engine, off on every load (`disableBackfires`), kept across
+an edit of the running engine (`keepBackfires`). Open: no render reaches a real
+pop yet; the overrun burns continuously, so nothing accumulates to pop
+(`docs/physical-afterfire.md`, journal).
 
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
@@ -234,7 +236,10 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
   belongs inside the 1-D runner).
 - **Backfire** (journal 2026-10-24): "1-D cannot carry a front" (it rises in
-  0.2-0.8 ms); for pops on the Lab Twin, one at a time, a later spark alone,
+  0.2-0.8 ms); "the heat is too slow to become a wave" (the source is a
+  continuous afterburn at 100 % duty); for pops on the Lab Twin, one at a
+  time, pockets at the unburnt zone's temperature or born lit at EVO, a 950 or
+  1,100 K ignition, a later spark alone,
   faster chemistry, burn COV, a hot wall, skipped sparks, flame contact between cells or between
   pockets, a 0.10 lean limit, a 50 mm mesh (the last two burn 70-97 % of the
   exhaust fuel, continuously). A cell averages the unburnt charge below the lean

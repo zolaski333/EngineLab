@@ -9,7 +9,9 @@ mufflers and outlets as the normal blowdown.
 **Status (2026-10-24, `docs/journal.md`):** no rendered overrun yet reaches the
 real pops measured on three recordings. Their 1 ms peaks stand 16-22 dB over
 the running median; the best profile reaches 11-12 dB, against 8.5 dB without
-pockets.
+pockets. The heat-to-pressure path is not what holds it back: the overrun's
+heat is a continuous afterburn (100 % duty), every late-spark cycle burning its
+own charge, so no unburnt charge collects to burn at once.
 
 ## Backfires are a listening switch, not an engine property
 
@@ -19,15 +21,20 @@ loaded. `disableBackfires()` (`EngineTypes.hpp`) clears the strategy, the
 `enabled` flag and `ignition.limiter_keeps_fuel`. It is applied:
 
 - when the application switches engine (catalogue, saved, designed or built);
-- when a script reloads (it keeps the switch where the workshop left it);
 - when an engine is saved or read back (`SavedEngines.cpp`);
 - in the "modified" comparison (`EngineBaseline`), so the switch is never an
   edit.
 
+An edit of the running engine keeps them: `keepBackfires()` gives every edit
+(the 3-D view's bore or stroke, a designer, the JSON editor, an A/B switch, a
+script reload) the running engine's switch and calibration, because those hold
+copies made before the workshop's last change. Only another engine resets them.
+
 The calibration under the switch (temperatures, times, spark angle, pocket
-mixing) is part of the engine and is saved. Engine files and scripts can still
-carry the old activation keys (the serializers read them, and the
-`EngineLabAfterfireHarness` measures them), but the application drops them.
+mixing) is part of the engine and is saved. Engine files can still carry the
+activation keys and a script `ignition.limiter_keeps_fuel` (the serializers
+read them, and the `EngineLabAfterfireHarness` measures them), but the
+application drops them.
 
 ## ECU strategies
 
@@ -36,12 +43,13 @@ carry the old activation keys (the serializers read them, and the
   ECU keeps the normal charge and fires it at `overrun_spark_advance_deg`
   (negative is after top dead centre, -30 by default in the workshop), past the
   map's -10 deg floor. The flame is still burning when the exhaust valve opens,
-  and the late, hot, partly burnt charge goes down the pipe;
-- `continuous_anti_lag` and `discrete_afterfire`: retained fuel, continuous or
-  chopped into slugs (`overrun_fuel_fraction`, `overrun_pulse_hz`, duty and
-  timing variation). No longer offered: the discrete rhythm was the chopper's
-  2 Hz, not the physics', and the retained charge, mixed into 0.25 m cells,
-  never burned on the lab Twin.
+  and the late, hot, partly burnt charge goes down the pipe.
+
+The retained-fuel strategies (`continuous_anti_lag`, `discrete_afterfire`, with
+`overrun_fuel_fraction` and the `overrun_pulse_*` chopper) were removed on
+2026-10-24: the discrete rhythm was the chopper's 2 Hz, not the physics', and
+the retained charge, mixed into 0.25 m cells, never burned on the lab Twin. A
+file that still names them reads as `clean_dfco`, and the old keys are ignored.
 
 ## Unburned pockets
 

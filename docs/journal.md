@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-24 — Backfires: the heat is continuous, not too slow to become a wave
+
+- Owner: backfires survive an edit of the running engine (`keepBackfires`) and reset only on another engine; the anti-lag and chopped strategies and their keys are removed.
+- Lead "the released heat does not become a brief enough pressure wave", Lab Twin as below (-30 deg, 10 ms pockets, 800 K, 2 ms): refuted. The path is the textbook one, `(gamma-1) Qdot / (A c)` per coupling advance (<= 125 us); the voices alone peak 1.9 dB over the render's median. The source is a 3.7 kW mean, 5.7 kW peak afterburn at 100 % duty (240 Hz bins, modulation 5x): the ~114 mg/s that burns would be ~400 J per 1 ms pop every ~80 ms if it accumulated, and it never does.
+- One factor each, peak 11.3 dB at baseline: pockets at the unburnt zone's temperature 10.8; pockets born lit while the cylinder's flame burns at EVO 9.3 (both 9.3); ignition 950 / 1100 K 10.4 / 11.5, with lit pockets 9.4 / 9.0. Duty stays 100 % in all: every late-spark cycle's charge burns on its own, so nothing builds up. None kept.
+- What a pop seems to need, not built: an overrun whose cylinder burns intermittently (stock-ECU closed-throttle partial burns), so unburnt charge collects over several cycles, then a fast burn of that collected volume. Not measured: any engine but the Lab Twin.
+
 ## 2026-10-24 — Backfires: a late spark and unburnt pockets, still short of a pop
 
 - Owner: backfires only from the Audio workshop, off by default. `disableBackfires` clears them when an engine is switched, reloaded, saved, read back or compared; engine 16 and `physical-audio-lab.els` no longer switch them on. The workshop installs `late_spark_overrun`; the 2 Hz slugs and the anti-lag are no longer offered.
