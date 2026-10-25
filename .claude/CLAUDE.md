@@ -49,7 +49,7 @@ without the owner's explicit agreement.
    (*Joined* on the ports or a junction), and the designer window. Open: the
    designer lists valve and injector rows a two-stroke does not use.
 
-**Backfires** -- closed 2026-10-25 (0.4.1): switched on in the Audio workshop
+**Backfires** -- closed 2026-10-25 (0.4.2): switched on in the Audio workshop
 only, never by an engine, off on every load (`disableBackfires`), kept across
 an edit of the running engine (`keepBackfires`). The workshop profile pops
 (journal 2026-10-25): 70 % of overrun sparks cut, fuel kept, and the next
@@ -117,7 +117,7 @@ and `ctest` wraps the GUI test in Xvfb itself (no `xvfb-run` prefix needed).
   running binary by its CPU delta, never by a file's mtime (stdio to a file
   flushes in 4 KB blocks, so a CSV lags the work by minutes). A very short time
   can be a failure (`EngineLab.Core` passes in ~43 s on 14.44, aborts in ~8).
-  The whole suite is 92 tests in ~44 min. **Never run it beside a harness or
+  The whole suite is 93 tests in ~44 min. **Never run it beside a harness or
   sweep** (a WSL suite included: shared CPUs): `CoreTests` waits on wall-clock
   deadlines nothing scales by load, so a loaded host invents failures.
 - **Release**: bump `project(EngineLab VERSION ...)`, date the `[Unreleased]`

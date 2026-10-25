@@ -7,12 +7,14 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
-## [0.4.1] — 2026-10-25
+## [0.4.2] — 2026-10-25
 
-The tag `v0.4.0` exists but 0.4.0 was never published: its release build ran
-the hosted runner's compiler out of heap (C1060), which the release workflow,
-unlike CI, did not resume on one build node. 0.4.1 is the first release with
-everything listed here.
+The tags `v0.4.0` and `v0.4.1` exist but neither was published. 0.4.0's
+release build ran the hosted runner's compiler out of heap (C1060), which the
+release workflow, unlike CI, did not resume on one build node; 0.4.1's tests
+failed on a full V8 dyno sweep that the runner, sharing its processors with a
+second test, could not finish in time (the first entry under *Fixed*). 0.4.2
+is the first release with everything listed here.
 
 ### Highlights
 
@@ -110,6 +112,13 @@ everything listed here.
 
 ### Fixed
 
+- **An engine of three cylinders or more no longer crawls on a busy or small
+  computer.** Its physics thread waited for its helper threads by spinning
+  without ever giving the processor up, so whenever the threads outnumbered
+  the free processors each step cost a whole scheduler time slice: a full V8
+  dyno sweep took 61 s on two processors instead of 7, and never finished on
+  one. It now hands the processor over (41 s on two); on the reference
+  machine the real-time factor is unchanged within its noise.
 - A backfire's pressure wave is no longer partly deleted in the exhaust:
   strong pulses were read too early by the pipes' wave-steepening and lost
   4-9 dB depending on where they burned, and a 100 kPa safety bound clipped
