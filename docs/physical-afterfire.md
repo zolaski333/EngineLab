@@ -6,7 +6,7 @@ releases energy in the cell or junction where the conditions are met. The
 pressure rise travels through the same acoustic DAG, the same collectors,
 mufflers and outlets as the normal blowdown.
 
-**Status (2026-10-25, `docs/journal.md`):** the workshop's profile pops. On
+**Status (closed 2026-10-25, `docs/journal.md`):** the workshop's profile pops. On
 the overrun the ECU cuts 70 % of the sparks (fuel kept), and the next fired
 cycle's exhaust lights the slug a cut cycle left in its primary. On the Lab
 Twin at 3,400 rpm: 18 pops in 2.2 s, 16.6 dB over the median against the
@@ -17,7 +17,8 @@ deleted 4-9 dB of every pop by where it burned, and the old 100 kPa source
 bound flattened the 320 kPa jump of a lit slug. Not reached: the Lab at
 6,200 rpm (1 pop), the Hayabusa (a continuous burn), the K20A (too short an
 overrun), a pop's 1.1 ms decay (0.5-0.6) and its 120-500 Hz weight (+4.5 dB
-against +7.4).
+against +7.4). These are known limits, not work in progress: reopening them
+needs a measured lead, ideally a CP2 overrun recording.
 
 ## Backfires are a listening switch, not an engine property
 
@@ -36,8 +37,8 @@ An edit of the running engine keeps them: `keepBackfires()` gives every edit
 script reload) the running engine's switch and calibration, because those hold
 copies made before the workshop's last change. Only another engine resets them.
 
-The calibration under the switch (temperatures, times, spark angle, pocket
-mixing) is part of the engine and is saved. Engine files can still carry the
+The calibration under the switch (temperatures, times, spark angle and cut,
+pocket mixing) is part of the engine and is saved. Engine files can still carry the
 activation keys and a script `ignition.limiter_keeps_fuel` (the serializers
 read them, and the `EngineLabAfterfireHarness` measures them), but the
 application drops them.
@@ -142,8 +143,8 @@ the validation harnesses. It sits above the ~0.8 MPa rise of an isochoric
 stoichiometric explosion, so no physical burn reaches it. The old 100 kPa
 bound clipped every lit slug (up to ~700 kW, a 320 kPa jump), cost a pop
 3 dB and made the generic crack below eat into it: crack noise riding a
-clipped pulse loses its positive half. Each voice keeps the power `energy / duration` for
-the exact duration of the reaction step.
+clipped pulse loses its positive half. Each voice keeps the power
+`energy / duration` for the exact duration of the reaction step.
 
 The reconstruction keeps nothing above ~3.8 kHz: the 1-D network does not
 compute that band. `ReactionCrackSynthesiser` adds it to every reaction voice
@@ -198,8 +199,9 @@ physical result: cold line, mixture outside the window, strategy not armed.
 
 `EngineLabAfterfireHarness --backfires` measures what the switches do, on the
 engine's own calibration. `--late-spark DEG`, `--pocket-mix-ms MS` and
-`--spark-cut SHARE` change one factor; `scripts/pop_metrics.py` counts pops in the render the same way as
-in a recording.
+`--spark-cut SHARE` change one factor, and a value outside the engine's limits
+is refused by name. `scripts/pop_metrics.py` counts pops in the render the
+same way as in a recording (`--threshold-db 12` for the figures above).
 
 The 2026-08 write-ups of the schema 8 induction and of the discrete-slug level
 correction are in the docs archive (git tag `archive/docs-2026-09`):

@@ -1495,6 +1495,18 @@ int main(int argc, char** argv) {
         selected.push_back(std::move(config));
     }
 
+    // An override outside the engine's limits (a --late-spark past +10 deg, a
+    // --spark-cut above 0.9) is refused here, by name, before the simulator
+    // would reject the engine with an exception.
+    for (const auto& engine : selected) {
+        auto overridden = engine;
+        applyCalibrationOverrides(overridden, options);
+        if (const auto error = enginelab::validateEngineConfig(overridden)) {
+            std::fprintf(stderr, "%s: %s\n", engine.name.c_str(), error->c_str());
+            return 2;
+        }
+    }
+
     auto invalidRealtimeMeasurements = 0;
     for (const auto& engine : selected) {
         const auto metrics = measureAfterfire(engine, options);

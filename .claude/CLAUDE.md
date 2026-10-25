@@ -49,13 +49,14 @@ without the owner's explicit agreement.
    (*Joined* on the ports or a junction), and the designer window. Open: the
    designer lists valve and injector rows a two-stroke does not use.
 
-**Backfires** (owner's go-ahead, 2026-10-24): switched on in the Audio workshop
+**Backfires** -- closed 2026-10-25 (0.4.0): switched on in the Audio workshop
 only, never by an engine, off on every load (`disableBackfires`), kept across
 an edit of the running engine (`keepBackfires`). The workshop profile pops
 (journal 2026-10-25): 70 % of overrun sparks cut, fuel kept, and the next
 fired cycle's exhaust lights the slug left in the primary -- 16.6 dB over the
 median on the Lab Twin (a real bike: 15.8), 13.5 on the MT-07, contract valid.
-Open: high rpm (1 pop at 6,200), the Hayabusa, a pop's decay and low band.
+Known limits, reopened only on a measured lead: high rpm (1 pop at 6,200), the
+Hayabusa, a pop's decay and low band (`docs/physical-afterfire.md`).
 
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
@@ -86,7 +87,7 @@ per-engine recording.
 ```
 . scripts/vsenv.ps1                                                # EVERY call
 cmake --build out/build/windows-vs2022 --config Release            # whole project
-ctest  --test-dir out/build/windows-vs2022 -C Release              # all tests (~33 min)
+ctest  --test-dir out/build/windows-vs2022 -C Release              # all tests (~44 min)
 cmake --build out/build/windows-vs2022 --config Release --target package   # release zip
 ```
 
@@ -116,7 +117,7 @@ and `ctest` wraps the GUI test in Xvfb itself (no `xvfb-run` prefix needed).
   running binary by its CPU delta, never by a file's mtime (stdio to a file
   flushes in 4 KB blocks, so a CSV lags the work by minutes). A very short time
   can be a failure (`EngineLab.Core` passes in ~43 s on 14.44, aborts in ~8).
-  The whole suite is 91 tests in ~33 min. **Never run it beside a harness or
+  The whole suite is 92 tests in ~44 min. **Never run it beside a harness or
   sweep** (a WSL suite included: shared CPUs): `CoreTests` waits on wall-clock
   deadlines nothing scales by load, so a loaded host invents failures.
 - **Release**: bump `project(EngineLab VERSION ...)`, date the `[Unreleased]`

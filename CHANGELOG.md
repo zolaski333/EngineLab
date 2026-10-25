@@ -7,6 +7,24 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-25
+
+### Highlights
+
+- **Design an engine from nothing**: *New engine…* asks what it is and derives
+  every other value, each with the rule behind it, and checks that this
+  computer keeps it in real time before building it.
+- **Two-strokes behave and sound like two-strokes**: scavenging follows the
+  fresh charge's front, a slide carburettor, a power valve, an idle that
+  misfires on its diluted charge, and one pipe per thread.
+- **Engines knock**: the end gas autoignites, and the knock control holds the
+  limit in steps as a production one does.
+- **Backfires pop**, switched on in the Audio workshop: an overrun spark cut
+  whose unburnt charge the next fired cycle lights in the pipe.
+- **Linux x64** builds and passes the tests, beside Windows.
+- More edits on the engine itself: compression ratio, port timing, the
+  carburettor's jets, the clutch, two exhaust paths joined into one.
+
 ### Added
 
 - **A two-stroke can breathe through a cylinder port**: the designer's
@@ -23,6 +41,27 @@ file formats, always with an in-memory migration).
   beside it; a new carburettor bore scales the main jet so the mixture holds.
 - `EngineLabSceneExport --two-stroke-intake` draws every two-stroke with
   either intake.
+- **Two-strokes can have a power valve** (`two_stroke.power_valve_*`): it
+  lowers the exhaust port at low speed and lifts as the pipe comes in. The
+  designer fits one to sport two-strokes; a designed 500 cc twin gains 20-39 %
+  of torque between 3,250 and 5,750 rpm and keeps its top end.
+- **Clicking a two-stroke's head or ports edits the port timing** (exhaust
+  and transfer opening, with the boost port following the transfers) and the
+  port widths; the engine restarts with them.
+- **A carburettor is drawn and tuned in the 3-D view**: on a carburetted
+  engine the throttle body becomes a carburettor (slide tower, float bowl),
+  and clicking it offers its main and pilot jets, needle clip and air screw,
+  taken by the running engine.
+- **The compression ratio is edited by clicking the engine**: a cylinder
+  liner, piston or head offers it beside the bore and stroke, on any engine
+  (a two-stroke's included, and engines whose cylinders differ in size), and
+  the running engine takes it (at once or over the ramp).
+- **The clutch's capacity can be edited** on the gearbox, live: a boosted
+  engine no longer has to slip on the designer's estimate.
+- **Two exhaust paths can be joined into one**: the exhaust ports or a
+  junction offer *Joined*, which gives the other path's cylinders a copy of
+  this path's primary into its collector (a boxer six's two banks become a
+  6-into-1) and restarts the engine.
 - **New engine… designs an engine from nothing**: say what it is (four- or
   two-stroke, petrol or diesel, what it is built for, inline, V, flat, radial
   or W, any number of cylinders, bore and stroke or a displacement, natural,
@@ -41,7 +80,7 @@ file formats, always with an in-memory migration).
 - **EngineLab builds and passes its tests on Linux x64.**
   `cmake --preset linux-gcc-release` (GCC 13 or newer) configures and builds
   the whole project with warnings as errors, and `ctest --preset
-  linux-gcc-release` runs all 89 tests green; `linux-clang-release` does the
+  linux-gcc-release` runs all 92 tests green; `linux-clang-release` does the
   same with Clang 18. Every push now compiles and tests both platforms.
   Windows stays the reference, and [docs/platforms.md](docs/platforms.md) says
   why a figure measured on one is not comparable with the other:
@@ -71,6 +110,9 @@ file formats, always with an in-memory migration).
   4-9 dB depending on where they burned, and a 100 kPa safety bound clipped
   every lit slug by about 3 dB. Without backfires the sound is unchanged, to
   the bit.
+- `EngineLabAfterfireHarness` names an override outside the engine's limits
+  (a `--late-spark` past +10 deg, a `--spark-cut` above 0.9) and exits,
+  instead of crashing.
 - **A two-stroke idles like one**: its idle charge is mostly burned gas left
   from the last cycle, and it now misfires on it, lighting about one
   revolution in three as a real one does, instead of firing every revolution
@@ -84,13 +126,6 @@ file formats, always with an in-memory migration).
   boot into one airbox all the carburettors share (above a V's valley). The
   carburettors were hidden inside per-crankcase boxes and could not be
   clicked; the crankcase is now the block's only.
-- **Clicking a two-stroke's head or ports edits the port timing** (exhaust
-  and transfer opening, with the boost port following the transfers) and the
-  port widths; the engine restarts with them.
-- **The compression ratio can be edited** from the head of any engine (a
-  two-stroke's included, and engines whose cylinders differ in size).
-- **The clutch's capacity can be edited** on the gearbox, live: a boosted
-  engine no longer has to slip on the designer's estimate.
 - **A V motorcycle engine's gearbox no longer goes through the rear bank**
   (a designed V-twin or V4, and the catalogue Big Twin's, 16.6 mm inside a
   barrel): the case turns down behind the crankshaft until it clears the
@@ -153,25 +188,10 @@ file formats, always with an in-memory migration).
   about a degree while the engine knocks and gives it back at 1 deg/s, so an
   engine settles at its knock limit instead of sitting in light knock. The
   Audi I5 gets the intercooler its real engine has.
-- **The compression ratio is edited by clicking the engine**: a cylinder
-  liner or piston offers it beside the bore and stroke, and the running
-  engine takes it (at once or over the ramp).
-- **A carburettor is drawn and tuned in the 3-D view**: on a carburetted
-  engine the throttle body becomes a carburettor (slide tower, float bowl),
-  and clicking it offers its main and pilot jets, needle clip and air screw,
-  taken by the running engine.
-- **Two exhaust paths can be joined into one**: the exhaust ports or a
-  junction offer *Joined*, which gives the other path's cylinders a copy of
-  this path's primary into its collector (a boxer six's two banks become a
-  6-into-1) and restarts the engine.
 - **Every turbocharger is drawn.** With two or more units the 3-D view drew
   only the first; now each unit an exhaust path drives sits on that path's
   collector (a flat six's two banks get one each), and clicking one opens its
   own inspector, titled with its number and its path.
-- **Two-strokes can have a power valve** (`two_stroke.power_valve_*`): it
-  lowers the exhaust port at low speed and lifts as the pipe comes in. The
-  designer fits one to sport two-strokes; a designed 500 cc twin gains 20-39 %
-  of torque between 3,250 and 5,750 rpm and keeps its top end.
 - A two-stroke saved as JSON keeps its scavenging loop length (it came back
   at the default).
 - A two-stroke twin no longer fails to hold 3,500, 7,000 and 7,500 rpm on the
