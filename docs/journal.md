@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-25 — High boost: the wastegate loop hunted, and lambda with it
+
+- Owner report: lambda spikes up and down under load at high boost, any engine (flat four, wastegate 3.20, CR 5:1, ~5,400 rpm in gear). `DriveScenarioHarness --builtin pull` (new `--catalog-root`, lambda/MAP/wastegate columns) on an EJ25 with wastegate 3.20 and the rated ratio moved with it (3.25, as the editor does): boost 2.97 <-> 3.75 at ~13 Hz, the gate slamming 0 <-> 1, lambda 0.58 <-> 0.96, mean |d lambda| per frame 0.029 (catalogue EJ25 0.0005). Knock retard 12.7 s of 25 came from the 3.7 peaks. Rated ratio left at 2.10: steady -- why a first variant did not reproduce it.
+- Not the fuelling, the intake or the exhaust: one factor, the PI band 0.25 -> 0.50, gives boost 3.20-3.22 and lambda 0.78-0.80. Realtime factor 1.3-1.6 either way.
+- Onset with the fixed band (boost s.d. in 3rd-6th at WOT): 2JZ 2.70 (0.049), EJ25 and I5 3.00 (0.031, 0.037); every catalogue engine holds at most 2.45.
+- Fix: the band scales with the cube of the gauge target past 1.5 (catalogue untouched: EJ25 pull CSV bit-identical). Linear: EJ25 holds 3.2 but the 2JZ hunts from 3.0 and the I5 at 3.4; square: the 2JZ at 3.4 still 0.089. Cube: all three at 2.7-3.4 hold 0.004-0.012 s.d., lambda back to 0.0002-0.0004 per frame; after a shift the boost is back within 0.05 in 0.08-0.28 s (1.3-1.5 s before, never settled).
+- `EngineLab.Turbocharger`: EJ25 and 2JZ at 3.2, 5,400 rpm: 3.200 +- 0.0003 / 0.001; without the fix 3.28 +- 0.12, lambda 0.71-0.88, FAIL.
+- Not done: the post-shift boost spike (EJ25 at 3.2 peaks ~4.0 after a lift, before and after). Toolchain: this machine has VS 2022 Community with MSVC 14.34 again, not BuildTools 14.44, so `scripts/vsenv.ps1` throws; built with vcvars `-vcvars_ver=14.34`.
+
 ## 2026-10-25 — The pool's master spun a whole time slice away per dispatch
 
 - Release v0.4.1 failed `UserDynoRampLS3Complete` (CI passed the same commit). Reproduced by process affinity: the LS3 complete sweep takes 7.3 s on 12 processors, 61 s on 2, and does not finish in 150 s on 1; four copies on 2 processors: three hung, one failed its start.

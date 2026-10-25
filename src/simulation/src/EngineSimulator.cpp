@@ -1981,8 +1981,19 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     : config_.forcedInduction.wastegatePressureRatio
                         + (config_.forcedInduction.wastegatePressureRatio - 1.0)
                             * (seaLevelPressureKpa / std::max(1.0, config_.ambientPressureKpa) - 1.0);
+                // The gate's authority over the boost grows with the boost it
+                // holds: a fixed band that holds 2.45 ran a 13 Hz limit cycle
+                // above ~2.7 (2JZ) to ~3.0 (EJ25, I5), the gate slamming 0 -> 1,
+                // boost 3.0 <-> 3.7 and lambda 0.58 <-> 0.96 on an EJ25 at 3.2
+                // (journal 2026-10-25). The band widens as the cube of the gauge
+                // target past what the catalogue holds, so its engines are
+                // untouched (linear and square still hunted on the 2JZ).
+                constexpr double wastegateScheduledFromGaugeRatio = 1.5;
+                const auto bandGrowth = std::max(1.0,
+                    (wastegateRatio - 1.0) / wastegateScheduledFromGaugeRatio);
+                const auto scheduledBandRatio = wastegateBandRatio * bandGrowth * bandGrowth * bandGrowth;
                 const auto proportional = (state_.boostPressureRatio
-                    - wastegateRatio) / wastegateBandRatio;
+                    - wastegateRatio) / scheduledBandRatio;
                 const auto unclamped = proportional + wastegateIntegral_;
                 if ((unclamped < 1.0 || proportional < 0.0) && (unclamped > 0.0 || proportional > 0.0))
                     wastegateIntegral_ = std::clamp(wastegateIntegral_

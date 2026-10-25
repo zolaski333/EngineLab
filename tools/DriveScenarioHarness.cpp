@@ -13,6 +13,7 @@
 //   EngineLabDriveScenarioHarness --scenario my.json --csv out.csv
 //   options: --shift-style manual|sequential|dual_clutch --quickshifter 0|1
 //            --blipper 0|1 --automatic 0|1 --duration <s> --list
+//            --catalog-root <dir> (a folder holding engines/ and parts/)
 //
 // Scenario file (every event key optional except "t"):
 //   { "engine": "CP2 MT-07", "duration_s": 30,
@@ -91,6 +92,7 @@ struct Options final {
     std::filesystem::path scenarioPath;
     std::string builtin;
     std::filesystem::path csvPath;
+    std::filesystem::path catalogRoot { ENGINELAB_CATALOG_ROOT };
     std::optional<enginelab::ShiftStyle> shiftStyle;
     std::optional<bool> quickshifter;
     std::optional<bool> blipper;
@@ -120,6 +122,7 @@ Options parseOptions(int argc, char** argv) {
         else if (argument == "--scenario") options.scenarioPath = next();
         else if (argument == "--builtin") options.builtin = next();
         else if (argument == "--csv") options.csvPath = next();
+        else if (argument == "--catalog-root") options.catalogRoot = next();
         else if (argument == "--shift-style") {
             const auto name = next();
             options.shiftStyle = enginelab::parseShiftStyle(name);
@@ -304,7 +307,7 @@ double median(std::vector<double> values) {
 }
 
 int run(const Options& options) {
-    const auto catalog = enginelab::loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+    const auto catalog = enginelab::loadEngineCatalog(options.catalogRoot);
     if (!catalog.errors.empty()) fail("the catalogue does not load");
     if (options.list) {
         for (const auto& entry : catalog.entries) std::printf("%s\n", entry.config.name.c_str());
@@ -474,7 +477,7 @@ int run(const Options& options) {
         if (csv.is_open()) {
             char row[704];
             std::snprintf(row, sizeof(row),
-                "%.5f,%.2f,%.3f,%d,%d,%.4f,%.4f,%s,%.4f,%.4f,%.2f,%.3f,%.3f,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%d,%d,%.0f,%u,%.2f,%.2f,%.1f\n",
+                "%.5f,%.2f,%.3f,%d,%d,%.4f,%.4f,%s,%.4f,%.4f,%.2f,%.3f,%.3f,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%d,%d,%.0f,%u,%.2f,%.2f,%.1f,%.4f,%d,%.2f,%.4f,%.4f\n",
                 now, state.rpm, speed * 3.6, humanGear(requested), humanGear(drive.engagedGear),
                 inputs.throttle, step.engineThrottle, authorityName(step.throttleAuthority),
                 inputs.clutchPedal, drive.clutchPressure, drive.clutchSlipRpm, state.torqueNm,
@@ -483,7 +486,9 @@ int run(const Options& options) {
                 state.fuelFlowGramsPerSecond, state.ecuSoftRevLimiterActive ? 1 : 0,
                 state.ecuHardRevLimiterActive ? 1 : 0, drive.tractionLimited ? 1 : 0,
                 state.activeRevLimitRpm, static_cast<unsigned>(state.activeLimits),
-                step.shiftSparkRetardDegrees, state.ignitionAdvanceDegrees, state.exhaustTemperatureC);
+                step.shiftSparkRetardDegrees, state.ignitionAdvanceDegrees, state.exhaustTemperatureC,
+                state.lambda, state.airFuelRatioValid ? 1 : 0, state.manifoldPressureKpa,
+                state.wastegateOpening, state.cylinderStates[0].injectorDutyCycle);
             csv << row;
         }
     }

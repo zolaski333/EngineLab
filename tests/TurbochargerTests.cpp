@@ -2,6 +2,7 @@
 // and several turbochargers sharing an engine's exhaust paths.
 
 #include <enginelab/calibration/EcuCalibration.hpp>
+#include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -18,6 +19,7 @@
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -102,7 +104,10 @@ struct Rig final {
 
 struct HeldRun final {
     double boostRatio { 0.0 };
+    double boostStdDev { 0.0 };
     double torqueNm { 0.0 };
+    double lambdaMin { 1.0e9 };
+    double lambdaMax { 0.0 };
     std::array<double, maximumTurbochargers> shaftRpm {};
     std::array<double, maximumTurbochargers> flowShare {};
 };
@@ -118,10 +123,12 @@ void publishBoostTable(SimpleEcuModel& ecu, double gaugeKpa) {
     require(ecu.calibrationStore()->publish(draft).published, "a boost table must publish");
 }
 
-/** Cranked, then full throttle against a dyno holding 0.7 x redline; means over
- *  the last 3 s. A non-negative `boostTableGaugeKpa` replaces the ECU's boost
- *  table. */
-[[nodiscard]] HeldRun heldFullLoad(const EngineConfig& config, double seconds, double boostTableGaugeKpa = -1.0) {
+/** Cranked, then full throttle against a dyno holding `heldRpm` (0.7 x
+ *  redline by default); means over the last 3 s. A non-negative
+ *  `boostTableGaugeKpa` replaces the ECU's boost table. */
+[[nodiscard]] HeldRun heldFullLoad(const EngineConfig& config, double seconds, double boostTableGaugeKpa = -1.0,
+                                   double heldRpm = 0.0) {
+    if (heldRpm <= 0.0) heldRpm = 0.7 * config.redlineRpm;
     auto rig = std::make_unique<Rig>(config);
     if (boostTableGaugeKpa >= 0.0) publishBoostTable(rig->ecu, boostTableGaugeKpa);
     const auto frames = static_cast<int>(seconds * 240.0);
@@ -135,11 +142,16 @@ void publishBoostTable(SimpleEcuModel& ecu, double gaugeKpa) {
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.5;
         controls.throttle = t < 2.0 ? 0.0 : 1.0;
-        if (t >= 2.0) controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (rpm - 0.7 * config.redlineRpm));
+        if (t >= 2.0) controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (rpm - heldRpm));
         const auto state = rig->simulator->step(frameSeconds, controls).state;
         rpm = state.rpm;
         if (frame < firstMeasured) continue;
         run.boostRatio += state.boostPressureRatio * weight;
+        run.boostStdDev += state.boostPressureRatio * state.boostPressureRatio * weight;
+        if (state.airFuelRatioValid) {
+            run.lambdaMin = std::min(run.lambdaMin, state.lambda);
+            run.lambdaMax = std::max(run.lambdaMax, state.lambda);
+        }
         run.torqueNm += state.torqueNm * weight;
         auto totalFlow = 0.0;
         for (std::size_t index = 0; index < state.turbochargerCount; ++index)
@@ -150,6 +162,7 @@ void publishBoostTable(SimpleEcuModel& ecu, double gaugeKpa) {
                 ? state.turbochargers[index].compressorMassFlowKgPerSecond / totalFlow : 0.0) * weight;
         }
     }
+    run.boostStdDev = std::sqrt(std::max(0.0, run.boostStdDev - run.boostRatio * run.boostRatio));
     return run;
 }
 
@@ -284,6 +297,37 @@ void boostTableIsTheTarget() {
     require(lower.torqueNm < stock.torqueNm, "and the engine makes less torque");
 }
 
+[[nodiscard]] EngineConfig catalogueEngine(std::string_view selector) {
+    static const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
+    const auto selected = selectSingleEngineCatalogEntry(catalogue.entries, selector);
+    require(static_cast<bool>(selected), "catalogue engine " + std::string(selector));
+    auto config = selected.entry->config;
+    normaliseEngineConfig(config);
+    return config;
+}
+
+/** A wastegate set far past the catalogue's holds its boost: the gate's
+ *  authority grows with the boost, and a fixed controller band ran a 13 Hz
+ *  limit cycle from ~2.7 (2JZ) or ~3.0 (EJ25), the gate slamming shut and open
+ *  and lambda swinging 0.58 <-> 0.96 (EJ25 at 3.2, journal 2026-10-25). The
+ *  wastegate is moved as the engine editor moves it, the rated ratio keeping
+ *  its distance. */
+void highBoostHoldsSteady() {
+    for (const auto* name : { "EJ25", "2JZ" }) {
+        auto config = catalogueEngine(name);
+        auto& turbo = config.forcedInduction;
+        const auto margin = turbo.pressureRatio - turbo.wastegatePressureRatio;
+        turbo.wastegatePressureRatio = 3.2;
+        turbo.pressureRatio = turbo.wastegatePressureRatio + margin;
+        const auto run = heldFullLoad(config, 9.0, -1.0, 5'400.0);
+        std::cout << "  " << name << " wastegate 3.2 at 5,400 rpm: boost " << run.boostRatio << " +- "
+                  << run.boostStdDev << ", lambda " << run.lambdaMin << " .. " << run.lambdaMax << '\n';
+        require(std::abs(run.boostRatio - 3.2) < 0.05, std::string(name) + ": the boost reaches its wastegate");
+        require(run.boostStdDev < 0.03, std::string(name) + ": and holds it without hunting");
+        require(run.lambdaMax - run.lambdaMin < 0.08, std::string(name) + ": so the mixture holds too");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -299,5 +343,7 @@ int main() {
     std::cout << "two plus six cylinders: ok\n";
     boostTableIsTheTarget();
     std::cout << "ECU boost table: ok\n";
+    highBoostHoldsSteady();
+    std::cout << "high boost holds steady: ok\n";
     return 0;
 }

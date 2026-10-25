@@ -7,6 +7,15 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **High boost no longer makes the boost and the mixture hunt.** With the
+  wastegate set past about 2.7-3.0 x, the boost control slammed the gate open
+  and shut some 13 times a second: the boost swung 3.0 to 3.7 and lambda 0.58
+  to 0.96 under load, whatever the intake, exhaust or injectors. The controller
+  now widens its band with the boost it holds; every catalogue engine is
+  unchanged.
+
 ## [0.4.2] — 2026-10-25
 
 The tags `v0.4.0` and `v0.4.1` exist but neither was published. 0.4.0's

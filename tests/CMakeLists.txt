@@ -648,7 +648,9 @@ add_test(NAME EngineLab.PeakPressure COMMAND EngineLabPeakPressureTests)
 add_executable(EngineLabTurbochargerTests TurbochargerTests.cpp)
 target_link_libraries(EngineLabTurbochargerTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
-    EngineLab::Exhaust EngineLab::Simulation)
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabTurbochargerTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
     target_link_options(EngineLabTurbochargerTests PRIVATE /STACK:8388608)
 endif()
