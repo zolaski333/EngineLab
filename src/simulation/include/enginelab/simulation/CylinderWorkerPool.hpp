@@ -125,8 +125,17 @@ public:
         }
         drainQueue();
         // Acquire: every worker's writes must be visible once it has arrived.
+        // Spin, then yield, like a waiting worker. A pure spin holds the
+        // processor a descheduled worker needs whenever the threads outnumber
+        // the free processors (a shared runner, a two-core laptop), and every
+        // dispatch then costs a whole time slice: 35 ms each on one processor.
         const auto expected = workers_.size();
-        while (arrived_.load(std::memory_order_acquire) != expected) spinPause();
+        auto spins = 0;
+        while (arrived_.load(std::memory_order_acquire) != expected) {
+            if (++spins < spinsBeforeYield) { spinPause(); continue; }
+            spins = 0;
+            std::this_thread::yield();
+        }
     }
 
 private:

@@ -72,6 +72,11 @@ target_link_libraries(EngineLabThreadSchedulingTests PRIVATE EngineLab::Foundati
 enginelab_set_warnings(EngineLabThreadSchedulingTests)
 add_test(NAME EngineLab.ThreadScheduling COMMAND EngineLabThreadSchedulingTests)
 
+add_executable(EngineLabCylinderWorkerPoolTests CylinderWorkerPoolTests.cpp)
+target_link_libraries(EngineLabCylinderWorkerPoolTests PRIVATE EngineLab::Simulation)
+enginelab_set_warnings(EngineLabCylinderWorkerPoolTests)
+add_test(NAME EngineLab.CylinderWorkerPool COMMAND EngineLabCylinderWorkerPoolTests)
+
 add_executable(EngineLabStructuralNvhTests StructuralNvhTests.cpp)
 target_link_libraries(EngineLabStructuralNvhTests PRIVATE
     EngineLab::Audio EngineLab::Serialization EngineLab::Catalog)
@@ -537,6 +542,8 @@ if(TARGET EngineLabLoadedAccelerationHarness)
         PROPERTIES TIMEOUT 240)
 endif()
 if(TARGET EngineLabUserDynoHarness)
+    # A free-running engine against a 90 s wall-clock deadline: run alone, so a
+    # parallel ctest on a shared runner cannot take its processors.
     add_test(NAME EngineLab.UserDynoHighRpmStart
         COMMAND EngineLabUserDynoHarness
             --filter "Yamaha CP2")
@@ -549,7 +556,7 @@ if(TARGET EngineLabUserDynoHarness)
     set_tests_properties(EngineLab.UserDynoHighRpmStart
         EngineLab.UserDynoRampCP2Complete
         EngineLab.UserDynoRampLS3Complete
-        PROPERTIES TIMEOUT 120)
+        PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()
 if(TARGET EngineLabDieselControlHarness)
     add_test(NAME EngineLab.DieselControl

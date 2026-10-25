@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-25 — The pool's master spun a whole time slice away per dispatch
+
+- Release v0.4.1 failed `UserDynoRampLS3Complete` (CI passed the same commit). Reproduced by process affinity: the LS3 complete sweep takes 7.3 s on 12 processors, 61 s on 2, and does not finish in 150 s on 1; four copies on 2 processors: three hung, one failed its start.
+- Cause: `CylinderWorkerPool::runIndexRange` waited for `arrived_` with `_mm_pause` only. `hardware_concurrency()` ignores a mask or a busy host, so the pool's threads can outnumber the free processors, and the master then holds the one a descheduled worker needs until preempted. `CylinderWorkerPoolTests` (one processor, 2 workers, 2,000 dispatches): 71.2 s before, 0.11 s after.
+- Fix: the master spins `spinsBeforeYield` (512) then yields, as a worker does. LS3 sweep: 7.6 s on 12, 41 s on 2, 1 processor reaches 5,970 of 6,270 rpm in the 90 s deadline. The three user-dyno tests are now `RUN_SERIAL`.
+- RealtimeBudget `--free-run`, 4 s, interleaved, first pair discarded, minimum of 4: LS3 1.602 -> 1.619; a V12 1.40-1.89 for both variants (noise); CP2 control (no pool) 2.78 -> 2.81. Physics untouched by construction (results do not depend on the schedule); ctest checks the bit-exact references.
+- Not done: the remaining 2-processor slowdown (41 s vs ~2x 7 s): workers still spin then yield 64 times before parking, and the pool size ignores the process affinity.
+
 ## 2026-10-25 — Backfires: the workshop profile pops; the 100 kPa bound clipped them
 
 - In the tree: `overrun_spark_cut_fraction` (0.70 in `MeasuredBackfireProfile`, the workshop and the Lab file) and a fired cycle >= 50 % burnt at EVO lighting the pockets in its port element (`igniteUnburnedPockets`). Same harness, `--threshold-db 12`, windows 2.2 s after the lift.
