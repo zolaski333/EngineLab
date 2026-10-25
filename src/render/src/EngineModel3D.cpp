@@ -104,6 +104,19 @@ void appendShaft(Mesh& mesh, Vec3 centreXY, float zStart, float length, float ra
     default: return { -0.27F * bore, 0.0F, 0.27F * bore };
     }
 }
+
+/** A port's anchor, its members set by name: the two-stroke ones keep their
+    defaults (GCC's -Wmissing-field-initializers rejects a short brace list). */
+[[nodiscard]] PortAnchor portAnchor(std::uint32_t cylinderId, Vec3 position, Vec3 direction,
+                                    float diameterMm, Vec3 inner) {
+    PortAnchor anchor;
+    anchor.cylinderId = cylinderId;
+    anchor.position = position;
+    anchor.direction = direction;
+    anchor.diameterMm = diameterMm;
+    anchor.inner = inner;
+    return anchor;
+}
 } // namespace
 
 EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
@@ -660,7 +673,7 @@ void EngineModel3D::buildDucts() {
                 }
                 intakePort = cylinder.crankCentre + intakeOut * reach;
             }
-            PortAnchor anchor { config.id, intakePort, intakeOut, intakeDiameter, window };
+            auto anchor = portAnchor(config.id, intakePort, intakeOut, intakeDiameter, window);
             anchor.transferDuct = { base, startOfRise, belowWindow, window };
             anchor.transferMirrorPoint = cylinder.crankCentre;
             anchor.transferMirrorNormal = lateral;
@@ -668,8 +681,8 @@ void EngineModel3D::buildDucts() {
             anchor.carburettorUp = valley ? zAxis : yAxis;
             intakePorts_.push_back(std::move(anchor));
         } else {
-            intakePorts_.push_back({ config.id, intakePort, intakeOut, intakeDiameter,
-                                     cylinder.deckCentre + axis * (0.12F * b) - side * (0.22F * b) });
+            intakePorts_.push_back(portAnchor(config.id, intakePort, intakeOut, intakeDiameter,
+                                               cylinder.deckCentre + axis * (0.12F * b) - side * (0.22F * b)));
         }
 
         if (twoStrokeBarrel) {
@@ -681,7 +694,7 @@ void EngineModel3D::buildDucts() {
             const auto exhaustOut = normalise(side - axis * 0.2F);
             const auto exhaustEnd = spigot + exhaustOut * (0.35F * b);
             appendTube(exhaust, catmullRom({ exhaustInner, spigot, exhaustEnd }, 10), { exhaustDiameter * 0.5F }, 18);
-            exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner });
+            exhaustPorts_.push_back(portAnchor(config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner));
         } else {
             // Exhaust port stub: out of the head on the exhaust side.
             const auto exhaustDiameter = 0.34F * b;
@@ -690,7 +703,7 @@ void EngineModel3D::buildDucts() {
             const auto exhaustOut = normalise(side - axis * 0.25F);
             const auto exhaustEnd = exhaustPort + exhaustOut * (0.6F * b);
             appendTube(exhaust, catmullRom({ exhaustInner, exhaustPort, exhaustEnd }, 10), { exhaustDiameter * 0.5F }, 18);
-            exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner });
+            exhaustPorts_.push_back(portAnchor(config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner));
         }
 
         // The injector. A port injector sits in the runner just out of the

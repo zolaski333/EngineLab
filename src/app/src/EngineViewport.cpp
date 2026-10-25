@@ -1964,10 +1964,10 @@ void EngineViewport::updateInspector() {
                 if (values.size() < 3U) return std::string("The power valve changed meanwhile.");
                 if (values[2] < values[1] + 100.0)
                     return std::string("The power valve is fully open at least 100 rpm after it starts to open.");
-                auto& ports = edited.twoStroke;
-                ports.powerValveClosedExhaustPortOpenDegrees = values[0];
-                ports.powerValveOpeningStartRpm = values[1];
-                ports.powerValveFullyOpenRpm = values[2];
+                auto& editedPorts = edited.twoStroke;
+                editedPorts.powerValveClosedExhaustPortOpenDegrees = values[0];
+                editedPorts.powerValveOpeningStartRpm = values[1];
+                editedPorts.powerValveFullyOpenRpm = values[2];
                 return std::string();
             };
         }
