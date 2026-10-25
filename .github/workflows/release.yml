@@ -31,11 +31,16 @@ jobs:
         run: cmake --preset windows-vs2022
 
       # Two parallel MSBuild nodes: more runs the hosted runner's compiler out
-      # of heap space (C1060).
+      # of heap space (C1060). Two can still run out (the first v0.4.0 run):
+      # the build then resumes on one node, as ci.yml does.
       - name: Build
         shell: pwsh
         run: |
           cmake --build --preset windows-release -- /m:2 /nologo /verbosity:minimal *>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0 -and (Select-String -Path build.log -Pattern 'C1060' -Quiet)) {
+            Write-Output "::warning::C1060 (compiler out of heap) on two nodes; resuming on one."
+            cmake --build --preset windows-release -- /m:1 /nologo /verbosity:minimal *>&1 | Tee-Object -FilePath build.log
+          }
           if ($LASTEXITCODE -ne 0) {
             Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]+|fatal error' |
               Select-Object -First 30 |
@@ -44,7 +49,7 @@ jobs:
           }
 
       - name: Test
-        run: ctest --preset windows-release --parallel 2
+        run: ctest --preset windows-release --parallel 2 --output-on-failure
 
       - name: Package
         shell: pwsh
