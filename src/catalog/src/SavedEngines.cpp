@@ -123,7 +123,9 @@ std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, c
     } else {
         std::filesystem::remove(calibrationFile, error);
     }
-    return writeReplacing(engineFile, JsonEngineSerializer {}.encode(config));
+    auto saved = config;
+    disableBackfires(saved);
+    return writeReplacing(engineFile, JsonEngineSerializer {}.encode(saved));
 }
 
 SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
@@ -140,6 +142,7 @@ SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
     }
     SavedEngine engine;
     engine.config = std::move(*decoded.config);
+    disableBackfires(engine.config);
     engine.file = engineFile;
     const auto calibrationFile = savedCalibrationFile(engineFile);
     std::error_code error;
@@ -191,14 +194,24 @@ std::optional<std::string> restoreAudioVoicing(EngineConfig& config, const std::
     return std::nullopt;
 }
 
+namespace {
+
+// Backfires are switched on the running engine, not edited into it.
+std::string comparable(EngineConfig config) {
+    disableBackfires(config);
+    return JsonEngineSerializer {}.encode(config);
+}
+
+} // namespace
+
 EngineBaseline::EngineBaseline(const EngineConfig& config, const calibration::CalibrationDraft& calibration)
-    : config_(JsonEngineSerializer {}.encode(config)) {
+    : config_(comparable(config)) {
     auto tables = calibration::CalibrationJson::serialize(calibration);
     if (tables) calibration_ = tables.takeValue();
 }
 
 bool EngineBaseline::configDiffers(const EngineConfig& config) const {
-    return JsonEngineSerializer {}.encode(config) != config_;
+    return comparable(config) != config_;
 }
 
 bool EngineBaseline::calibrationDiffers(const calibration::CalibrationSnapshot& snapshot) const {

@@ -66,6 +66,11 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- A backfire's pressure wave is no longer partly deleted in the exhaust:
+  strong pulses were read too early by the pipes' wave-steepening and lost
+  4-9 dB depending on where they burned, and a 100 kPa safety bound clipped
+  every lit slug by about 3 dB. Without backfires the sound is unchanged, to
+  the bit.
 - **A two-stroke idles like one**: its idle charge is mostly burned gas left
   from the last cycle, and it now misfires on it, lighting about one
   revolution in three as a real one does, instead of firing every revolution
@@ -210,11 +215,34 @@ file formats, always with an in-memory migration).
   1.25. Torque moves by less than 1 %. Four-strokes are unchanged, to the bit.
   `EngineLabDynoSweepHarness` and `EngineLabRealtimeBudgetHarness
   --exhaust-whole` keep a two-stroke's exhaust as one network for comparison.
+- **Backfires are switched on in the Audio workshop only**, for the engine
+  running, and every engine loads with them off: a catalogue engine, a saved
+  one, a script or a designed engine never turns on the overrun afterfire or
+  the wet limiter, and switching them is not an edit to save. The *Audio
+  Physics Lab 689 Twin* no longer pops or fires a wet limiter until you switch
+  them on. Editing the running engine (a bigger bore, a designer, the JSON
+  editor, a script reload) keeps them as the workshop left them; only another
+  engine turns them off.
+- **The *AFTERFIRE* switch pops like a real overrun**: instead of chopping
+  retained fuel at 2 Hz, the ECU cuts the spark of most overrun cycles (70 %
+  by default, fuel kept) and fires the others at 10 degrees, and the next
+  fired cycle's exhaust lights the unburnt charge waiting in the pipe. On the
+  *Audio Physics Lab 689 Twin* at 3,400 rpm that gives about 8 pops a second,
+  16.6 dB over the engine, against 15.8 for a recorded bike. The physics group
+  shows the spark angle, the pocket mixing time and the spark cut instead of
+  the overrun fuel and the pop rate, duty and jitter. High revs (above about
+  6,000 rpm) still pop rarely.
 
 ### Removed
 
 - The old *New engine…* that changed the size of an existing engine: the
   designer replaces it.
+- The `continuous_anti_lag` and `discrete_afterfire` afterfire strategies, with
+  `overrun_fuel_fraction` and the `overrun_pulse_*` chopper: a file naming them
+  loads with a clean fuel cut, and its old keys are ignored. A script that sets
+  `exhaust_afterfire.enabled` or `exhaust_afterfire.overrun_fuel_fraction` is
+  now rejected (unknown property). `EngineLabAfterfireHarness` loses
+  `--force-demo`, `--fuel-fraction` and the `--pulse-*` flags.
 
 ## [0.3.1] — 2026-10-18
 

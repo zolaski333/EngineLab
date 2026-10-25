@@ -31,8 +31,17 @@ public:
     static constexpr std::size_t maximumPaths = 8;
     /** Last-resort stability bound for a compact source in the linear network.
      * Any use must be reported by RealtimeEngineAudio; it is not a voicing
-     * limiter and must never be silent instrumentation. */
-    static constexpr float maximumReactionSourcePressurePa = 100'000.0F;
+     * limiter and must never be silent instrumentation. Above the ~0.8 MPa
+     * rise of an isochoric stoichiometric explosion from ambient, so no
+     * physical burn reaches it: a slug lit by the fired exhaust gives a
+     * 320 kPa jump, and the old 100 kPa bound cost a pop 3 dB (journal
+     * 2026-10-25). A pulse that strong always arms the linear read. */
+    static constexpr float maximumReactionSourcePressurePa = 1'000'000.0F;
+    /** A reaction half-wave above this Mach number (beta * p' / (rho c^2))
+     *  makes every line read linearly for reactionLinearHoldSeconds. On a
+     *  0.5 m primary the amplitude warp then moves a read by about a sample. */
+    static constexpr float reactionLinearMachThreshold = 0.03F;
+    static constexpr double reactionLinearHoldSeconds = 0.020;
 
     struct CylinderBoundary final {
         float conductanceAreaM2 {};

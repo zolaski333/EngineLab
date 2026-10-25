@@ -40,16 +40,15 @@ int main() {
     const auto labSettings =
         enginelab::audioPhysicsSettingsFor(audioLab->config);
     require(
-        labSettings.afterfireEnabled && labSettings.limiterKeepsFuel
-            && near(labSettings.afterfireReactionTimeSeconds, 0.002)
-            && near(labSettings.overrunFuelFraction, 0.08)
-            && near(labSettings.overrunPulseHz, 2.0)
-            && near(labSettings.overrunPulseDutyCycle, 0.08)
-            && near(labSettings.overrunPulseTimingVariation, 0.40)
+        !labSettings.afterfireEnabled && !labSettings.limiterKeepsFuel
+            && near(labSettings.afterfireReactionTimeSeconds, 0.0005)
+            && near(labSettings.overrunSparkAdvanceDegrees, 10.0)
+            && near(labSettings.pocketMixingTimeSeconds, 0.040)
+            && near(labSettings.overrunSparkCutFraction, 0.70)
             && audioLab->config.exhaustAfterfire.strategy
-                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+                == enginelab::ExhaustAfterfireStrategy::cleanDfco
             && near(labSettings.cycleVariationCoefficientOfVariation, 0.06),
-        "audio lab engine opts into discrete physical afterfire slugs");
+        "audio lab engine carries the measured backfire calibration, backfires off");
     require(
         enginelab::audioPhysicsTelemetryFor(
             audioLab->config, enginelab::EngineState {}).porousMufflerCount == 1,
@@ -57,8 +56,7 @@ int main() {
 
     auto physicsConfig = engine;
     enginelab::AudioPhysicsSettings authoredPhysics {
-        0.06, 0.55, true, true, 800.0, 0.008, 0.95, 0.12, 4.0, 0.35,
-        0.27
+        0.06, 0.55, true, true, 800.0, 0.008, 0.95, -25.0, 0.012
     };
     enginelab::applyAudioPhysicsSettings(physicsConfig, authoredPhysics);
     const auto recoveredPhysics =
@@ -71,12 +69,10 @@ int main() {
             && near(recoveredPhysics.afterfireIgnitionTemperatureK, 800.0)
             && near(recoveredPhysics.afterfireReactionTimeSeconds, 0.008)
             && near(recoveredPhysics.afterfireEfficiency, 0.95)
-            && near(recoveredPhysics.overrunFuelFraction, 0.12)
-            && near(recoveredPhysics.overrunPulseHz, 4.0)
-            && near(recoveredPhysics.overrunPulseDutyCycle, 0.35)
-            && near(recoveredPhysics.overrunPulseTimingVariation, 0.27)
+            && near(recoveredPhysics.overrunSparkAdvanceDegrees, -25.0)
+            && near(recoveredPhysics.pocketMixingTimeSeconds, 0.012)
             && physicsConfig.exhaustAfterfire.strategy
-                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+                == enginelab::ExhaustAfterfireStrategy::lateSparkOverrun
             && near(physicsConfig.exhaustAfterfire
                         .inductionActivationTemperatureK, 13'340.0)
             && near(physicsConfig.exhaustAfterfire.inductionPressureExponent,
@@ -269,8 +265,8 @@ int main() {
     }
     require(visibleChildren >= 45, "complete workshop control set is present");
     require(
-        sliderCount == 18 && disabledSliderCount == 4,
-        "nine faders and nine physics controls exist; four no-op faders are disabled");
+        sliderCount == 17 && disabledSliderCount == 4,
+        "nine faders and eight physics controls exist; four no-op faders are disabled");
     require(
         muteCount == 4 && soloCount == 4
             && disabledMuteCount == 1
@@ -310,12 +306,11 @@ int main() {
         physicsApplyCount == 1
             && appliedPhysics.afterfireEnabled
             && near(appliedPhysics.afterfireIgnitionTemperatureK, 800.0)
-            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.002)
-            && near(appliedPhysics.overrunFuelFraction, 0.08)
-            && near(appliedPhysics.overrunPulseHz, 2.0)
-            && near(appliedPhysics.overrunPulseDutyCycle, 0.08)
-            && near(appliedPhysics.overrunPulseTimingVariation, 0.40),
-        "enabling a clean afterfire prepares discrete irregular pops rather than continuous anti-lag");
+            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.0005)
+            && near(appliedPhysics.overrunSparkAdvanceDegrees, 10.0)
+            && near(appliedPhysics.pocketMixingTimeSeconds, 0.040)
+            && near(appliedPhysics.overrunSparkCutFraction, 0.70),
+        "enabling a clean afterfire installs the measured backfire profile");
     require(mixAfterfireToggle->getToggleState(),
             "the mix switch mirrors an afterfire applied from the physics group");
 
@@ -325,11 +320,10 @@ int main() {
             && near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.06)
             && appliedPhysics.afterfireEnabled
             && appliedPhysics.limiterKeepsFuel
-            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.002)
-            && near(appliedPhysics.overrunFuelFraction, 0.08)
-            && near(appliedPhysics.overrunPulseHz, 2.0)
-            && near(appliedPhysics.overrunPulseDutyCycle, 0.08)
-            && near(appliedPhysics.overrunPulseTimingVariation, 0.40),
+            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.0005)
+            && near(appliedPhysics.overrunSparkAdvanceDegrees, 10.0)
+            && near(appliedPhysics.pocketMixingTimeSeconds, 0.040)
+            && near(appliedPhysics.overrunSparkCutFraction, 0.70),
         "demo action publishes an intentionally audible physical calibration");
 
     mixAfterfireToggle->setToggleState(false, juce::dontSendNotification);
@@ -345,8 +339,9 @@ int main() {
         physicsApplyCount == 4
             && appliedPhysics.afterfireEnabled
             && afterfireToggle->getToggleState()
-            && near(appliedPhysics.overrunFuelFraction, 0.08)
-            && near(appliedPhysics.overrunPulseDutyCycle, 0.08),
+            && near(appliedPhysics.overrunSparkAdvanceDegrees, 10.0)
+            && near(appliedPhysics.pocketMixingTimeSeconds, 0.040)
+            && near(appliedPhysics.overrunSparkCutFraction, 0.70),
         "switching afterfire back on applies at once and keeps the calibration");
     refusePhysics = true;
     mixAfterfireToggle->setToggleState(false, juce::dontSendNotification);
@@ -357,33 +352,6 @@ int main() {
             && afterfireToggle->getToggleState(),
         "a refused switch shows the afterfire state that is actually live");
     refusePhysics = false;
-
-    {
-        // Measured (docs/journal.md 2026-09-23): below the chemistry's lean
-        // limit the retained charge never ignites.
-        enginelab::ExhaustAfterfireConfig afterfire;
-        afterfire.enabled = true;
-        afterfire.strategy =
-            enginelab::ExhaustAfterfireStrategy::continuousAntiLag;
-        afterfire.overrunFuelFraction = 0.18;
-        require(enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
-                "continuous 18 % retained fuel is flagged as unburnable");
-        afterfire.strategy =
-            enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
-        afterfire.overrunFuelFraction = 0.08;
-        afterfire.overrunPulseHz = 2.0;
-        afterfire.overrunPulseDutyCycle = 0.08;
-        require(!enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire)
-                    && near(enginelab::afterfireRetainedChargeEquivalenceRatio(
-                                afterfire), 1.0),
-                "the discrete pop profile retains a stoichiometric charge");
-        afterfire.overrunPulseDutyCycle = 0.25;
-        require(enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
-                "8 % fuel spread over a 25 % duty is flagged as unburnable");
-        afterfire.enabled = false;
-        require(!enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
-                "a disabled afterfire is never flagged");
-    }
 
     window.setMix(base);
     require(callbackCount > 0, "mix synchronisation publishes to MainComponent");

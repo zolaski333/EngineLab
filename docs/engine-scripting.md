@@ -129,9 +129,13 @@ An unknown property is an error; it is not ignored. The executable reference
 list lives in the tables of `src/scripting/src/EngineScriptCompiler.cpp`.
 
 The [`physical-audio-lab.els`](../examples/physical-audio-lab.els) example
-enables a moderate combustion spread and the afterfire reaction. The latter
-schedules no pops: without unburned fuel, oxygen and hot enough gas in the
-exhaust, it correctly stays silent.
+enables a moderate combustion spread and calibrates the afterfire reaction.
+Backfires are not an engine property: a script has no switch for them, the
+application drops `ignition.limiter_keeps_fuel` on load and on save, and only
+the Audio workshop turns them on for the engine running. A script reload keeps
+them where the workshop left them. `exhaust_afterfire.enabled` and
+`exhaust_afterfire.overrun_fuel_fraction` were removed on 2026-10-24: a script
+that still sets them is rejected as setting an unknown property.
 
 ## Diagnostics and validation
 

@@ -35,21 +35,20 @@ void readCarburettor(const YAML::Node& intake, CarburettorConfig& carburettor) {
     ExhaustAfterfireStrategy value) noexcept {
     switch (value) {
     case ExhaustAfterfireStrategy::cleanDfco: return "clean_dfco";
-    case ExhaustAfterfireStrategy::continuousAntiLag:
-        return "continuous_anti_lag";
-    case ExhaustAfterfireStrategy::discreteAfterfire:
-        return "discrete_afterfire";
+    case ExhaustAfterfireStrategy::lateSparkOverrun:
+        return "late_spark_overrun";
     }
     return "clean_dfco";
 }
 [[nodiscard]] ExhaustAfterfireStrategy decodeAfterfireStrategy(
     std::string_view value) {
-    if (value == "clean_dfco")
+    // The anti-lag and chopped-fuel strategies were removed: files that still
+    // name them read as a clean fuel cut.
+    if (value == "clean_dfco" || value == "continuous_anti_lag"
+        || value == "discrete_afterfire")
         return ExhaustAfterfireStrategy::cleanDfco;
-    if (value == "continuous_anti_lag")
-        return ExhaustAfterfireStrategy::continuousAntiLag;
-    if (value == "discrete_afterfire")
-        return ExhaustAfterfireStrategy::discreteAfterfire;
+    if (value == "late_spark_overrun")
+        return ExhaustAfterfireStrategy::lateSparkOverrun;
     throw std::invalid_argument(
         "Unknown exhaust afterfire strategy: " + std::string(value));
 }
@@ -384,12 +383,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "ignition_temperature_k" << YAML::Value << config.exhaustAfterfire.ignitionTemperatureK
         << YAML::Key << "reaction_time_constant_s" << YAML::Value << config.exhaustAfterfire.reactionTimeConstantSeconds
         << YAML::Key << "reaction_efficiency" << YAML::Value << config.exhaustAfterfire.reactionEfficiency
-        << YAML::Key << "overrun_fuel_fraction" << YAML::Value << config.exhaustAfterfire.overrunFuelFraction
         << YAML::Key << "overrun_minimum_rpm" << YAML::Value << config.exhaustAfterfire.overrunMinimumRpm
         << YAML::Key << "overrun_maximum_throttle" << YAML::Value << config.exhaustAfterfire.overrunMaximumThrottle
-        << YAML::Key << "overrun_pulse_hz" << YAML::Value << config.exhaustAfterfire.overrunPulseHz
-        << YAML::Key << "overrun_pulse_duty" << YAML::Value << config.exhaustAfterfire.overrunPulseDutyCycle
-        << YAML::Key << "overrun_pulse_timing_variation" << YAML::Value << config.exhaustAfterfire.overrunPulseTimingVariation
+        << YAML::Key << "overrun_spark_advance_deg" << YAML::Value << config.exhaustAfterfire.overrunSparkAdvanceDegrees
         << YAML::Key << "induction_time_s" << YAML::Value << config.exhaustAfterfire.inductionTimeSeconds
         << YAML::Key << "induction_reference_pressure_kpa" << YAML::Value << config.exhaustAfterfire.inductionReferencePressureKpa
         << YAML::Key << "induction_activation_temperature_k" << YAML::Value << config.exhaustAfterfire.inductionActivationTemperatureK
@@ -399,6 +395,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "minimum_equivalence_ratio" << YAML::Value << config.exhaustAfterfire.minimumEquivalenceRatio
         << YAML::Key << "maximum_equivalence_ratio" << YAML::Value << config.exhaustAfterfire.maximumEquivalenceRatio
         << YAML::Key << "quench_temperature_k" << YAML::Value << config.exhaustAfterfire.quenchTemperatureK
+        << YAML::Key << "pocket_mixing_time_s" << YAML::Value << config.exhaustAfterfire.pocketMixingTimeSeconds
+        << YAML::Key << "overrun_spark_cut_fraction" << YAML::Value << config.exhaustAfterfire.overrunSparkCutFraction
         << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
@@ -941,12 +939,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.ignitionTemperatureK = afterfire["ignition_temperature_k"].as<double>(config.exhaustAfterfire.ignitionTemperatureK);
             config.exhaustAfterfire.reactionTimeConstantSeconds = afterfire["reaction_time_constant_s"].as<double>(config.exhaustAfterfire.reactionTimeConstantSeconds);
             config.exhaustAfterfire.reactionEfficiency = afterfire["reaction_efficiency"].as<double>(config.exhaustAfterfire.reactionEfficiency);
-            config.exhaustAfterfire.overrunFuelFraction = afterfire["overrun_fuel_fraction"].as<double>(config.exhaustAfterfire.overrunFuelFraction);
             config.exhaustAfterfire.overrunMinimumRpm = afterfire["overrun_minimum_rpm"].as<double>(config.exhaustAfterfire.overrunMinimumRpm);
             config.exhaustAfterfire.overrunMaximumThrottle = afterfire["overrun_maximum_throttle"].as<double>(config.exhaustAfterfire.overrunMaximumThrottle);
-            config.exhaustAfterfire.overrunPulseHz = afterfire["overrun_pulse_hz"].as<double>(config.exhaustAfterfire.overrunPulseHz);
-            config.exhaustAfterfire.overrunPulseDutyCycle = afterfire["overrun_pulse_duty"].as<double>(config.exhaustAfterfire.overrunPulseDutyCycle);
-            config.exhaustAfterfire.overrunPulseTimingVariation = afterfire["overrun_pulse_timing_variation"].as<double>(config.exhaustAfterfire.overrunPulseTimingVariation);
+            config.exhaustAfterfire.overrunSparkAdvanceDegrees = afterfire["overrun_spark_advance_deg"].as<double>(config.exhaustAfterfire.overrunSparkAdvanceDegrees);
             config.exhaustAfterfire.inductionTimeSeconds = afterfire["induction_time_s"].as<double>(config.exhaustAfterfire.inductionTimeSeconds);
             config.exhaustAfterfire.inductionReferencePressureKpa = afterfire["induction_reference_pressure_kpa"].as<double>(config.exhaustAfterfire.inductionReferencePressureKpa);
             config.exhaustAfterfire.inductionActivationTemperatureK = afterfire["induction_activation_temperature_k"].as<double>(config.exhaustAfterfire.inductionActivationTemperatureK);
@@ -956,6 +951,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.minimumEquivalenceRatio = afterfire["minimum_equivalence_ratio"].as<double>(config.exhaustAfterfire.minimumEquivalenceRatio);
             config.exhaustAfterfire.maximumEquivalenceRatio = afterfire["maximum_equivalence_ratio"].as<double>(config.exhaustAfterfire.maximumEquivalenceRatio);
             config.exhaustAfterfire.quenchTemperatureK = afterfire["quench_temperature_k"].as<double>(config.exhaustAfterfire.quenchTemperatureK);
+            config.exhaustAfterfire.pocketMixingTimeSeconds = afterfire["pocket_mixing_time_s"].as<double>(config.exhaustAfterfire.pocketMixingTimeSeconds);
+            config.exhaustAfterfire.overrunSparkCutFraction = afterfire["overrun_spark_cut_fraction"].as<double>(config.exhaustAfterfire.overrunSparkCutFraction);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);

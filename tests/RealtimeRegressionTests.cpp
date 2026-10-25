@@ -547,6 +547,76 @@ void reactionInjectionRegression() {
         "a local exhaust reaction must propagate through the authored DAG to the microphones");
 }
 
+void strongReactionPositionRegression() {
+    // A burning slug's pulse is 0.4-1x the ambient pressure. The amplitude
+    // warp of the lines read such a pulse at an age younger than where it was
+    // injected and lost 4-9 dB of it by where along the duct it burned
+    // (journal 2026-10-25). The same pulse must radiate about the same energy
+    // wherever it burns: 12.4 dB apart over these positions with the warp,
+    // 2.9 dB with the linear read (the duct's own reflections).
+    constexpr double sampleRate = 48'000.0;
+    auto config = enginelab::makeDefaultInlineFour();
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    const auto sourceNode = std::find_if(
+        graph.nodes().begin(), graph.nodes().end(), [](const auto& node) {
+            return node.type == enginelab::ExhaustNodeType::pipe
+                && node.lengthMm >= 300.0;
+        });
+    require(sourceNode != graph.nodes().end(),
+        "the strong-reaction fixture must resolve a duct of at least 0.3 m");
+    const auto render = [&](float axial, float pressurePa) {
+        auto acoustics = std::make_unique<enginelab::AcousticExhaustNetwork>(
+            graph, cylinderIds);
+        require(acoustics->valid() && acoustics->prepare(sampleRate),
+            "the strong-reaction fixture must compile and prepare");
+        acoustics->setOutletJetNoiseEnabled(false);
+        const std::array<enginelab::AcousticExhaustNetwork::Medium, 1>
+            medium {{ { 0.55F, 535.0F } }};
+        acoustics->beginBlock(medium, 1.0);
+        std::array<float, 4> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4>
+            boundaries {};
+        auto energy = 0.0;
+        for (std::size_t sample = 0; sample < 16'384; ++sample) {
+            if (sample < 24U)
+                require(acoustics->injectReactionPressure(
+                        sourceNode->id, axial, pressurePa),
+                    "the strong reaction must enter its duct");
+            const auto output = acoustics->process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa),
+                "a strong reaction must stay finite");
+            energy += static_cast<double>(output[0].leftPa)
+                * output[0].leftPa;
+        }
+        return energy;
+    };
+    auto quietest = std::numeric_limits<double>::max();
+    auto loudest = 0.0;
+    for (const auto axial : { 0.05F, 0.25F, 0.5F, 0.85F, 0.95F }) {
+        const auto energy = render(axial, 100'000.0F);
+        quietest = std::min(quietest, energy);
+        loudest = std::max(loudest, energy);
+    }
+    const auto spreadDb = 10.0 * std::log10(loudest / std::max(quietest, 1.0e-30));
+    std::cout << "strong reaction by position: spread_db=" << spreadDb << '\n';
+    require(quietest > 1.0e-10 && spreadDb < 6.0,
+        "a pop-amplitude reaction pulse must radiate about the same energy wherever it burns along the duct");
+    // A slug lit by the fired exhaust releases up to ~700 kW, a 320 kPa jump
+    // (journal 2026-10-25). The old 100 kPa bound flattened it and cost a pop
+    // 3 dB; the bound is now above an isochoric explosion. Three times the
+    // pressure is 9.5 dB more energy in a linear network; the outlet edge's
+    // vortex loss, passive and growing with particle velocity, keeps ~2 dB
+    // (7.4 dB measured), and the old bound left 0 dB.
+    const auto gainDb = 10.0 * std::log10(
+        render(0.5F, 300'000.0F) / std::max(render(0.5F, 100'000.0F), 1.0e-30));
+    std::cout << "strong reaction 300/100 kPa: gain_db=" << gainDb << '\n';
+    require(gainDb > 5.0 && gainDb < 9.6,
+        "a 300 kPa reaction pulse must radiate as a linear source, not at the stability bound");
+}
+
 struct ReactionSpatialSignature final {
     std::vector<float> left;
     std::vector<float> right;
@@ -3438,6 +3508,7 @@ int main(int argc, char** argv) {
         thermoacousticHeatReleaseSourceRegression();
         reactionCrackRegression();
         reactionInjectionRegression();
+        strongReactionPositionRegression();
         reactionXPipeSpatialisationRegression();
         branchedAcousticTopologyRegression();
         branchTrunkDelayRegression();

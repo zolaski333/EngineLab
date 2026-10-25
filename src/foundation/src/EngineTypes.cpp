@@ -431,6 +431,17 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     return result;
 }
 
+void disableBackfires(EngineConfig& config) noexcept {
+    config.exhaustAfterfire.strategy = ExhaustAfterfireStrategy::cleanDfco;
+    config.exhaustAfterfire.enabled = false;
+    config.ignition.limiterKeepsFuel = false;
+}
+
+void keepBackfires(const EngineConfig& running, EngineConfig& edited) noexcept {
+    edited.exhaustAfterfire = running.exhaustAfterfire;
+    edited.ignition.limiterKeepsFuel = running.ignition.limiterKeepsFuel;
+}
+
 void normaliseEngineConfig(EngineConfig& config) {
     // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
     // explicit valve geometry; schema 4 adds SI outlet/observer coordinates;
@@ -445,23 +456,8 @@ void normaliseEngineConfig(EngineConfig& config) {
     const auto sourceSchemaVersion = config.schemaVersion;
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
-    // Schema <=5 only had `enabled`, fuel fraction and an optional pulse rate.
-    // Programmatic callers also commonly still set those three fields, so the
-    // same deterministic migration is intentionally accepted there.  Once a
-    // non-clean strategy is present it is authoritative.
-    if (config.exhaustAfterfire.strategy
-            == ExhaustAfterfireStrategy::cleanDfco
-        && config.exhaustAfterfire.enabled) {
-        config.exhaustAfterfire.strategy =
-            config.exhaustAfterfire.overrunPulseHz > 0.0
-            ? ExhaustAfterfireStrategy::discreteAfterfire
-            : ExhaustAfterfireStrategy::continuousAntiLag;
-    }
-    if (sourceSchemaVersion < 6
-        && !config.exhaustAfterfire.enabled) {
-        config.exhaustAfterfire.strategy =
-            ExhaustAfterfireStrategy::cleanDfco;
-    }
+    // The exhaust chemistry runs with the backfire strategy: schema <=5
+    // files and the removed anti-lag and chopped strategies read as clean.
     config.exhaustAfterfire.enabled = afterfireRetainsFuel(
         config.exhaustAfterfire.strategy);
     if (sourceSchemaVersion < 8) {
@@ -844,16 +840,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || outOfRange("exhaustAfterfire.reactionTimeConstantSeconds", config.exhaustAfterfire.reactionTimeConstantSeconds,
                     0.0001, 1.0)
         || outOfRange("exhaustAfterfire.reactionEfficiency", config.exhaustAfterfire.reactionEfficiency, 0.0, 1.0)
-        || outOfRange("exhaustAfterfire.overrunFuelFraction", config.exhaustAfterfire.overrunFuelFraction, 0.0, 0.25)
         || outOfRange("exhaustAfterfire.overrunMinimumRpm", config.exhaustAfterfire.overrunMinimumRpm, 500.0, 20'000.0)
         || outOfRange("exhaustAfterfire.overrunMaximumThrottle", config.exhaustAfterfire.overrunMaximumThrottle, 0.0, 0.20)
-        // Zero means "every cycle", the historical continuous strategy. The
-        // upper bound is where chopping stops being audible as separate events
-        // and merges back into the steady burn it exists to break up.
-        || outOfRange("exhaustAfterfire.overrunPulseHz", config.exhaustAfterfire.overrunPulseHz, 0.0, 60.0)
-        || outOfRange("exhaustAfterfire.overrunPulseDutyCycle", config.exhaustAfterfire.overrunPulseDutyCycle, 0.02, 1.0)
-        || outOfRange("exhaustAfterfire.overrunPulseTimingVariation", config.exhaustAfterfire.overrunPulseTimingVariation,
-                    0.0, 0.45)
         || outOfRange("exhaustAfterfire.inductionTimeSeconds", config.exhaustAfterfire.inductionTimeSeconds,
                     0.0001, 0.100)
         || outOfRange("exhaustAfterfire.inductionReferencePressureKpa", config.exhaustAfterfire.inductionReferencePressureKpa,
@@ -874,15 +862,12 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             >= config.exhaustAfterfire.maximumEquivalenceRatio
         || outOfRange("exhaustAfterfire.quenchTemperatureK", config.exhaustAfterfire.quenchTemperatureK,
                     250.0, 1'500.0)
-        || (afterfireRetainsFuel(config.exhaustAfterfire.strategy)
-            && !(config.exhaustAfterfire.overrunFuelFraction > 0.0))
-        || (config.exhaustAfterfire.strategy
-                == ExhaustAfterfireStrategy::discreteAfterfire
-            && !(config.exhaustAfterfire.overrunPulseHz > 0.0))
-        || (config.exhaustAfterfire.strategy
-                == ExhaustAfterfireStrategy::discreteAfterfire
-            && config.exhaustAfterfire.overrunFuelFraction
-                > config.exhaustAfterfire.overrunPulseDutyCycle)
+        || outOfRange("exhaustAfterfire.pocketMixingTimeSeconds",
+                    config.exhaustAfterfire.pocketMixingTimeSeconds, 0.0, 0.2)
+        || outOfRange("exhaustAfterfire.overrunSparkAdvanceDegrees",
+                    config.exhaustAfterfire.overrunSparkAdvanceDegrees, -45.0, 10.0)
+        || outOfRange("exhaustAfterfire.overrunSparkCutFraction",
+                    config.exhaustAfterfire.overrunSparkCutFraction, 0.0, 0.9)
         || outOfRange("runnerAcoustics.dampingRatio", config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || outOfRange("runnerAcoustics.couplingGain", config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || outOfRange("runnerAcoustics.maximumPressureAmplitudeKpa", config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
@@ -1632,8 +1617,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
 
 const char* afterfireBlockerName(std::uint32_t mask) noexcept {
     // Ordered by how much the reading tells someone who hears no pop. An
-    // unauthored feature explains everything else, so it leads; the duty-cycle
-    // chop is the mechanism of a WORKING pop map and therefore comes last.
+    // unauthored feature explains everything else, so it leads.
     if (afterfireBlocked(mask, AfterfireBlocker::notAuthored)) return "not authored";
     if (afterfireBlocked(mask, AfterfireBlocker::ignitionOff)) return "ignition off";
     if (afterfireBlocked(mask, AfterfireBlocker::cranking)) return "cranking";
@@ -1642,7 +1626,6 @@ const char* afterfireBlockerName(std::uint32_t mask) noexcept {
     if (afterfireBlocked(mask, AfterfireBlocker::throttleOpen)) return "throttle open";
     if (afterfireBlocked(mask, AfterfireBlocker::revLimiterActive)) return "rev limiter active";
     if (afterfireBlocked(mask, AfterfireBlocker::fuelCutInactive)) return "not in overrun fuel cut";
-    if (afterfireBlocked(mask, AfterfireBlocker::pulseChopClosed)) return "pop chop closed";
     return "";
 }
 

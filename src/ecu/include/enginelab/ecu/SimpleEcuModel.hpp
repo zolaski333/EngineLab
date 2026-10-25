@@ -58,8 +58,6 @@ public:
         postStartAirOpening_.store(0.0, std::memory_order_relaxed);
         overrunAfterfireArmed_.store(false, std::memory_order_relaxed);
         driverRevvedSinceStart_.store(false, std::memory_order_relaxed);
-        afterfireOverrunWindow_.store(false, std::memory_order_relaxed);
-        afterfirePulseEpochSeconds_.store(0.0, std::memory_order_relaxed);
         knockRetardShare_.store(0.0, std::memory_order_relaxed);
     }
     /**
@@ -125,9 +123,5 @@ private:
     /** Latched only after a deliberate high-speed driver power request. */
     mutable std::atomic<bool> overrunAfterfireArmed_ { false };
     mutable std::atomic<bool> driverRevvedSinceStart_ { false };
-    /** The pulse scheduler is anchored to the actual lift-off transition, not
-     * an arbitrary absolute simulation-time grid. */
-    mutable std::atomic<bool> afterfireOverrunWindow_ { false };
-    mutable std::atomic<double> afterfirePulseEpochSeconds_ { 0.0 };
 };
 } // namespace enginelab

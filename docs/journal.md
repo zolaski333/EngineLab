@@ -5,6 +5,67 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-25 — Backfires: the workshop profile pops; the 100 kPa bound clipped them
+
+- In the tree: `overrun_spark_cut_fraction` (0.70 in `MeasuredBackfireProfile`, the workshop and the Lab file) and a fired cycle >= 50 % burnt at EVO lighting the pockets in its port element (`igniteUnburnedPockets`). Same harness, `--threshold-db 12`, windows 2.2 s after the lift.
+- Lab Twin at 3,400 rpm with the 100 kPa bound: 4 pops with the crack, 16 without (12.9 dB over the median), 480 / 247 clamped samples, INVALID. Every lit slug reaches 660-710 kW, a 266-325 kPa jump; crack noise on a clipped pulse loses its positive half.
+- One factor, the bound at 1 MPa (above an isochoric stoichiometric explosion): 18 pops with or without the crack; 16.6 dB over the median (bike 667592: 15.8), rise 0.53 ms (0.5), decay 0.54 (1.12), intervals p10/p50 48/96 ms (38/143); 120-500 Hz +4.5 (+7.4), 500-2k +23 (+8). reactLimit 0; the crack run's one render over-budget block came from four harnesses sharing the CPU.
+- MT-07 Full System at 4,400 rpm (profile flags, crack on): 2 -> 17 pops, 13.5 dB, p50 125 ms, valid. Lab at 6,200 rpm: 0 -> 1 pop.
+- A 300 kPa pulse now radiates 7.4 dB over a 100 kPa one, 0 with the old bound (the outlet edge's vortex loss keeps 2 of the linear 9.5; `strongReactionPositionRegression`); `aFiredExhaustLightsTheSlugInItsOwnPipe` fails with the lighting stubbed out.
+- Solo, crack on: the same WAV, every counter valid, physics step 26.5 % of its budget (max 37 %). Not reached: high rpm, the Hayabusa, the K20A, the decay and low band. Not measured: a CP2 overrun recording.
+
+## 2026-10-25 — Backfires: the lines' amplitude warp deleted the pops
+
+- The silencer lead, measured with a fixed heat pulse (experiment code, reverted): 200 J over 0.5 ms in a Lab Twin primary read -28.0 to -34.6 dBFS depending on where along the duct it was injected, with no pattern; with the warp off, -23.9 to -29.4, smooth. `steepenedRead` re-reads a line at delay x scale(p), and at 50-100 kPa the scale sits at its 0.3 clamp: the read lands younger than the injection point, and the pulse is never output.
+- Not it: the 100 kPa bound (300 kPa: +1.3 dB), c and A in the source term, voices overwriting each other, EVO timing (a pulse 0-20 ms after a fired EVO 16.2 dB vs a random phase 15.6).
+- Fix: while a reaction half-wave above Mach 0.03 rings (20 ms, re-armed), every line reads linearly. Without backfires there is no reaction voice, so the default sound cannot change. A 100 kPa pulse at five positions now spans 2.9 dB (12.4 without, `strongReactionPositionRegression`).
+- Recipe (experiment flags): 70 % of overrun cycles misfire (fuel kept), +10 deg on the others, 800 K, a 0.5 ms reaction, 40 ms pockets lit by the next fired cycle's exhaust, no crack. On the Lab Twin at 3,400 rpm the heat peaks go -37.0 -> -30.6 dBFS (8.2 -> 12.9 dB over the median). On the MT-07 at 4,400 rpm, -37.0 -> -33.2 and 1 -> 7 pops; on the Lab at 6,200 rpm, -34.1 -> -32.0.
+- Lab Twin at 3,400 rpm against the bike (667592): 15 pops in 2.2 s; 13.5 / 15.8 dB over the median; rise 0.6 / 0.5 ms; decay 0.88 / 1.12 ms; intervals p50 131 / 143 ms; 120-500 Hz +4.6 / +7.4; 500-2k +24 / +8 (the model's background is thin there).
+- One factor each: 10 ms mixing gives 0 pops (the slug must survive about a cycle); 2 ms reaction 7; spark -30 11, weak; misfires 0.5 12, 0.3 6. The production profile (-30, 10 ms, 2 ms, no misfires) gives 0, on the Lab and the MT-07.
+- No pop: the Hayabusa at 6,800 rpm (a continuous 10 kW burn) and the K20A (its overrun ends within 0.3 s). Every pop reaches the 100 kPa bound, so the harness calls each such run INVALID. Not measured: a CP2 overrun recording.
+
+## 2026-10-24 — Backfires: no volume holds a pop's fuel
+
+- Owner's go-ahead: a volume where slugs collect and burn together (the muffler). Not built: measured first with a per-element inventory trace (fuel energy, phi, temperature every 0.25 ms; experiment code, reverted), Lab Twin as below. The gas network has no 2 L chamber: a perforated-core muffler is its 54 x 240 mm core (0.55 L, one cell); the packed can exists only acoustically.
+- On the overrun the muffler is tailpipe air: phi 0.01-0.03 at 474-495 K, 4-28 J of fuel median, 50 J at most (outlet 0.5-4 J, 390 K), with or without 50 % misfires. A slug is ~30 cc (the cylinder is at 10-20 kPa at EVO) and Taylor dispersion spreads it ~0.3 m per metre of pipe: nothing physical keeps slugs whole until the muffler.
+- The fuel sits in the primaries: with 50 % misfires 40-110 J median, 226-250 J at most per primary, phi 0.14-0.29 at 950-1,240 K, under the 0.45 lean limit, so it never lights. A lean limit falling with temperature (Zabetakis, x (1 - 0.000721 (T - 298))): 27 -> 36 % burnt, 1 ms peak 30 -> 50 J, render 10.3 -> 10.2 dB (late spark -30: 11.3 -> 10.7). Not kept.
+- Budget: the largest local inventory (226 J) lit at once with the 2 ms reaction gives ~90 J in its first ms (~8 dB); the whole network holds 442 J at most. The overrun charge is not low: 15.6 mg of air per cycle is the idle air of a choked throttle spread over 5x more cycles.
+- Not the median either: 1 ms RMS median -40.1 dBFS without backfires, -41.6 with.
+- Lead, not measured: the 220 J includes what the silencer takes between the primaries and the outlet. A free-field monopole of one cycle's 49 J over 1-2 ms is ~116-128 dB at 1 m (an estimate, no real reference). Measure the source-to-observer transfer of a fixed heat pulse per element first.
+
+## 2026-10-24 — Backfires: intermittent overrun burns, still one slug at a time
+
+- Owner's go-ahead: model intermittent overrun combustion. Lab Twin as below, a spark trace at every spark and EVO (experiment code, reverted).
+- Late spark -30: 98 % of cycles leave burning, 18 % burnt, 800 K; 97 % of the pipe's heat is in the port-side cell of each primary, at 1,400-1,700 K, so it holds itself whatever the chemistry: a 10x or 125x slower autoignition (500 ms at 800 K, the Shaqiri exponents anchored on ~1 ms at 20 atm, 1,000 K) or a flame carried away with its gas leave 100 % duty and 9.3-12.1 dB.
+- Spark +10 (fuel kept): 6 % natural misfires, each a 450 K, phi 0.85, 47 J slug. Bradley's K (u'=0.5 Sp, l=2.5 mm, Metghalchi-Keck with dilution) is 0.7 median on both overruns against 0.3 under load, i.e. K Le ~1.5, the quench limit; but it reaches 20-85 on the CP4 and two-stroke idles (dilution 0.44-0.58, past the correlation's range), so it cannot go in as is.
+- With 50 / 80 % overrun misfires standing in for it: heat modulation 170-430x (was 5x), bursts up to 135-460 J, yet the 1 ms peak stays 38-53 J and the render 10.0-11.9 dB. Each slug lights at the port on the next fired cycle's gas.
+- Calibration: 28 J per ms reads -2 dB re the median (voices alone), so a 16 dB pop needs ~220 J within 1 ms, 4-5 slugs at once. A 47 J slug burnt in 0.3 ms (147 kW, a 58 kPa jump) gives 12.1 dB.
+- Not built: somewhere slugs pile up unburnt (the 2 L muffler gets 0 % of the heat) and burn together. Not measured: any engine but the Lab Twin.
+
+## 2026-10-24 — Backfires: the heat is continuous, not too slow to become a wave
+
+- Owner: backfires survive an edit of the running engine (`keepBackfires`) and reset only on another engine; the anti-lag and chopped strategies and their keys are removed.
+- Lead "the released heat does not become a brief enough pressure wave", Lab Twin as below (-30 deg, 10 ms pockets, 800 K, 2 ms): refuted. The path is the textbook one, `(gamma-1) Qdot / (A c)` per coupling advance (<= 125 us); the voices alone peak 1.9 dB over the render's median. The source is a 3.7 kW mean, 5.7 kW peak afterburn at 100 % duty (240 Hz bins, modulation 5x): the ~114 mg/s that burns would be ~400 J per 1 ms pop every ~80 ms if it accumulated, and it never does.
+- One factor each, peak 11.3 dB at baseline: pockets at the unburnt zone's temperature 10.8; pockets born lit while the cylinder's flame burns at EVO 9.3 (both 9.3); ignition 950 / 1100 K 10.4 / 11.5, with lit pockets 9.4 / 9.0. Duty stays 100 % in all: every late-spark cycle's charge burns on its own, so nothing builds up. None kept.
+- What a pop seems to need, not built: an overrun whose cylinder burns intermittently (stock-ECU closed-throttle partial burns), so unburnt charge collects over several cycles, then a fast burn of that collected volume. Not measured: any engine but the Lab Twin.
+
+## 2026-10-24 — Backfires: a late spark and unburnt pockets, still short of a pop
+
+- Owner: backfires only from the Audio workshop, off by default. `disableBackfires` clears them when an engine is switched, reloaded, saved, read back or compared; engine 16 and `physical-audio-lab.els` no longer switch them on. The workshop installs `late_spark_overrun`; the 2 Hz slugs and the anti-lag are no longer offered.
+- Lab Twin, `AfterfireHarness --liftoff-rpm 6000 --audio`, overrun 38.4-40.9 s, 1 ms peak over the +/-1 s median (real pops 16-22 dB). Late spark alone, -20/-30/-40 deg: 7/25/35 % of the exhaust fuel burns, as a continuous afterburn; peak 8.5 dB, 0 pops. The model misfires 0 of 240 late sparks; COV 0.20 and a 622 degC wall (60 s warm-up) change nothing.
+- Why: a ~0.25 m cell averages the cylinder's unburnt phi ~1.2 with the air the tailpipe draws in to 0.3-0.45, under the 0.45 lean limit. A 0.10 limit burns 67-71 %, a 50 mm mesh 92-97 %; both are continuous, 0 pops.
+- Unburnt pockets (own composition and temperature, 10 ms mixing): 58-78 % burns, source peaks 55-73 kW, peak 11.3-11.5 dB, twice as often over 6 dB, 0 pops. The loaded part is bit-identical; the step costs 35 % mean against 34 %.
+- One factor each, no gain: skipped sparks 0.1-0.5, flame contact between cells at 10/30 m/s, pocket-to-pocket ignition, 40 ms mixing (10.3-11.8 dB). A 0.3 ms reaction: +1 dB (12.3). Without the reaction voices: 11.6 dB, so they add nothing to the peaks, and the pockets' gain comes through the FV gas.
+- Kept: late spark -30 deg and 10 ms pockets as the workshop profile. Removed: the skip and flame-contact knobs. Not measured: any engine but the Lab Twin (the CP2 included), the render against a recording by ear.
+
+## 2026-10-24 — A backfire target from three real recordings
+
+- Owner's go-ahead for the backfire work. Three CC0 Freesound recordings (`references/real-engine-audio/backfire-manifest.json`): a motorbike drive-by (Yoyodaman234, 12 pops), a large motorbike (mudflea2, 3), a car's anti-lag (modusmogulus, 34). New `scripts/pop_metrics.py` measures any file, real or rendered, the same way.
+- A pop is a 1 ms RMS peak 15-18 dB over the +/-1 s median: an engine's own firing pulses stand 12-16 dB over it, so a lower threshold counts the firing (239 "pops" at 18-47 ms intervals on the drive-by).
+- Energy share by band is the wrong metric: the real pops, like the engines, hold >95 % of their energy below 2 kHz (2-8 kHz 0.07-0.4 % of the files). So the 2026-09-23 "0.2-0.5 % between 4 and 8 kHz" was not by itself a sign of a missing crack. What differs is each band's rise over its own background.
+- Medians, motorbikes / anti-lag: over the engine +15.8-17.1 / +21.7 dB; rise (10-90 %) 0.5-0.9 / 0.3 ms; decay to 10 % 1.0-1.1 / 0.4 ms; band rise 20-120 Hz +3-5 / +10, 120-500 +7-8 / +12, 500-2k +6-8 / +15, 2k-8k +3.5-5 / +3, 8k-16k +1-4 / 0 dB. The drive-by pops come in bursts 38-143 ms apart (p10-p50), the anti-lag 25-151 ms; none at a fixed 500 ms.
+- Not known: rpm, distance, microphone gain; the previews are lossy transcodes. None is a CP2 or an overrun pop on a stock ECU.
+
 ## 2026-10-24 — Two-stroke cost: its pipes as networks of their own
 
 - `RealtimeBudgetHarness --free-run` read every designed two-stroke "hold not stable": it cranked at the dyno's full throttle and they never caught (a binary without the idle limit did the same). It now cranks shut. Then (6-core desktop, free run, interleaved, min of three after a discarded run; control: a designed four-stroke twin, 3.05-3.07 throughout): single 2.7-3.1, twin 1.53, triple 1.30, V4 0.97 (slow motion), LS3 1.70.

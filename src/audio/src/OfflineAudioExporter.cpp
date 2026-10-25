@@ -1270,10 +1270,8 @@ OfflineAudioExportResult exportOfflineAudio(
             switch (config.exhaustAfterfire.strategy) {
             case ExhaustAfterfireStrategy::cleanDfco:
                 return "clean_dfco";
-            case ExhaustAfterfireStrategy::continuousAntiLag:
-                return "continuous_anti_lag";
-            case ExhaustAfterfireStrategy::discreteAfterfire:
-                return "discrete_afterfire";
+            case ExhaustAfterfireStrategy::lateSparkOverrun:
+                return "late_spark_overrun";
             }
             return "clean_dfco";
         }();
@@ -1413,10 +1411,6 @@ OfflineAudioExportResult exportOfflineAudio(
                 { "authored_afterfire_enabled", config.exhaustAfterfire.enabled },
                 { "authored_afterfire_strategy", afterfireStrategy },
                 { "authored_limiter_keeps_fuel", config.ignition.limiterKeepsFuel },
-                { "authored_overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction },
-                { "authored_overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz },
-                { "authored_overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle },
-                { "authored_overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation },
                 { "cycle_multiplier_minimum", result.cycleMultiplierMinimum },
                 { "cycle_multiplier_maximum", result.cycleMultiplierMaximum },
                 { "cycle_variation_samples", result.cycleVariationSamples },

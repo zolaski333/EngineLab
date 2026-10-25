@@ -1,7 +1,8 @@
 # Listening example for the physical audio sources.
 # Import this file into EngineLab, then listen to the idle, a rev-up and the
-# rev limiter. Cycle variability acts on cylinder pressure. The afterfire only
-# reacts when the network actually holds fuel, oxygen and heat.
+# rev limiter. Cycle variability acts on cylinder pressure. The lines below
+# calibrate the exhaust afterfire; backfires themselves are switched on in the
+# Audio workshop only, so a script never turns them on.
 
 preset inline_four
 name "Physical Audio Lab I4"
@@ -9,7 +10,6 @@ name "Physical Audio Lab I4"
 set combustion.cycle_variation_cov = 4 percent
 set combustion.cycle_variation_correlation = 0.55 ratio
 
-set exhaust_afterfire.enabled = 1 ratio
 set exhaust_afterfire.ignition_temperature_c = 627 c
 set exhaust_afterfire.reaction_time_constant_s = 10 ms
 set exhaust_afterfire.reaction_efficiency = 95 percent

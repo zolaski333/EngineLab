@@ -4,11 +4,11 @@
 // poor implementation. Both halves need separating before anything is changed,
 // because they have different causes and only one of them is a model defect.
 //
-//  * Most catalogue engines intentionally use clean DFCO. The Audio Physics Lab
-//    engine authors a discrete strategy, so its exact authored calibration must
-//    remain observable. Hidden harness defaults used to replace that calibration
-//    on every run; the default path now preserves it and --force-demo is the
-//    explicit legacy laboratory override.
+//  * No engine file switches backfires on: the Audio workshop does, on the
+//    engine running. --backfires does what its switches do (the late-spark
+//    strategy and the wet limiter on the engine's own calibration; the Audio
+//    Physics Lab engine carries the measured one). Without it the engine is
+//    measured as authored, which is clean DFCO.
 //
 //  * Whether what is there is a POOR model is a question about the shape of the
 //    heat release in time, and that is what this harness measures. A real
@@ -44,12 +44,10 @@
 // coupling replicated in the same order EngineRuntime::run uses.
 //
 //   EngineLabAfterfireHarness [--engines NAME] [--trace] [--audio DIR]
-//                             [--force-demo] [--fuel-fraction F]
-//                             [--ignition-k K]
+//                             [--backfires] [--ignition-k K]
 //                             [--reaction-ms MS] [--overrun-seconds S]
 //                             [--induction-ms MS]
 //                             [--correlated-induction]
-//                             [--pulse-timing-variation FRACTION]
 //                             [--no-reaction-acoustics]
 //                             [--list]
 
@@ -106,6 +104,9 @@ struct Sample final {
     double inductionProgress { 0.0 };
     double minimumInductionDelayMs { 0.0 };
     double maximumInductionDelayMs { 0.0 };
+    double manifoldKpa { 0.0 };
+    double diluentAtSpark { 0.0 };
+    double airFuelRatio { 0.0 };
     bool overrunActive { false };
 };
 
@@ -195,6 +196,9 @@ struct Metrics final {
     double eventIntervalStdDevMs { 0.0 };
     double burnedFuelMg { 0.0 };
     double meteredFuelMg { 0.0 };
+    // In-cylinder misfires over the settled overrun, and the firings due.
+    std::uint64_t overrunMisfires { 0 };
+    double overrunFirings { 0.0 };
     // Legacy last-completed-cycle estimate sampled at the outer frame rate.
     // It is diagnostic only: a short fuel window can open and close without a
     // cycle boundary, so the cumulative injector meter below is authoritative.
@@ -511,10 +515,7 @@ struct Options final {
     std::filesystem::path audioDirectory;
     std::filesystem::path impulseResponsePath;
     // Default means "use the selected engine exactly as authored". Individual
-    // optionals are explicit overrides; --force-demo recreates the historical
-    // 0.18 / 900 K / 10 ms continuous laboratory scenario.
-    bool forceDemo { false };
-    std::optional<double> fuelFraction;
+    // optionals are explicit overrides.
     std::optional<double> ignitionTemperatureK;
     std::optional<double> reactionMilliseconds;
     std::optional<double> inductionMilliseconds;
@@ -522,10 +523,13 @@ struct Options final {
     double overrunSeconds { 3.0 };
     // Long enough for 1.5 mm of steel to arrive; see phase C.
     double warmupSeconds { 30.0 };
-    // Zero keeps the historical continuous strategy (anti-lag).
-    std::optional<double> pulseHz;
-    std::optional<double> pulseDuty;
-    std::optional<double> pulseTimingVariation;
+    std::optional<double> lateSparkDegrees;
+    bool backfires { false };
+    std::optional<double> cycleCov;
+    std::optional<double> pocketMixMs;
+    std::optional<double> sparkCutFraction;
+    std::optional<double> minimumPhi;
+    std::optional<double> exhaustCellMm;
     /** Same-binary null for the schema-8 induction correlation. */
     bool flatInductionControl { false };
     bool reactionAcousticsEnabled { true };
@@ -542,10 +546,8 @@ struct Options final {
     switch (strategy) {
     case enginelab::ExhaustAfterfireStrategy::cleanDfco:
         return "clean_dfco";
-    case enginelab::ExhaustAfterfireStrategy::continuousAntiLag:
-        return "continuous_anti_lag";
-    case enginelab::ExhaustAfterfireStrategy::discreteAfterfire:
-        return "discrete_afterfire";
+    case enginelab::ExhaustAfterfireStrategy::lateSparkOverrun:
+        return "late_spark_overrun";
     }
     return "unknown";
 }
@@ -553,23 +555,6 @@ struct Options final {
 void applyCalibrationOverrides(enginelab::EngineConfig& config,
                                const Options& options) {
     auto& afterfire = config.exhaustAfterfire;
-    if (options.forceDemo) {
-        afterfire.overrunFuelFraction = 0.18;
-        afterfire.ignitionTemperatureK = 900.0;
-        afterfire.reactionTimeConstantSeconds = 0.010;
-        afterfire.overrunPulseHz = 0.0;
-        afterfire.overrunPulseDutyCycle = 0.35;
-        afterfire.overrunPulseTimingVariation = 0.25;
-        afterfire.inductionActivationTemperatureK = 0.0;
-        afterfire.inductionPressureExponent = 0.0;
-        afterfire.inductionEquivalenceRatioExponent = 0.0;
-        afterfire.inductionDecayTimeSeconds =
-            2.0 * afterfire.inductionTimeSeconds;
-        afterfire.overrunMinimumRpm =
-            std::clamp(config.idleRpm * 1.8, 500.0, 20'000.0);
-    }
-    if (options.fuelFraction)
-        afterfire.overrunFuelFraction = *options.fuelFraction;
     if (options.ignitionTemperatureK)
         afterfire.ignitionTemperatureK = *options.ignitionTemperatureK;
     if (options.reactionMilliseconds)
@@ -584,13 +569,6 @@ void applyCalibrationOverrides(enginelab::EngineConfig& config,
         afterfire.inductionEquivalenceRatioExponent = -0.577;
         afterfire.inductionDecayTimeSeconds = 0.008;
     }
-    if (options.pulseHz)
-        afterfire.overrunPulseHz = *options.pulseHz;
-    if (options.pulseDuty)
-        afterfire.overrunPulseDutyCycle = *options.pulseDuty;
-    if (options.pulseTimingVariation)
-        afterfire.overrunPulseTimingVariation =
-            *options.pulseTimingVariation;
     if (options.flatInductionControl) {
         afterfire.inductionActivationTemperatureK = 0.0;
         afterfire.inductionPressureExponent = 0.0;
@@ -599,16 +577,29 @@ void applyCalibrationOverrides(enginelab::EngineConfig& config,
             2.0 * afterfire.inductionTimeSeconds;
     }
 
-    // Strategy is only inferred when the caller explicitly changes delivery.
-    // Merely overriding a chemistry parameter must not rewrite ECU intent.
-    if (options.forceDemo || options.fuelFraction || options.pulseHz) {
-        afterfire.strategy = afterfire.overrunFuelFraction <= 0.0
-            ? enginelab::ExhaustAfterfireStrategy::cleanDfco
-            : (afterfire.overrunPulseHz > 0.0
-                ? enginelab::ExhaustAfterfireStrategy::discreteAfterfire
-                : enginelab::ExhaustAfterfireStrategy::continuousAntiLag);
-        afterfire.enabled = enginelab::afterfireRetainsFuel(afterfire.strategy);
+    if (options.backfires) {
+        afterfire.strategy =
+            enginelab::ExhaustAfterfireStrategy::lateSparkOverrun;
+        afterfire.enabled = true;
+        config.ignition.limiterKeepsFuel = true;
     }
+    if (options.cycleCov)
+        config.combustionCalibration.cycleVariationCoefficientOfVariation =
+            *options.cycleCov;
+    // The pops-and-bangs map: full charge, the spark this far before top
+    // dead centre (negative is after it).
+    if (options.lateSparkDegrees) {
+        afterfire.strategy =
+            enginelab::ExhaustAfterfireStrategy::lateSparkOverrun;
+        afterfire.overrunSparkAdvanceDegrees = *options.lateSparkDegrees;
+        afterfire.enabled = true;
+    }
+    if (options.pocketMixMs)
+        afterfire.pocketMixingTimeSeconds = *options.pocketMixMs * 0.001;
+    if (options.sparkCutFraction)
+        afterfire.overrunSparkCutFraction = *options.sparkCutFraction;
+    if (options.minimumPhi)
+        afterfire.minimumEquivalenceRatio = *options.minimumPhi;
 }
 
 Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
@@ -620,7 +611,11 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulatorOptions simulatorOptions;
+    if (options.exhaustCellMm)
+        simulatorOptions.exhaustTargetCellLengthM = *options.exhaustCellMm * 0.001;
+    enginelab::EngineSimulator simulator(
+        config, ecu, physics, events, exhaust, simulatorOptions);
     enginelab::DrivelineModel driveline(config);
     std::unique_ptr<AudioCapture> audio;
     if (!options.audioDirectory.empty()) {
@@ -634,11 +629,11 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     Metrics metrics;
     metrics.name = config.name;
     metrics.effectiveCalibration = config.exhaustAfterfire;
-    metrics.calibrationOverridden = options.forceDemo
-        || options.fuelFraction || options.ignitionTemperatureK
+    metrics.calibrationOverridden = options.ignitionTemperatureK
         || options.reactionMilliseconds || options.inductionMilliseconds
-        || options.correlatedInduction || options.pulseHz
-        || options.pulseDuty || options.pulseTimingVariation
+        || options.correlatedInduction
+        || options.lateSparkDegrees || options.cycleCov || options.backfires
+        || options.pocketMixMs || options.sparkCutFraction || options.minimumPhi
         || options.flatInductionControl;
     metrics.reactionAcousticsEnabled = options.reactionAcousticsEnabled;
     const auto captureAudioContract = [&metrics, &audio]() {
@@ -679,6 +674,10 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
             s.exhaustAfterfireMinimumInductionDelayMs;
         sample.maximumInductionDelayMs =
             s.exhaustAfterfireMaximumInductionDelayMs;
+        sample.manifoldKpa = s.manifoldPressureKpa;
+        sample.airFuelRatio = s.airFuelRatio;
+        if (s.cylinderStateCount > 0)
+            sample.diluentAtSpark = s.cylinderStates[0].diluentFractionAtSpark;
         samples.push_back(sample);
     };
 
@@ -866,6 +865,7 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     // Phase D -- lift off. Closed throttle, clutch home, engine driven by the
     // car. This is the overrun the pops are supposed to live in.
     std::vector<double> overrunSimulationDurationsSeconds;
+    std::uint64_t misfiresAtSettle = simulator.state().misfireEventCount;
     overrunSimulationDurationsSeconds.reserve(
         static_cast<std::size_t>(options.overrunSeconds / stepSeconds));
     for (int step = 0;
@@ -881,7 +881,16 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
             audio->renderFrame(tick.frame, simulator, false,
                 tick.drive.requestedLoad);
         record(tick, 0.0);
+        if (step == static_cast<int>(0.5 / stepSeconds))
+            misfiresAtSettle = tick.frame.state.misfireEventCount;
+        else if (step > static_cast<int>(0.5 / stepSeconds))
+            metrics.overrunFirings += tick.frame.state.rpm / 60.0
+                * static_cast<double>(config.cylinders.size())
+                * (config.cycle == enginelab::EngineCycle::twoStroke
+                    ? 1.0 : 0.5) * stepSeconds;
     }
+    metrics.overrunMisfires =
+        simulator.state().misfireEventCount - misfiresAtSettle;
     metrics.reactionWindowSimulationTiming = summariseRealtimeTiming(
         std::move(overrunSimulationDurationsSeconds), stepSeconds);
     metrics.tipInTime = t;
@@ -1137,19 +1146,20 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         std::printf("# %s\n", config.name.c_str());
         std::printf("t_s,rpm,throttle,heat_kw,fuel_mg_s,port_kpa,egt_c,"
                     "wall_c,induction_i,induction_min_ms,"
-                    "induction_max_ms,armed\n");
+                    "induction_max_ms,armed,map_kpa,diluent0,afr\n");
         const auto traceBegin = liftOffIndex > 240 ? liftOffIndex - 240
                                                    : std::size_t { 0 };
         for (std::size_t index = traceBegin; index < samples.size(); ++index) {
             const auto& sample = samples[index];
             std::printf("%.4f,%.1f,%.2f,%.4f,%.3f,%.1f,%.1f,%.1f,"
-                        "%.4f,%.4f,%.4f,%d\n",
+                        "%.4f,%.4f,%.4f,%d,%.1f,%.3f,%.2f\n",
                 sample.t, sample.rpm, sample.throttle, sample.heatKw,
                 sample.fuelBurnMgPerSecond, sample.exhaustPortPeakKpa,
                 sample.exhaustGasC, sample.exhaustWallC,
                 sample.inductionProgress, sample.minimumInductionDelayMs,
                 sample.maximumInductionDelayMs,
-                sample.overrunActive ? 1 : 0);
+                sample.overrunActive ? 1 : 0, sample.manifoldKpa,
+                sample.diluentAtSpark, sample.airFuelRatio);
         }
     }
     return metrics;
@@ -1189,8 +1199,7 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     const Metrics& metrics) noexcept {
     if (!metrics.ran) return true;
     const auto expectsAfterfire = enginelab::afterfireRetainsFuel(
-            metrics.effectiveCalibration.strategy)
-        && metrics.effectiveCalibration.overrunFuelFraction > 0.0;
+        metrics.effectiveCalibration.strategy);
     if (!expectsAfterfire) return false;
     return metrics.overrunActiveSteps == 0
         || !(metrics.meteredFuelMg > 0.0)
@@ -1234,12 +1243,12 @@ void reportAudioContract(const Metrics& metrics) {
 
 void report(const Metrics& metrics) {
     const auto& calibration = metrics.effectiveCalibration;
-    std::printf("    calibration %s  strategy=%s enabled=%s fuel=%.3f"
+    std::printf("    calibration %s  strategy=%s enabled=%s spark=%.1f deg"
                 " ignition=%.1f K reaction=%.2f ms induction=%.2f ms\n",
         metrics.calibrationOverridden ? "OVERRIDDEN" : "authored",
         afterfireStrategyName(calibration.strategy),
         calibration.enabled ? "yes" : "no",
-        calibration.overrunFuelFraction,
+        calibration.overrunSparkAdvanceDegrees,
         calibration.ignitionTemperatureK,
         calibration.reactionTimeConstantSeconds * 1'000.0,
         calibration.inductionTimeSeconds * 1'000.0);
@@ -1250,23 +1259,15 @@ void report(const Metrics& metrics) {
         calibration.inductionPressureExponent,
         calibration.inductionEquivalenceRatioExponent,
         calibration.inductionDecayTimeSeconds * 1'000.0);
-    std::printf("    delivery pulse=%.3f Hz duty=%.3f variation=%.3f"
-                " min_rpm=%.0f max_throttle=%.3f quench=%.1f K"
-                " reaction_audio=%s\n",
-        calibration.overrunPulseHz,
-        calibration.overrunPulseDutyCycle,
-        calibration.overrunPulseTimingVariation,
+    std::printf("    delivery min_rpm=%.0f max_throttle=%.3f quench=%.1f K"
+                " pockets=%.1f ms spark_cut=%.2f reaction_audio=%s\n",
         calibration.overrunMinimumRpm,
         calibration.overrunMaximumThrottle,
         calibration.quenchTemperatureK,
+        calibration.pocketMixingTimeSeconds * 1'000.0,
+        calibration.overrunSparkCutFraction,
         metrics.reactionAcousticsEnabled ? "on" : "OFF (instrumental)"
     );
-    if (enginelab::afterfireRetainedChargeBelowLeanLimit(calibration)) {
-        std::printf("    WARNING retained charge phi=%.2f is below the lean"
-                    " limit %.2f: this fuel cannot burn\n",
-            enginelab::afterfireRetainedChargeEquivalenceRatio(calibration),
-            calibration.minimumEquivalenceRatio);
-    }
     if (!metrics.ran) {
         std::printf("%-44s  NOT RUN (never reached the arming speed)\n",
             metrics.name.c_str());
@@ -1306,6 +1307,9 @@ void report(const Metrics& metrics) {
         100.0 * metrics.burnedFuelMg
             / std::max(1.0e-9, metrics.meteredFuelMg),
         metrics.sampledDeliveredFuelEstimateMg);
+    std::printf("    cylinder misfires %llu of %.0f firings over the settled overrun\n",
+        static_cast<unsigned long long>(metrics.overrunMisfires),
+        metrics.overrunFirings);
     if (metrics.eventCount > 1)
         std::printf("    burst spacing min %6.1f ms  max %6.1f ms"
                     "  stddev %6.1f ms\n",
@@ -1325,8 +1329,7 @@ void report(const Metrics& metrics) {
             metrics.reactionWindowSimulationTiming.overBudgetBlockCount),
         violatesSimulationBudget(metrics) ? "INVALID" : "valid");
     const auto expectsAfterfire = enginelab::afterfireRetainsFuel(
-            calibration.strategy)
-        && calibration.overrunFuelFraction > 0.0;
+        calibration.strategy);
     std::printf("    physical afterfire expected=%s induction=%s"
                 " heat_events=%d source_events=%llu  %s\n",
         expectsAfterfire ? "yes" : "no",
@@ -1380,15 +1383,17 @@ void printUsage() {
         "  --ir FILE                      optional listening impulse response\n"
         "  --trace                        print the 240 Hz heat-release trace\n"
         "  --list                         list catalogue engines\n"
-        "  --force-demo                   apply the historical hidden lab defaults\n"
-        "  --fuel-fraction F              override retained fuel fraction\n"
+        "  --backfires                    the Audio workshop's switches: late spark + wet limiter\n"
         "  --ignition-k K                 override ignition threshold\n"
         "  --reaction-ms MS               override reaction time constant\n"
         "  --induction-ms MS              override reference ignition delay\n"
         "  --correlated-induction         enable the schema-8 T/p/phi delay law\n"
-        "  --pulse-hz HZ                  override fuel-slug frequency\n"
-        "  --pulse-duty FRACTION          override fuel-slug duty cycle\n"
-        "  --pulse-timing-variation F     override deterministic timing variation\n"
+        "  --late-spark DEG               late-spark overrun, spark DEG BTDC (-20 = 20 ATDC)\n"
+        "  --cycle-cov F                  override the burn's cycle-to-cycle variation\n"
+        "  --pocket-mix-ms MS             unburnt charge stays a pocket for MS before mixing\n"
+        "  --spark-cut SHARE              overrun cycles whose spark the map cuts, fuel kept\n"
+        "  --min-phi PHI                  exhaust lean flammability limit (cell mean)\n"
+        "  --exhaust-cell-mm MM           exhaust mesh (production when absent)\n"
         "  --flat-induction               same-binary schema-7 timer control\n"
         "  --warmup-seconds S             loaded exhaust warm-up duration\n"
         "  --overrun-seconds S            closed-throttle capture duration\n"
@@ -1417,13 +1422,11 @@ int main(int argc, char** argv) {
         else if (argument == "--list") options.list = true;
         else if (argument == "--audio") options.audioDirectory = next();
         else if (argument == "--ir") options.impulseResponsePath = next();
-        else if (argument == "--force-demo") options.forceDemo = true;
+        else if (argument == "--backfires") options.backfires = true;
         else if (argument == "--no-reaction-acoustics")
             options.reactionAcousticsEnabled = false;
         else if (argument == "--no-reaction-crack")
             options.reactionCrackEnabled = false;
-        else if (argument == "--fuel-fraction")
-            options.fuelFraction = std::stod(next());
         else if (argument == "--ignition-k")
             options.ignitionTemperatureK = std::stod(next());
         else if (argument == "--reaction-ms")
@@ -1438,10 +1441,12 @@ int main(int argc, char** argv) {
             options.warmupSeconds = std::stod(next());
         else if (argument == "--liftoff-rpm")
             options.liftOffRpm = std::stod(next());
-        else if (argument == "--pulse-hz") options.pulseHz = std::stod(next());
-        else if (argument == "--pulse-duty") options.pulseDuty = std::stod(next());
-        else if (argument == "--pulse-timing-variation")
-            options.pulseTimingVariation = std::stod(next());
+        else if (argument == "--late-spark") options.lateSparkDegrees = std::stod(next());
+        else if (argument == "--cycle-cov") options.cycleCov = std::stod(next());
+        else if (argument == "--pocket-mix-ms") options.pocketMixMs = std::stod(next());
+        else if (argument == "--spark-cut") options.sparkCutFraction = std::stod(next());
+        else if (argument == "--min-phi") options.minimumPhi = std::stod(next());
+        else if (argument == "--exhaust-cell-mm") options.exhaustCellMm = std::stod(next());
         else if (argument == "--flat-induction")
             options.flatInductionControl = true;
         else {

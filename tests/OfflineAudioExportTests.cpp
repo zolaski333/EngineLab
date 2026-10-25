@@ -315,9 +315,8 @@ int main() {
             manifest.contains("audio_physics")
                 && manifest.at("audio_physics").at("cycle_variation_samples") == 0
                 && manifest.at("audio_physics").at("afterfire_fuel_burned_mg") == 0.0
-                && manifest.at("audio_physics").contains("authored_overrun_pulse_hz")
-                && manifest.at("audio_physics").contains("authored_overrun_pulse_duty")
-                && manifest.at("audio_physics").at("authored_overrun_pulse_timing_variation") == 0.0,
+                && manifest.at("audio_physics").at("authored_afterfire_strategy") == "clean_dfco"
+                && manifest.at("audio_physics").at("authored_limiter_keeps_fuel") == false,
             "manifest exposes an exact bypass for the default deterministic engine");
         require(
             manifest.at("path_diagnostics")
@@ -398,11 +397,7 @@ int main() {
     require(audioLab != nullptr, "audio physics lab fixture is present");
     auto bypassEngine = *audioLab;
     bypassEngine.combustionCalibration.cycleVariationCoefficientOfVariation = 0.0;
-    bypassEngine.exhaustAfterfire.strategy =
-        enginelab::ExhaustAfterfireStrategy::cleanDfco;
-    bypassEngine.exhaustAfterfire.enabled = false;
-    bypassEngine.exhaustAfterfire.overrunFuelFraction = 0.0;
-    bypassEngine.ignition.limiterKeepsFuel = false;
+    enginelab::disableBackfires(bypassEngine);
     bypassEngine.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
     bypassEngine.exhaust.mufflerPackingThicknessMm = 0.0;
     bypassEngine.exhaust.mufflerPerforatedOpenAreaRatio = 0.0;
@@ -432,6 +427,12 @@ int main() {
 
     auto demoRequest = bypassRequest;
     demoRequest.engine = *audioLab;
+    // The lab engine carries the calibration; the Audio workshop's switches
+    // are what turn its backfires on.
+    demoRequest.engine.exhaustAfterfire.strategy =
+        enginelab::ExhaustAfterfireStrategy::lateSparkOverrun;
+    demoRequest.engine.exhaustAfterfire.enabled = true;
+    demoRequest.engine.ignition.limiterKeepsFuel = true;
     demoRequest.outputDirectory = temporary.path() / "physics-demo";
     const auto demo = enginelab::exportOfflineAudio(demoRequest);
     require(demo.success, demo.error);

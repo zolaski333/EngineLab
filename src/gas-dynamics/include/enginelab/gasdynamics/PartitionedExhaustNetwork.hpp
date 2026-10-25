@@ -73,6 +73,13 @@ public:
      * those past ExhaustFuelReactionResult::maximumSources are counted dropped. */
     [[nodiscard]] ExhaustFuelReactionResult reactUnburnedFuel(
         double durationSeconds, const ExhaustFuelReactionConfig& reaction) noexcept;
+    /** To the part holding the cylinder's port. */
+    bool emitUnburnedPocket(std::uint32_t cylinderId, double fuelKg,
+                            double oxygenKg, double temperatureK,
+                            const ExhaustFuelReactionConfig& reaction) noexcept;
+    /** In the part holding the cylinder's port. */
+    void igniteUnburnedPockets(std::uint32_t cylinderId) noexcept;
+    [[nodiscard]] std::size_t activeUnburnedPocketCount() const noexcept;
 
     /** Every part by exactly durationSeconds. Completed only if each part
      * completed; substep counts are the busiest part's, the time steps the

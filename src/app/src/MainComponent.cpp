@@ -303,7 +303,11 @@ std::optional<std::pair<std::string, MainComponent::SessionEdit>> MainComponent:
 bool MainComponent::switchEngine(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store,
                                  const std::optional<calibration::CalibrationDraft>& loadedTables) {
     auto kept = unsavedEdit();
-    if (!applyConfig(config, false, false, std::move(store))) return false;
+    // Every engine starts without backfires: only the Audio workshop turns
+    // them on, for the engine running.
+    auto entering = config;
+    disableBackfires(entering);
+    if (!applyConfig(entering, false, false, std::move(store))) return false;
     resetAbVersions();
     if (kept && kept->first != config_.name) sessionEdits_.insert_or_assign(kept->first, std::move(kept->second));
     if (selectedPresetIndex_ >= 0) {
@@ -431,7 +435,11 @@ void MainComponent::toggleDatalog() {
     topBar_.logButton.setTooltip(utf8("Recording to ") + file.getFullPathName() + utf8(" (key 9 stops)"));
 }
 
-bool MainComponent::applyEngineEdit(const EngineConfig& edited, double rampSeconds) {
+bool MainComponent::applyEngineEdit(const EngineConfig& requested, double rampSeconds) {
+    // The view, the designers and the A/B versions hold copies made before
+    // the Audio workshop's last change: none of them switches backfires.
+    auto edited = requested;
+    keepBackfires(config_, edited);
     constexpr double seaLevelPressureKpa = 101.325;
     const auto boostStepKpa = (edited.forcedInduction.wastegatePressureRatio
         - config_.forcedInduction.wastegatePressureRatio) * seaLevelPressureKpa;
@@ -1052,7 +1060,11 @@ void MainComponent::pollEngineScript() {
         // once the run has stopped, without requiring another file save.
         if (runtime_ && runtime_->dynoRunning()) return;
         scriptAttempt_ = reload->attempt;
-        if (applyConfig(*reload->config, true, true)) {
+        // A script cannot switch backfires; a reload keeps them where the
+        // Audio workshop left them.
+        auto reloaded = *reload->config;
+        keepBackfires(config_, reloaded);
+        if (applyConfig(reloaded, true, true)) {
             scriptRevision_ = reload->revision;
             resetAbVersions();
         }

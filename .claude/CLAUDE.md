@@ -49,6 +49,14 @@ without the owner's explicit agreement.
    (*Joined* on the ports or a junction), and the designer window. Open: the
    designer lists valve and injector rows a two-stroke does not use.
 
+**Backfires** (owner's go-ahead, 2026-10-24): switched on in the Audio workshop
+only, never by an engine, off on every load (`disableBackfires`), kept across
+an edit of the running engine (`keepBackfires`). The workshop profile pops
+(journal 2026-10-25): 70 % of overrun sparks cut, fuel kept, and the next
+fired cycle's exhaust lights the slug left in the primary -- 16.6 dB over the
+median on the Lab Twin (a real bike: 15.8), 13.5 on the MT-07, contract valid.
+Open: high rpm (1 pop at 6,200), the Hayabusa, a pop's decay and low band.
+
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
 are the ~3.8 kHz ceiling (`docs/physical-afterfire.md`) and the plane-mode
@@ -229,10 +237,18 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   trajectory-resolved forward delivery; individual throttles as a small 0-D cell
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
   belongs inside the 1-D runner).
+- **Backfire** (journal 2026-10-24/25): "1-D cannot carry a front" (it rises in
+  0.2-0.8 ms); "the heat is too slow to become a wave"; the EVO timing as
+  what silences a pop (the 100 kPa source bound did clip it: now 1 MPa); slugs collecting in the muffler (phi
+  0.03, <= 50 J). With a late spark every cycle burns its own charge, at
+  100 % duty, whatever the variant: pockets at the unburnt zone's temperature
+  or born lit, a 950-1,100 K ignition, slower autoignition, a carried flame, a
+  0.10 or temperature-dependent lean limit, a 50 mm mesh, burn COV, a hot wall,
+  flame contact between cells or pockets. Misfires give no pop with 10 ms
+  pocket mixing. "The voices add nothing" and "a pop needs ~220 J in 1 ms"
+  were the lines' amplitude warp deleting 4-9 dB of each pop (fixed).
 - **Combustion and fuel**: closing cyclic variability through dilution (it
-  exists, 1.7-12.9 %); afterfire by faster chemistry (shape unchanged) and "1-D
-  cannot carry a backfire front" (it rises in 0.2-0.8 ms; the lock is the
-  ~3.8 kHz bandwidth); continuous fuel below ~45 % of demand (below the lean
+  exists, 1.7-12.9 %); continuous fuel below ~45 % of demand (below the lean
   limit, packets burn); crediting port vapour to the port-injection pulse (a
   stationary reservoir, delivered/demanded 0.47-0.77: 8 DFCO-recovery variants
   fail, 5 more trade the lean first cycle for rich or misfires); seeding the

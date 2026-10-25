@@ -1013,6 +1013,7 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
     for (const auto& duct : ducts_)
         ductReactionStates_.emplace_back(duct.cells_.size());
     junctionReactionStates_.assign(junctionStates_.size(), {});
+    unburnedPockets_.fill(UnburnedPocket {});
     configured_ = true;
     return true;
 }
@@ -1040,6 +1041,7 @@ bool ExhaustGasNetwork::reset(double pressurePa,
         std::fill(sites.begin(), sites.end(), ReactionSiteState {});
     std::fill(junctionReactionStates_.begin(),
               junctionReactionStates_.end(), ReactionSiteState {});
+    unburnedPockets_.fill(UnburnedPocket {});
     wallHeatPendingSeconds_ = 0.0;
     std::fill(junctionStates_.begin(), junctionStates_.end(), *initialState);
     for (auto& state : junctionStates_) state.momentumDensityKgPerM2S = 0.0;
@@ -1164,6 +1166,8 @@ bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexce
               junctionPrimitives_.begin());
     std::copy(previous.junctionReactionStates_.begin(),
               previous.junctionReactionStates_.end(), junctionReactionStates_.begin());
+    // Same ducts, another mesh: a pocket's position is in metres.
+    unburnedPockets_ = previous.unburnedPockets_;
     std::copy(previous.cylinderReservoirStates_.begin(),
               previous.cylinderReservoirStates_.end(), cylinderReservoirStates_.begin());
     std::copy(previous.cylinderReservoirPrimitives_.begin(),
@@ -1478,10 +1482,94 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         return true;
     };
 
+    // A pocket warms towards its host cell, lights from its own temperature
+    // or from a burning host, and then burns at the reaction time constant
+    // whatever the host's mean mixture: the fuel and oxygen it burns are the
+    // host's own, so a pocket whose fuel the cells no longer hold has nothing
+    // to burn and ends.
+    const auto pocketsEnabled = reaction.pocketMixingTimeSeconds > 0.0
+        && finite(reaction.pocketMixingTimeSeconds);
+    const auto reactPocket = [&](UnburnedPocket& pocket,
+                                 ConservativeState& host, double hostVolumeM3,
+                                 bool hostBurning, double axialPosition,
+                                 ReactionAggregate& aggregate) noexcept {
+        const auto primitive = mixtureModel_.primitiveFromConservative(host);
+        if (!primitive || !(hostVolumeM3 > 0.0)) return false;
+        pocket.temperatureK += (primitive->temperatureK - pocket.temperatureK)
+            * (1.0 - std::exp(-durationSeconds
+                / reaction.pocketMixingTimeSeconds));
+        pocket.ageSeconds += durationSeconds;
+        const auto equivalenceRatio = pocket.oxygenKg > 0.0
+            ? pocket.fuelKg * oxygenMassPerFuelMass / pocket.oxygenKg
+            : std::numeric_limits<double>::infinity();
+        if (!(pocket.fuelKg > 0.0)
+            || equivalenceRatio < reaction.minimumEquivalenceRatio
+            || equivalenceRatio > reaction.maximumEquivalenceRatio) {
+            pocket.active = false;
+            return false;
+        }
+        if (!pocket.burning && hostBurning) {
+            pocket.burning = true;
+        } else if (!pocket.burning
+                   && pocket.temperatureK >= reaction.ignitionTemperatureK) {
+            const auto delaySeconds = localInductionDelaySeconds(reaction,
+                pocket.temperatureK, primitive->pressurePa, equivalenceRatio);
+            pocket.inductionIntegral += delaySeconds > 0.0
+                ? (finite(delaySeconds) ? durationSeconds / delaySeconds : 0.0)
+                : 1.0;
+            pocket.burning = pocket.inductionIntegral >= 1.0;
+        }
+        if (!pocket.burning) {
+            if (pocket.ageSeconds > 3.0 * reaction.pocketMixingTimeSeconds)
+                pocket.active = false;
+            return false;
+        }
+        const auto hostFuelKg =
+            host.speciesMassDensityKgPerM3[fuel] * hostVolumeM3;
+        const auto hostOxygenKg =
+            host.speciesMassDensityKgPerM3[oxygen] * hostVolumeM3;
+        const auto consumedFuelKg = std::min({
+            pocket.fuelKg * efficiency * (1.0 - std::exp(
+                -durationSeconds / reaction.reactionTimeConstantSeconds)),
+            hostFuelKg, hostOxygenKg / oxygenMassPerFuelMass });
+        if (!(consumedFuelKg > 1.0e-15)) {
+            pocket.active = false;
+            return false;
+        }
+        const auto consumedOxygenKg = consumedFuelKg * oxygenMassPerFuelMass;
+        const auto releasedEnergyJ =
+            consumedFuelKg * reaction.lowerHeatingValueJPerKg;
+        auto candidate = host;
+        candidate.speciesMassDensityKgPerM3[fuel] -=
+            consumedFuelKg / hostVolumeM3;
+        candidate.speciesMassDensityKgPerM3[oxygen] -=
+            consumedOxygenKg / hostVolumeM3;
+        candidate.speciesMassDensityKgPerM3[burned] +=
+            (consumedFuelKg + consumedOxygenKg) / hostVolumeM3;
+        candidate.totalEnergyDensityJPerM3 += releasedEnergyJ / hostVolumeM3;
+        if (!mixtureModel_.primitiveFromConservative(candidate)) return false;
+        host = candidate;
+        pocket.fuelKg -= consumedFuelKg;
+        pocket.oxygenKg = std::max(0.0, pocket.oxygenKg - consumedOxygenKg);
+        if (pocket.fuelKg <= 1.0e-12) pocket.active = false;
+        result.burnedFuelMassKg += consumedFuelKg;
+        result.consumedOxygenMassKg += consumedOxygenKg;
+        result.releasedEnergyJoules += releasedEnergyJ;
+        aggregate.energyJ += releasedEnergyJ;
+        aggregate.fuelKg += consumedFuelKg;
+        aggregate.energyWeightedAxial += releasedEnergyJ * axialPosition;
+        aggregate.energyWeightedDensity += releasedEnergyJ
+            * primitive->densityKgPerM3;
+        aggregate.energyWeightedSoundSpeed += releasedEnergyJ
+            * primitive->speedOfSoundMps;
+        return true;
+    };
+
     for (std::size_t ductIndex = 0; ductIndex < ducts_.size(); ++ductIndex) {
         auto& duct = ducts_[ductIndex];
         ReactionAggregate aggregate;
         auto reacted = false;
+        const auto& layoutDuct = layout_.ducts()[ductIndex];
         for (std::size_t index = 0; index < duct.cells_.size(); ++index) {
             const auto wallTemperatureK = index < duct.wallStates_.size()
                 ? duct.wallStates_[index].temperatureK : 0.0;
@@ -1492,17 +1580,39 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
                     / static_cast<double>(duct.cells_.size()),
                 aggregate) || reacted;
         }
+        for (auto& pocket : unburnedPockets_) {
+            if (!pocketsEnabled || !pocket.active || pocket.inJunction
+                || pocket.elementIndex != ductIndex || duct.cells_.empty())
+                continue;
+            const auto cell = pocketCellIndex(pocket, layoutDuct.lengthM,
+                duct.cells_.size());
+            reacted = reactPocket(pocket, duct.cells_[cell],
+                duct.cellVolumesM3_[cell],
+                ductReactionStates_[ductIndex][cell].burning,
+                (static_cast<double>(cell) + 0.5)
+                    / static_cast<double>(duct.cells_.size()),
+                aggregate) || reacted;
+        }
         if (reacted) duct.cellStateCacheIsValid_ = false;
-        const auto& layoutDuct = layout_.ducts()[ductIndex];
         appendSource(aggregate, layoutDuct.nodeId,
             layoutDuct.sourceComponentId, layoutDuct.pathIndex,
             layoutDuct.flowAreaM2);
     }
     for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
         ReactionAggregate aggregate;
-        if (!reactState(junctionStates_[index],
-                layout_.junctions()[index].volumeM3, 0.0,
-                junctionReactionStates_[index], 0.5, aggregate)) continue;
+        auto reacted = reactState(junctionStates_[index],
+            layout_.junctions()[index].volumeM3, 0.0,
+            junctionReactionStates_[index], 0.5, aggregate);
+        for (auto& pocket : unburnedPockets_) {
+            if (!pocketsEnabled || !pocket.active || !pocket.inJunction
+                || pocket.elementIndex != index)
+                continue;
+            reacted = reactPocket(pocket, junctionStates_[index],
+                layout_.junctions()[index].volumeM3,
+                junctionReactionStates_[index].burning, 0.5, aggregate)
+                || reacted;
+        }
+        if (!reacted) continue;
         const auto primitive = mixtureModel_.primitiveFromConservative(
             junctionStates_[index]);
         if (primitive) junctionPrimitives_[index] = *primitive;
@@ -1513,7 +1623,158 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         appendSource(aggregate, junction.nodeId,
             junction.sourceComponentId, junction.pathIndex, flowAreaM2);
     }
+    if (pocketsEnabled)
+        for (auto& pocket : unburnedPockets_)
+            if (pocket.active) carryPocket(pocket, durationSeconds);
     return result;
+}
+
+std::size_t ExhaustGasNetwork::pocketCellIndex(const UnburnedPocket& pocket,
+                                               double ductLengthM,
+                                               std::size_t cellCount) noexcept {
+    if (cellCount == 0 || !(ductLengthM > 0.0)) return 0;
+    const auto cell = static_cast<std::size_t>(std::max(0.0,
+        pocket.positionM / ductLengthM * static_cast<double>(cellCount)));
+    return std::min(cell, cellCount - 1);
+}
+
+void ExhaustGasNetwork::carryPocket(UnburnedPocket& pocket,
+                                    double durationSeconds) noexcept {
+    const auto interfaces = layout_.interfaces();
+    const auto matches = [](const ExhaustEndpoint& endpoint,
+                            ExhaustEndpointType type, std::size_t index) {
+        return endpoint.type == type && endpoint.elementIndex == index;
+    };
+    // A junction is well mixed: a pocket leaves it by its first outgoing duct
+    // on the next call.
+    if (pocket.inJunction) {
+        for (const auto& face : interfaces) {
+            if (!matches(face.upstream, ExhaustEndpointType::junction,
+                    pocket.elementIndex)
+                || face.downstream.type != ExhaustEndpointType::ductInlet)
+                continue;
+            pocket.inJunction = false;
+            pocket.elementIndex = face.downstream.elementIndex;
+            pocket.positionM = 0.0;
+            return;
+        }
+        pocket.active = false;
+        return;
+    }
+    if (pocket.elementIndex >= ducts_.size()) {
+        pocket.active = false;
+        return;
+    }
+    const auto& duct = ducts_[pocket.elementIndex];
+    const auto lengthM = layout_.ducts()[pocket.elementIndex].lengthM;
+    if (duct.cells_.empty() || !(lengthM > 0.0)) {
+        pocket.active = false;
+        return;
+    }
+    const auto primitive = mixtureModel_.primitiveFromConservative(
+        duct.cells_[pocketCellIndex(pocket, lengthM, duct.cells_.size())]);
+    if (!primitive) return;
+    pocket.positionM += primitive->velocityMps * durationSeconds;
+    // One element per call: the coupling interval moves gas a few cells.
+    if (pocket.positionM > lengthM) {
+        for (const auto& face : interfaces) {
+            if (!matches(face.upstream, ExhaustEndpointType::ductOutlet,
+                    pocket.elementIndex))
+                continue;
+            if (face.downstream.type == ExhaustEndpointType::junction) {
+                pocket.inJunction = true;
+                pocket.elementIndex = face.downstream.elementIndex;
+            } else if (face.downstream.type == ExhaustEndpointType::ductInlet
+                       && face.downstream.elementIndex < ducts_.size()) {
+                pocket.positionM = std::min(pocket.positionM - lengthM,
+                    layout_.ducts()[face.downstream.elementIndex].lengthM);
+                pocket.elementIndex = face.downstream.elementIndex;
+            }
+            return;
+        }
+        // Out of the tailpipe.
+        pocket.active = false;
+    } else if (pocket.positionM < 0.0) {
+        for (const auto& face : interfaces) {
+            if (!matches(face.downstream, ExhaustEndpointType::ductInlet,
+                    pocket.elementIndex))
+                continue;
+            if (face.upstream.type == ExhaustEndpointType::junction) {
+                pocket.inJunction = true;
+                pocket.elementIndex = face.upstream.elementIndex;
+            } else if (face.upstream.type == ExhaustEndpointType::ductOutlet
+                       && face.upstream.elementIndex < ducts_.size()) {
+                const auto upstreamLengthM =
+                    layout_.ducts()[face.upstream.elementIndex].lengthM;
+                pocket.positionM = std::max(0.0,
+                    upstreamLengthM + pocket.positionM);
+                pocket.elementIndex = face.upstream.elementIndex;
+            }
+            return;
+        }
+        // Pushed back against the valve it came from.
+        pocket.positionM = 0.0;
+    }
+}
+
+bool ExhaustGasNetwork::emitUnburnedPocket(
+    std::uint32_t cylinderId, double fuelKg, double oxygenKg,
+    double temperatureK, const ExhaustFuelReactionConfig& reaction) noexcept {
+    if (!configured_ || !(reaction.pocketMixingTimeSeconds > 0.0)
+        || !(fuelKg > 0.0) || !(oxygenKg > 0.0) || !(temperatureK > 0.0)
+        || !finite(fuelKg) || !finite(oxygenKg) || !finite(temperatureK)
+        || !(reaction.fuelMolarMassKg > 0.0))
+        return false;
+    const auto oxygenMassPerFuelMass =
+        reaction.oxygenMolesPerFuelMole * 0.032 / reaction.fuelMolarMassKg;
+    const auto equivalenceRatio = fuelKg * oxygenMassPerFuelMass / oxygenKg;
+    if (equivalenceRatio < reaction.minimumEquivalenceRatio
+        || equivalenceRatio > reaction.maximumEquivalenceRatio)
+        return false;
+    const auto ports = layout_.cylinderPorts();
+    const auto port = std::find_if(ports.begin(), ports.end(),
+        [cylinderId](const CompiledCylinderPort& candidate) {
+            return candidate.cylinderId == cylinderId;
+        });
+    if (port == ports.end()) return false;
+    const auto slot = std::find_if(unburnedPockets_.begin(),
+        unburnedPockets_.end(),
+        [](const UnburnedPocket& pocket) { return !pocket.active; });
+    if (slot == unburnedPockets_.end()) return false;
+    const auto& endpoint = port->networkEndpoint;
+    UnburnedPocket pocket;
+    pocket.active = true;
+    pocket.inJunction = endpoint.type == ExhaustEndpointType::junction;
+    pocket.elementIndex = endpoint.elementIndex;
+    pocket.positionM = endpoint.type == ExhaustEndpointType::ductOutlet
+            && endpoint.elementIndex < ducts_.size()
+        ? layout_.ducts()[endpoint.elementIndex].lengthM : 0.0;
+    pocket.fuelKg = fuelKg;
+    pocket.oxygenKg = oxygenKg;
+    pocket.temperatureK = temperatureK;
+    *slot = pocket;
+    return true;
+}
+
+void ExhaustGasNetwork::igniteUnburnedPockets(std::uint32_t cylinderId) noexcept {
+    const auto ports = layout_.cylinderPorts();
+    const auto port = std::find_if(ports.begin(), ports.end(),
+        [cylinderId](const CompiledCylinderPort& candidate) {
+            return candidate.cylinderId == cylinderId;
+        });
+    if (port == ports.end()) return;
+    const auto& endpoint = port->networkEndpoint;
+    const auto inJunction = endpoint.type == ExhaustEndpointType::junction;
+    for (auto& pocket : unburnedPockets_)
+        if (pocket.active && pocket.inJunction == inJunction
+            && pocket.elementIndex == endpoint.elementIndex)
+            pocket.burning = true;
+}
+
+std::size_t ExhaustGasNetwork::activeUnburnedPocketCount() const noexcept {
+    return static_cast<std::size_t>(std::count_if(unburnedPockets_.begin(),
+        unburnedPockets_.end(),
+        [](const UnburnedPocket& pocket) { return pocket.active; }));
 }
 
 bool ExhaustGasNetwork::sampleCylinderBoundaries(

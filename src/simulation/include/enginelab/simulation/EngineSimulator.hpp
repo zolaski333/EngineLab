@@ -811,6 +811,18 @@ private:
      *  mixed fraction of one and the exhaust boundary is bit-exact unchanged. */
     std::array<TwoStrokeScavengeState, 32> scavengeStates_ {};
     std::array<bool, 32> cylinderMisfires_ {};
+    /** Unburnt charge a cylinder exhausted at its EVO, emitted as a pocket
+     *  once the per-cylinder pass is done (it may run in parallel). */
+    struct PendingUnburnedPocket final {
+        bool pending { false };
+        double fuelKg { 0.0 };
+        double oxygenKg { 0.0 };
+        double temperatureK { 0.0 };
+        /** The cycle fired: its exhaust lights the pockets already waiting
+         *  in the primary. */
+        bool lightsResident { false };
+    };
+    std::array<PendingUnburnedPocket, 32> pendingUnburnedPockets_ {};
     bool previousAfrObservationCommandEnabled_ { false };
     std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> physicalExhaustNetwork_;
     /** The exhaust layout at construction. Live changes keep its topology, so

@@ -1215,8 +1215,10 @@ int main() {
 
     {
         auto overrunAfterfireConfig = config;
+        overrunAfterfireConfig.exhaustAfterfire.strategy =
+            enginelab::ExhaustAfterfireStrategy::lateSparkOverrun;
         overrunAfterfireConfig.exhaustAfterfire.enabled = true;
-        overrunAfterfireConfig.exhaustAfterfire.overrunFuelFraction = 0.12;
+        overrunAfterfireConfig.exhaustAfterfire.overrunSparkAdvanceDegrees = -30.0;
         overrunAfterfireConfig.exhaustAfterfire.overrunMinimumRpm = 3'000.0;
         overrunAfterfireConfig.exhaustAfterfire.overrunMaximumThrottle = 0.02;
         enginelab::SimpleEcuModel overrunAfterfireEcu;
@@ -1242,10 +1244,10 @@ int main() {
         const auto active = overrunAfterfireEcu.evaluate(
             overrunAfterfireConfig, overrunState, closedThrottle);
         require(active.overrunAfterfireActive && active.fuelEnabled
-                && !active.sparkEnabled
-                && active.fuelCorrection > 0.11
-                && active.fuelCorrection < 0.13,
-            "a deliberate power request must arm partial-fuel spark-cut overrun even while the post-start air floor is decaying");
+                && active.sparkEnabled
+                && active.fuelCorrection > 0.98
+                && active.ignitionAdvanceDegrees == -30.0,
+            "a deliberate power request must arm the fuelled late-spark overrun even while the post-start air floor is decaying");
         // The blocker mask has to agree with the boolean it explains. If it
         // could disagree it would be worse than useless: the whole point is
         // that a user seeing no pop can read WHY, and a mask derived
@@ -1283,10 +1285,10 @@ int main() {
             "the blocker name must resolve to the reason a user can act on");
 
         // An unauthored engine is the case a reader meets first, and it must
-        // say so rather than reporting the nine downstream conditions that a
+        // say so rather than reporting the downstream conditions that a
         // disabled feature also fails.
         auto unauthoredConfig = overrunAfterfireConfig;
-        unauthoredConfig.exhaustAfterfire.enabled = false;
+        enginelab::disableBackfires(unauthoredConfig);
         enginelab::SimpleEcuModel unauthoredEcu;
         unauthoredEcu.initialise(unauthoredConfig);
         const auto unauthored = unauthoredEcu.evaluate(
@@ -1297,156 +1299,6 @@ int main() {
                 && std::string_view(enginelab::afterfireBlockerName(
                     unauthored.overrunAfterfireBlockers)) == "not authored",
             "an engine that does not author an afterfire must say exactly that");
-    }
-
-    {
-        // Chopping the retained fuel is what separates a pop-and-bang map from
-        // anti-lag: continuous delivery into a continuously ignited exhaust
-        // burns steadily and roars, and discrete slugs are what pop. Zero must
-        // stay exactly the historical every-cycle behaviour, because that is
-        // what the whole catalogue authors.
-        auto pulsedConfig = config;
-        pulsedConfig.exhaustAfterfire.enabled = true;
-        pulsedConfig.exhaustAfterfire.strategy =
-            enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
-        pulsedConfig.exhaustAfterfire.overrunFuelFraction = 0.12;
-        pulsedConfig.exhaustAfterfire.overrunMinimumRpm = 3'000.0;
-        pulsedConfig.exhaustAfterfire.overrunMaximumThrottle = 0.02;
-        pulsedConfig.exhaustAfterfire.overrunPulseHz = 4.0;
-        pulsedConfig.exhaustAfterfire.overrunPulseDutyCycle = 0.35;
-
-        const auto armedAt = [](const enginelab::EngineConfig& engineConfig,
-                                double secondsAfterLift) {
-            enginelab::SimpleEcuModel ecuModel;
-            ecuModel.initialise(engineConfig);
-            enginelab::EngineState state;
-            state.simulationTimeSeconds = 1.0;
-            state.rpm = 300.0;
-            state.coolantTemperatureC = 90.0;
-            enginelab::EngineControls cranking { true, true, 0.0, 0.0 };
-            (void)ecuModel.evaluate(engineConfig, state, cranking);
-            // Arm the strategy with a deliberate power request, then lift off.
-            state.simulationTimeSeconds += 0.01;
-            state.rpm = 4'000.0;
-            state.throttle = 0.50;
-            enginelab::EngineControls power { true, false, 0.50, 0.0 };
-            (void)ecuModel.evaluate(engineConfig, state, power);
-            state.simulationTimeSeconds = 1.02;
-            state.throttle = 0.0;
-            enginelab::EngineControls closed { true, false, 0.0, 0.0 };
-            // The pulse clock is deliberately anchored at the lift-off edge,
-            // rather than at an arbitrary absolute simulation-time grid.
-            (void)ecuModel.evaluate(engineConfig, state, closed);
-            state.simulationTimeSeconds += secondsAfterLift;
-            return ecuModel.evaluate(engineConfig, state, closed)
-                .overrunAfterfireActive;
-        };
-
-        // One 4 Hz period is 250 ms with a 35 % duty, so 0.05 s into a period
-        // is inside the slug and 0.20 s is between slugs. Times are chosen from
-        // the commanded rate, never read back from the model.
-        require(armedAt(pulsedConfig, 0.05),
-            "a chopped overrun must meter fuel inside its pulse");
-        require(!armedAt(pulsedConfig, 0.20),
-            "a chopped overrun must stop metering between its pulses");
-        // Same instants, unchopped: both must stay armed, so the discriminator
-        // above is the chopping and not the two timestamps.
-        auto continuousConfig = pulsedConfig;
-        continuousConfig.exhaustAfterfire.strategy =
-            enginelab::ExhaustAfterfireStrategy::continuousAntiLag;
-        continuousConfig.exhaustAfterfire.overrunPulseHz = 0.0;
-        require(armedAt(continuousConfig, 0.05) && armedAt(continuousConfig, 0.20),
-            "zero pulse rate must keep the historical every-cycle delivery");
-
-        auto irregularConfig = pulsedConfig;
-        irregularConfig.exhaustAfterfire.overrunPulseTimingVariation = 0.30;
-        enginelab::SimpleEcuModel irregularEcu;
-        irregularEcu.initialise(irregularConfig);
-        enginelab::EngineState irregularState;
-        irregularState.simulationTimeSeconds = 1.0;
-        irregularState.rpm = 4'000.0;
-        irregularState.coolantTemperatureC = 90.0;
-        irregularState.throttle = 0.50;
-        enginelab::EngineControls irregularPower { true, false, 0.50, 0.0 };
-        (void)irregularEcu.evaluate(
-            irregularConfig, irregularState, irregularPower);
-        irregularState.simulationTimeSeconds += 0.001;
-        irregularState.throttle = 0.0;
-        enginelab::EngineControls irregularClosed { true, false, 0.0, 0.0 };
-        auto previousPulseOpen = false;
-        std::vector<double> irregularPulseStarts;
-        constexpr auto timingSampleSeconds = 0.001;
-        for (int step = 0; step < 4'000; ++step) {
-            const auto command = irregularEcu.evaluate(
-                irregularConfig, irregularState, irregularClosed);
-            if (command.overrunAfterfireActive && !previousPulseOpen)
-                irregularPulseStarts.push_back(
-                    irregularState.simulationTimeSeconds);
-            previousPulseOpen = command.overrunAfterfireActive;
-            irregularState.simulationTimeSeconds += timingSampleSeconds;
-        }
-        require(irregularPulseStarts.size() >= 14,
-            "irregular discrete afterfire must keep producing separate slugs");
-        auto minimumInterval = 1.0;
-        auto maximumInterval = 0.0;
-        for (std::size_t index = 1;
-             index < irregularPulseStarts.size(); ++index) {
-            const auto interval = irregularPulseStarts[index]
-                - irregularPulseStarts[index - 1];
-            minimumInterval = std::min(minimumInterval, interval);
-            maximumInterval = std::max(maximumInterval, interval);
-        }
-        require(minimumInterval >= 0.25 * (1.0 - 0.30) - 0.002
-                && maximumInterval <= 0.25 * (1.0 + 0.30) + 0.002
-                && maximumInterval - minimumInterval > 0.08,
-            "timing variation must be audible but remain inside its authored bound");
-
-        const auto retainedFuelIntegral = [](
-                const enginelab::EngineConfig& engineConfig,
-                double durationSeconds = 2.0) {
-            enginelab::SimpleEcuModel ecuModel;
-            ecuModel.initialise(engineConfig);
-            enginelab::EngineState state;
-            state.simulationTimeSeconds = 1.0;
-            state.rpm = 4'000.0;
-            state.coolantTemperatureC = 90.0;
-            state.throttle = 0.50;
-            enginelab::EngineControls power { true, false, 0.50, 0.0 };
-            (void)ecuModel.evaluate(engineConfig, state, power);
-            state.simulationTimeSeconds += 0.001;
-            state.throttle = 0.0;
-            enginelab::EngineControls closed { true, false, 0.0, 0.0 };
-            (void)ecuModel.evaluate(engineConfig, state, closed);
-            auto integral = 0.0;
-            auto peak = 0.0;
-            constexpr auto dt = 0.001;
-            for (int step = 0;
-                 step < static_cast<int>(durationSeconds / dt); ++step) {
-                state.simulationTimeSeconds += dt;
-                const auto command = ecuModel.evaluate(
-                    engineConfig, state, closed);
-                if (command.fuelEnabled)
-                    integral += command.fuelCorrection * dt;
-                peak = std::max(peak, command.fuelCorrection);
-            }
-            return std::pair { integral, peak };
-        };
-        const auto [pulsedIntegral, pulsedPeak] =
-            retainedFuelIntegral(pulsedConfig);
-        const auto [continuousIntegral, continuousPeak] =
-            retainedFuelIntegral(continuousConfig);
-        require(std::abs(pulsedIntegral - continuousIntegral)
-                    <= continuousIntegral * 0.015
-                && pulsedPeak > continuousPeak * 2.5,
-            "pulse duty must concentrate, not discard, the calibrated overrun fuel mass");
-        const auto [irregularIntegral, irregularPeak] =
-            retainedFuelIntegral(irregularConfig, 30.0);
-        const auto [longContinuousIntegral, longContinuousPeak] =
-            retainedFuelIntegral(continuousConfig, 30.0);
-        require(std::abs(irregularIntegral - longContinuousIntegral)
-                    <= longContinuousIntegral * 0.015
-                && irregularPeak > longContinuousPeak * 2.5,
-            "irregular pulse timing must preserve calibrated long-run fuel mass");
     }
 
     {
@@ -1924,14 +1776,13 @@ int main() {
     extendedPhysicsConfig.combustionCalibration.cycleVariationCorrelation = 0.62;
     extendedPhysicsConfig.ignition.limiterKeepsFuel = true;
     extendedPhysicsConfig.exhaustAfterfire = { true, 875.0, 0.012, 0.91 };
-    extendedPhysicsConfig.exhaustAfterfire.overrunFuelFraction = 0.11;
     extendedPhysicsConfig.exhaustAfterfire.overrunMinimumRpm = 3'450.0;
     extendedPhysicsConfig.exhaustAfterfire.overrunMaximumThrottle = 0.015;
-    extendedPhysicsConfig.exhaustAfterfire.overrunPulseHz = 6.5;
-    extendedPhysicsConfig.exhaustAfterfire.overrunPulseDutyCycle = 0.42;
-    extendedPhysicsConfig.exhaustAfterfire.overrunPulseTimingVariation = 0.23;
     extendedPhysicsConfig.exhaustAfterfire.strategy =
-        enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
+        enginelab::ExhaustAfterfireStrategy::lateSparkOverrun;
+    extendedPhysicsConfig.exhaustAfterfire.overrunSparkAdvanceDegrees = -27.0;
+    extendedPhysicsConfig.exhaustAfterfire.pocketMixingTimeSeconds = 0.013;
+    extendedPhysicsConfig.exhaustAfterfire.overrunSparkCutFraction = 0.35;
     extendedPhysicsConfig.exhaustAfterfire.inductionTimeSeconds = 0.0065;
     extendedPhysicsConfig.exhaustAfterfire.inductionReferencePressureKpa = 118.0;
     extendedPhysicsConfig.exhaustAfterfire.inductionActivationTemperatureK = 12'700.0;
@@ -2006,14 +1857,13 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.ignitionTemperatureK - 875.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.reactionTimeConstantSeconds - 0.012) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.reactionEfficiency - 0.91) < 0.001
-            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunFuelFraction - 0.11) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunMinimumRpm - 3'450.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
-            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseHz - 6.5) < 0.001
-            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseDutyCycle - 0.42) < 0.001
-            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseTimingVariation - 0.23) < 0.001
             && extendedJsonRoundTrip.config->exhaustAfterfire.strategy
-                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+                == enginelab::ExhaustAfterfireStrategy::lateSparkOverrun
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunSparkAdvanceDegrees + 27.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.pocketMixingTimeSeconds - 0.013) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunSparkCutFraction - 0.35) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionReferencePressureKpa - 118.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionActivationTemperatureK - 12'700.0) < 0.001
@@ -2084,14 +1934,13 @@ int main() {
             "YAML must preserve turbo inertia, bearing and speed calibration");
     require(extendedYamlRoundTrip
             && std::abs(extendedYamlRoundTrip.config->runnerAcoustics.dampingRatio - 0.21) < 0.001
-            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunFuelFraction - 0.11) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunMinimumRpm - 3'450.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
-            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseHz - 6.5) < 0.001
-            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseDutyCycle - 0.42) < 0.001
-            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseTimingVariation - 0.23) < 0.001
             && extendedYamlRoundTrip.config->exhaustAfterfire.strategy
-                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+                == enginelab::ExhaustAfterfireStrategy::lateSparkOverrun
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunSparkAdvanceDegrees + 27.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.pocketMixingTimeSeconds - 0.013) < 1.0e-9
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunSparkCutFraction - 0.35) < 1.0e-9
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionReferencePressureKpa - 118.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionActivationTemperatureK - 12'700.0) < 0.001

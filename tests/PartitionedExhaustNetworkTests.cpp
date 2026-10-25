@@ -6,7 +6,7 @@
 // in, and every transfer must come back at its compiled index. Unpartitioned,
 // it must be exactly the whole network. A cylinder ported into both pipes
 // joins them, and a finite ambient reservoir, which the parts cannot share,
-// is refused.
+// is refused. A fired cylinder lights the slug waiting in its own pipe only.
 #include <enginelab/gasdynamics/PartitionedExhaustNetwork.hpp>
 
 #include <cmath>
@@ -261,6 +261,41 @@ void aSharedCylinderJoinsThePipes() {
     require(joined.partCount() == 1, "a cylinder ported into both pipes makes them one part");
 }
 
+// A misfire's slug waits in its primary at 450 K, under the 800 K ignition:
+// it does not light by itself, and the fired cycle's exhaust of its own
+// cylinder lights it, not another cylinder's (journal 2026-10-25).
+void aFiredExhaustLightsTheSlugInItsOwnPipe() {
+    auto config = rigConfig();
+    config.initialTemperatureK = 450.0;
+    // Lean air and fuel vapour for the pockets to burn (phi ~0.5).
+    config.initialComposition.massFractions = { 0.216, 0.724, 0.030, 0.030 };
+    PartitionedExhaustNetwork network;
+    require(network.configure(wholeLayout(false), config, true) && network.partCount() == 2,
+        "the pipes must configure as two parts");
+    ExhaustFuelReactionConfig reaction;
+    reaction.ignitionTemperatureK = 800.0;
+    reaction.reactionTimeConstantSeconds = 0.0005;
+    reaction.pocketMixingTimeSeconds = 0.040;
+    // 1 mg of fuel at phi 0.88 for each cylinder.
+    require(network.emitUnburnedPocket(1, 1.0e-6, 4.0e-6, 450.0, reaction)
+            && network.emitUnburnedPocket(2, 1.0e-6, 4.0e-6, 450.0, reaction),
+        "each cylinder's slug must enter its primary");
+    const auto burnFor = [&network, &reaction](std::size_t count) {
+        auto releasedJ = 0.0;
+        for (std::size_t step = 0; step < count; ++step)
+            releasedJ += network.reactUnburnedFuel(stepSeconds, reaction).releasedEnergyJoules;
+        return releasedJ;
+    };
+    require(burnFor(10) < 0.1, "a slug under its ignition temperature must not burn by itself");
+    network.igniteUnburnedPockets(1);
+    const auto litJ = burnFor(10);
+    // One slug: 44 J of fuel, 0.95 of it burning with a 0.5 ms time constant.
+    require(litJ > 25.0 && litJ < 44.0,
+        "the fired cylinder's exhaust must light and burn its own slug in about a millisecond");
+    network.igniteUnburnedPockets(2);
+    require(burnFor(10) > 25.0, "the other cylinder's slug waits for its own fired exhaust");
+}
+
 } // namespace
 
 int main() {
@@ -268,6 +303,7 @@ int main() {
     partsEvolveAsTheirOwnNetworks(true);
     unpartitionedIsTheWholeNetwork();
     aSharedCylinderJoinsThePipes();
+    aFiredExhaustLightsTheSlugInItsOwnPipe();
     std::cout << "PartitionedExhaustNetwork: all checks passed\n";
     return EXIT_SUCCESS;
 }

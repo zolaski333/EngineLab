@@ -243,6 +243,46 @@ ExhaustFuelReactionResult PartitionedExhaustNetwork::reactUnburnedFuel(
     return total;
 }
 
+bool PartitionedExhaustNetwork::emitUnburnedPocket(
+    std::uint32_t cylinderId, double fuelKg, double oxygenKg,
+    double temperatureK, const ExhaustFuelReactionConfig& reaction) noexcept {
+    if (parts_.size() == 1)
+        return parts_.front()->emitUnburnedPocket(cylinderId, fuelKg,
+            oxygenKg, temperatureK, reaction);
+    const auto ports = layout_.cylinderPorts();
+    const auto port = std::find_if(ports.begin(), ports.end(),
+        [cylinderId](const CompiledCylinderPort& candidate) {
+            return candidate.cylinderId == cylinderId;
+        });
+    if (port == ports.end()) return false;
+    return parts_[portAt_[static_cast<std::size_t>(port - ports.begin())].part]
+        ->emitUnburnedPocket(cylinderId, fuelKg, oxygenKg, temperatureK,
+            reaction);
+}
+
+void PartitionedExhaustNetwork::igniteUnburnedPockets(
+    std::uint32_t cylinderId) noexcept {
+    if (parts_.size() == 1) {
+        parts_.front()->igniteUnburnedPockets(cylinderId);
+        return;
+    }
+    const auto ports = layout_.cylinderPorts();
+    const auto port = std::find_if(ports.begin(), ports.end(),
+        [cylinderId](const CompiledCylinderPort& candidate) {
+            return candidate.cylinderId == cylinderId;
+        });
+    if (port == ports.end()) return;
+    parts_[portAt_[static_cast<std::size_t>(port - ports.begin())].part]
+        ->igniteUnburnedPockets(cylinderId);
+}
+
+std::size_t PartitionedExhaustNetwork::activeUnburnedPocketCount()
+    const noexcept {
+    std::size_t total = 0;
+    for (const auto& part : parts_) total += part->activeUnburnedPocketCount();
+    return total;
+}
+
 ExhaustNetworkAdvanceResult PartitionedExhaustNetwork::advance(
     double durationSeconds,
     std::span<const CylinderValveBoundary> cylinderBoundaries,

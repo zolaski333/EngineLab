@@ -513,17 +513,20 @@ struct ExhaustComponentConfig final {
     double crossoverCoupling { 0.0 };
 };
 
-/** Driver/ECU intent for closed-throttle exhaust combustion.
- *
- * The former boolean could mean three physically different calibrations and,
- * worse, could be enabled while retaining exactly zero fuel.  Keep the legacy
- * boolean in the structure for schema-1..5 readers, but make this strategy the
- * canonical schema-6 contract after normalisation.
- */
+/** The ECU's overrun map. Clean deceleration fuel cut is every engine's; the
+ * late spark is the one backfire strategy, switched on in the Audio workshop
+ * (`disableBackfires`). The anti-lag and chopped-fuel strategies are gone
+ * (2026-10-24): files that still name them read as `cleanDfco`. */
 enum class ExhaustAfterfireStrategy : std::uint8_t {
     cleanDfco,
-    continuousAntiLag,
-    discreteAfterfire,
+    /** No fuel cut on overrun, as a "pops and bangs" map does: its own spark
+     * angle (`overrunSparkAdvanceDegrees`) and an ignition cut on a share of
+     * the cycles (`overrunSparkCutFraction`). A late spark's flame is still
+     * burning when the exhaust valve opens; a cut cycle's whole charge leaves
+     * unburnt, and the next fired cycle's exhaust lights it in the primary.
+     * Only the cut makes a pop (journal 2026-10-25): with a late spark alone
+     * every cycle burns its own charge, continuously. */
+    lateSparkOverrun,
 };
 
 /** Optional oxidation of unburned charge inside the physical exhaust network.
@@ -534,36 +537,11 @@ struct ExhaustAfterfireConfig final {
     double ignitionTemperatureK { 900.0 };
     double reactionTimeConstantSeconds { 0.010 };
     double reactionEfficiency { 0.95 };
-    /** Fraction of the normal charge fuel deliberately retained during DFCO.
-     * Zero preserves the historical clean fuel cut exactly. A positive value
-     * requests a spark-cut overrun strategy; chemistry still decides whether
-     * that fuel can react in the exhaust. */
-    double overrunFuelFraction { 0.0 };
     double overrunMinimumRpm { 2'500.0 };
     double overrunMaximumThrottle { 0.02 };
-    /** Rate at which the retained fuel is CHOPPED, Hz. Zero meters it on every
-     * cycle of the overrun, which is the historical behaviour.
-     *
-     * This is the difference between the two real strategies, and it is an ECU
-     * calibration rather than a chemistry parameter. Continuous retained fuel
-     * with the spark cut is anti-lag: the exhaust burns steadily and roars.
-     * Pops need discrete SLUGS, because a continuously fuelled and
-     * continuously ignited flow burns steadily and is supposed to.
-     *
-     * Measured before this existed: heat release on a warm exhaust ran at
-     * 100 % duty with a single 120-512 ms swell over a 3 s overrun on every
-     * engine tried, and shrinking `reactionTimeConstantSeconds` from 10 ms to
-     * 2 ms raised the peak by half while leaving that shape untouched -- the
-     * chemistry was never what made it continuous, the delivery was. */
-    double overrunPulseHz { 0.0 };
-    /** Fraction of each pulse period during which fuel is retained. Only read
-     * when `overrunPulseHz` is positive. */
-    double overrunPulseDutyCycle { 0.35 };
-    /** Maximum fractional departure of one slug interval from 1/pulseHz.
-     * Zero is a metronomic authored map; non-zero uses a deterministic
-     * low-discrepancy timing sequence while preserving each interval's duty
-     * and therefore the calibrated long-run fuel mass. */
-    double overrunPulseTimingVariation { 0.0 };
+    /** Spark advance on overrun for `lateSparkOverrun`, degrees before top
+     * dead centre: negative is after it. Only that strategy reads it. */
+    double overrunSparkAdvanceDegrees { -20.0 };
     ExhaustAfterfireStrategy strategy {
         ExhaustAfterfireStrategy::cleanDfco
     };
@@ -590,45 +568,32 @@ struct ExhaustAfterfireConfig final {
     /** Below this bulk-gas temperature an established kernel is quenched unless
      * a sufficiently hot wall continues to supply ignition energy. */
     double quenchTemperatureK { 520.0 };
+    /** Time for the unburnt charge a cylinder exhausts to mix into the gas
+     * around it, s. Until then it is a pocket of its own composition and
+     * temperature carried by the flow; zero mixes it into the cells at once. */
+    double pocketMixingTimeSeconds { 0.0 };
+    /** Share of overrun cycles whose spark a `lateSparkOverrun` map cuts,
+     * fuel kept. Each is drawn on its own, so the cuts come irregularly, as
+     * the pops of a real overrun do. Zero: every overrun cycle fires. */
+    double overrunSparkCutFraction { 0.0 };
+};
+
+/** The backfire calibration the Audio workshop installs on an engine that
+ * never authored one, measured on the Lab Twin and the MT-07 (journal
+ * 2026-10-25): an ignition cut on 70 % of the overrun cycles, the others
+ * fired at +10 deg so that their exhaust is hot enough to light the slugs,
+ * which stay pockets of their own for 40 ms and burn in 0.5 ms. */
+struct MeasuredBackfireProfile final {
+    static constexpr double ignitionTemperatureK = 800.0;
+    static constexpr double reactionTimeConstantSeconds = 0.0005;
+    static constexpr double overrunSparkAdvanceDegrees = 10.0;
+    static constexpr double pocketMixingTimeSeconds = 0.040;
+    static constexpr double overrunSparkCutFraction = 0.70;
 };
 
 [[nodiscard]] constexpr bool afterfireRetainsFuel(
     ExhaustAfterfireStrategy strategy) noexcept {
     return strategy != ExhaustAfterfireStrategy::cleanDfco;
-}
-
-/** Equivalence ratio of the charge the ECU retains on overrun, relative to a
- * normally fuelled one. SimpleEcuModel meters `overrunFuelFraction` of the
- * normal request, concentrated into the open window for the discrete strategy
- * (fraction / duty, at most a full charge). Zero for clean DFCO. */
-[[nodiscard]] constexpr double afterfireRetainedChargeEquivalenceRatio(
-    const ExhaustAfterfireConfig& afterfire) noexcept {
-    if (!afterfireRetainsFuel(afterfire.strategy)
-        || !(afterfire.overrunFuelFraction > 0.0))
-        return 0.0;
-    if (afterfire.strategy != ExhaustAfterfireStrategy::discreteAfterfire)
-        return afterfire.overrunFuelFraction < 1.0
-            ? afterfire.overrunFuelFraction : 1.0;
-    const auto duty = afterfire.overrunPulseDutyCycle < 0.02 ? 0.02
-        : (afterfire.overrunPulseDutyCycle > 1.0 ? 1.0
-            : afterfire.overrunPulseDutyCycle);
-    const auto ratio = afterfire.overrunFuelFraction / duty;
-    return ratio < 1.0 ? ratio : 1.0;
-}
-
-/** True when a fuel-retaining calibration leaves the port below the exhaust
- * chemistry's lean flammability limit and therefore cannot burn: it only
- * dumps raw fuel. Measured 2026-09-23 on the 2JZ: continuous 18 % burned 0.0 %
- * of its fuel; the same mass chopped into 18 %-duty slugs burned 89 %. A
- * discrete slug just below the limit still burned 18 % at 8 %/25 % (mixing
- * with the previous slug), so only the continuous case is a hard zero; the
- * editor warns for both. */
-[[nodiscard]] constexpr bool afterfireRetainedChargeBelowLeanLimit(
-    const ExhaustAfterfireConfig& afterfire) noexcept {
-    return afterfire.enabled && afterfireRetainsFuel(afterfire.strategy)
-        && afterfire.overrunFuelFraction > 0.0
-        && afterfireRetainedChargeEquivalenceRatio(afterfire)
-            < afterfire.minimumEquivalenceRatio;
 }
 
 /** Coherent, allocation-free calibration copied into the simulation thread.
@@ -644,7 +609,7 @@ struct AudioPhysicsCalibration final {
 /**
  * Why the overrun afterfire is not metering fuel right now.
  *
- * The afterfire has nine independent preconditions and a user who hears no pop
+ * The afterfire has eight independent preconditions and a user who hears no pop
  * has no way to tell which one is missing -- the reported symptom is identical
  * whether the feature is unauthored, the throttle never closed far enough, or
  * the engine is still in its after-start flare. Every one of those was proposed
@@ -657,7 +622,7 @@ struct AudioPhysicsCalibration final {
  */
 enum class AfterfireBlocker : std::uint32_t {
     none = 0,
-    /** Not authored: disabled, zero retained fuel, or a non-gasoline engine. */
+    /** Not authored: backfires off, or a non-gasoline engine. */
     notAuthored = 1U << 0,
     ignitionOff = 1U << 1,
     cranking = 1U << 2,
@@ -667,10 +632,6 @@ enum class AfterfireBlocker : std::uint32_t {
     /** Deceleration fuel cut is not latched, so the engine is not in overrun. */
     fuelCutInactive = 1U << 5,
     revLimiterActive = 1U << 6,
-    /** `overrunPulseHz` chopping is in the closed part of its duty cycle. This
-     * one is expected to blink during a working pop map: it is the mechanism,
-     * not a fault. */
-    pulseChopClosed = 1U << 7,
     /** The engine has not been taken above the rpm gate under throttle since
      * the last start, so the lift-off is still an after-start flare. */
     notArmed = 1U << 8,
@@ -2092,6 +2053,15 @@ struct DynoRun final {
 [[nodiscard]] double peakCylinderPressureLimitBar(const EngineConfig&) noexcept;
 [[nodiscard]] double intakeRunnerVolumeLitres(const CylinderConfig&, const IntakeConfig&) noexcept;
 void normaliseEngineConfig(EngineConfig&);
+/** Backfires (overrun afterfire and the wet limiter) are a listening option
+ *  the Audio workshop turns on for the running engine, never part of an
+ *  engine: every engine is loaded, compared and saved with them off. The
+ *  calibration under the switch is kept. */
+void disableBackfires(EngineConfig&) noexcept;
+/** An edit of the running engine (a bigger bore, a script reload, the JSON
+ *  editor) takes the running engine's backfires, switch and calibration: only
+ *  the Audio workshop changes them, and only another engine resets them. */
+void keepBackfires(const EngineConfig& running, EngineConfig& edited) noexcept;
 [[nodiscard]] double valveFlowCoefficient(double liftMm, double fallback,
                                           const std::vector<ValveFlowSample>&) noexcept;
 [[nodiscard]] ValveControlSample interpolateValveControl(const ValveControlConfig&, double rpm,
