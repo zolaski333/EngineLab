@@ -77,6 +77,8 @@ public:
     bool emitUnburnedPocket(std::uint32_t cylinderId, double fuelKg,
                             double oxygenKg, double temperatureK,
                             const ExhaustFuelReactionConfig& reaction) noexcept;
+    /** In the part holding the cylinder's port. */
+    void igniteUnburnedPockets(std::uint32_t cylinderId) noexcept;
     [[nodiscard]] std::size_t activeUnburnedPocketCount() const noexcept;
 
     /** Every part by exactly durationSeconds. Completed only if each part

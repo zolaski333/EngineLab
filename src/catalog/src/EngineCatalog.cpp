@@ -1052,6 +1052,7 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(afterfire, "quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK);
         assignIfPresent(afterfire, "overrun_spark_advance_deg", config.exhaustAfterfire.overrunSparkAdvanceDegrees);
         assignIfPresent(afterfire, "pocket_mixing_time_s", config.exhaustAfterfire.pocketMixingTimeSeconds);
+        assignIfPresent(afterfire, "overrun_spark_cut_fraction", config.exhaustAfterfire.overrunSparkCutFraction);
     }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);

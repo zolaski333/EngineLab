@@ -818,6 +818,9 @@ private:
         double fuelKg { 0.0 };
         double oxygenKg { 0.0 };
         double temperatureK { 0.0 };
+        /** The cycle fired: its exhaust lights the pockets already waiting
+         *  in the primary. */
+        bool lightsResident { false };
     };
     std::array<PendingUnburnedPocket, 32> pendingUnburnedPockets_ {};
     bool previousAfrObservationCommandEnabled_ { false };

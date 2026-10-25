@@ -51,11 +51,11 @@ without the owner's explicit agreement.
 
 **Backfires** (owner's go-ahead, 2026-10-24): switched on in the Audio workshop
 only, never by an engine, off on every load (`disableBackfires`), kept across
-an edit of the running engine (`keepBackfires`). What pops (journal
-2026-10-25): an overrun on which most cycles do not fire, fuel kept, and the
-next fired cycle's exhaust lighting the slug left in the primary -- 13.5 dB
-over the median on the Lab Twin against a real bike's 15.8. A pop reaches the
-100 kPa reaction bound, so the harness calls every such run INVALID.
+an edit of the running engine (`keepBackfires`). The workshop profile pops
+(journal 2026-10-25): 70 % of overrun sparks cut, fuel kept, and the next
+fired cycle's exhaust lights the slug left in the primary -- 16.6 dB over the
+median on the Lab Twin (a real bike: 15.8), 13.5 on the MT-07, contract valid.
+Open: high rpm (1 pop at 6,200), the Hayabusa, a pop's decay and low band.
 
 **Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
 `docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
@@ -238,8 +238,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
   belongs inside the 1-D runner).
 - **Backfire** (journal 2026-10-24/25): "1-D cannot carry a front" (it rises in
-  0.2-0.8 ms); "the heat is too slow to become a wave"; the 100 kPa bound or
-  the EVO timing as what silences a pop; slugs collecting in the muffler (phi
+  0.2-0.8 ms); "the heat is too slow to become a wave"; the EVO timing as
+  what silences a pop (the 100 kPa source bound did clip it: now 1 MPa); slugs collecting in the muffler (phi
   0.03, <= 50 J). With a late spark every cycle burns its own charge, at
   100 % duty, whatever the variant: pockets at the unburnt zone's temperature
   or born lit, a 950-1,100 K ignition, slower autoignition, a carried flame, a

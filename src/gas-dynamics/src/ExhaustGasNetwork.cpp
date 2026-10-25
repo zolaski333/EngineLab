@@ -1756,6 +1756,21 @@ bool ExhaustGasNetwork::emitUnburnedPocket(
     return true;
 }
 
+void ExhaustGasNetwork::igniteUnburnedPockets(std::uint32_t cylinderId) noexcept {
+    const auto ports = layout_.cylinderPorts();
+    const auto port = std::find_if(ports.begin(), ports.end(),
+        [cylinderId](const CompiledCylinderPort& candidate) {
+            return candidate.cylinderId == cylinderId;
+        });
+    if (port == ports.end()) return;
+    const auto& endpoint = port->networkEndpoint;
+    const auto inJunction = endpoint.type == ExhaustEndpointType::junction;
+    for (auto& pocket : unburnedPockets_)
+        if (pocket.active && pocket.inJunction == inJunction
+            && pocket.elementIndex == endpoint.elementIndex)
+            pocket.burning = true;
+}
+
 std::size_t ExhaustGasNetwork::activeUnburnedPocketCount() const noexcept {
     return static_cast<std::size_t>(std::count_if(unburnedPockets_.begin(),
         unburnedPockets_.end(),

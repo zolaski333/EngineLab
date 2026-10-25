@@ -527,6 +527,7 @@ struct Options final {
     bool backfires { false };
     std::optional<double> cycleCov;
     std::optional<double> pocketMixMs;
+    std::optional<double> sparkCutFraction;
     std::optional<double> minimumPhi;
     std::optional<double> exhaustCellMm;
     /** Same-binary null for the schema-8 induction correlation. */
@@ -595,6 +596,8 @@ void applyCalibrationOverrides(enginelab::EngineConfig& config,
     }
     if (options.pocketMixMs)
         afterfire.pocketMixingTimeSeconds = *options.pocketMixMs * 0.001;
+    if (options.sparkCutFraction)
+        afterfire.overrunSparkCutFraction = *options.sparkCutFraction;
     if (options.minimumPhi)
         afterfire.minimumEquivalenceRatio = *options.minimumPhi;
 }
@@ -630,7 +633,7 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         || options.reactionMilliseconds || options.inductionMilliseconds
         || options.correlatedInduction
         || options.lateSparkDegrees || options.cycleCov || options.backfires
-        || options.pocketMixMs || options.minimumPhi
+        || options.pocketMixMs || options.sparkCutFraction || options.minimumPhi
         || options.flatInductionControl;
     metrics.reactionAcousticsEnabled = options.reactionAcousticsEnabled;
     const auto captureAudioContract = [&metrics, &audio]() {
@@ -1257,11 +1260,12 @@ void report(const Metrics& metrics) {
         calibration.inductionEquivalenceRatioExponent,
         calibration.inductionDecayTimeSeconds * 1'000.0);
     std::printf("    delivery min_rpm=%.0f max_throttle=%.3f quench=%.1f K"
-                " pockets=%.1f ms reaction_audio=%s\n",
+                " pockets=%.1f ms spark_cut=%.2f reaction_audio=%s\n",
         calibration.overrunMinimumRpm,
         calibration.overrunMaximumThrottle,
         calibration.quenchTemperatureK,
         calibration.pocketMixingTimeSeconds * 1'000.0,
+        calibration.overrunSparkCutFraction,
         metrics.reactionAcousticsEnabled ? "on" : "OFF (instrumental)"
     );
     if (!metrics.ran) {
@@ -1387,6 +1391,7 @@ void printUsage() {
         "  --late-spark DEG               late-spark overrun, spark DEG BTDC (-20 = 20 ATDC)\n"
         "  --cycle-cov F                  override the burn's cycle-to-cycle variation\n"
         "  --pocket-mix-ms MS             unburnt charge stays a pocket for MS before mixing\n"
+        "  --spark-cut SHARE              overrun cycles whose spark the map cuts, fuel kept\n"
         "  --min-phi PHI                  exhaust lean flammability limit (cell mean)\n"
         "  --exhaust-cell-mm MM           exhaust mesh (production when absent)\n"
         "  --flat-induction               same-binary schema-7 timer control\n"
@@ -1439,6 +1444,7 @@ int main(int argc, char** argv) {
         else if (argument == "--late-spark") options.lateSparkDegrees = std::stod(next());
         else if (argument == "--cycle-cov") options.cycleCov = std::stod(next());
         else if (argument == "--pocket-mix-ms") options.pocketMixMs = std::stod(next());
+        else if (argument == "--spark-cut") options.sparkCutFraction = std::stod(next());
         else if (argument == "--min-phi") options.minimumPhi = std::stod(next());
         else if (argument == "--exhaust-cell-mm") options.exhaustCellMm = std::stod(next());
         else if (argument == "--flat-induction")

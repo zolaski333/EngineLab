@@ -866,6 +866,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     config.exhaustAfterfire.pocketMixingTimeSeconds, 0.0, 0.2)
         || outOfRange("exhaustAfterfire.overrunSparkAdvanceDegrees",
                     config.exhaustAfterfire.overrunSparkAdvanceDegrees, -45.0, 10.0)
+        || outOfRange("exhaustAfterfire.overrunSparkCutFraction",
+                    config.exhaustAfterfire.overrunSparkCutFraction, 0.0, 0.9)
         || outOfRange("runnerAcoustics.dampingRatio", config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || outOfRange("runnerAcoustics.couplingGain", config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || outOfRange("runnerAcoustics.maximumPressureAmplitudeKpa", config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)

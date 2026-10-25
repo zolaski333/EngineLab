@@ -1782,6 +1782,7 @@ int main() {
         enginelab::ExhaustAfterfireStrategy::lateSparkOverrun;
     extendedPhysicsConfig.exhaustAfterfire.overrunSparkAdvanceDegrees = -27.0;
     extendedPhysicsConfig.exhaustAfterfire.pocketMixingTimeSeconds = 0.013;
+    extendedPhysicsConfig.exhaustAfterfire.overrunSparkCutFraction = 0.35;
     extendedPhysicsConfig.exhaustAfterfire.inductionTimeSeconds = 0.0065;
     extendedPhysicsConfig.exhaustAfterfire.inductionReferencePressureKpa = 118.0;
     extendedPhysicsConfig.exhaustAfterfire.inductionActivationTemperatureK = 12'700.0;
@@ -1862,6 +1863,7 @@ int main() {
                 == enginelab::ExhaustAfterfireStrategy::lateSparkOverrun
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunSparkAdvanceDegrees + 27.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.pocketMixingTimeSeconds - 0.013) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunSparkCutFraction - 0.35) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionReferencePressureKpa - 118.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionActivationTemperatureK - 12'700.0) < 0.001
@@ -1938,6 +1940,7 @@ int main() {
                 == enginelab::ExhaustAfterfireStrategy::lateSparkOverrun
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunSparkAdvanceDegrees + 27.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.pocketMixingTimeSeconds - 0.013) < 1.0e-9
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunSparkCutFraction - 0.35) < 1.0e-9
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionReferencePressureKpa - 118.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionActivationTemperatureK - 12'700.0) < 0.001

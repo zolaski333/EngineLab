@@ -106,6 +106,7 @@ AudioPhysicsSettings audioPhysicsSettingsFor(
         engine.exhaustAfterfire.reactionEfficiency,
         engine.exhaustAfterfire.overrunSparkAdvanceDegrees,
         engine.exhaustAfterfire.pocketMixingTimeSeconds,
+        engine.exhaustAfterfire.overrunSparkCutFraction,
     };
 }
 
@@ -135,6 +136,8 @@ void applyAudioPhysicsSettings(
         settings.overrunSparkAdvanceDegrees;
     engine.exhaustAfterfire.pocketMixingTimeSeconds =
         settings.pocketMixingTimeSeconds;
+    engine.exhaustAfterfire.overrunSparkCutFraction =
+        settings.overrunSparkCutFraction;
     if (enablingFlatInduction) {
         // A flat legacy induction timer is not what the late-spark profile
         // was measured with: enabling it installs the schema-8
@@ -396,11 +399,11 @@ public:
         addAndMakeVisible(proofLabel_);
         addAndMakeVisible(progressBar_);
 
-        const std::array<std::string_view, 7> physicsNames {
+        const std::array<std::string_view, 8> physicsNames {
             "Cycle variation (COV)", "Cycle correlation",
             "Afterfire ignition (K)", "Afterfire reaction (ms)",
             "Afterfire efficiency", "Overrun spark (deg BTDC)",
-            "Pocket mixing (ms)",
+            "Pocket mixing (ms)", "Overrun spark cut",
         };
         for (std::size_t index = 0; index < physicsLabels_.size(); ++index) {
             physicsLabels_[index].setText(
@@ -413,10 +416,11 @@ public:
         configureSlider(cycleVariationSlider_, 0.0, 0.20, 0.005);
         configureSlider(cycleCorrelationSlider_, 0.0, 0.98, 0.01);
         configureSlider(afterfireTemperatureSlider_, 500.0, 1'800.0, 10.0);
-        configureSlider(afterfireReactionSlider_, 2.0, 50.0, 1.0);
+        configureSlider(afterfireReactionSlider_, 0.5, 50.0, 0.5);
         configureSlider(afterfireEfficiencySlider_, 0.0, 1.0, 0.01);
         configureSlider(overrunSparkSlider_, -45.0, 10.0, 1.0);
         configureSlider(pocketMixingSlider_, 0.0, 50.0, 1.0);
+        configureSlider(sparkCutSlider_, 0.0, 0.9, 0.05);
         cycleVariationSlider_.setTextValueSuffix(" ratio");
         cycleCorrelationSlider_.setTextValueSuffix(" ratio");
         afterfireTemperatureSlider_.setTextValueSuffix(" K");
@@ -424,6 +428,7 @@ public:
         afterfireEfficiencySlider_.setTextValueSuffix(" ratio");
         overrunSparkSlider_.setTextValueSuffix(" deg");
         pocketMixingSlider_.setTextValueSuffix(" ms");
+        sparkCutSlider_.setTextValueSuffix(" ratio");
 
         afterfireToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
@@ -464,7 +469,11 @@ public:
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
             setPhysicsInternal({ 0.06, 0.55, true, true,
-                                 800.0, 0.002, 0.95, -30.0, 0.010 });
+                MeasuredBackfireProfile::ignitionTemperatureK,
+                MeasuredBackfireProfile::reactionTimeConstantSeconds, 0.95,
+                MeasuredBackfireProfile::overrunSparkAdvanceDegrees,
+                MeasuredBackfireProfile::pocketMixingTimeSeconds,
+                MeasuredBackfireProfile::overrunSparkCutFraction });
             applyPhysics();
         };
         bypassPhysicsButton_.onClick = [this] {
@@ -654,7 +663,7 @@ public:
         auto secondColumn = physicsBody.removeFromLeft(secondWidth);
         physicsBody.removeFromLeft(12);
         auto thirdColumn = physicsBody;
-        // The afterfire column is the tallest at five rows; seven keeps the
+        // The afterfire column is the tallest at six rows; seven keeps the
         // rows at their former height. Size the row from it
         // so shrinking the window narrows the rows instead of clipping them.
         const auto physicsRowHeight =
@@ -674,6 +683,7 @@ public:
         physicsRow(secondColumn, physicsLabels_[4], afterfireEfficiencySlider_);
         physicsRow(secondColumn, physicsLabels_[5], overrunSparkSlider_);
         physicsRow(secondColumn, physicsLabels_[6], pocketMixingSlider_);
+        physicsRow(secondColumn, physicsLabels_[7], sparkCutSlider_);
         afterfireToggle_.setBounds(thirdColumn.removeFromTop(27));
         wetLimiterToggle_.setBounds(thirdColumn.removeFromTop(27));
         auto presets = thirdColumn.removeFromTop(32);
@@ -800,6 +810,7 @@ private:
             afterfireEfficiencySlider_.getValue(),
             overrunSparkSlider_.getValue(),
             pocketMixingSlider_.getValue() * 0.001,
+            sparkCutSlider_.getValue(),
         };
     }
 
@@ -828,13 +839,15 @@ private:
         pocketMixingSlider_.setValue(
             settings.pocketMixingTimeSeconds * 1'000.0,
             juce::dontSendNotification);
+        sparkCutSlider_.setValue(
+            settings.overrunSparkCutFraction, juce::dontSendNotification);
     }
 
     /** An engine that never authored an afterfire calibration carries the
      *  clean defaults (900 K, 10 ms, no pockets), which were never measured
-     *  as a backfire. Turning backfires on installs the measured late-spark
-     *  profile instead (docs/journal.md 2026-10-24); an authored calibration
-     *  is kept. */
+     *  as a backfire. Turning backfires on installs the measured profile
+     *  instead (`MeasuredBackfireProfile`); an authored calibration is
+     *  kept. */
     void prepareCleanAfterfireProfile() {
         const auto cleanProfile =
             std::abs(afterfireTemperatureSlider_.getValue() - 900.0) < 0.5
@@ -843,13 +856,20 @@ private:
         if (!cleanProfile) return;
 
         afterfireTemperatureSlider_.setValue(
-            800.0, juce::dontSendNotification);
+            MeasuredBackfireProfile::ignitionTemperatureK,
+            juce::dontSendNotification);
         afterfireReactionSlider_.setValue(
-            2.0, juce::dontSendNotification);
+            MeasuredBackfireProfile::reactionTimeConstantSeconds * 1'000.0,
+            juce::dontSendNotification);
         overrunSparkSlider_.setValue(
-            -30.0, juce::dontSendNotification);
+            MeasuredBackfireProfile::overrunSparkAdvanceDegrees,
+            juce::dontSendNotification);
         pocketMixingSlider_.setValue(
-            10.0, juce::dontSendNotification);
+            MeasuredBackfireProfile::pocketMixingTimeSeconds * 1'000.0,
+            juce::dontSendNotification);
+        sparkCutSlider_.setValue(
+            MeasuredBackfireProfile::overrunSparkCutFraction,
+            juce::dontSendNotification);
     }
 
     bool applyPhysics() {
@@ -1341,7 +1361,7 @@ private:
     juce::ProgressBar progressBar_;
     std::jthread exportThread_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
-    std::array<juce::Label, 7> physicsLabels_;
+    std::array<juce::Label, 8> physicsLabels_;
     juce::Slider cycleVariationSlider_;
     juce::Slider cycleCorrelationSlider_;
     juce::Slider afterfireTemperatureSlider_;
@@ -1349,6 +1369,7 @@ private:
     juce::Slider afterfireEfficiencySlider_;
     juce::Slider overrunSparkSlider_;
     juce::Slider pocketMixingSlider_;
+    juce::Slider sparkCutSlider_;
     juce::ToggleButton afterfireToggle_ { "PHYSICAL AFTERFIRE ON" };
     juce::ToggleButton wetLimiterToggle_ {
         "SPARK-CUT LIMITER / FUEL KEPT"

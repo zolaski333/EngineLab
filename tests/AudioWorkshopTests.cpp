@@ -41,9 +41,10 @@ int main() {
         enginelab::audioPhysicsSettingsFor(audioLab->config);
     require(
         !labSettings.afterfireEnabled && !labSettings.limiterKeepsFuel
-            && near(labSettings.afterfireReactionTimeSeconds, 0.002)
-            && near(labSettings.overrunSparkAdvanceDegrees, -30.0)
-            && near(labSettings.pocketMixingTimeSeconds, 0.010)
+            && near(labSettings.afterfireReactionTimeSeconds, 0.0005)
+            && near(labSettings.overrunSparkAdvanceDegrees, 10.0)
+            && near(labSettings.pocketMixingTimeSeconds, 0.040)
+            && near(labSettings.overrunSparkCutFraction, 0.70)
             && audioLab->config.exhaustAfterfire.strategy
                 == enginelab::ExhaustAfterfireStrategy::cleanDfco
             && near(labSettings.cycleVariationCoefficientOfVariation, 0.06),
@@ -264,8 +265,8 @@ int main() {
     }
     require(visibleChildren >= 45, "complete workshop control set is present");
     require(
-        sliderCount == 16 && disabledSliderCount == 4,
-        "nine faders and seven physics controls exist; four no-op faders are disabled");
+        sliderCount == 17 && disabledSliderCount == 4,
+        "nine faders and eight physics controls exist; four no-op faders are disabled");
     require(
         muteCount == 4 && soloCount == 4
             && disabledMuteCount == 1
@@ -305,10 +306,11 @@ int main() {
         physicsApplyCount == 1
             && appliedPhysics.afterfireEnabled
             && near(appliedPhysics.afterfireIgnitionTemperatureK, 800.0)
-            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.002)
-            && near(appliedPhysics.overrunSparkAdvanceDegrees, -30.0)
-            && near(appliedPhysics.pocketMixingTimeSeconds, 0.010),
-        "enabling a clean afterfire installs the measured late-spark profile");
+            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.0005)
+            && near(appliedPhysics.overrunSparkAdvanceDegrees, 10.0)
+            && near(appliedPhysics.pocketMixingTimeSeconds, 0.040)
+            && near(appliedPhysics.overrunSparkCutFraction, 0.70),
+        "enabling a clean afterfire installs the measured backfire profile");
     require(mixAfterfireToggle->getToggleState(),
             "the mix switch mirrors an afterfire applied from the physics group");
 
@@ -318,9 +320,10 @@ int main() {
             && near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.06)
             && appliedPhysics.afterfireEnabled
             && appliedPhysics.limiterKeepsFuel
-            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.002)
-            && near(appliedPhysics.overrunSparkAdvanceDegrees, -30.0)
-            && near(appliedPhysics.pocketMixingTimeSeconds, 0.010),
+            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.0005)
+            && near(appliedPhysics.overrunSparkAdvanceDegrees, 10.0)
+            && near(appliedPhysics.pocketMixingTimeSeconds, 0.040)
+            && near(appliedPhysics.overrunSparkCutFraction, 0.70),
         "demo action publishes an intentionally audible physical calibration");
 
     mixAfterfireToggle->setToggleState(false, juce::dontSendNotification);
@@ -336,8 +339,9 @@ int main() {
         physicsApplyCount == 4
             && appliedPhysics.afterfireEnabled
             && afterfireToggle->getToggleState()
-            && near(appliedPhysics.overrunSparkAdvanceDegrees, -30.0)
-            && near(appliedPhysics.pocketMixingTimeSeconds, 0.010),
+            && near(appliedPhysics.overrunSparkAdvanceDegrees, 10.0)
+            && near(appliedPhysics.pocketMixingTimeSeconds, 0.040)
+            && near(appliedPhysics.overrunSparkCutFraction, 0.70),
         "switching afterfire back on applies at once and keeps the calibration");
     refusePhysics = true;
     mixAfterfireToggle->setToggleState(false, juce::dontSendNotification);

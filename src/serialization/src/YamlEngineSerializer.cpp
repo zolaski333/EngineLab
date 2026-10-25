@@ -396,6 +396,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "maximum_equivalence_ratio" << YAML::Value << config.exhaustAfterfire.maximumEquivalenceRatio
         << YAML::Key << "quench_temperature_k" << YAML::Value << config.exhaustAfterfire.quenchTemperatureK
         << YAML::Key << "pocket_mixing_time_s" << YAML::Value << config.exhaustAfterfire.pocketMixingTimeSeconds
+        << YAML::Key << "overrun_spark_cut_fraction" << YAML::Value << config.exhaustAfterfire.overrunSparkCutFraction
         << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
@@ -951,6 +952,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.maximumEquivalenceRatio = afterfire["maximum_equivalence_ratio"].as<double>(config.exhaustAfterfire.maximumEquivalenceRatio);
             config.exhaustAfterfire.quenchTemperatureK = afterfire["quench_temperature_k"].as<double>(config.exhaustAfterfire.quenchTemperatureK);
             config.exhaustAfterfire.pocketMixingTimeSeconds = afterfire["pocket_mixing_time_s"].as<double>(config.exhaustAfterfire.pocketMixingTimeSeconds);
+            config.exhaustAfterfire.overrunSparkCutFraction = afterfire["overrun_spark_cut_fraction"].as<double>(config.exhaustAfterfire.overrunSparkCutFraction);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);

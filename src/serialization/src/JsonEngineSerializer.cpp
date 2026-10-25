@@ -550,7 +550,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio},
                       {"maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio},
                       {"quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK},
-                      {"pocket_mixing_time_s", config.exhaustAfterfire.pocketMixingTimeSeconds}}},
+                      {"pocket_mixing_time_s", config.exhaustAfterfire.pocketMixingTimeSeconds},
+                      {"overrun_spark_cut_fraction", config.exhaustAfterfire.overrunSparkCutFraction}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -845,6 +846,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.maximumEquivalenceRatio = afterfire.value("maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio);
             config.exhaustAfterfire.quenchTemperatureK = afterfire.value("quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK);
             config.exhaustAfterfire.pocketMixingTimeSeconds = afterfire.value("pocket_mixing_time_s", config.exhaustAfterfire.pocketMixingTimeSeconds);
+            config.exhaustAfterfire.overrunSparkCutFraction = afterfire.value("overrun_spark_cut_fraction", config.exhaustAfterfire.overrunSparkCutFraction);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");

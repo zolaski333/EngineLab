@@ -379,6 +379,12 @@ public:
     bool emitUnburnedPocket(std::uint32_t cylinderId, double fuelKg,
                             double oxygenKg, double temperatureK,
                             const ExhaustFuelReactionConfig& reaction) noexcept;
+    /** A fired cycle's exhaust lights every pocket waiting in its cylinder's
+     * port element. Its burnt gas leaves at 2,000-2,200 K and sweeps the
+     * primary at blowdown; a misfire's slug warms only by mixing otherwise,
+     * and on an overrun never reached its ignition temperature whole
+     * (journal 2026-10-25). */
+    void igniteUnburnedPockets(std::uint32_t cylinderId) noexcept;
     [[nodiscard]] std::size_t activeUnburnedPocketCount() const noexcept;
 
     /** Advance the complete network by exactly durationSeconds when successful.

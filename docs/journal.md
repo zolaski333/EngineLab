@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-25 — Backfires: the workshop profile pops; the 100 kPa bound clipped them
+
+- In the tree: `overrun_spark_cut_fraction` (0.70 in `MeasuredBackfireProfile`, the workshop and the Lab file) and a fired cycle >= 50 % burnt at EVO lighting the pockets in its port element (`igniteUnburnedPockets`). Same harness, `--threshold-db 12`, windows 2.2 s after the lift.
+- Lab Twin at 3,400 rpm with the 100 kPa bound: 4 pops with the crack, 16 without (12.9 dB over the median), 480 / 247 clamped samples, INVALID. Every lit slug reaches 660-710 kW, a 266-325 kPa jump; crack noise on a clipped pulse loses its positive half.
+- One factor, the bound at 1 MPa (above an isochoric stoichiometric explosion): 18 pops with or without the crack; 16.6 dB over the median (bike 667592: 15.8), rise 0.53 ms (0.5), decay 0.54 (1.12), intervals p10/p50 48/96 ms (38/143); 120-500 Hz +4.5 (+7.4), 500-2k +23 (+8). reactLimit 0; the crack run's one render over-budget block came from four harnesses sharing the CPU.
+- MT-07 Full System at 4,400 rpm (profile flags, crack on): 2 -> 17 pops, 13.5 dB, p50 125 ms, valid. Lab at 6,200 rpm: 0 -> 1 pop.
+- A 300 kPa pulse now radiates 7.4 dB over a 100 kPa one, 0 with the old bound (the outlet edge's vortex loss keeps 2 of the linear 9.5; `strongReactionPositionRegression`); `aFiredExhaustLightsTheSlugInItsOwnPipe` fails with the lighting stubbed out.
+- Solo, crack on: the same WAV, every counter valid, physics step 26.5 % of its budget (max 37 %). Not reached: high rpm, the Hayabusa, the K20A, the decay and low band. Not measured: a CP2 overrun recording.
+
 ## 2026-10-25 — Backfires: the lines' amplitude warp deleted the pops
 
 - The silencer lead, measured with a fixed heat pulse (experiment code, reverted): 200 J over 0.5 ms in a Lab Twin primary read -28.0 to -34.6 dBFS depending on where along the duct it was injected, with no pattern; with the warp off, -23.9 to -29.4, smooth. `steepenedRead` re-reads a line at delay x scale(p), and at 50-100 kPa the scale sits at its 0.3 clamp: the read lands younger than the injection point, and the pulse is never output.

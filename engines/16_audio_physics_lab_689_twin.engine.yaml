@@ -44,19 +44,19 @@ engine:
     cycle_variation_correlation: 0.55
   exhaust_afterfire:
     ignition_temperature_k: 800
-    # Compact burn time of the listening-lab slug.  The former 8 ms value
-    # spread the same conservative energy into a low-crest swell; 2 ms remains
-    # inside the authored control range and produces a resolved pressure front
-    # without reaching the 100 kPa linear-network safety bound.
-    reaction_time_constant_s: 0.002
+    # The backfire profile measured on this engine (docs/journal.md
+    # 2026-10-25): the map cuts the spark of 70 % of the overrun cycles, fuel
+    # kept, and fires the others at 10 deg before top dead centre, so that
+    # their exhaust is hot enough to light the slug a cut cycle left in the
+    # primary. The slug stays a pocket of its own for 40 ms, about a cycle,
+    # and burns in 0.5 ms, the rise of a real pop.
+    reaction_time_constant_s: 0.0005
     reaction_efficiency: 0.95
-    overrun_minimum_rpm: 3000
+    overrun_minimum_rpm: 1500
     overrun_maximum_throttle: 0.02
-    # The late-spark profile measured on this engine (docs/journal.md
-    # 2026-10-24): 30 deg after top dead centre, the unburnt charge a pocket
-    # of its own for 10 ms before it mixes into the 0.25 m cells.
-    overrun_spark_advance_deg: -30
-    pocket_mixing_time_s: 0.010
+    overrun_spark_advance_deg: 10
+    overrun_spark_cut_fraction: 0.70
+    pocket_mixing_time_s: 0.040
     # Reference Livengood-Wu delay at 800 K, 101.325 kPa and phi=1. The
     # Arrhenius/pressure/mixture exponents below reproduce the FORM of a global
     # high-temperature gasoline-surrogate correlation (Ea/R=13340 K,

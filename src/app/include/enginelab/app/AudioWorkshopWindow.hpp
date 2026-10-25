@@ -39,6 +39,7 @@ struct AudioPhysicsSettings final {
      *  by position. */
     double overrunSparkAdvanceDegrees { -30.0 };
     double pocketMixingTimeSeconds { 0.0 };
+    double overrunSparkCutFraction { 0.0 };
 };
 
 /** Live proof that the authored controls are active in the simulator. */

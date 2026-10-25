@@ -567,7 +567,7 @@ void strongReactionPositionRegression() {
         });
     require(sourceNode != graph.nodes().end(),
         "the strong-reaction fixture must resolve a duct of at least 0.3 m");
-    const auto render = [&](float axial) {
+    const auto render = [&](float axial, float pressurePa) {
         auto acoustics = std::make_unique<enginelab::AcousticExhaustNetwork>(
             graph, cylinderIds);
         require(acoustics->valid() && acoustics->prepare(sampleRate),
@@ -583,7 +583,7 @@ void strongReactionPositionRegression() {
         for (std::size_t sample = 0; sample < 16'384; ++sample) {
             if (sample < 24U)
                 require(acoustics->injectReactionPressure(
-                        sourceNode->id, axial, 100'000.0F),
+                        sourceNode->id, axial, pressurePa),
                     "the strong reaction must enter its duct");
             const auto output = acoustics->process(sources, boundaries, 1.0F);
             require(std::isfinite(output[0].leftPa),
@@ -596,7 +596,7 @@ void strongReactionPositionRegression() {
     auto quietest = std::numeric_limits<double>::max();
     auto loudest = 0.0;
     for (const auto axial : { 0.05F, 0.25F, 0.5F, 0.85F, 0.95F }) {
-        const auto energy = render(axial);
+        const auto energy = render(axial, 100'000.0F);
         quietest = std::min(quietest, energy);
         loudest = std::max(loudest, energy);
     }
@@ -604,6 +604,17 @@ void strongReactionPositionRegression() {
     std::cout << "strong reaction by position: spread_db=" << spreadDb << '\n';
     require(quietest > 1.0e-10 && spreadDb < 6.0,
         "a pop-amplitude reaction pulse must radiate about the same energy wherever it burns along the duct");
+    // A slug lit by the fired exhaust releases up to ~700 kW, a 320 kPa jump
+    // (journal 2026-10-25). The old 100 kPa bound flattened it and cost a pop
+    // 3 dB; the bound is now above an isochoric explosion. Three times the
+    // pressure is 9.5 dB more energy in a linear network; the outlet edge's
+    // vortex loss, passive and growing with particle velocity, keeps ~2 dB
+    // (7.4 dB measured), and the old bound left 0 dB.
+    const auto gainDb = 10.0 * std::log10(
+        render(0.5F, 300'000.0F) / std::max(render(0.5F, 100'000.0F), 1.0e-30));
+    std::cout << "strong reaction 300/100 kPa: gain_db=" << gainDb << '\n';
+    require(gainDb > 5.0 && gainDb < 9.6,
+        "a 300 kPa reaction pulse must radiate as a linear source, not at the stability bound");
 }
 
 struct ReactionSpatialSignature final {

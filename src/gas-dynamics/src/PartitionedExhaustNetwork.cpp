@@ -260,6 +260,22 @@ bool PartitionedExhaustNetwork::emitUnburnedPocket(
             reaction);
 }
 
+void PartitionedExhaustNetwork::igniteUnburnedPockets(
+    std::uint32_t cylinderId) noexcept {
+    if (parts_.size() == 1) {
+        parts_.front()->igniteUnburnedPockets(cylinderId);
+        return;
+    }
+    const auto ports = layout_.cylinderPorts();
+    const auto port = std::find_if(ports.begin(), ports.end(),
+        [cylinderId](const CompiledCylinderPort& candidate) {
+            return candidate.cylinderId == cylinderId;
+        });
+    if (port == ports.end()) return;
+    parts_[portAt_[static_cast<std::size_t>(port - ports.begin())].part]
+        ->igniteUnburnedPockets(cylinderId);
+}
+
 std::size_t PartitionedExhaustNetwork::activeUnburnedPocketCount()
     const noexcept {
     std::size_t total = 0;

@@ -6,15 +6,18 @@ releases energy in the cell or junction where the conditions are met. The
 pressure rise travels through the same acoustic DAG, the same collectors,
 mufflers and outlets as the normal blowdown.
 
-**Status (2026-10-25, `docs/journal.md`):** the workshop's late-spark profile
-still renders no pop. Its overrun heat is a continuous afterburn (100 % duty):
-every late-spark cycle burns its own charge, so nothing collects to burn at
-once. What does pop, so far only in experiment code (not in the tree), is an overrun on which
-most cycles do not fire (fuel kept) and the next fired cycle's exhaust lights
-the slug the misfire left in the primary. On the Lab Twin at 3,400 rpm that
-gives 13.5 dB over the median against the real bike's 15.8, a 0.6 ms rise
-(0.5) and 131 ms between pops (143). That figure needed a fix in the acoustic
-lines (below), which had been deleting 4-9 dB of every pop by where it burned.
+**Status (2026-10-25, `docs/journal.md`):** the workshop's profile pops. On
+the overrun the ECU cuts 70 % of the sparks (fuel kept), and the next fired
+cycle's exhaust lights the slug a cut cycle left in its primary. On the Lab
+Twin at 3,400 rpm: 18 pops in 2.2 s, 16.6 dB over the median against the
+real bike's 15.8, a 0.5 ms rise (0.5), 96 ms between pops (143); on the
+MT-07 at 4,400 rpm, 17 pops at 13.5 dB. Both runs keep the audio contract.
+It took two fixes in the acoustic path (below): the lines' amplitude warp
+deleted 4-9 dB of every pop by where it burned, and the old 100 kPa source
+bound flattened the 320 kPa jump of a lit slug. Not reached: the Lab at
+6,200 rpm (1 pop), the Hayabusa (a continuous burn), the K20A (too short an
+overrun), a pop's 1.1 ms decay (0.5-0.6) and its 120-500 Hz weight (+4.5 dB
+against +7.4).
 
 ## Backfires are a listening switch, not an engine property
 
@@ -42,11 +45,16 @@ application drops them.
 ## ECU strategies
 
 - `clean_dfco`: clean fuel cut, no fuel retained (the default);
-- `late_spark_overrun`: what the Audio workshop installs. On a shut throttle the
-  ECU keeps the normal charge and fires it at `overrun_spark_advance_deg`
-  (negative is after top dead centre, -30 by default in the workshop), past the
-  map's -10 deg floor. The flame is still burning when the exhaust valve opens,
-  and the late, hot, partly burnt charge goes down the pipe.
+- `late_spark_overrun`: what the Audio workshop installs, a "pops and bangs"
+  map. On a shut throttle the ECU keeps the normal charge and fires it at
+  `overrun_spark_advance_deg` (negative is after top dead centre, past the
+  map's -10 deg floor), and cuts the spark of a share
+  `overrun_spark_cut_fraction` of the cycles, each drawn on its own, fuel
+  kept. A late spark's flame is still burning when the exhaust valve opens; a
+  cut cycle's whole charge leaves unburnt and waits in the primary for the
+  next fired cycle's exhaust. The cut is drawn apart from the misfire draw and
+  only while the overrun map runs, so no other engine's misfire sequence
+  changes.
 
 The retained-fuel strategies (`continuous_anti_lag`, `discrete_afterfire`, with
 `overrun_fuel_fraction` and the `overrun_pulse_*` chopper) were removed on
@@ -68,8 +76,11 @@ per network) with its own composition and temperature:
 - its temperature relaxes to the host cell's over the mixing time, and after
   three of them it has mixed into the cells;
 - it lights from its own temperature (the same Livengood-Wu integral as a
-  cell) or from a burning host cell, and is checked against the flammability
-  window on its own equivalence ratio;
+  cell), from a burning host cell, or when its cylinder's next cycle fires
+  (half burnt or more at exhaust valve opening): that exhaust leaves at
+  2,000-2,200 K and lights every pocket waiting in the cylinder's port element
+  (`igniteUnburnedPockets`). It is checked against the flammability window on
+  its own equivalence ratio;
 - it burns at the reaction time constant, out of the fuel and oxygen its host
   cell actually holds, so it adds no mass; the released heat is a source like
   any other.
@@ -125,9 +136,13 @@ heat already carried by the mean flow.
 
 The source is injected at the node and axial position of the reaction. There
 is no "pop" oscillator, no sample, no imposed audio periodicity and no global
-source placed at the outlet. A last-resort 100 kPa bound protects the linear
+source placed at the outlet. A last-resort 1 MPa bound protects the linear
 network; every sample that would reach it is counted, shown and invalidates
-the validation harnesses. Each voice keeps the power `energy / duration` for
+the validation harnesses. It sits above the ~0.8 MPa rise of an isochoric
+stoichiometric explosion, so no physical burn reaches it. The old 100 kPa
+bound clipped every lit slug (up to ~700 kW, a 320 kPa jump), cost a pop
+3 dB and made the generic crack below eat into it: crack noise riding a
+clipped pulse loses its positive half. Each voice keeps the power `energy / duration` for
 the exact duration of the reaction step.
 
 The reconstruction keeps nothing above ~3.8 kHz: the 1-D network does not
@@ -158,10 +173,11 @@ if it is refused (dyno run in progress). The wet limiter has its own box in the
 physics group. Both are off whenever an engine is loaded.
 
 The physics group exposes the ignition temperature, the reaction time, the
-efficiency, the overrun spark angle and the pocket mixing time. On an engine
-that never authored an afterfire calibration (900 K, 10 ms, no pockets),
-turning backfires on installs the measured profile: 800 K, 2 ms, -30 deg,
-10 ms pockets, and the schema 8 induction correlation in place of a flat timer.
+efficiency, the overrun spark angle, the pocket mixing time and the overrun
+spark cut. On an engine that never authored an afterfire calibration (900 K,
+10 ms, no pockets), turning backfires on installs the measured profile
+(`MeasuredBackfireProfile`): 800 K, 0.5 ms, +10 deg, 40 ms pockets, a 70 %
+spark cut, and the schema 8 induction correlation in place of a flat timer.
 An authored calibration is kept. `AUDIBLE DEMO` installs the same profile with
 the wet limiter and a 6 % cycle variation.
 
@@ -181,8 +197,8 @@ number of reacting volumes and the lost events. Zero power is still a possible
 physical result: cold line, mixture outside the window, strategy not armed.
 
 `EngineLabAfterfireHarness --backfires` measures what the switches do, on the
-engine's own calibration. `--late-spark DEG` and `--pocket-mix-ms MS` change
-one factor; `scripts/pop_metrics.py` counts pops in the render the same way as
+engine's own calibration. `--late-spark DEG`, `--pocket-mix-ms MS` and
+`--spark-cut SHARE` change one factor; `scripts/pop_metrics.py` counts pops in the render the same way as
 in a recording.
 
 The 2026-08 write-ups of the schema 8 induction and of the discrete-slug level

@@ -519,10 +519,13 @@ struct ExhaustComponentConfig final {
  * (2026-10-24): files that still name them read as `cleanDfco`. */
 enum class ExhaustAfterfireStrategy : std::uint8_t {
     cleanDfco,
-    /** No fuel cut on overrun and a spark far after top dead centre, as a
-     * "pops and bangs" map does. The late flame is still burning when the
-     * exhaust valve opens, so the unburned rest of the charge leaves premixed
-     * and hot and lights in the header by itself. */
+    /** No fuel cut on overrun, as a "pops and bangs" map does: its own spark
+     * angle (`overrunSparkAdvanceDegrees`) and an ignition cut on a share of
+     * the cycles (`overrunSparkCutFraction`). A late spark's flame is still
+     * burning when the exhaust valve opens; a cut cycle's whole charge leaves
+     * unburnt, and the next fired cycle's exhaust lights it in the primary.
+     * Only the cut makes a pop (journal 2026-10-25): with a late spark alone
+     * every cycle burns its own charge, continuously. */
     lateSparkOverrun,
 };
 
@@ -569,6 +572,23 @@ struct ExhaustAfterfireConfig final {
      * around it, s. Until then it is a pocket of its own composition and
      * temperature carried by the flow; zero mixes it into the cells at once. */
     double pocketMixingTimeSeconds { 0.0 };
+    /** Share of overrun cycles whose spark a `lateSparkOverrun` map cuts,
+     * fuel kept. Each is drawn on its own, so the cuts come irregularly, as
+     * the pops of a real overrun do. Zero: every overrun cycle fires. */
+    double overrunSparkCutFraction { 0.0 };
+};
+
+/** The backfire calibration the Audio workshop installs on an engine that
+ * never authored one, measured on the Lab Twin and the MT-07 (journal
+ * 2026-10-25): an ignition cut on 70 % of the overrun cycles, the others
+ * fired at +10 deg so that their exhaust is hot enough to light the slugs,
+ * which stay pockets of their own for 40 ms and burn in 0.5 ms. */
+struct MeasuredBackfireProfile final {
+    static constexpr double ignitionTemperatureK = 800.0;
+    static constexpr double reactionTimeConstantSeconds = 0.0005;
+    static constexpr double overrunSparkAdvanceDegrees = 10.0;
+    static constexpr double pocketMixingTimeSeconds = 0.040;
+    static constexpr double overrunSparkCutFraction = 0.70;
 };
 
 [[nodiscard]] constexpr bool afterfireRetainsFuel(
