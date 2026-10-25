@@ -49,7 +49,7 @@ without the owner's explicit agreement.
    (*Joined* on the ports or a junction), and the designer window. Open: the
    designer lists valve and injector rows a two-stroke does not use.
 
-**Backfires** -- closed 2026-10-25 (0.4.0): switched on in the Audio workshop
+**Backfires** -- closed 2026-10-25 (0.4.1): switched on in the Audio workshop
 only, never by an engine, off on every load (`disableBackfires`), kept across
 an edit of the running engine (`keepBackfires`). The workshop profile pops
 (journal 2026-10-25): 70 % of overrun sparks cut, fuel kept, and the next

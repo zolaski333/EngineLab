@@ -7,7 +7,12 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
-## [0.4.0] — 2026-10-25
+## [0.4.1] — 2026-10-25
+
+The tag `v0.4.0` exists but 0.4.0 was never published: its release build ran
+the hosted runner's compiler out of heap (C1060), which the release workflow,
+unlike CI, did not resume on one build node. 0.4.1 is the first release with
+everything listed here.
 
 ### Highlights
 

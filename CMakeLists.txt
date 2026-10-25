@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.24)
 # that -- MSBuild picks the language from the file extension -- which is why the
 # windows-vs2022 cache has CMAKE_C_FLAGS but no CMAKE_C_COMPILER at all. Ninja
 # resolves the compile rule at generate time and fails outright.
-project(EngineLab VERSION 0.4.0 LANGUAGES CXX C)
+project(EngineLab VERSION 0.4.1 LANGUAGES CXX C)
 
 option(ENGINELAB_BUILD_TESTS "Build EngineLab unit tests" ON)
 option(ENGINELAB_BUILD_COMPARISON_HARNESS "Build deterministic comparison and regression harness" ON)
