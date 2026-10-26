@@ -10,19 +10,27 @@ A four-stroke and two-stroke engine simulator **whose sound is as close to
 reality as possible**, for any engine the user builds.
 
 *Amended 2026-10-15 by the owner's decision: two-stroke engines are in scope
-(piston-ported, crankcase-scavenged). The four-stroke milestones below are
-unchanged; a two-stroke follows the same rules: plausible figures against the
-maker's, real time, no per-engine recording.*
+(piston-ported, crankcase-scavenged). A two-stroke follows the same rules as a
+four-stroke: plausible figures against the maker's, real time, no per-engine
+recording.*
+
+*Amended 2026-10-26 by the owner's decision: there is no pilot engine any
+more (the CP2 milestone is withdrawn), and EngineLab is open source, built for
+many users and many computers, not for one.*
 
 1. **Sound first.** Someone who knows the real engine should recognise it by
-   ear: not just "a parallel twin", but "a CP2". The method is open: physics,
+   ear: not just "a parallel twin", but that engine. The method is open: physics,
    synthesis, or both. What counts is the audible result, not the elegance of
    the model.
 2. **Physics that is broadly right.** Plausible torque and power (within about
    ±15 % of the manufacturer figures), credible reactions to throttle, gear and
    exhaust. Physics serves the sound and the feel; it is not an end in itself.
 3. **Real time on a mid-range PC.** Reference machine: Intel i5-10600
-   (6 cores / 12 threads), 16 GB of RAM.
+   (6 cores / 12 threads), 16 GB of RAM. The whole simulation (physics,
+   sound, threads) must use the computer it runs on as fully as it can, so a
+   smaller PC runs more engines and a bigger one runs bigger engines. Nothing
+   a user may build is capped to fit the reference machine: an engine that
+   needs a faster PC is allowed.
 
 ## Fundamental constraint: no per-engine recordings
 
@@ -45,13 +53,15 @@ against the simulator's own output.
   engine speed and load, measured by a dedicated tool.
 - **Subjective:** blind listening.
 
-Milestones:
+There is no pilot engine. The recordings are whatever real engines can be
+measured at a known engine speed: freely licensed recordings (CC0, CC BY) and
+recordings contributors share. Two rules keep calibration generic:
 
-1. **Pilot engine: Yamaha CP2 (MT-07), Arrow exhaust.** Recordings made by the
-   owner on their own motorcycle, at a known engine speed.
-2. **Generalisation:** a second, very different engine must improve **without
-   specific tuning**. That is the proof that calibrating on the CP2 improved
-   the generic model rather than just imitating one motorcycle.
+1. **One recording never tunes the render.** A change calibrated on one
+   engine's recording is kept only if it does not move the others away from
+   their own recordings.
+2. **Generalisation is the proof:** an engine that was not used to calibrate a
+   change must improve, or at least not regress, **without specific tuning**.
 
 ## Non-goals
 

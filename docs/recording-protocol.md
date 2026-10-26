@@ -1,15 +1,19 @@
-# Recording protocol — MT-07 (CP2), Arrow exhaust
+# Recording protocol
 
-Goal: obtain the **sound target** for milestone 1 of `VISION.md`. Without a
+Goal: a **sound target** for one real engine, to judge the simulation against
+(`VISION.md`, success criterion). It was first written for a Yamaha MT-07 with
+an Arrow exhaust, and works for any engine. Without a
 known engine speed, a recording only serves the ear; with a known engine speed,
 it serves to measure the simulation/reality gap band by band. Everything below
 aims at that second use.
 
 ## Before starting: write down
 
-- Exact Arrow model: slip-on or full system, part number, catalyst kept or not,
-  **dB-killer fitted or removed**. The timbre depends heavily on it.
-- Year of the motorcycle, mileage, stock air filter or not, modified ECU map or
+- Engine and vehicle: make, model, year, engine code.
+- Exact exhaust: stock or aftermarket, make and part number, slip-on or full
+  system, catalyst kept or not, **dB-killer fitted or removed**. The timbre
+  depends heavily on it.
+- Mileage, stock air filter or not, modified ECU map or
   not.
 - Approximate outside temperature, wind.
 
@@ -34,11 +38,11 @@ afterwards, otherwise the takes are no longer comparable with each other.
 ## Microphone positions
 
 Always the same, measured with a tape measure, microphone at the height of the
-exhaust outlet:
+exhaust outlet (one per outlet side if there are several):
 
 - **A — close:** 50 cm from the outlet, at 45° to the jet axis (never in the
   jet: the blast saturates the microphone).
-- **B — scene:** 4 m to the side of the motorcycle, on the exhaust side. This is
+- **B — scene:** 4 m to the side of the vehicle, on the exhaust side. This is
   the default listening distance of the simulation, so the most directly
   comparable.
 
@@ -47,6 +51,9 @@ open space, away from walls and parked cars (reflections change the timbre),
 with no wind.
 
 ## Sequence (warm engine, stationary)
+
+The engine speeds below suit a motorcycle twin; scale them to the engine
+(stay below about two thirds of its redline while stationary).
 
 **Warm** engine (after at least 10 minutes of riding): gas temperature changes
 the speed of sound in the exhaust, and therefore its resonances.
@@ -73,6 +80,8 @@ fan run between series, and be considerate of the neighbours.
 
 ## Delivery
 
-Put the files in `references/cp2-mt07-arrow/` with a short `notes.md`:
+Share the files under CC0 or CC BY 4.0 (a **Reference recording** issue on
+GitHub), with a short `notes.md`; in the repository they go in
+`references/<engine>-<exhaust>/`. The notes give the
 equipment, position (A/B), gain level, conditions, and for each file the time
 (in seconds) of each hold and each blip, read from the dashboard video.

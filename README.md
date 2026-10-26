@@ -20,9 +20,8 @@ Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 > **Project status: early.** The physics, tooling and real-time pipeline are
 > solid and heavily tested. The sound is not there yet: in blind listening
 > against real recordings, engines are recognisable by their cylinder count and
-> firing rhythm, but not yet as a specific engine. Closing that gap, starting
-> with the Yamaha CP2 (MT-07), is the current milestone — see
-> [VISION.md](VISION.md).
+> firing rhythm, but not yet as a specific engine. Closing that gap, for every
+> engine and without per-engine tuning, is the goal — see [VISION.md](VISION.md).
 
 ---
 

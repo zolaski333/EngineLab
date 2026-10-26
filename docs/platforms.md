@@ -218,8 +218,8 @@ a fix rather than a tautology.
   and the POSIX branches added for Linux compile there in principle, but no
   one has run it.
 - **A loopback recorder on Linux**: `tools/WasapiLoopbackRecorder.cpp` is
-  Windows-only and is not part of the build. The reference recordings for
-  milestone 1 are made on Windows.
+  Windows-only and is not part of the build. Loopback captures of the
+  simulator are made on Windows.
 - **aarch64**: `CylinderWorkerPool::spinPause` has an aarch64 branch and the
   cache-line constant follows the architecture, but no aarch64 build has been
   run.

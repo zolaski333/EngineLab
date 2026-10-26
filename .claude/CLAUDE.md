@@ -17,52 +17,46 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Owner's mandate of 2026-10-20**, in order, each finished before the next:
+**Owner's plan of 2026-10-26**: close the open work streams, in order, each
+against the end criterion written here before it starts. **Feature freeze**
+until the plan ends: no new feature, only what an item's criterion needs. No
+limit on what a user may build (cylinders, size): an engine that needs a faster
+PC than the reference one is allowed.
 
-1. **Linux** -- done 2026-10-20, CI green; `docs/platforms.md` says what differs
-   from the Windows reference.
-2. **The two-stroke model.** Whatever 2T engine is designed, the curves come out
-   chaotic and neither the behaviour nor the sound is a real two-stroke's. Free
-   rein to add what a 2T needs (carburettor, reed and power valves) or to rework
-   the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
-   and a carburettor exists (2026-10-22); the 3,500/7,000/7,500 rpm holding
-   band was the 240 Hz frame's alias of the firing ripple, and a power valve
-   exists (2026-10-23). The idle misfires on its diluted charge, and the pipes
-   run one per thread (twin 2.1, triple 1.65, V4 1.25 x real time; 2026-10-24).
-   The reed stays a perfect check valve until a measured gap asks for its
-   petals (VISION.md's decision rule).
-3. **Performance**: test duration, build time, real-time factor. JUCE compiles
-   once since 2026-10-23 (Linux CI build 18 -> 4.5 min, Windows 25 -> 32: one
-   serial MSBuild project). Open, and measurable only on the reference machine:
-   the V10-V16 designs below real time (pool spin vs park, duct numerics).
-4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
-   that would destroy a real one. Fix the knock PHYSICS, not the damage model.
-   The designer's ignition is a template because there is no knock limit to
-   calibrate MBT against, so this item unblocks that one. The end gas knocks
-   since 2026-10-22, a stepped control holds the limit, and Douaud-Eyzat's
-   prefactor (x2) puts the catalogue's maps at their limit (2026-10-23). Open:
-   the I5 holds 8-12 deg of retard at its maker's boost; Woschni's combustion
-   term (right for the TDI's BSFC, it stalls lugged engines) was backed out.
-5. **Editing on the engine** -- done 2026-10-23, each checked on screen
-   (journal): compression ratio on the liner/piston, every turbo drawn, the
-   carburettor drawn and jetted by clicking, two exhaust paths joined into one
-   (*Joined* on the ports or a junction), and the designer window. Open: the
-   designer lists valve and injector rows a two-stroke does not use.
+1. **Base** -- the reference PC (i5-10600) builds on BuildTools 14.44 (owner,
+   2026-10-26); VISION.md has no pilot engine any more; instrument baselines
+   re-taken on 14.44.
+2. **The two-stroke model.** Done when the catalogue RD350 and designed 1-, 2-
+   and 3-cylinder two-strokes give curves within ~15 % of maker figures with no
+   chaotic humps, `held_rpm_stddev` bounded over the range, a held idle, a
+   dilution misfire limit grounded in the literature (not the model's CP4
+   idle), and a designer that lists no valve or injector rows for them. So far:
+   scavenging by the integrated front (2026-10-21), a carburettor (-22), a
+   power valve and the 240 Hz alias found (-23), the idle misfire and one pipe
+   per thread (-24). The reed stays a perfect check valve until a measured gap
+   asks for its petals.
+3. **Optimisation of the whole simulation**, never per engine: physics, sound
+   and threads use the computer fully, measured with 12, 4 and 2 processors
+   (process affinity) on a fixed panel of 2T and 4T engines. Quality bar:
+   bit-exact first; otherwise every dyno row within 0.1 % torque and power,
+   `held_rpm_stddev` and every catalogue idle unchanged, audio octave bands
+   within 0.1 dB and the Geometry harness `shape` at noise level -- one such
+   change measured alone. Done when no further lead is known.
+4. **Knock.** Fix the knock PHYSICS, not the damage model. The end gas knocks
+   and a stepped control holds the limit (2026-10-22/23). Done when the I5
+   holds its maker's boost without 8-12 deg of retard (Woschni's combustion
+   term was backed out: it stalls lugged engines) and the designer's ignition
+   is calibrated against the knock limit instead of a template.
 
-**Backfires** -- closed 2026-10-25 (0.4.2): switched on in the Audio workshop
-only, never by an engine, off on every load (`disableBackfires`), kept across
-an edit of the running engine (`keepBackfires`). The workshop profile pops
-(journal 2026-10-25): 70 % of overrun sparks cut, fuel kept, and the next
-fired cycle's exhaust lights the slug left in the primary -- 16.6 dB over the
-median on the Lab Twin (a real bike: 15.8), 13.5 on the MT-07, contract valid.
-Known limits, reopened only on a measured lead: high rpm (1 pop at 6,200), the
-Hayabusa, a pop's decay and low band (`docs/physical-afterfire.md`).
+**Closed**: Linux (2026-10-20, `docs/platforms.md`); editing on the engine
+(2026-10-23); backfires (0.4.2, Audio workshop only, off on every load; known
+limits in `docs/physical-afterfire.md`, reopened only on a measured lead).
 
-**Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
-`docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
-are the ~3.8 kHz ceiling (`docs/physical-afterfire.md`) and the plane-mode
-cutoff (`docs/thermoacoustic-architecture.md` 25.2). No fix may require a
-per-engine recording.
+**Sound leads, unverified, for after the plan**: the ~3.8 kHz ceiling
+(`docs/physical-afterfire.md`) and the plane-mode cutoff
+(`docs/thermoacoustic-architecture.md` 25.2), judged against any real
+recording at a known speed (`docs/recording-protocol.md`). No fix may require
+a per-engine recording.
 
 ## Working rules
 

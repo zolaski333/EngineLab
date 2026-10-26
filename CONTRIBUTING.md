@@ -30,9 +30,8 @@ real engines, so a recording of your own engine at a **known engine speed** is
 worth a lot: it is how the generic model gets calibrated (a recording is never
 needed to *run* an engine).
 
-Follow the [recording protocol](docs/recording-protocol-cp2.md): it is written
-for the MT-07, but the positions and the sequence (idle, steady holds, a slow
-sweep, blips) work for any engine. Then open a **Reference recording** issue
+Follow the [recording protocol](docs/recording-protocol.md): the positions and
+the sequence (idle, steady holds, a slow sweep, blips) work for any engine. Then open a **Reference recording** issue
 with a link to the files. Only recordings shared under CC0 or CC BY 4.0 can be
 used.
 

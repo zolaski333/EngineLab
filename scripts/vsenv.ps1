@@ -6,17 +6,17 @@
 #
 #     . scripts/vsenv.ps1
 #
-# 2026-10-20: Visual Studio 2022 *Community* is no longer installed on the
-# development machine -- `C:\Program Files\Microsoft Visual Studio` holds only
-# `18`. The 2022 line survives as **BuildTools**, which is a complete C++
-# toolchain and a valid "Visual Studio 17 2022" generator instance, so that is
-# what the authoritative tree now uses. The toolset moved with it: 14.34 is
-# gone from this machine, 14.44.35207 is what BuildTools ships.
+# 2026-10-20: the authoritative tree builds with Visual Studio 2022
+# **BuildTools** (a complete C++ toolchain and a valid "Visual Studio 17 2022"
+# generator instance) and its toolset, 14.44.35207 -- the one the windows-2022
+# CI runner uses. 2026-10-26: the reference machine (i5-10600) carries it too,
+# beside a VS 2022 Community with 14.34 that this script must NOT pick: a tree
+# configured on Community needs `-DCMAKE_GENERATOR_INSTANCE` at the BuildTools
+# root and a clean rebuild.
 #
 # Consequence to keep in mind, not a detail: every performance figure and every
-# instrument baseline recorded before this date was taken on 14.34 and is NOT
-# comparable with a number taken now. Re-baseline on 14.44 before trusting any
-# before/after.
+# instrument baseline taken on 14.34 is NOT comparable with a number taken on
+# 14.44. Re-baseline on 14.44 before trusting any before/after.
 #
 # The toolset is still pinned rather than left to vcvars' default. A Visual
 # Studio 18 Community install (MSVC 14.50) sits beside this one, and letting
