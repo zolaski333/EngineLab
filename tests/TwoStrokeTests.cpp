@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -182,6 +183,8 @@ struct Held final {
     double lambda { 0.0 };
     double firingsPerCylinderRevolution { 0.0 };
     double deliveredVolumetricEfficiency { 0.0 };
+    double frictionTorqueNm { 0.0 };
+    double meanPistonSpeedMps { 0.0 };
 };
 
 /** Cranked with the slide at `crankingThrottle`, then full throttle against a
@@ -210,6 +213,8 @@ struct Held final {
         held.torqueNm += result.state.torqueNm * weight;
         held.lambda += result.state.lambda * weight;
         held.deliveredVolumetricEfficiency += result.state.deliveredVolumetricEfficiency * weight;
+        held.frictionTorqueNm += result.state.frictionTorqueNm * weight;
+        held.meanPistonSpeedMps += result.state.meanPistonSpeedMps * weight;
         for (std::size_t index = 0; index < result.firingEventCount; ++index)
             if (!result.firingEvents[index].misfire) firings += 1.0;
         revolutions += result.state.rpm / 60.0 * frameSeconds;
@@ -220,12 +225,10 @@ struct Held final {
 }
 
 /** Maker: 40.2 N.m at 8,000 rpm (37 N.m in the Japanese listing). The model
- *  makes about 33 here at the 100 mm real-time exhaust mesh (journal
- *  2026-10-16): the first cell behind the port holds about a cylinder's
- *  volume, and 25 mm cells, not real time, make about 36. The test
- *  guards what holds -- one firing per cylinder per revolution, a sane
- *  mixture, positive torque -- and prints the figure; it does not pretend the
- *  gap is closed. */
+ *  makes about 41 here since a two-stroke takes Blair's friction (journal
+ *  2026-10-26; 33 with a four-stroke's). The test guards what holds -- one
+ *  firing per cylinder per revolution, a sane mixture, positive torque, the
+ *  friction -- and prints the figure. */
 void catalogueTwinMakesItsTorque() {
     const auto config = catalogueTwoStroke();
     const auto held = heldFullLoad(config, 8'000.0);
@@ -237,6 +240,13 @@ void catalogueTwinMakesItsTorque() {
     require(held.lambda > 0.7 && held.lambda < 1.3, "the full-load mixture is near stoichiometric");
     require(held.torqueNm > 0.0 && held.torqueNm < 1.15 * 40.2,
         "the full-load torque at 8,000 rpm is positive and not above the maker's");
+    // Blair's rolling-bearing motorcycle two-stroke: fmep = 3,150 Pa per m/s of
+    // mean piston speed, per revolution (four-stroke friction was 2.8 x that).
+    const auto blairNm = 3'150.0 * held.meanPistonSpeedMps * 0.347e-3 / (2.0 * std::numbers::pi);
+    std::cout << "RD350LC-like friction at 8,000 rpm: " << held.frictionTorqueNm << " N.m (Blair "
+              << blairNm << ")\n";
+    require(std::abs(held.frictionTorqueNm - blairNm) < 0.05 * blairNm,
+        "a two-stroke's friction is Blair's, not a four-stroke's");
 }
 
 /** A cylinder intake port is a window the piston skirt uncovers around top

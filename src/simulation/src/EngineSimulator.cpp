@@ -5234,7 +5234,19 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             && config_.forcedInduction.type == ForcedInductionType::supercharger
             && state_.angularVelocityRadPerSecond > 1.0
             ? state_.compressorPowerKw * 1'000.0 / state_.angularVelocityRadPerSecond : 0.0;
-        const auto mechanicalFriction = bearingFriction + pistonFriction + crankshaftFriction + superchargerTorque;
+        // A two-stroke has no valvetrain, rolls on needle and ball bearings and
+        // carries two compression rings, not a four-stroke's ring pack: the
+        // polynomial and the Stribeck rings above put the RD350 at 1.26 bar at
+        // 8,000 rpm, 2.8 x Blair's relation for a rolling-bearing motorcycle
+        // two-stroke, fmep = 3,150 Pa per m/s of mean piston speed (Design and
+        // Simulation of Two-Stroke Engines, 1996, p. 379). It takes Blair's
+        // whole relation instead (journal 2026-10-26); the breakaway still
+        // holds a crank at rest.
+        const auto twoStrokeFriction = state_.angularVelocityRadPerSecond > 1.0
+            ? 3'150.0 * meanPistonSpeed * displacementM3 / (2.0 * std::numbers::pi)
+            : pistonBreakawayTorqueNm;
+        const auto mechanicalFriction = (twoStroke ? twoStrokeFriction : bearingFriction + pistonFriction)
+            + crankshaftFriction + superchargerTorque;
         // Gas-pressure torque already contains the complete intake/exhaust
         // pumping loop. Adding a MAP-derived pumping loss here counted the
         // same work twice, especially at closed throttle.

@@ -5,6 +5,19 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-26 — A two-stroke took a four-stroke's friction, 2.8 x Blair's
+
+- New `DynoSweepHarness --pipe-temperature` (raised-limiter RD350 copy, 8,000 rpm): header 538-553 C, belly 476-515, stinger 418 -- under a real two-stroke's 650-680 C at the probe, so "the pipe gas is too hot" is refuted as the cause of the curve's rpm offset.
+- Friction torque at the held point, the RD350 at 8,000 rpm: 6.93 N.m = 1.26 bar. Blair (Design and Simulation of Two-Stroke Engines, 1996, p. 379; via hpwizard.com/fmep.html) gives a rolling-bearing motorcycle two-stroke 3,150 Pa per m/s of mean piston speed: 0.45 bar, 2.5 N.m. The four-stroke polynomial carries a valvetrain and plain bearings; the Stribeck rings alone were 3.6 N.m, more than Blair's whole relation. One source only: a measured two-stroke motoring test was not found.
+- One factor: a two-stroke takes Blair's relation (breakaway at rest kept). Peaks, torque / power, before -> after: catalogue RD350 (sweep ceiling 9,025) 37.3@9000 / 35.2 -> 42.2@9000 / 39.7 kW (maker 40.2@8000 / 34.5@8500); designed rd350 31.5 / 26.7 -> 35.7 / 30.8 (-11 %, -11 %); H1 41.7 / 32.4 -> 47.9 / 37.6 (-14 %, -16 %); TZR250 24.4 / 24.9 -> 28.8 / 29.5 (-19 %, -21 %); RS125 13.5 / 12.7 -> 15.6 / 14.7 (-38 % at its designed 9,600 redline, maker peak 11,000).
+- Idle: lowest 1,377 rpm, 31 % of sparks fired; max `held_rpm_stddev` 1.1-3.8 except the H1 below 5,000 (12.1, was 14.2). `TwoStroke`: friction within 5 % of Blair (fails at 6.93 without the fix); RD350 at 8,000 rpm 41.5 N.m.
+- Four-strokes untouched by construction (the branch is the two-stroke's). Open: the sport designs' gap (their redline and ports, not this), the H1's low-speed rich hunting.
+
+## 2026-10-26 — The designer lists no valve, header or injector row for a two-stroke
+
+- A designed two-stroke listed `valves_per_side`, the header length and diameters, the collector/outlet and `injector_flow_mg_s`: values the model never reads (the pipe is its own chamber, the carburettor meters). Hidden; setting one is now an unknown value. `EngineDesign` fails on the first of them without the fix.
+- Refuted (2T peak-power piston speed by use, sport 17.5 -> real 17.8 m/s, road 14.8): sport designs lost torque (TZR250 24.4 -> 21.0 N.m) as the pipe followed the higher rpm. Measured with the four-stroke friction above; not re-run since.
+
 ## 2026-10-26 — The reference PC on BuildTools 14.44: the baseline
 
 - The i5-10600 had VS 2022 Community (14.34) and VS 18 (14.50), no 14.44, so `vsenv.ps1` threw; the owner installed BuildTools 2022 17.14 (14.44.35207, cl 19.44.35229), the CI runner's toolset. `windows-vs2022` reconfigured on it (cache and `_deps` cleared) and rebuilt `--clean-first`: 16.3 min, no warning.
