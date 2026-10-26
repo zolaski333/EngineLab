@@ -329,7 +329,10 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 : format(density) + " g/cm3 x bore^3");
         const auto rodMass = derive("connecting_rod_mass_g", "Connecting rod mass", "g", 1.3 * piston,
             "1.3 x the piston");
-        const auto valvesPerSide = static_cast<std::uint32_t>(std::lround(derive("valves_per_side",
+        // A two-stroke has no valves, no headers and no injector: its ports,
+        // its chambers and its carburettor carry them, so those rows are not
+        // listed for it and setting one is an unknown value.
+        const auto valvesPerSide = twoStroke ? 2U : static_cast<std::uint32_t>(std::lround(derive("valves_per_side",
             "Valves per side", "", diesel ? 2.0 : static_cast<double>(profile.valvesPerSide), "the use's")));
         // Below 0.22 L the per-litre rule falls under the simulator's 0.01
         // floor (a 125 cc sport single: 0.0056): it is raised to the floor.
@@ -679,25 +682,29 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         // Independent ejector stacks: the outlet is each stack's flared lip.
         const auto stacks = std::string_view(exhaustKey) == "aircraft_manifold";
         auto exhaust = part(parts.exhausts, exhaustKey);
-        if (spec.use != EngineUse::aircraft) {
+        if (spec.use != EngineUse::aircraft && !twoStroke) {
             exhaust.primaryLengthMm = derive("exhaust_primary_length_mm", "Exhaust primary length", "mm",
                 spec.induction == Induction::turbocharged ? 430.0 : std::clamp(5.0e6 / peakPowerRpm, 250.0, 1'200.0),
                 spec.induction == Induction::turbocharged ? "to the turbine, the catalogue turbos'"
                     : "5.0e6 / peak power rpm (catalogue 4.1-5.9e6)");
         }
-        exhaust.primaryDiameterMm = derive("exhaust_primary_diameter_mm", "Exhaust primary diameter", "mm",
-            0.45 * bore, "0.45 x bore (catalogue 0.42-0.52)");
+        exhaust.primaryDiameterMm = twoStroke ? 0.45 * bore
+            : derive("exhaust_primary_diameter_mm", "Exhaust primary diameter", "mm",
+                0.45 * bore, "0.45 x bore (catalogue 0.42-0.52)");
         const auto paths = twoStroke ? count
             : (spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::flat) && count >= 4 ? 2U
             : spec.layout == EngineLayout::custom ? bankCount : 1U;
         const auto merged = std::max(1U, count / paths);
-        exhaust.collectorDiameterMm = derive("exhaust_collector_diameter_mm", "Exhaust collector diameter", "mm",
-            exhaust.primaryDiameterMm * std::max(1.0, std::sqrt(0.55 * static_cast<double>(merged))),
-            "0.55 x the merged primaries' area");
-        exhaust.outletDiameterMm = derive("exhaust_outlet_diameter_mm", "Exhaust outlet diameter", "mm",
-            stacks ? 2.7 * exhaust.primaryDiameterMm : 1.1 * exhaust.collectorDiameterMm,
-            stacks ? "each stack's lip, 2.7 x the stack (the part's 52 -> 140 mm; narrower jets roar)"
-                   : "1.1 x the collector");
+        const auto collectorDiameter = exhaust.primaryDiameterMm
+            * std::max(1.0, std::sqrt(0.55 * static_cast<double>(merged)));
+        exhaust.collectorDiameterMm = twoStroke ? collectorDiameter
+            : derive("exhaust_collector_diameter_mm", "Exhaust collector diameter", "mm",
+                collectorDiameter, "0.55 x the merged primaries' area");
+        const auto outletDiameter = stacks ? 2.7 * exhaust.primaryDiameterMm : 1.1 * exhaust.collectorDiameterMm;
+        exhaust.outletDiameterMm = twoStroke ? outletDiameter
+            : derive("exhaust_outlet_diameter_mm", "Exhaust outlet diameter", "mm", outletDiameter,
+                stacks ? "each stack's lip, 2.7 x the stack (the part's 52 -> 140 mm; narrower jets roar)"
+                       : "1.1 x the collector");
         config.exhaust = exhaust;
         for (std::uint32_t path = 0; path < paths; ++path) {
             ExhaustPathConfig pathConfig;
@@ -745,9 +752,10 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         // redline; each injector at most 80 % open.
         const auto airKgPerSecond = 1.18 * litres * 1.0e-3 * config.redlineRpm / (twoStroke ? 60.0 : 120.0) * 1.1 * boost;
         const auto fuelMgPerSecond = airKgPerSecond / (diesel ? 18.0 : 12.0) * 1.0e6;
-        config.injection.injectorFlowMgPerSecond = derive("injector_flow_mg_s", "Injector flow", "mg/s",
-            std::max(config.injection.injectorFlowMgPerSecond, fuelMgPerSecond / countD / 0.8),
-            "the part's, or the full-load fuel at 80 % duty if more");
+        const auto injectorFlow = std::max(config.injection.injectorFlowMgPerSecond, fuelMgPerSecond / countD / 0.8);
+        config.injection.injectorFlowMgPerSecond = twoStroke ? injectorFlow
+            : derive("injector_flow_mg_s", "Injector flow", "mg/s", injectorFlow,
+                "the part's, or the full-load fuel at 80 % duty if more");
         if (diesel) {
             const auto scale = litres / countD / 0.492 * boost / 2.3;
             for (auto& sample : config.injection.fullLoadFuelLimit) {

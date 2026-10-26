@@ -303,6 +303,12 @@ void everyLayoutDesigns() {
     require(chamber && chamber->components.size() == 8, "each pipe is an expansion chamber");
     const auto* tuned = valueOf(stinger, "expansion_chamber_tuned_length_mm");
     require(tuned && tuned->value > 700.0 && tuned->value < 1'100.0, "tuned to its peak power speed");
+    for (const auto* unused : { "valves_per_side", "exhaust_primary_length_mm", "exhaust_primary_diameter_mm",
+             "exhaust_collector_diameter_mm", "exhaust_outlet_diameter_mm", "injector_flow_mg_s" })
+        require(valueOf(stinger, unused) == nullptr, std::string("a two-stroke lists no ") + unused);
+    auto valved = twin;
+    valved.overrides["valves_per_side"] = 2.0;
+    require(!designCatalogueEngine(valved, ENGINELAB_CATALOG_ROOT).config, "and setting one is an unknown value");
     evenlySpaced(*stinger.config);
 
     EngineSpec crossplane;
