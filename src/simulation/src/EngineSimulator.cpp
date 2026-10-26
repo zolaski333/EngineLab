@@ -3285,6 +3285,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // differently. With the draw rising to its 0.92 cap by 0.70,
                 // the designed two-strokes fire 28-36 % of their sparks at
                 // idle, about every third revolution (journal 2026-10-24).
+                // The literature's limit is a flame temperature, not a
+                // fraction: lean-limit flames of hydrocarbons in air sit near
+                // 1,500-1,600 K adiabatic (NBSIR 76-1076; Zabetakis 1965,
+                // 1,573 K), and Tsuchiya et al. (SAE 830091) judge a
+                // two-stroke's light-load irregular firing by it. From the
+                // 550-680 K the idle's charge has at the spark, 0.60 of
+                // diluent leaves about 1,460 K and 0.70 about 1,250 K, so
+                // the band starts at that limit (journal 2026-10-26).
                 constexpr double dilutionMisfireOnset = 0.60;
                 constexpr double dilutionMisfireFull = 0.70;
                 const auto dilutionShare = std::clamp(

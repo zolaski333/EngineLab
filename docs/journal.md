@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-26 — The dilution misfire band sits at the limit flame temperature
+
+- Literature: lean-limit flames of hydrocarbons in air have an adiabatic flame temperature near 1,500-1,600 K (NIST NBSIR 76-1076; Zabetakis 1965, 1,573 K; lower at engine pressure, Egolfopoulos-Holley-Law 2005); Yamaha's SAE 830091 judges a two-stroke's light-load irregular firing by that temperature. No source gives a residual fraction.
+- Measured (temporary probe, `TwoStroke --trace 0`, RD350 free idle, 361 sparks): 0.47-0.70 diluent at 533-681 K. With ~2,160 K of rise per unit fresh stoichiometric charge, the band's 0.60 onset leaves ~1,460 K and its 0.70 cap ~1,250 K: it starts at the limit. Kept as is; the reason is now in the code. The CP4 idle (0.56) stays above it.
+- Refuted (F2, the designer's 2T redline from the real peak-power piston speeds over 0.9: road 14.8, sport 17.8 m/s), with Blair's friction: RS125 15.6 -> 14.0 N.m, TZR250 28.8 -> 25.6, rd350 power 30.8 -> 30.6 at 7,750, H1 power 37.6 -> 36.3. The sport gap is not the redline.
+
 ## 2026-10-26 — A two-stroke took a four-stroke's friction, 2.8 x Blair's
 
 - New `DynoSweepHarness --pipe-temperature` (raised-limiter RD350 copy, 8,000 rpm): header 538-553 C, belly 476-515, stinger 418 -- under a real two-stroke's 650-680 C at the probe, so "the pipe gas is too hot" is refuted as the cause of the curve's rpm offset.
