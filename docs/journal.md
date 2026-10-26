@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-26 — The reference PC on BuildTools 14.44: the baseline
+
+- The i5-10600 had VS 2022 Community (14.34) and VS 18 (14.50), no 14.44, so `vsenv.ps1` threw; the owner installed BuildTools 2022 17.14 (14.44.35207, cl 19.44.35229), the CI runner's toolset. `windows-vs2022` reconfigured on it (cache and `_deps` cleared) and rebuilt `--clean-first`: 16.3 min, no warning.
+- Full `ctest` 92/93 in 43 min: every bit-exact reference holds, so this PC's 14.44 output equals the one the references were taken on. The one failure is the known `UserDynoRampCP2Complete` start loop (start 3,209 rpm, minimum 549, 293 recoveries; journal 2026-10-23); alone 10/10 pass, and 10/10 under twelve busy-loop jobs.
+- Mechanism read, not proven: after a recovery the preparation keeps the target at the stall speed, the engine is restarted at 0.18 throttle and handed straight to the sweep at full throttle the moment it passes 1,107 rpm. Open bug, not reproduced on demand; no instrument fixes the start state yet.
+- Not done: any real-time figure on 14.44 (each change takes its own interleaved control).
+
 ## 2026-10-25 — High boost: the wastegate loop hunted, and lambda with it
 
 - Owner report: lambda spikes up and down under load at high boost, any engine (flat four, wastegate 3.20, CR 5:1, ~5,400 rpm in gear). `DriveScenarioHarness --builtin pull` (new `--catalog-root`, lambda/MAP/wastegate columns) on an EJ25 with wastegate 3.20 and the rated ratio moved with it (3.25, as the editor does): boost 2.97 <-> 3.75 at ~13 Hz, the gate slamming 0 <-> 1, lambda 0.58 <-> 0.96, mean |d lambda| per frame 0.029 (catalogue EJ25 0.0005). Knock retard 12.7 s of 25 came from the 3.7 peaks. Rated ratio left at 2.10: steady -- why a first variant did not reproduce it.
