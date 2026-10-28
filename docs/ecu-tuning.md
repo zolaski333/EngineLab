@@ -42,6 +42,17 @@ name of the proportional control it replaced), read with
 `knockRetardGainDegrees()`. Past that much retard the knock is no longer held.
 Zero turns it off: the knock then runs free. Diesels have no entry.
 
+A map is calibrated against that limit, as a calibrator does on the dyno, by
+`ignition.knock_limit_curve` in the engine file: the spark the knock control
+settles at with the throttle wide open, at six speeds, and the manifold
+pressure it was measured at (`calibrateKnockLimit`, in the runtime). The ECU
+holds the map under it in proportion to how far the manifold pressure has
+climbed from the ambient (a boosted engine) or 0.7 of that pressure (one that
+is not) to the measured one, so part load keeps its map; the knock control
+trims what is left. The engine designer measures it for every spark-ignition
+design when it is built; `EngineLabKnockLimitCalibration --filter <engine>
+[--verify]` measures a catalogue engine and prints the curve.
+
 Launch control (`limits.launch_rpm`, off by default) moves the limiter's cut
 down to that speed while the vehicle stands in gear (under 5 km/h) with the
 throttle past half, so a launch takes up the clutch from there; it lets go

@@ -719,6 +719,12 @@ struct IgnitionMapSample final {
     double advanceDegrees { 10.0 };
 };
 
+struct KnockLimitSample final {
+    double rpm { 0.0 };
+    double advanceDegrees { 0.0 };
+    double manifoldPressureKpa { 0.0 };
+};
+
 struct IgnitionConfig final {
     std::vector<IgnitionMapSample> timingCurve {
         { 0.0, 10.0 }, { 1'000.0, 14.0 }, { 2'000.0, 22.0 },
@@ -733,6 +739,15 @@ struct IgnitionConfig final {
      * exhaust afterfire model receives actual unburned fuel.
      */
     bool limiterKeepsFuel { false };
+    /**
+     * The knock-limited spark at full load, measured on the dyno with the
+     * knock control on (`calibrateKnockLimit`), and the manifold pressure it
+     * was measured at. The ECU holds the map under it in proportion to how
+     * far the manifold pressure has climbed towards that pressure, so part
+     * load keeps its map. Empty: the map alone, the knock control's retard on
+     * top as before.
+     */
+    std::vector<KnockLimitSample> knockLimitCurve {};
 };
 
 struct InjectionConfig final {

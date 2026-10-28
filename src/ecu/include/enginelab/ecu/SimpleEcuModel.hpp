@@ -84,6 +84,10 @@ public:
     [[nodiscard]] double decelerationFuelResume() const noexcept {
         return decelerationFuelResume_.load(std::memory_order_relaxed);
     }
+    /** The knock control's retard as a share of its authority, 0-1. */
+    [[nodiscard]] double knockRetardShare() const noexcept {
+        return knockRetardShare_.load(std::memory_order_relaxed);
+    }
     void setAirFuelRatioTrim(double value) noexcept {
         afrTrim_.store(std::isfinite(value)
             ? std::clamp(value,

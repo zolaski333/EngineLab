@@ -787,7 +787,8 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         }
         designed.values.push_back({ "ignition_curve", "Ignition curve", "", 0.0, false,
             diesel ? "the diesel template stretched to the redline"
-                   : "the family template stretched to the redline (not calibrated)", false });
+                   : "the family template stretched to the redline, held under the knock limit "
+                     "measured on the dyno when it is built", false });
 
         // Two-stroke ports and chamber.
         if (twoStroke) {

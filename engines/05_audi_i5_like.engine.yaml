@@ -73,6 +73,19 @@ engine:
       - { rpm: 3400, advance_deg: 17 }
       - { rpm: 5600, advance_deg: 18 }
       - { rpm: 7300, advance_deg: 16 }
+    # The full-load map above is a template: at the maker's 2.5 bar it put
+    # CA50 near 8 deg ATDC, where a boosted engine knocks well below its
+    # rated load, and the knock control held it 8-12 deg behind. Measured
+    # with `EngineLabKnockLimitCalibration --filter I5` (journal 2026-10-28):
+    # the knock limit, CA50 22-30 deg ATDC at 25 bar BMEP, as boosted
+    # engines run there.
+    knock_limit_curve:
+      - { rpm: 1500, advance_deg: -8.2, map_kpa: 149 }
+      - { rpm: 2549, advance_deg: -10.0, map_kpa: 248 }
+      - { rpm: 3598, advance_deg: -0.4, map_kpa: 247 }
+      - { rpm: 4647, advance_deg: -6.3, map_kpa: 247 }
+      - { rpm: 5696, advance_deg: -0.5, map_kpa: 247 }
+      - { rpm: 6745, advance_deg: 7.2, map_kpa: 247 }
   combustion_calibration:
     chamber_turbulence_intensity_ratio: 1.50
   uses:

@@ -37,12 +37,14 @@ PC than the reference one is allowed.
    bit-exact first; otherwise every dyno row within 0.1 % torque and power,
    `held_rpm_stddev` and every catalogue idle unchanged, audio octave bands
    within 0.1 dB and the Geometry harness `shape` at noise level -- one such
-   change measured alone. Done when no further lead is known.
-4. **Knock.** Fix the knock PHYSICS, not the damage model. The end gas knocks
-   and a stepped control holds the limit (2026-10-22/23). Done when the I5
-   holds its maker's boost without 8-12 deg of retard (Woschni's combustion
-   term was backed out: it stalls lugged engines) and the designer's ignition
-   is calibrated against the knock limit instead of a template.
+   change measured alone. Done when no further lead is known. So far: the
+   pool counts the processors the affinity allows (2026-10-28); open: the
+   half-reserve rule at 4 processors (measure the whole chain there).
+4. **Knock** -- closed 2026-10-28 (journal): at the limit the I5 runs CA50
+   22-30 deg ATDC at 25 bar BMEP, where boosted engines run, so the physics
+   stays; its template map was the error. `ignition.knock_limit_curve` holds
+   the map under the measured limit (the designer measures it at build); the
+   I5 holds 2.48 bar with 0-0.5 deg of retard left above 2,500 rpm.
 
 **Closed**: Linux (2026-10-20, `docs/platforms.md`); editing on the engine
 (2026-10-23); backfires (0.4.2, Audio workshop only, off on every load; known

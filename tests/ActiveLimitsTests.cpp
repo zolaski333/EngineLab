@@ -102,6 +102,40 @@ void checkEcu() {
         "a hot engine's protection retard is reported");
 }
 
+// A map calibrated against knock: at the pressure its limit was measured at
+// the spark is the limit, at part load the map, halfway between, half the gap.
+void checkKnockLimitCurve() {
+    auto config = enginelab::makeDefaultInlineFour();
+    const auto advanceAt = [](const enginelab::EngineConfig& engine, double manifoldPressureKpa) {
+        enginelab::SimpleEcuModel ecu;
+        ecu.initialiseCalibration(engine);
+        ecu.beginFrame();
+        enginelab::EngineState state;
+        state.rpm = 3'000.0;
+        state.manifoldPressureKpa = manifoldPressureKpa;
+        state.coolantTemperatureC = 90.0;
+        state.simulationTimeSeconds = 1.0;
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.throttle = 1.0;
+        return ecu.evaluate(engine, state, controls).ignitionAdvanceDegrees;
+    };
+    const auto full = config.ambientPressureKpa * 0.97;
+    const auto partLoad = config.ambientPressureKpa * 0.5;
+    const auto mapFull = advanceAt(config, full);
+    const auto mapPartLoad = advanceAt(config, partLoad);
+    require(mapFull > 12.0, "the default map is well advanced at 3,000 rpm");
+    config.ignition.knockLimitCurve = { { 2'000.0, 4.0, full }, { 4'000.0, 8.0, full } };
+    require(std::abs(advanceAt(config, full) - 6.0) < 1.0e-9,
+        "at the limit's own pressure the spark is the limit, interpolated in speed");
+    require(advanceAt(config, partLoad) == mapPartLoad, "part load keeps its map");
+    const auto onset = 0.7 * full;
+    const auto midway = 0.5 * (onset + full);
+    const auto mapMidway = advanceAt(enginelab::makeDefaultInlineFour(), midway);
+    require(std::abs(advanceAt(config, midway) - (mapMidway - 0.5 * (mapMidway - 6.0))) < 1.0e-9,
+        "halfway from the onset, half the gap to the limit");
+}
+
 struct Engine final {
     explicit Engine(const enginelab::EngineConfig& config)
         : exhaust(enginelab::ExhaustGraph::makeForEngine(config)),
@@ -287,6 +321,7 @@ void checkDynoCeiling(const enginelab::EngineConfig& cp2) {
 int main() {
     try {
         checkEcu();
+        checkKnockLimitCurve();
         const auto catalog = enginelab::loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
         require(catalog.errors.empty(), "the catalogue must load");
         checkSimulator(catalog);

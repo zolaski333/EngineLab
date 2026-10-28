@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-28 — Knock: the physics holds; the map is now calibrated against the limit
+
+- New `EngineLabKnockLimitCalibration` (`calibrateKnockLimit`): WOT on the dyno at six speeds from 0.95 of the limiter down, knock control on; the settled spark is the limit (a control past 0.75 of its 12 deg authority gets the map moved and the point measured again, twice at most); CA50 of cylinder 1 from 0.5 deg heat-release bins.
+- I5 at 2.48 bar (25 bar BMEP): limit -10 to -0.4 deg, CA50 22-30 deg ATDC; 2JZ at 1.9 bar 0.8-10.8 deg, CA50 24-29; K20 (NA) within 1.3 deg of its map, CA50 7-14. The literature has boosted engines knock-limited past ~10 bar BMEP at 2,000 rpm (Ford 1.6 GTDI, CR 10.5: MBT CA50 8 is the limit there) and running CA50 up to the ~30 deg stability limit at full load (SwRI/EPA VNT study, 2018). So the physics is not shown to over-knock: the I5's template map (17 deg, CA50 ~8) was the error. Not compared with a real I5 trace.
+- `ignition.knock_limit_curve`: the ECU holds the map under the limit in proportion to the MAP's climb from the ambient (boosted) or 0.7 of the limit's MAP to the measured one; the engine designer measures it for every spark-ignition design at build. The I5 carries its measured curve.
+- I5 `DynoSweepHarness --step 500`, before -> after: knock mean 0.02-0.23 -> 0-0.09 (0 at 7 of 10 rows), spark -6.1..+1.3 -> -10..+3.0 deg, MAP 247-248 both, torque 529-560 -> 510-546 N.m (maker 500), power 305.3 -> 305.7 kW. `--verify`: retard left 0-0.5 deg from 2,549 rpm, 4.1 at 1,500 where the -10 deg floor binds.
+- Limits: the limit is read off a sawtooth (fast pull, 1 deg/s return) over 2 s, so neighbours scatter by ~5 deg (I5 3,598 -0.4, 4,647 -6.3); the MAP fade between onset and the measured pressure is assumed linear, not measured. The I5's full-load sound moves with its spark; not rendered.
+
 ## 2026-10-28 — The worker pool counts the processors the process may use
 
 - Profile (new `SamplingProfiler`, LS3 physics, 12 processors): no hotspot -- the exhaust FV solver leads, `pow` ~5 %, the two workers spin ~60 %, the master waits 11.6 %. The pool was sized from `hardware_concurrency()`, which ignores the affinity mask: under `start /affinity 3` an engine still got 3 spinning workers on 2 processors.

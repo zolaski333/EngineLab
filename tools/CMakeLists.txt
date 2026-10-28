@@ -231,3 +231,7 @@ if(WIN32)
     target_link_libraries(EngineLabSamplingProfiler PRIVATE Dbghelp winmm)
     enginelab_set_warnings(EngineLabSamplingProfiler)
 endif()
+
+add_executable(EngineLabKnockLimitCalibration KnockLimitCalibration.cpp)
+target_link_libraries(EngineLabKnockLimitCalibration PRIVATE EngineLab::Runtime EngineLab::Catalog)
+enginelab_set_warnings(EngineLabKnockLimitCalibration)

@@ -679,6 +679,14 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             ports["intake_port_reed"] = config.twoStroke.intakePortReed;
         }
     }
+    // Only a measured limit: an uncalibrated file is unchanged.
+    if (!config.ignition.knockLimitCurve.empty()) {
+        Json knockLimitCurve = Json::array();
+        for (const auto& sample : config.ignition.knockLimitCurve)
+            knockLimitCurve.push_back({ {"rpm", sample.rpm}, {"advance_deg", sample.advanceDegrees},
+                                        {"map_kpa", sample.manifoldPressureKpa} });
+        document["engine"]["ignition"]["knock_limit_curve"] = knockLimitCurve;
+    }
     return document.dump(2);
 }
 
@@ -985,6 +993,12 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 config.ignition.timingCurve.clear();
                 for (const auto& sample : ignition.at("timing_curve"))
                     config.ignition.timingCurve.push_back({ sample.at("rpm"), sample.at("advance_deg") });
+            }
+            if (ignition.contains("knock_limit_curve")) {
+                config.ignition.knockLimitCurve.clear();
+                for (const auto& sample : ignition.at("knock_limit_curve"))
+                    config.ignition.knockLimitCurve.push_back({ sample.at("rpm"), sample.at("advance_deg"),
+                                                                sample.at("map_kpa") });
             }
         } else config.ignition.revLimitRpm = config.redlineRpm;
         if (engine.contains("injection")) {
