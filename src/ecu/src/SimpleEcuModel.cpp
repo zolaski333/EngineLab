@@ -238,7 +238,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             idleDashpot = std::max(idleDashpot,
                 std::clamp(effectiveThrottle * 2.0, 0.0, 0.65));
         } else if (state.rpm < targetRpm * 1.30
-                || normalizedRpmRate > -coastingNormalizedRpmRate) {
+                || normalizedRpmRate > -coastingNormalizedRpmRate
+                || config.cycle == EngineCycle::twoStroke) {
             // Near idle, or no longer coasting down: hand back to the
             // governor, bleeding the dashpot out.
             idleDashpot *= std::exp(-idleDt * 1.25);
@@ -260,6 +261,12 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // learned lambda trim no longer went lean after a fuel-cut resume, the
         // EJ25 sat at 1,200 rpm (1.46 x idle) for good, the dashpot held by
         // the very speed it was holding.
+        //
+        // Never held on a two-stroke: it keeps its fuel on overrun (below),
+        // so there is no cut-and-vacuum relight to protect, and the held air
+        // fed it instead. On Blair's lower friction the RD350 then coasted
+        // from 9,970 rpm at 450-900 rpm/s and was still at 2,262 rpm 12 s
+        // after a WOT blip (journal 2026-10-28).
         //
         // Post-start air.
         //

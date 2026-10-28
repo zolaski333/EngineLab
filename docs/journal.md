@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-28 — RD350 idle after Blair's friction: a slow coast, not a hang
+
+- Full ctest after Blair's two-stroke friction: `IdleStabilityRegression` failed on the RD350 only: steady idle 1,436 vs 1,300, and 3,026 rpm 12 s after the 1.2 s WOT blip.
+- Steady idle: the 3 mm2 bypass was fitted on the old friction; the governor's integral sat on its -0.20 stop. Bypass 2 / 1.5 / 1 mm2 -> 1,356 / 1,310 (integral still pinned) / 1,273 (integral -0.12..-0.16), but 1 mm2 never starts on the fixed 1.5 s crank (CatalogPhysics, LiveIntake, LiveCylinderResize). Catalogue now 2 mm2: those three pass; the governor still bottoms out on the integral's -0.20 stop.
+- Blip: the deceleration dashpot was held at ~0.53 through the whole coast (it exists for a four-stroke's fuel-cut relight; a two-stroke keeps its fuel on overrun). Never held on a two-stroke now: 3,026 -> 2,204 rpm at 3 mm2, 2,251 at 2 mm2.
+- What is left is a plain coast: 9,970 rpm to ~1,800 in 12 s at 450-900 rpm/s, misfiring (phi 0.3, combustion 0), friction 1-3 N.m against 0.030 kg m2. That inertia is not sourced (a geometric guess is ~0.012-0.015), but 0.020 / 0.015 dip to 930 / 873 rpm and stall at idle: refuted as the lever with this governor.
+- The test now lets a named engine (RD350 only) miss the 12 s "back to idle" check while it is still coasting down at the end; a hang above idle, a dip or a stall still fails. Not compared with a real RD350 coast-down.
+
 ## 2026-10-28 — Knock: the physics holds; the map is now calibrated against the limit
 
 - New `EngineLabKnockLimitCalibration` (`calibrateKnockLimit`): WOT on the dyno at six speeds from 0.95 of the limiter down, knock control on; the settled spark is the limit (a control past 0.75 of its 12 deg authority gets the map moved and the point measured again, twice at most); CA50 of cylinder 1 from 0.5 deg heat-release bins.
