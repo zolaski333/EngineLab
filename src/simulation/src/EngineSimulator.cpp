@@ -2514,6 +2514,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             + cycleDegrees, cycleDegrees),
                         0.0, sparkScheduleMaximumTravelDegrees);
                 sparkScheduleArmed_[cylinderIndex] = true;
+                dieselInjectionStarted_[cylinderIndex] = false;
             } else if (sparkScheduleArmed_[cylinderIndex]) {
                 // `forwardPhaseDegrees` wraps, so a momentarily REVERSING crank
                 // -- start kickback is real here -- reports ~720 deg of forward
@@ -2532,6 +2533,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 scheduledSparkPhaseDegrees_[cylinderIndex];
             const auto sparkCrossed = sparkScheduleArmed_[cylinderIndex]
                 && sparkScheduleTravelRemainingDegrees_[cylinderIndex] <= 0.0;
+            // A diesel has no spark: its ECU advance is the start of
+            // injection, and the spark schedule is the crank event that opens
+            // the injector. The part's window still bounds it, so an advance
+            // earlier than the window's start injects from that start.
+            if (compressionIgnitionEngine && sparkCrossed)
+                dieselInjectionStarted_[cylinderIndex] = true;
             const auto injectionStartCrossed = crossedPhase(previousPhase, cyclePhase,
                 config_.injection.startAngleDegrees, cycleDegrees);
             if (injectionStartCrossed) {
@@ -2922,6 +2929,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 && (!portInjection
                     || !portFuelResumePending_[cylinderIndex]
                     || portFuelResumePrepared_[cylinderIndex])
+                && (!compressionIgnitionEngine
+                    || dieselInjectionStarted_[cylinderIndex])
                 && insideInjectionWindow) {
                 // Meter to the requested physical inventory, accounting for
                 // vapour already present and port-wall film. Counting only the
@@ -3426,7 +3435,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     cycleCalibration,
                     { cyclePhase,
                       2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
-                      compressionIgnitionAvailable },
+                      compressionIgnitionAvailable,
+                      injectedFuelMolesThisCycle_[cylinderIndex] > 0.0 },
                     combustionDt);
                 if (!wasAutoIgnited && compressionResult.autoIgnited) {
                     residualGasFractionAtSpark_[cylinderIndex] =
@@ -3696,6 +3706,29 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto cylinderGasTemperatureK = cylinderGas_[cylinderIndex].temperatureK();
             const auto cylinderGasHeatCapacityJPerK = cylinderGas_[cylinderIndex].totalMoles()
                 * cylinderGas_[cylinderIndex].molarHeatCapacityCvEffective();
+            const auto valvesOpen = intakeLift > 0.01 || exhaustLift > 0.01;
+            if (exhaustLift > 0.01) woschniReferenceValid_[cylinderIndex] = false;
+            // Woschni's combustion term (SAE 670931; C2 = 3.24e-3 m/(s K),
+            // fitted on a direct-injection diesel): the gas the burn sets in
+            // motion, from the pressure above the motored one. Without it
+            // the TDI turned 51 % of its fuel into indicated work at full
+            // load, where a real one turns 45-47 % (journal 2026-10-28).
+            // Diesel only: the spark engines' calibrations and starts were
+            // measured without it (journal 2026-10-23).
+            auto combustionGasVelocityMps = 0.0;
+            if (compressionIgnitionEngine && !valvesOpen
+                    && woschniReferenceValid_[cylinderIndex]) {
+                const auto referenceVolumeL = woschniReferenceVolumeL_[cylinderIndex];
+                const auto referencePressureKpa = woschniReferencePressureKpa_[cylinderIndex];
+                const auto motoredPressureKpa = referencePressureKpa
+                    * std::pow(referenceVolumeL / std::max(1.0e-9, chamberVolume), 1.35);
+                const auto displacementL = std::numbers::pi * 0.25 * cylinder.boreMm
+                    * cylinder.boreMm * cylinder.strokeMm * 1.0e-6;
+                combustionGasVelocityMps = 3.24e-3 * displacementL
+                    * woschniReferenceTemperatureK_[cylinderIndex]
+                    / (referencePressureKpa * referenceVolumeL)
+                    * std::max(0.0, chamberKpa - motoredPressureKpa);
+            }
             const auto wallHeatTransfer = CylinderHeatTransferModel::evaluate({
                 cylinder.boreMm * 0.001,
                 kinematics.pistonTravelMm * 0.001,
@@ -3706,7 +3739,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 cylinderGasHeatCapacityJPerK,
                 config_.combustionCalibration.wallHeatTransferCoefficientWPerK,
                 subDt,
-                intakeLift > 0.01 || exhaustLift > 0.01,
+                valvesOpen,
+                combustionGasVelocityMps,
             });
             cylinderGas_[cylinderIndex].addHeatJoules(wallHeatTransfer.heatToGasJ);
             if (cylinder.blowByCoefficient > 0.0) {
@@ -3739,6 +3773,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 : cams.intakeDuration();
             intakeCloseForTrappedAir[cylinderIndex] = crossedPhase(
                 previousPhase, cyclePhase, intakeClosePhase, cycleDegrees);
+            if (compressionIgnitionEngine && intakeCloseForTrappedAir[cylinderIndex]) {
+                woschniReferenceValid_[cylinderIndex] = chamberKpa > 0.0 && chamberVolume > 0.0;
+                woschniReferenceVolumeL_[cylinderIndex] = chamberVolume;
+                woschniReferencePressureKpa_[cylinderIndex] = chamberKpa;
+                woschniReferenceTemperatureK_[cylinderIndex] = cylinderGas_[cylinderIndex].temperatureK();
+            }
             if (forwardIntakeFlush) {
                 // Where this chamber and its intake valve will be at the end of
                 // the interval the network is about to run ahead over. The
@@ -6486,6 +6526,8 @@ void EngineSimulator::reset() noexcept {
     ignitionPending_.fill(false);
     sparkScheduleArmed_.fill(false);
     scheduledSparkPhaseDegrees_.fill(0.0);
+    dieselInjectionStarted_.fill(false);
+    woschniReferenceValid_.fill(false);
     sparkScheduleTravelRemainingDegrees_.fill(0.0);
     commandedSparkEventsThisCycle_.fill(0);
     commandedSparkEventsLastCycle_.fill(0);

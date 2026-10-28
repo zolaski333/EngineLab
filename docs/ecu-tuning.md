@@ -14,7 +14,7 @@ The set created with each engine contains:
 | Identifier | Shape | Effect |
 |---|---|---|
 | `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target |
-| `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections |
+| `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections; on a diesel, the start of injection (deg BTDC), no earlier than the injection part's window |
 | `limits.rev_rpm` | scalar | rev limiter threshold |
 | `limits.launch_rpm` | scalar | launch control (two-step) rev limit; 0 = off |
 | `knock.retard_deg_per_intensity` | scalar | knock control gain (spark-ignition only) |

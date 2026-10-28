@@ -7,6 +7,19 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Changed
+
+- **A diesel injects when its map says.** The ECU's advance is a diesel's
+  start of injection (deg BTDC, editable in the ECU tuner), where it used to
+  inject from a fixed 20 deg BTDC whatever the map. The ignition delay now
+  runs from that injection, at Assanis et al.'s published value, and the burn
+  loses heat to the walls as a diesel's does (Woschni's combustion term). The
+  TDI's full-load firing peak falls from 231 to 156 bar, its fuel
+  consumption from 171 to 191-210 g/kWh (a real one: ~195-210), and its torque
+  at 2,000 rpm from 347 to 308 N.m (rated 320). A saved diesel keeps the
+  ignition delay scale it was saved with: 3.0 was the old default, 1.0 the
+  published delay (about 3 deg later combustion, under 1 % of torque).
+
 ## [0.5.0] — 2026-10-28
 
 ### Added

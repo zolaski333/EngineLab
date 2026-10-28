@@ -82,6 +82,7 @@ CompressionIgnitionResult CompressionIgnitionModel::advance(
         conditions.cyclePhaseDegrees >= 540.0
         || conditions.cyclePhaseDegrees < 180.0;
     const auto inductionEligible = conditions.enabled
+        && conditions.injectionStarted
         && compressionOrPowerStroke
         && burnableFuel > 1.0e-15
         && chamber.mixture().oxygenMoles > 1.0e-12
