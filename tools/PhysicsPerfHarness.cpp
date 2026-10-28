@@ -203,7 +203,7 @@ StepMetrics measurePoint(
  */
 void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                  double throttle, bool freeIdle, bool watchSettle,
-                 double exhaustCellMm) {
+                 double exhaustCellMm, double settleSeconds) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     const auto kinematicsReference =
@@ -250,7 +250,10 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
     if (watchSettle)
         std::cout << "t_s,rpm,map_kpa,throttle,afr,fuel_mg,misfire,irt_c,net_nm,cylp_bar,"
                      "boost,wastegate,shaft_krpm,turbine_kw,back_kpa,cycle_nm\n";
-    for (int step = 0; step < static_cast<int>((freeIdle ? 12.0 : 4.0) / dt); ++step) {
+    // `--settle S` holds longer before the cycle is dumped: a turbo diesel's
+    // boost is still rising after the default 4 s.
+    const auto holdSeconds = settleSeconds > 0.0 ? settleSeconds : freeIdle ? 12.0 : 4.0;
+    for (int step = 0; step < static_cast<int>(holdSeconds / dt); ++step) {
         const auto frame = drive(dt);
         if (watchSettle && step % 6 == 0) {
             const auto& c = frame.state.cylinderStates[0];
@@ -653,6 +656,7 @@ int main(int argc, char** argv) {
     auto freeRevSeconds = 12.0;
     auto freeRevReleaseSeconds = -1.0;
     auto freeRevSettleSeconds = 6.0;
+    auto settleGiven = false;
     auto idleFiringSeconds = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -675,11 +679,12 @@ int main(int argc, char** argv) {
             freeRevReleaseSeconds = std::max(0.0, std::stod(argv[++index]));
         else if (argument == "--idle-firing" && index + 1 < argc)
             idleFiringSeconds = std::max(1.0, std::stod(argv[++index]));
-        else if (argument == "--settle" && index + 1 < argc)
+        else if (argument == "--settle" && index + 1 < argc) {
             freeRevSettleSeconds = std::max(1.0, std::stod(argv[++index]));
-        else {
+            settleGiven = true;
+        } else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--runs count] [--trace rpm [--exhaust-cell-mm mm]]"
+                         " [--filter name-fragment] [--runs count] [--trace rpm [--exhaust-cell-mm mm] [--settle S]]"
                          " [--throttle 0..1] [--idle] [--overrun seconds]"
                          " [--freerev 0..1 [--seconds S] [--release S]]"
                          " [--idle-firing S [--settle S]]\n";
@@ -720,7 +725,7 @@ int main(int argc, char** argv) {
     // --trace is a single-engine instrument: pair it with --filter.
     if (traceRpm > 0.0) {
         traceEngine(engines.front(), traceRpm, traceThrottle, traceFreeIdle, traceWatch,
-                    traceExhaustCellMm);
+                    traceExhaustCellMm, settleGiven ? freeRevSettleSeconds : 0.0);
         return EXIT_SUCCESS;
     }
     if (freeRevThrottle >= 0.0) {
