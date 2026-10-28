@@ -26,15 +26,11 @@ PC than the reference one is allowed.
 1. **Base** -- the reference PC (i5-10600) builds on BuildTools 14.44 (owner,
    2026-10-26); VISION.md has no pilot engine any more; instrument baselines
    re-taken on 14.44.
-2. **The two-stroke model.** Done when the catalogue RD350 and designed 1-, 2-
-   and 3-cylinder two-strokes give curves within ~15 % of maker figures with no
-   chaotic humps, `held_rpm_stddev` bounded over the range, a held idle, a
-   dilution misfire limit grounded in the literature (not the model's CP4
-   idle), and a designer that lists no valve or injector rows for them. So far:
-   scavenging by the integrated front (2026-10-21), a carburettor (-22), a
-   power valve and the 240 Hz alias found (-23), the idle misfire and one pipe
-   per thread (-24). The reed stays a perfect check valve until a measured gap
-   asks for its petals.
+2. **The two-stroke model** -- closed 2026-10-28 (journal): the road designs
+   are within 2 % of their makers at the converged 25 mm mesh and 11-15 % below
+   at production (a real-time budget limit); the sport designs keep their gap
+   (their 17.5 m/s redline). A two-stroke takes Blair's friction. The reed
+   stays a perfect check valve until a measured gap asks for its petals.
 3. **Optimisation of the whole simulation**, never per engine: physics, sound
    and threads use the computer fully, measured with 12, 4 and 2 processors
    (process affinity) on a fixed panel of 2T and 4T engines. Quality bar:
@@ -224,7 +220,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   crankcase); a transit-vs-window scavenging race (monotonic in rpm by
   construction); a scavenging bias from ONE pressure sample at port opening (a
   hunting limit cycle over 4,500-6,250 rpm: integrate the front); "the trapped
-  residual is too low" (a unit error). A holding band locked to crank speed is
+  residual is too low" (a unit error); "the pipe gas is too hot" (418-553 C,
+  under a real pipe); the designer's redline from real piston speeds (road
+  14.8, sport 17.8 m/s: torque falls as the pipe follows the rpm). A holding band locked to crank speed is
   first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it.
 - **Intake**: four inertance formulations (unstable or out of phase); the charge
   bias as the MUSCL limiter, the finite plenum, wall heat or valve linearisation

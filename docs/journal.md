@@ -5,6 +5,21 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-28 — The worker pool counts the processors the process may use
+
+- Profile (new `SamplingProfiler`, LS3 physics, 12 processors): no hotspot -- the exhaust FV solver leads, `pow` ~5 %, the two workers spin ~60 %, the master waits 11.6 %. The pool was sized from `hardware_concurrency()`, which ignores the affinity mask: under `start /affinity 3` an engine still got 3 spinning workers on 2 processors.
+- Change: `platform::usableProcessorCount()` (affinity mask on Windows, `sched_getaffinity` on Linux) sizes the pool and the health panel; the policy (half reserved, workload caps) is unchanged. `ThreadScheduling` test: 2 under a two-processor mask (fails at 12 without the read).
+- `RealtimeBudgetHarness --relative-rpm 0.9 --free-run --warmup 2 --seconds 8`, before/after interleaved, 4 rounds, round 0 discarded; min-max, before -> after. 2 processors: 2JZ 0.26-0.33 -> 1.27-1.31, LS3 0.22-0.25 -> 0.84-0.91, Merlin 0.22 -> 1.03-1.04, V4 2T 0.35 -> 0.49-0.50, RD350 1.06-1.09 -> 1.09-1.10, CP2 1.84-1.93 -> 1.88-1.98.
+- 4 processors: 2JZ 0.83-1.17 -> 1.24-1.27; Merlin 1.50-1.52 -> 1.29-1.35, CP2 1.90-1.95 -> 1.81-1.89, LS3 and V4 -2 to -3 %, RD350 equal. 12: equal within noise (bit-exact physics, the same pool).
+- The 4-processor loss is the half-reserve rule now biting (Merlin 3 workers -> 1); the wrong count used to bypass it. Kept: the rule protects audio and UI, and the whole chain at 4 processors was not measured -- that measurement decides it.
+
+## 2026-10-28 — Two-stroke closing panel at the 25 mm mesh: the mesh owns the gap
+
+- Same designs, Blair's friction, `DynoSweepHarness --step 500 --settle 8`, production (100 mm) against `--exhaust-cell-mm 25` (within 1 % of converged, journal 2026-10-21). Peak torque / power, N.m / kW, maker in brackets:
+- rd350 (road twin) 35.7 / 30.8 -> 39.5 / 35.2 (40.2 / 34.5); H1 (road triple, piston port) 47.7 / 37.4 -> 55.7 / 43.7 (56 / 44.7); TZR250 (sport twin) 28.1 / 28.0 -> 31.8 / 30.6 (35.5 / 37.3); RS125 (sport single) 15.6 / 14.7 -> 18.3 / 17.2 (25 / 24.8 at 11,000, beyond the designed 9,600 redline); V4 57.6 / 57.3 -> 63.8 / 63.3 (no maker).
+- Converged, the road designs are within 2 % of their makers; production sits 11-15 % below, the mesh's numerical diffusion of the blowdown front (2026-10-21), a real-time budget limit. The sport designs keep -10 to -31 % at convergence: their redline (17.5 m/s) is below the race-replicas' 20 m/s, and raising it was refuted (2026-10-26).
+- `held_rpm_stddev` max: 1.5-4.4 rpm, the H1 14.1 below 5,000 rpm (its rich piston-port blowback; 10-12 at production).
+
 ## 2026-10-26 — The dilution misfire band sits at the limit flame temperature
 
 - Literature: lean-limit flames of hydrocarbons in air have an adiabatic flame temperature near 1,500-1,600 K (NIST NBSIR 76-1076; Zabetakis 1965, 1,573 K; lower at engine pressure, Egolfopoulos-Holley-Law 2005); Yamaha's SAE 830091 judges a two-stroke's light-load irregular firing by that temperature. No source gives a residual fraction.

@@ -71,4 +71,13 @@ LatencyCriticalThreadResult requestLatencyCriticalThread() noexcept;
  */
 void simulateBackgroundThrottlingForMeasurement() noexcept;
 
+/**
+ * The logical processors this process may run on: its affinity mask's when
+ * one restricts it (a container, `start /affinity`, taskset), otherwise
+ * std::thread::hardware_concurrency(), which ignores the mask. A pool sized
+ * from the latter on two allowed processors put four spinning threads on
+ * them (journal 2026-10-25).
+ */
+[[nodiscard]] unsigned usableProcessorCount() noexcept;
+
 } // namespace enginelab::platform

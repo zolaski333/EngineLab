@@ -2,7 +2,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstddef>
+#include <thread>
+#if defined(__linux__)
+#include <sched.h>
+#endif
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -104,5 +109,23 @@ void requestLatencyCriticalProcess() noexcept {}
 
 LatencyCriticalThreadResult requestLatencyCriticalThread() noexcept { return {}; }
 #endif
+
+unsigned usableProcessorCount() noexcept {
+#if defined(_WIN32)
+    // A mask equal to the system's is no restriction; reading it then would
+    // count one processor group only on a machine with more than 64.
+    DWORD_PTR processMask = 0;
+    DWORD_PTR systemMask = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask)
+        && processMask != 0 && processMask != systemMask)
+        return static_cast<unsigned>(std::popcount(static_cast<std::uint64_t>(processMask)));
+#elif defined(__linux__)
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    if (sched_getaffinity(0, sizeof(set), &set) == 0 && CPU_COUNT(&set) > 0)
+        return static_cast<unsigned>(CPU_COUNT(&set));
+#endif
+    return std::thread::hardware_concurrency();
+}
 
 } // namespace enginelab::platform

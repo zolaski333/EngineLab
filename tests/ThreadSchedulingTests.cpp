@@ -1,9 +1,16 @@
 #include <enginelab/foundation/ThreadScheduling.hpp>
 
+#include <bit>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
 #include <vector>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#endif
 
 namespace {
 void require(bool condition, const char* message) {
@@ -64,6 +71,27 @@ int main() {
                   << " (0 = uniform processor, not restricted)\n";
     });
     probe.join();
+
+    // A process held to two processors sizes its pools for two, whatever the
+    // machine has.
+    const auto unrestricted = enginelab::platform::usableProcessorCount();
+    require(unrestricted >= 1, "a process may run on at least one processor");
+#if defined(_WIN32)
+    DWORD_PTR processMask = 0;
+    DWORD_PTR systemMask = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask)
+        && std::popcount(static_cast<std::uint64_t>(systemMask)) > 2) {
+        const auto lowestBit = [](DWORD_PTR mask) { return mask & (~mask + 1); };
+        const auto first = lowestBit(systemMask);
+        const auto second = lowestBit(systemMask & ~first);
+        require(SetProcessAffinityMask(GetCurrentProcess(), first | second) != 0,
+            "the test can restrict its own affinity");
+        const auto restricted = enginelab::platform::usableProcessorCount();
+        SetProcessAffinityMask(GetCurrentProcess(), processMask);
+        std::cout << "usable processors: " << unrestricted << ", held to two: " << restricted << '\n';
+        require(restricted == 2, "a process held to two processors may use two");
+    }
+#endif
     std::cout << "ThreadScheduling tests passed\n";
     return 0;
 }

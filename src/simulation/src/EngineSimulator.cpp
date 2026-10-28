@@ -1,6 +1,7 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/foundation/ForcedInductionFlow.hpp>
+#include <enginelab/foundation/ThreadScheduling.hpp>
 #include <enginelab/simulation/EngineThermalModel.hpp>
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -719,7 +720,7 @@ void EngineSimulator::configureIntakeWorkerPool() {
     if (options_.intakeWorkerCount.has_value()) {
         workerCount = std::min(*options_.intakeWorkerCount, cylinderCount - 1);
     } else {
-        const auto reportedConcurrency = std::thread::hardware_concurrency();
+        const auto reportedConcurrency = platform::usableProcessorCount();
         if (reportedConcurrency < 4) return;
         const auto usableThreads = std::max<std::size_t>(1, reportedConcurrency / 2);
         const std::size_t workloadWorkerCap =
