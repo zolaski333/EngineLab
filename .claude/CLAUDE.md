@@ -17,41 +17,35 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Owner's plan of 2026-10-26**: close the open work streams, in order, each
-against the end criterion written here before it starts. **Feature freeze**
-until the plan ends: no new feature, only what an item's criterion needs. No
-limit on what a user may build (cylinders, size): an engine that needs a faster
-PC than the reference one is allowed.
+**No current plan.** The owner's plan of 2026-10-26 closed on 2026-10-28
+(released 0.5.0; the owner accepted every outcome and every open point
+below). Ask the owner before starting anything new. Standing rule: no limit
+on what a user may build (cylinders, size); an engine that needs a faster PC
+than the reference one is allowed.
 
-1. **Base** -- the reference PC (i5-10600) builds on BuildTools 14.44 (owner,
-   2026-10-26); VISION.md has no pilot engine any more; instrument baselines
-   re-taken on 14.44.
-2. **The two-stroke model** -- closed 2026-10-28 (journal): the road designs
-   are within 2 % of their makers at the converged 25 mm mesh and 11-15 % below
-   at production (a real-time budget limit); the sport designs keep their gap
-   (their 17.5 m/s redline). A two-stroke takes Blair's friction. The reed
-   stays a perfect check valve until a measured gap asks for its petals.
-3. **Optimisation of the whole simulation**, never per engine: physics, sound
-   and threads use the computer fully, measured with 12, 4 and 2 processors
-   (process affinity) on a fixed panel of 2T and 4T engines. Quality bar:
-   bit-exact first; otherwise every dyno row within 0.1 % torque and power,
-   `held_rpm_stddev` and every catalogue idle unchanged, audio octave bands
-   within 0.1 dB and the Geometry harness `shape` at noise level -- one such
-   change measured alone. Done when no further lead is known. Closed
-   2026-10-28 (journal): the pool counts the processors the affinity allows;
-   the half-reserve rule holds at 4 processors (three workers break the
-   audio); every lead left fails the bar (see Refuted, Performance).
-4. **Knock** -- closed 2026-10-28 (journal): at the limit the I5 runs CA50
-   22-30 deg ATDC at 25 bar BMEP, where boosted engines run, so the physics
-   stays; its template map was the error. `ignition.knock_limit_curve` holds
-   the map under the measured limit (the designer measures it at build); the
-   I5 holds 2.48 bar with 0-0.5 deg of retard left above 2,500 rpm.
+What the plan settled (journal 2026-10-28):
+- **Base**: the reference PC (i5-10600) builds on BuildTools 14.44; VISION.md
+  has no pilot engine.
+- **Two-stroke model**: road designs within 2 % of their makers at the 25 mm
+  mesh, 11-15 % below at production (accepted); sport designs keep their gap;
+  Blair's friction; the reed stays a perfect check valve until a measured gap
+  asks for its petals. The RD350's slow coast to idle is a named exception in
+  `IdleStabilityRegression` (accepted; its 0.030 kg m2 inertia is unsourced).
+- **Optimisation** (quality bar for any later one: bit-exact first; otherwise
+  every dyno row within 0.1 % torque and power, `held_rpm_stddev` and every
+  catalogue idle unchanged, audio octave bands within 0.1 dB, Geometry
+  `shape` at noise level): the pool counts the processors the affinity
+  allows; the half-reserve holds at 4 processors; no lead left inside the bar.
+- **Knock**: the physics stays; `ignition.knock_limit_curve` holds the map
+  under the measured limit (the designer measures it at build).
+- Known and accepted: H1 low-speed hunting; the `UserDynoRampCP2Complete`
+  start-loop flake.
 
 **Closed**: Linux (2026-10-20, `docs/platforms.md`); editing on the engine
 (2026-10-23); backfires (0.4.2, Audio workshop only, off on every load; known
 limits in `docs/physical-afterfire.md`, reopened only on a measured lead).
 
-**Sound leads, unverified, for after the plan**: the ~3.8 kHz ceiling
+**Sound leads, unverified**: the ~3.8 kHz ceiling
 (`docs/physical-afterfire.md`) and the plane-mode cutoff
 (`docs/thermoacoustic-architecture.md` 25.2), judged against any real
 recording at a known speed (`docs/recording-protocol.md`). No fix may require
