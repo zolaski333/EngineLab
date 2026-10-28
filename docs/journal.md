@@ -13,7 +13,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Generalisation, no tuning: designed EA288 from bore/stroke/CR 320 N.m (-0.1 %), 101 kW (-7.9 %); M57TU 485 N.m (+18 %: the designer's 2.3 boost and fuel map, not the 2003 calibration), 153 kW (+2 %); 6BT at 1.6 boost, 2,800 rpm: 633 N.m / 133 kW against 542 / 119 (+17 / +11 %). All BSFC 183-210 at 2,000-3,000, Pmax 131-165.
 - Idle (`--idle-firing 20 --settle 8`, 5 diesels): rpm sd 14-26, as before (TDI 819 -> 800 rpm). TDI idle: Pmax 47 -> 49, CA50 12 -> 8, dp/dtheta 1.4 -> 1.8.
 - Sound, `AudioRenderHarness --catalogue-filter TDI` (2,790 rpm): RMS +0.8 dB, bands 76/24 -> 70/30 %, brightness 0.067 -> 0.066. One point, not blind-listened, not compared with a recording.
-- Not done: the petrol over-efficiency (its own question); EGT still low (384-672 C); premixed share fixed at 8 % (Watson's would depend on the delay, the idle clatter); the full ctest (the app was running).
+- Not done: the petrol over-efficiency (its own question); EGT still low (384-672 C); premixed share fixed at 8 % (Watson's would depend on the delay, the idle clatter). Full ctest: 93/93 in 43 min 26 s.
 
 ## 2026-10-28 — Optimisation: the half-reserve at 4 processors holds; no lead left inside the bar
 
