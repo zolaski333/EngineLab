@@ -8,8 +8,8 @@ body:
         Thank you. EngineLab's sound is judged against real engines, and a
         recording at a **known engine speed** is the most useful thing a
         non-programmer can give the project. The
-        [recording protocol](https://github.com/zolaski333/EngineLab/blob/main/docs/recording-protocol-cp2.md)
-        says how; it is written for the MT-07 but works for any engine.
+        [recording protocol](https://github.com/zolaski333/EngineLab/blob/main/docs/recording-protocol.md)
+        says how, for any engine.
 
         Please do not attach the audio here: upload it somewhere stable
         (Freesound, Zenodo, a cloud folder) and paste the link.

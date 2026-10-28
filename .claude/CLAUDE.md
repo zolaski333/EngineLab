@@ -17,52 +17,44 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Owner's mandate of 2026-10-20**, in order, each finished before the next:
+**Owner's plan of 2026-10-26**: close the open work streams, in order, each
+against the end criterion written here before it starts. **Feature freeze**
+until the plan ends: no new feature, only what an item's criterion needs. No
+limit on what a user may build (cylinders, size): an engine that needs a faster
+PC than the reference one is allowed.
 
-1. **Linux** -- done 2026-10-20, CI green; `docs/platforms.md` says what differs
-   from the Windows reference.
-2. **The two-stroke model.** Whatever 2T engine is designed, the curves come out
-   chaotic and neither the behaviour nor the sound is a real two-stroke's. Free
-   rein to add what a 2T needs (carburettor, reed and power valves) or to rework
-   the ports deeply. Half the chaos was the scavenging model (fixed 2026-10-21)
-   and a carburettor exists (2026-10-22); the 3,500/7,000/7,500 rpm holding
-   band was the 240 Hz frame's alias of the firing ripple, and a power valve
-   exists (2026-10-23). The idle misfires on its diluted charge, and the pipes
-   run one per thread (twin 2.1, triple 1.65, V4 1.25 x real time; 2026-10-24).
-   The reed stays a perfect check valve until a measured gap asks for its
-   petals (VISION.md's decision rule).
-3. **Performance**: test duration, build time, real-time factor. JUCE compiles
-   once since 2026-10-23 (Linux CI build 18 -> 4.5 min, Windows 25 -> 32: one
-   serial MSBuild project). Open, and measurable only on the reference machine:
-   the V10-V16 designs below real time (pool spin vs park, duct numerics).
-4. **Knock.** Most engines, even the biggest, survive a boost plus an advance
-   that would destroy a real one. Fix the knock PHYSICS, not the damage model.
-   The designer's ignition is a template because there is no knock limit to
-   calibrate MBT against, so this item unblocks that one. The end gas knocks
-   since 2026-10-22, a stepped control holds the limit, and Douaud-Eyzat's
-   prefactor (x2) puts the catalogue's maps at their limit (2026-10-23). Open:
-   the I5 holds 8-12 deg of retard at its maker's boost; Woschni's combustion
-   term (right for the TDI's BSFC, it stalls lugged engines) was backed out.
-5. **Editing on the engine** -- done 2026-10-23, each checked on screen
-   (journal): compression ratio on the liner/piston, every turbo drawn, the
-   carburettor drawn and jetted by clicking, two exhaust paths joined into one
-   (*Joined* on the ports or a junction), and the designer window. Open: the
-   designer lists valve and injector rows a two-stroke does not use.
+1. **Base** -- the reference PC (i5-10600) builds on BuildTools 14.44 (owner,
+   2026-10-26); VISION.md has no pilot engine any more; instrument baselines
+   re-taken on 14.44.
+2. **The two-stroke model** -- closed 2026-10-28 (journal): the road designs
+   are within 2 % of their makers at the converged 25 mm mesh and 11-15 % below
+   at production (a real-time budget limit); the sport designs keep their gap
+   (their 17.5 m/s redline). A two-stroke takes Blair's friction. The reed
+   stays a perfect check valve until a measured gap asks for its petals.
+3. **Optimisation of the whole simulation**, never per engine: physics, sound
+   and threads use the computer fully, measured with 12, 4 and 2 processors
+   (process affinity) on a fixed panel of 2T and 4T engines. Quality bar:
+   bit-exact first; otherwise every dyno row within 0.1 % torque and power,
+   `held_rpm_stddev` and every catalogue idle unchanged, audio octave bands
+   within 0.1 dB and the Geometry harness `shape` at noise level -- one such
+   change measured alone. Done when no further lead is known. So far: the
+   pool counts the processors the affinity allows (2026-10-28); open: the
+   half-reserve rule at 4 processors (measure the whole chain there).
+4. **Knock** -- closed 2026-10-28 (journal): at the limit the I5 runs CA50
+   22-30 deg ATDC at 25 bar BMEP, where boosted engines run, so the physics
+   stays; its template map was the error. `ignition.knock_limit_curve` holds
+   the map under the measured limit (the designer measures it at build); the
+   I5 holds 2.48 bar with 0-0.5 deg of retard left above 2,500 rpm.
 
-**Backfires** -- closed 2026-10-25 (0.4.2): switched on in the Audio workshop
-only, never by an engine, off on every load (`disableBackfires`), kept across
-an edit of the running engine (`keepBackfires`). The workshop profile pops
-(journal 2026-10-25): 70 % of overrun sparks cut, fuel kept, and the next
-fired cycle's exhaust lights the slug left in the primary -- 16.6 dB over the
-median on the Lab Twin (a real bike: 15.8), 13.5 on the MT-07, contract valid.
-Known limits, reopened only on a measured lead: high rpm (1 pop at 6,200), the
-Hayabusa, a pop's decay and low band (`docs/physical-afterfire.md`).
+**Closed**: Linux (2026-10-20, `docs/platforms.md`); editing on the engine
+(2026-10-23); backfires (0.4.2, Audio workshop only, off on every load; known
+limits in `docs/physical-afterfire.md`, reopened only on a measured lead).
 
-**Paused: milestone 1, the sound of the CP2** (MT-07, Arrow exhaust):
-`docs/recording-protocol-cp2.md` holds the method, and the two unverified leads
-are the ~3.8 kHz ceiling (`docs/physical-afterfire.md`) and the plane-mode
-cutoff (`docs/thermoacoustic-architecture.md` 25.2). No fix may require a
-per-engine recording.
+**Sound leads, unverified, for after the plan**: the ~3.8 kHz ceiling
+(`docs/physical-afterfire.md`) and the plane-mode cutoff
+(`docs/thermoacoustic-architecture.md` 25.2), judged against any real
+recording at a known speed (`docs/recording-protocol.md`). No fix may require
+a per-engine recording.
 
 ## Working rules
 
@@ -230,7 +222,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   crankcase); a transit-vs-window scavenging race (monotonic in rpm by
   construction); a scavenging bias from ONE pressure sample at port opening (a
   hunting limit cycle over 4,500-6,250 rpm: integrate the front); "the trapped
-  residual is too low" (a unit error). A holding band locked to crank speed is
+  residual is too low" (a unit error); "the pipe gas is too hot" (418-553 C,
+  under a real pipe); the designer's redline from real piston speeds (road
+  14.8, sport 17.8 m/s: torque falls as the pipe follows the rpm). A holding band locked to crank speed is
   first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it.
 - **Intake**: four inertance formulations (unstable or out of phase); the charge
   bias as the MUSCL limiter, the finite plenum, wall heat or valve linearisation

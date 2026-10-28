@@ -1,7 +1,8 @@
 name: Release
 
-# Pushing a tag such as v0.2.0 builds, tests and packages that exact commit,
-# then publishes a GitHub Release with the Windows archive and its checksum.
+# Pushing a tag such as v0.2.0 builds, tests and packages that exact commit on
+# Windows and Linux, then publishes one GitHub Release with both archives and
+# their checksums. Nothing is published unless both platforms pass.
 on:
   push:
     tags: ['v*']
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   windows:
-    name: Build and publish (Windows x64)
+    name: Build and package (Windows x64)
     runs-on: windows-2022
     timeout-minutes: 180
     steps:
@@ -60,6 +61,80 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
           "$hash  EngineLab-$env:VERSION-win64.zip" | Out-File -Encoding ascii "$zip.sha256"
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            out/build/windows-vs2022/EngineLab-${{ env.VERSION }}-win64.zip
+            out/build/windows-vs2022/EngineLab-${{ env.VERSION }}-win64.zip.sha256
+
+  linux:
+    name: Build and package (Linux x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check that the tag matches the project version
+        run: |
+          version=$(sed -n 's/.*project(EngineLab VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt | head -1)
+          if [ "v$version" != "${{ github.ref_name }}" ]; then
+            echo "::error::Tag ${{ github.ref_name }} does not match project version $version in CMakeLists.txt"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # The same packages as ci.yml, for the same reasons.
+      - name: Install JUCE system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
+            xvfb matchbox-window-manager x11-utils libgl1-mesa-dri
+
+      - name: Configure
+        run: cmake --preset linux-gcc-release
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-release -- -k 0
+
+      - name: Test
+        run: ctest --preset linux-gcc-release --parallel 2 --output-on-failure
+
+      - name: Package
+        run: |
+          cmake --build out/build/linux-gcc-release --target package
+          archive="out/build/linux-gcc-release/EngineLab-$VERSION-Linux.tar.gz"
+          if [ ! -f "$archive" ]; then echo "::error::$archive was not produced"; exit 1; fi
+          (cd out/build/linux-gcc-release && sha256sum "EngineLab-$VERSION-Linux.tar.gz" > "EngineLab-$VERSION-Linux.tar.gz.sha256")
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          if-no-files-found: error
+          path: |
+            out/build/linux-gcc-release/EngineLab-${{ env.VERSION }}-Linux.tar.gz
+            out/build/linux-gcc-release/EngineLab-${{ env.VERSION }}-Linux.tar.gz.sha256
+
+  publish:
+    name: Publish release
+    needs: [windows, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Read the version from the tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
@@ -67,11 +142,15 @@ jobs:
           prerelease: true
           generate_release_notes: true
           body: |
-            **Windows 10/11 x64:** download `EngineLab-${{ env.VERSION }}-win64.zip`, extract it anywhere and run `EngineLab.exe`. Nothing else to install.
+            **Windows 10/11 x64:** download `EngineLab-${{ env.VERSION }}-win64.zip`, extract it anywhere and run `EngineLab.exe`. Nothing else to install. The executable is not code-signed: if SmartScreen warns about an unknown publisher, choose **More info → Run anyway**.
 
-            The executable is not code-signed: if SmartScreen warns about an unknown publisher, choose **More info → Run anyway**. The `.sha256` file holds the archive checksum.
+            **Linux x64:** download `EngineLab-${{ env.VERSION }}-Linux.tar.gz`, extract it (`tar xzf`) and run `./EngineLab` from the extracted folder. Built on Ubuntu 24.04; it needs the distribution's ALSA, X11, OpenGL, FreeType and Fontconfig libraries (`README.txt` in the archive lists the packages).
+
+            Each `.sha256` file holds its archive's checksum.
 
             What changed: see [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).
           files: |
-            out/build/windows-vs2022/EngineLab-${{ env.VERSION }}-win64.zip
-            out/build/windows-vs2022/EngineLab-${{ env.VERSION }}-win64.zip.sha256
+            dist/EngineLab-${{ env.VERSION }}-win64.zip
+            dist/EngineLab-${{ env.VERSION }}-win64.zip.sha256
+            dist/EngineLab-${{ env.VERSION }}-Linux.tar.gz
+            dist/EngineLab-${{ env.VERSION }}-Linux.tar.gz.sha256

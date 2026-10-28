@@ -45,6 +45,11 @@ namespace {
 double frameSeconds = 1.0 / 240.0;
 // --exhaust-whole: a two-stroke's pipes as one network, one CFL step for all.
 std::optional<bool> partitionExhaustNetworkOverride;
+// --pipe-temperature: the first exhaust path's mean gas temperature, element by
+// element (port to outlet), on stderr after each point. A pipe's resonance
+// moves with the speed of sound in it, so this says how hot the gas is where a
+// tuned length is read.
+bool pipeTemperatureReport = false;
 constexpr std::array<std::string_view, 37> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
@@ -255,6 +260,9 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     auto knockAcc = 0.0, peakKnock = 0.0, heavyKnockAcc = 0.0, advanceAcc = 0.0;
     auto endGasAcc = 0.0;
     auto sampleStartTimeSeconds = std::numeric_limits<double>::infinity();
+    std::vector<double> pipeTemperatureSumK;
+    std::vector<std::uint32_t> pipeComponentIds;
+    auto pipeTemperatureFrames = 0.0;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
         const auto absorberOutput = absorber.advance(
             dt, targetRpm, simulator.state());
@@ -339,7 +347,31 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             // The simulator's per-sub-step cycle peak: a per-frame sample of
             // the chamber pressure misses the firing peak.
             peak = std::max(peak, frame.state.peakCylinderPressureBar);
+            if (pipeTemperatureReport) {
+                simulator.captureGasFieldNow();
+                std::size_t index = 0;
+                for (const auto& element : simulator.gasField().elements) {
+                    if (element.kind != enginelab::GasFieldElementKind::exhaustDuct
+                        || element.pathIndex != 0 || element.sampleCount == 0)
+                        continue;
+                    auto sum = 0.0;
+                    for (std::size_t s = 0; s < element.sampleCount; ++s) sum += element.gasTemperatureK[s];
+                    if (index == pipeTemperatureSumK.size()) {
+                        pipeTemperatureSumK.push_back(0.0);
+                        pipeComponentIds.push_back(element.componentId);
+                    }
+                    pipeTemperatureSumK[index++] += sum / element.sampleCount;
+                }
+                pipeTemperatureFrames += 1.0;
+            }
         }
+    }
+    if (pipeTemperatureReport && pipeTemperatureFrames > 0.0) {
+        std::cerr << "pipe_temperature_c " << targetRpm;
+        for (std::size_t index = 0; index < pipeTemperatureSumK.size(); ++index)
+            std::cerr << ' ' << pipeComponentIds[index] << ':'
+                      << std::lround(pipeTemperatureSumK[index] / pipeTemperatureFrames - 273.15);
+        std::cerr << '\n';
     }
     const auto d = std::max(1.0, n);
     const auto validBrakeCycles = droppedBrakeCycleCount == 0
@@ -670,6 +702,8 @@ int main(int argc, char** argv) {
             frameSeconds = 1.0 / std::clamp(std::stod(argv[++index]), 30.0, 4'000.0);
         else if (argument == "--exhaust-whole")
             partitionExhaustNetworkOverride = false;
+        else if (argument == "--pipe-temperature")
+            pipeTemperatureReport = true;
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
@@ -679,7 +713,7 @@ int main(int argc, char** argv) {
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
-                         " [--exhaust-whole]\n";
+                         " [--exhaust-whole] [--pipe-temperature]\n";
             return EXIT_FAILURE;
         }
     }

@@ -1,5 +1,6 @@
 #include <enginelab/app/MainComponent.hpp>
 #include <enginelab/app/Theme.hpp>
+#include <enginelab/foundation/ThreadScheduling.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/calibration/EcuCalibration.hpp>
@@ -642,7 +643,7 @@ void MainComponent::refreshRuntimeHealth() {
         health.loadProtectionActivations = runtime_->realtimeLoadProtectionActivationCount();
         health.physicsCpuSets = runtime_->physicsThreadCpuSets();
         health.physicsThrottlingOptOut = runtime_->physicsThreadThrottlingOptOut();
-        health.logicalProcessors = std::thread::hardware_concurrency();
+        health.logicalProcessors = platform::usableProcessorCount();
     }
     health.audioAvailable = audio_ != nullptr;
     if (audio_) {

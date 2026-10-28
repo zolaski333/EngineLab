@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.24)
 # that -- MSBuild picks the language from the file extension -- which is why the
 # windows-vs2022 cache has CMAKE_C_FLAGS but no CMAKE_C_COMPILER at all. Ninja
 # resolves the compile rule at generate time and fails outright.
-project(EngineLab VERSION 0.4.2 LANGUAGES CXX C)
+project(EngineLab VERSION 0.5.0 LANGUAGES CXX C)
 
 option(ENGINELAB_BUILD_TESTS "Build EngineLab unit tests" ON)
 option(ENGINELAB_BUILD_COMPARISON_HARNESS "Build deterministic comparison and regression harness" ON)
@@ -182,8 +182,8 @@ if(ENGINELAB_BUILD_TESTS)
 endif()
 
 # Packaging: `--target package` produces EngineLab-<version>-win64.zip on
-# Windows, EngineLab-<version>-Linux.zip on Linux. The Windows archive is the
-# one attached to every GitHub release. It holds only what a user needs to
+# Windows, EngineLab-<version>-Linux.tar.gz on Linux; both are attached to
+# every GitHub release. Each holds only what a user needs to
 # run the application; the documentation stays online.
 install(TARGETS EngineLabApp
     RUNTIME DESTINATION . COMPONENT EngineLab
@@ -212,6 +212,11 @@ endif()
 set(CPACK_PACKAGE_NAME "EngineLab")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_VENDOR "EngineLab contributors")
-set(CPACK_GENERATOR "ZIP")
+# A tarball on Linux: it keeps the executable bit a zip may drop.
+if(UNIX AND NOT APPLE)
+    set(CPACK_GENERATOR "TGZ")
+else()
+    set(CPACK_GENERATOR "ZIP")
+endif()
 set(CPACK_INSTALL_CMAKE_PROJECTS "${CMAKE_BINARY_DIR};${PROJECT_NAME};EngineLab;/")
 include(CPack)

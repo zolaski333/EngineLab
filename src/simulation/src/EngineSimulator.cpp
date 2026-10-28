@@ -1,6 +1,7 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/foundation/ForcedInductionFlow.hpp>
+#include <enginelab/foundation/ThreadScheduling.hpp>
 #include <enginelab/simulation/EngineThermalModel.hpp>
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -719,7 +720,7 @@ void EngineSimulator::configureIntakeWorkerPool() {
     if (options_.intakeWorkerCount.has_value()) {
         workerCount = std::min(*options_.intakeWorkerCount, cylinderCount - 1);
     } else {
-        const auto reportedConcurrency = std::thread::hardware_concurrency();
+        const auto reportedConcurrency = platform::usableProcessorCount();
         if (reportedConcurrency < 4) return;
         const auto usableThreads = std::max<std::size_t>(1, reportedConcurrency / 2);
         const std::size_t workloadWorkerCap =
@@ -3285,6 +3286,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // differently. With the draw rising to its 0.92 cap by 0.70,
                 // the designed two-strokes fire 28-36 % of their sparks at
                 // idle, about every third revolution (journal 2026-10-24).
+                // The literature's limit is a flame temperature, not a
+                // fraction: lean-limit flames of hydrocarbons in air sit near
+                // 1,500-1,600 K adiabatic (NBSIR 76-1076; Zabetakis 1965,
+                // 1,573 K), and Tsuchiya et al. (SAE 830091) judge a
+                // two-stroke's light-load irregular firing by it. From the
+                // 550-680 K the idle's charge has at the spark, 0.60 of
+                // diluent leaves about 1,460 K and 0.70 about 1,250 K, so
+                // the band starts at that limit (journal 2026-10-26).
                 constexpr double dilutionMisfireOnset = 0.60;
                 constexpr double dilutionMisfireFull = 0.70;
                 const auto dilutionShare = std::clamp(
@@ -5234,7 +5243,19 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             && config_.forcedInduction.type == ForcedInductionType::supercharger
             && state_.angularVelocityRadPerSecond > 1.0
             ? state_.compressorPowerKw * 1'000.0 / state_.angularVelocityRadPerSecond : 0.0;
-        const auto mechanicalFriction = bearingFriction + pistonFriction + crankshaftFriction + superchargerTorque;
+        // A two-stroke has no valvetrain, rolls on needle and ball bearings and
+        // carries two compression rings, not a four-stroke's ring pack: the
+        // polynomial and the Stribeck rings above put the RD350 at 1.26 bar at
+        // 8,000 rpm, 2.8 x Blair's relation for a rolling-bearing motorcycle
+        // two-stroke, fmep = 3,150 Pa per m/s of mean piston speed (Design and
+        // Simulation of Two-Stroke Engines, 1996, p. 379). It takes Blair's
+        // whole relation instead (journal 2026-10-26); the breakaway still
+        // holds a crank at rest.
+        const auto twoStrokeFriction = state_.angularVelocityRadPerSecond > 1.0
+            ? 3'150.0 * meanPistonSpeed * displacementM3 / (2.0 * std::numbers::pi)
+            : pistonBreakawayTorqueNm;
+        const auto mechanicalFriction = (twoStroke ? twoStrokeFriction : bearingFriction + pistonFriction)
+            + crankshaftFriction + superchargerTorque;
         // Gas-pressure torque already contains the complete intake/exhaust
         // pumping loop. Adding a MAP-derived pumping loss here counted the
         // same work twice, especially at closed throttle.

@@ -9,8 +9,8 @@ date when the code changes; measurement results go into the
 - [Vision](../VISION.md) — the intent of the project and how success is judged.
 - [Measurement journal](journal.md) — dated measurement results, most recent
   first.
-- [Recording protocol for the pilot engine](recording-protocol-cp2.md) — how the
-  CP2 reference recordings are made.
+- [Recording protocol](recording-protocol.md) — how a reference recording of a
+  real engine is made.
 - [Changelog](../CHANGELOG.md) — user-visible changes per release.
 
 ## Models

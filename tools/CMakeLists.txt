@@ -225,3 +225,13 @@ add_executable(EngineLabSceneExport SceneExport.cpp)
 target_link_libraries(EngineLabSceneExport PRIVATE EngineLab::Render EngineLab::Catalog EngineLab::Foundation)
 target_compile_definitions(EngineLabSceneExport PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabSceneExport)
+
+if(WIN32)
+    add_executable(EngineLabSamplingProfiler SamplingProfiler.cpp)
+    target_link_libraries(EngineLabSamplingProfiler PRIVATE Dbghelp winmm)
+    enginelab_set_warnings(EngineLabSamplingProfiler)
+endif()
+
+add_executable(EngineLabKnockLimitCalibration KnockLimitCalibration.cpp)
+target_link_libraries(EngineLabKnockLimitCalibration PRIVATE EngineLab::Runtime EngineLab::Catalog)
+enginelab_set_warnings(EngineLabKnockLimitCalibration)

@@ -2,6 +2,7 @@
 #include <enginelab/app/Theme.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
+#include <enginelab/runtime/KnockLimitCalibration.hpp>
 #include <enginelab/runtime/RealtimeCapacityProbe.hpp>
 
 #include <algorithm>
@@ -499,13 +500,20 @@ private:
         build_.setEnabled(false);
         livePausedBefore_ = pauseLive_ ? pauseLive_(true) : false;
         status_.setColour(juce::Label::textColourId, ui::colours::text);
-        status_.setText(utf8("Checking that this engine runs in real time on this computer (a few seconds)…"),
+        status_.setText(utf8("Checking that this engine runs in real time on this computer, then finding its "
+                             "knock-limited spark on the dyno (some seconds)…"),
             juce::dontSendNotification);
         cancelProbe_.store(false);
         auto safe = juce::Component::SafePointer<DesignerContent>(this);
         probe_ = std::thread([this, safe, config = std::move(config)]() mutable {
             auto capacity = measureRealtimeCapacity(config, 1.5, 30.0, &cancelProbe_);
             if (cancelProbe_.load()) return;
+            // The template map is held under the spark this design knocks at
+            // (journal 2026-10-28); if that cannot be measured, the knock
+            // control alone holds it, as before.
+            auto knockLimit = calibrateKnockLimit(config, &cancelProbe_);
+            if (cancelProbe_.load()) return;
+            if (knockLimit.error.empty()) config.ignition.knockLimitCurve = std::move(knockLimit.curve);
             juce::MessageManager::callAsync([safe, config = std::move(config), capacity]() mutable {
                 if (safe) safe->probeFinished(std::move(config), capacity);
             });

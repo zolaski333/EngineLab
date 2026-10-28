@@ -43,6 +43,34 @@ double interpolateTimingCurve(const std::vector<IgnitionMapSample>& curve, doubl
     return curve.back().advanceDegrees;
 }
 
+/** The map held under the full-load knock limit: none at or below the
+ *  pressure where knock starts to matter (the ambient for a boosted engine,
+ *  0.7 of the limit's own for one that is not), all of it at the pressure the
+ *  limit was measured at, linear between. Not measured between those two
+ *  pressures: the knock control trims what the line leaves. */
+double knockLimitedAdvance(const std::vector<KnockLimitSample>& curve, double advanceDegrees,
+                           double rpm, double manifoldPressureKpa, double ambientPressureKpa) noexcept {
+    if (curve.empty()) return advanceDegrees;
+    auto limit = curve.front();
+    if (curve.size() > 1 && rpm > curve.front().rpm) {
+        limit = curve.back();
+        for (std::size_t index = 1; index < curve.size(); ++index) {
+            if (rpm <= curve[index].rpm) {
+                const auto span = std::max(1.0, curve[index].rpm - curve[index - 1].rpm);
+                const auto t = std::clamp((rpm - curve[index - 1].rpm) / span, 0.0, 1.0);
+                limit.advanceDegrees = std::lerp(curve[index - 1].advanceDegrees, curve[index].advanceDegrees, t);
+                limit.manifoldPressureKpa = std::lerp(curve[index - 1].manifoldPressureKpa,
+                                                      curve[index].manifoldPressureKpa, t);
+                break;
+            }
+        }
+    }
+    const auto onsetKpa = std::min(ambientPressureKpa, 0.7 * limit.manifoldPressureKpa);
+    const auto share = std::clamp((manifoldPressureKpa - onsetKpa)
+        / std::max(1.0, limit.manifoldPressureKpa - onsetKpa), 0.0, 1.0);
+    return advanceDegrees - share * std::max(0.0, advanceDegrees - limit.advanceDegrees);
+}
+
 }
 
 SimpleEcuModel::SimpleEcuModel()
@@ -210,7 +238,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             idleDashpot = std::max(idleDashpot,
                 std::clamp(effectiveThrottle * 2.0, 0.0, 0.65));
         } else if (state.rpm < targetRpm * 1.30
-                || normalizedRpmRate > -coastingNormalizedRpmRate) {
+                || normalizedRpmRate > -coastingNormalizedRpmRate
+                || config.cycle == EngineCycle::twoStroke) {
             // Near idle, or no longer coasting down: hand back to the
             // governor, bleeding the dashpot out.
             idleDashpot *= std::exp(-idleDt * 1.25);
@@ -232,6 +261,12 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // learned lambda trim no longer went lean after a fuel-cut resume, the
         // EJ25 sat at 1,200 rpm (1.46 x idle) for good, the dashpot held by
         // the very speed it was holding.
+        //
+        // Never held on a two-stroke: it keeps its fuel on overrun (below),
+        // so there is no cut-and-vacuum relight to protect, and the held air
+        // fed it instead. On Blair's lower friction the RD350 then coasted
+        // from 9,970 rpm at 450-900 rpm/s and was still at 2,262 rpm 12 s
+        // after a WOT blip (journal 2026-10-28).
         //
         // Post-start air.
         //
@@ -392,7 +427,10 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     if (!calibratedAdvance)
         calibratedAdvance = calibrationSnapshot->sampleCurve(
             calibration::keys::ignitionAdvance, rpmCoordinate);
-    auto mappedAdvance = std::clamp(calibratedAdvance.value_or(legacyAdvance) + liveTrim,
+    const auto limitedAdvance = knockLimitedAdvance(config.ignition.knockLimitCurve,
+        calibratedAdvance.value_or(legacyAdvance), state.rpm, state.manifoldPressureKpa,
+        config.ambientPressureKpa);
+    auto mappedAdvance = std::clamp(limitedAdvance + liveTrim,
         calibration::ecuLimits::minimumIgnitionAdvanceDegrees,
         calibration::ecuLimits::maximumIgnitionAdvanceDegrees);
     const auto previousThrottle = previousThrottle_.exchange(effectiveThrottle, std::memory_order_relaxed);

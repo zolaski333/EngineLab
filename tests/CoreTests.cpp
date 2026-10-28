@@ -1775,6 +1775,7 @@ int main() {
     extendedPhysicsConfig.combustionCalibration.cycleVariationCoefficientOfVariation = 0.047;
     extendedPhysicsConfig.combustionCalibration.cycleVariationCorrelation = 0.62;
     extendedPhysicsConfig.ignition.limiterKeepsFuel = true;
+    extendedPhysicsConfig.ignition.knockLimitCurve = { { 2500.0, 6.5, 231.0 }, { 6000.0, 12.25, 244.0 } };
     extendedPhysicsConfig.exhaustAfterfire = { true, 875.0, 0.012, 0.91 };
     extendedPhysicsConfig.exhaustAfterfire.overrunMinimumRpm = 3'450.0;
     extendedPhysicsConfig.exhaustAfterfire.overrunMaximumThrottle = 0.015;
@@ -1928,6 +1929,13 @@ int main() {
             && std::abs(extendedYamlRoundTrip.config->injection.directSprayVaporisationTimeConstantSeconds - 0.00042) < 1.0e-9
             && std::abs(extendedYamlRoundTrip.config->cylinders.front().pistonFrictionCoefficient - 0.067) < 0.001,
             "YAML must preserve injection thermodynamics and per-cylinder friction");
+    const auto sameKnockLimit = [](const enginelab::EngineConfig& decoded) {
+        const auto& curve = decoded.ignition.knockLimitCurve;
+        return curve.size() == 2 && curve[1].rpm == 6000.0 && curve[1].advanceDegrees == 12.25
+            && curve[0].manifoldPressureKpa == 231.0;
+    };
+    require(sameKnockLimit(*extendedJsonRoundTrip.config) && sameKnockLimit(*extendedYamlRoundTrip.config),
+            "JSON and YAML must preserve the knock-limit curve");
     require(extendedYamlRoundTrip
             && std::abs(extendedYamlRoundTrip.config->forcedInduction.designShaftSpeedRpm - 145'000.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->forcedInduction.bearingFrictionPowerWatts - 360.0) < 0.001,

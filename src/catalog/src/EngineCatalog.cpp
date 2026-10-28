@@ -966,6 +966,12 @@ void applyCrankOffsets(EngineConfig& config) {
             for (const auto& sample : ignition["timing_curve"])
                 config.ignition.timingCurve.push_back({ sample["rpm"].as<double>(), sample["advance_deg"].as<double>() });
         }
+        if (ignition["knock_limit_curve"]) {
+            config.ignition.knockLimitCurve.clear();
+            for (const auto& sample : ignition["knock_limit_curve"])
+                config.ignition.knockLimitCurve.push_back({ sample["rpm"].as<double>(),
+                    sample["advance_deg"].as<double>(), sample["map_kpa"].as<double>() });
+        }
     }
     if (const auto injection = engine["injection"]) {
         config.injection = decodeInjection(injection);

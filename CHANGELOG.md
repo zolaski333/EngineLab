@@ -7,6 +7,38 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-28
+
+### Added
+
+- **A Linux x64 release archive** (`EngineLab-<version>-Linux.tar.gz`) beside
+  the Windows one; a release is published only when both platforms pass.
+
+- **The spark is calibrated against knock.** `ignition.knock_limit_curve`
+  holds the map under the knock-limited spark measured on the dyno at full
+  load, scaled with the manifold pressure so part load keeps its map. The
+  engine designer measures it for every spark-ignition design when it builds
+  it (a few more seconds), and `EngineLabKnockLimitCalibration` measures a
+  catalogue engine. The I5 now holds its 2.5 bar without the knock control
+  pulling 8-12 degrees behind its map; its torque stays above the maker's.
+
+### Changed
+
+- **The simulation's worker threads follow the processors Windows or Linux
+  lets EngineLab use.** Limited to two processors (process affinity), large
+  engines ran four times slower than they can (a 2JZ at 0.3 x real time,
+  now 1.3).
+- **A two-stroke loses Blair's friction, not a four-stroke's.** It carried a
+  valvetrain's and plain bearings' friction, 2.8 times what a rolling-bearing
+  motorcycle two-stroke loses: the RD350 gains about 5 N.m at 9,000 rpm and
+  designed two-strokes 13-17 %. Four-strokes are unchanged.
+- The designer no longer lists valve, header or injector rows for a
+  two-stroke: the model never read them.
+- A two-stroke's idle air no longer stays open through a closed-throttle
+  coast-down, and the RD350's idle air is refitted to the new friction (it
+  idled at 1,436 rpm instead of 1,300). Its coast from the limiter to idle
+  is slow, about 12 s: it has little to brake it.
+
 ### Fixed
 
 - **High boost no longer makes the boost and the mixture hunt.** With the

@@ -575,7 +575,16 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
     for (const auto& sample : config.ignition.timingCurve)
         out << YAML::BeginMap << YAML::Key << "rpm" << YAML::Value << sample.rpm
             << YAML::Key << "advance_deg" << YAML::Value << sample.advanceDegrees << YAML::EndMap;
-    out << YAML::EndSeq << YAML::EndMap
+    out << YAML::EndSeq;
+    if (!config.ignition.knockLimitCurve.empty()) {
+        out << YAML::Key << "knock_limit_curve" << YAML::Value << YAML::BeginSeq;
+        for (const auto& sample : config.ignition.knockLimitCurve)
+            out << YAML::Flow << YAML::BeginMap << YAML::Key << "rpm" << YAML::Value << sample.rpm
+                << YAML::Key << "advance_deg" << YAML::Value << sample.advanceDegrees
+                << YAML::Key << "map_kpa" << YAML::Value << sample.manifoldPressureKpa << YAML::EndMap;
+        out << YAML::EndSeq;
+    }
+    out << YAML::EndMap
         << YAML::Key << "injection" << YAML::Value << YAML::BeginMap
         << YAML::Key << "mode" << YAML::Value << (config.injection.mode == InjectionMode::port ? "port" : "direct")
         << YAML::Key << "start_angle_deg" << YAML::Value << config.injection.startAngleDegrees
@@ -1131,6 +1140,12 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 config.ignition.timingCurve.clear();
                 for (const auto& sample : ignition["timing_curve"])
                     config.ignition.timingCurve.push_back({ sample["rpm"].as<double>(), sample["advance_deg"].as<double>() });
+            }
+            if (ignition["knock_limit_curve"]) {
+                config.ignition.knockLimitCurve.clear();
+                for (const auto& sample : ignition["knock_limit_curve"])
+                    config.ignition.knockLimitCurve.push_back({ sample["rpm"].as<double>(),
+                        sample["advance_deg"].as<double>(), sample["map_kpa"].as<double>() });
             }
         }
         if (const auto injection = engine["injection"]) {

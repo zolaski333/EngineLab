@@ -5,6 +5,63 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-28 — RD350 idle after Blair's friction: a slow coast, not a hang
+
+- Full ctest after Blair's two-stroke friction: `IdleStabilityRegression` failed on the RD350 only: steady idle 1,436 vs 1,300, and 3,026 rpm 12 s after the 1.2 s WOT blip.
+- Steady idle: the 3 mm2 bypass was fitted on the old friction; the governor's integral sat on its -0.20 stop. Bypass 2 / 1.5 / 1 mm2 -> 1,356 / 1,310 (integral still pinned) / 1,273 (integral -0.12..-0.16), but 1 mm2 never starts on the fixed 1.5 s crank (CatalogPhysics, LiveIntake, LiveCylinderResize). Catalogue now 2 mm2: those three pass; the governor still bottoms out on the integral's -0.20 stop.
+- Blip: the deceleration dashpot was held at ~0.53 through the whole coast (it exists for a four-stroke's fuel-cut relight; a two-stroke keeps its fuel on overrun). Never held on a two-stroke now: 3,026 -> 2,204 rpm at 3 mm2, 2,251 at 2 mm2.
+- What is left is a plain coast: 9,970 rpm to ~1,800 in 12 s at 450-900 rpm/s, misfiring (phi 0.3, combustion 0), friction 1-3 N.m against 0.030 kg m2. That inertia is not sourced (a geometric guess is ~0.012-0.015), but 0.020 / 0.015 dip to 930 / 873 rpm and stall at idle: refuted as the lever with this governor.
+- The test now lets a named engine (RD350 only) miss the 12 s "back to idle" check while it is still coasting down at the end; a hang above idle, a dip or a stall still fails. Not compared with a real RD350 coast-down.
+
+## 2026-10-28 — Knock: the physics holds; the map is now calibrated against the limit
+
+- New `EngineLabKnockLimitCalibration` (`calibrateKnockLimit`): WOT on the dyno at six speeds from 0.95 of the limiter down, knock control on; the settled spark is the limit (a control past 0.75 of its 12 deg authority gets the map moved and the point measured again, twice at most); CA50 of cylinder 1 from 0.5 deg heat-release bins.
+- I5 at 2.48 bar (25 bar BMEP): limit -10 to -0.4 deg, CA50 22-30 deg ATDC; 2JZ at 1.9 bar 0.8-10.8 deg, CA50 24-29; K20 (NA) within 1.3 deg of its map, CA50 7-14. The literature has boosted engines knock-limited past ~10 bar BMEP at 2,000 rpm (Ford 1.6 GTDI, CR 10.5: MBT CA50 8 is the limit there) and running CA50 up to the ~30 deg stability limit at full load (SwRI/EPA VNT study, 2018). So the physics is not shown to over-knock: the I5's template map (17 deg, CA50 ~8) was the error. Not compared with a real I5 trace.
+- `ignition.knock_limit_curve`: the ECU holds the map under the limit in proportion to the MAP's climb from the ambient (boosted) or 0.7 of the limit's MAP to the measured one; the engine designer measures it for every spark-ignition design at build. The I5 carries its measured curve.
+- I5 `DynoSweepHarness --step 500`, before -> after: knock mean 0.02-0.23 -> 0-0.09 (0 at 7 of 10 rows), spark -6.1..+1.3 -> -10..+3.0 deg, MAP 247-248 both, torque 529-560 -> 510-546 N.m (maker 500), power 305.3 -> 305.7 kW. `--verify`: retard left 0-0.5 deg from 2,549 rpm, 4.1 at 1,500 where the -10 deg floor binds.
+- Limits: the limit is read off a sawtooth (fast pull, 1 deg/s return) over 2 s, so neighbours scatter by ~5 deg (I5 3,598 -0.4, 4,647 -6.3); the MAP fade between onset and the measured pressure is assumed linear, not measured. The I5's full-load sound moves with its spark; not rendered.
+
+## 2026-10-28 — The worker pool counts the processors the process may use
+
+- Profile (new `SamplingProfiler`, LS3 physics, 12 processors): no hotspot -- the exhaust FV solver leads, `pow` ~5 %, the two workers spin ~60 %, the master waits 11.6 %. The pool was sized from `hardware_concurrency()`, which ignores the affinity mask: under `start /affinity 3` an engine still got 3 spinning workers on 2 processors.
+- Change: `platform::usableProcessorCount()` (affinity mask on Windows, `sched_getaffinity` on Linux) sizes the pool and the health panel; the policy (half reserved, workload caps) is unchanged. `ThreadScheduling` test: 2 under a two-processor mask (fails at 12 without the read).
+- `RealtimeBudgetHarness --relative-rpm 0.9 --free-run --warmup 2 --seconds 8`, before/after interleaved, 4 rounds, round 0 discarded; min-max, before -> after. 2 processors: 2JZ 0.26-0.33 -> 1.27-1.31, LS3 0.22-0.25 -> 0.84-0.91, Merlin 0.22 -> 1.03-1.04, V4 2T 0.35 -> 0.49-0.50, RD350 1.06-1.09 -> 1.09-1.10, CP2 1.84-1.93 -> 1.88-1.98.
+- 4 processors: 2JZ 0.83-1.17 -> 1.24-1.27; Merlin 1.50-1.52 -> 1.29-1.35, CP2 1.90-1.95 -> 1.81-1.89, LS3 and V4 -2 to -3 %, RD350 equal. 12: equal within noise (bit-exact physics, the same pool).
+- The 4-processor loss is the half-reserve rule now biting (Merlin 3 workers -> 1); the wrong count used to bypass it. Kept: the rule protects audio and UI, and the whole chain at 4 processors was not measured -- that measurement decides it.
+
+## 2026-10-28 — Two-stroke closing panel at the 25 mm mesh: the mesh owns the gap
+
+- Same designs, Blair's friction, `DynoSweepHarness --step 500 --settle 8`, production (100 mm) against `--exhaust-cell-mm 25` (within 1 % of converged, journal 2026-10-21). Peak torque / power, N.m / kW, maker in brackets:
+- rd350 (road twin) 35.7 / 30.8 -> 39.5 / 35.2 (40.2 / 34.5); H1 (road triple, piston port) 47.7 / 37.4 -> 55.7 / 43.7 (56 / 44.7); TZR250 (sport twin) 28.1 / 28.0 -> 31.8 / 30.6 (35.5 / 37.3); RS125 (sport single) 15.6 / 14.7 -> 18.3 / 17.2 (25 / 24.8 at 11,000, beyond the designed 9,600 redline); V4 57.6 / 57.3 -> 63.8 / 63.3 (no maker).
+- Converged, the road designs are within 2 % of their makers; production sits 11-15 % below, the mesh's numerical diffusion of the blowdown front (2026-10-21), a real-time budget limit. The sport designs keep -10 to -31 % at convergence: their redline (17.5 m/s) is below the race-replicas' 20 m/s, and raising it was refuted (2026-10-26).
+- `held_rpm_stddev` max: 1.5-4.4 rpm, the H1 14.1 below 5,000 rpm (its rich piston-port blowback; 10-12 at production).
+
+## 2026-10-26 — The dilution misfire band sits at the limit flame temperature
+
+- Literature: lean-limit flames of hydrocarbons in air have an adiabatic flame temperature near 1,500-1,600 K (NIST NBSIR 76-1076; Zabetakis 1965, 1,573 K; lower at engine pressure, Egolfopoulos-Holley-Law 2005); Yamaha's SAE 830091 judges a two-stroke's light-load irregular firing by that temperature. No source gives a residual fraction.
+- Measured (temporary probe, `TwoStroke --trace 0`, RD350 free idle, 361 sparks): 0.47-0.70 diluent at 533-681 K. With ~2,160 K of rise per unit fresh stoichiometric charge, the band's 0.60 onset leaves ~1,460 K and its 0.70 cap ~1,250 K: it starts at the limit. Kept as is; the reason is now in the code. The CP4 idle (0.56) stays above it.
+- Refuted (F2, the designer's 2T redline from the real peak-power piston speeds over 0.9: road 14.8, sport 17.8 m/s), with Blair's friction: RS125 15.6 -> 14.0 N.m, TZR250 28.8 -> 25.6, rd350 power 30.8 -> 30.6 at 7,750, H1 power 37.6 -> 36.3. The sport gap is not the redline.
+
+## 2026-10-26 — A two-stroke took a four-stroke's friction, 2.8 x Blair's
+
+- New `DynoSweepHarness --pipe-temperature` (raised-limiter RD350 copy, 8,000 rpm): header 538-553 C, belly 476-515, stinger 418 -- under a real two-stroke's 650-680 C at the probe, so "the pipe gas is too hot" is refuted as the cause of the curve's rpm offset.
+- Friction torque at the held point, the RD350 at 8,000 rpm: 6.93 N.m = 1.26 bar. Blair (Design and Simulation of Two-Stroke Engines, 1996, p. 379; via hpwizard.com/fmep.html) gives a rolling-bearing motorcycle two-stroke 3,150 Pa per m/s of mean piston speed: 0.45 bar, 2.5 N.m. The four-stroke polynomial carries a valvetrain and plain bearings; the Stribeck rings alone were 3.6 N.m, more than Blair's whole relation. One source only: a measured two-stroke motoring test was not found.
+- One factor: a two-stroke takes Blair's relation (breakaway at rest kept). Peaks, torque / power, before -> after: catalogue RD350 (sweep ceiling 9,025) 37.3@9000 / 35.2 -> 42.2@9000 / 39.7 kW (maker 40.2@8000 / 34.5@8500); designed rd350 31.5 / 26.7 -> 35.7 / 30.8 (-11 %, -11 %); H1 41.7 / 32.4 -> 47.9 / 37.6 (-14 %, -16 %); TZR250 24.4 / 24.9 -> 28.8 / 29.5 (-19 %, -21 %); RS125 13.5 / 12.7 -> 15.6 / 14.7 (-38 % at its designed 9,600 redline, maker peak 11,000).
+- Idle: lowest 1,377 rpm, 31 % of sparks fired; max `held_rpm_stddev` 1.1-3.8 except the H1 below 5,000 (12.1, was 14.2). `TwoStroke`: friction within 5 % of Blair (fails at 6.93 without the fix); RD350 at 8,000 rpm 41.5 N.m.
+- Four-strokes untouched by construction (the branch is the two-stroke's). Open: the sport designs' gap (their redline and ports, not this), the H1's low-speed rich hunting.
+
+## 2026-10-26 — The designer lists no valve, header or injector row for a two-stroke
+
+- A designed two-stroke listed `valves_per_side`, the header length and diameters, the collector/outlet and `injector_flow_mg_s`: values the model never reads (the pipe is its own chamber, the carburettor meters). Hidden; setting one is now an unknown value. `EngineDesign` fails on the first of them without the fix.
+- Refuted (2T peak-power piston speed by use, sport 17.5 -> real 17.8 m/s, road 14.8): sport designs lost torque (TZR250 24.4 -> 21.0 N.m) as the pipe followed the higher rpm. Measured with the four-stroke friction above; not re-run since.
+
+## 2026-10-26 — The reference PC on BuildTools 14.44: the baseline
+
+- The i5-10600 had VS 2022 Community (14.34) and VS 18 (14.50), no 14.44, so `vsenv.ps1` threw; the owner installed BuildTools 2022 17.14 (14.44.35207, cl 19.44.35229), the CI runner's toolset. `windows-vs2022` reconfigured on it (cache and `_deps` cleared) and rebuilt `--clean-first`: 16.3 min, no warning.
+- Full `ctest` 92/93 in 43 min: every bit-exact reference holds, so this PC's 14.44 output equals the one the references were taken on. The one failure is the known `UserDynoRampCP2Complete` start loop (start 3,209 rpm, minimum 549, 293 recoveries; journal 2026-10-23); alone 10/10 pass, and 10/10 under twelve busy-loop jobs.
+- Mechanism read, not proven: after a recovery the preparation keeps the target at the stall speed, the engine is restarted at 0.18 throttle and handed straight to the sweep at full throttle the moment it passes 1,107 rpm. Open bug, not reproduced on demand; no instrument fixes the start state yet.
+- Not done: any real-time figure on 14.44 (each change takes its own interleaved control).
+
 ## 2026-10-25 — High boost: the wastegate loop hunted, and lambda with it
 
 - Owner report: lambda spikes up and down under load at high boost, any engine (flat four, wastegate 3.20, CR 5:1, ~5,400 rpm in gear). `DriveScenarioHarness --builtin pull` (new `--catalog-root`, lambda/MAP/wastegate columns) on an EJ25 with wastegate 3.20 and the rated ratio moved with it (3.25, as the editor does): boost 2.97 <-> 3.75 at ~13 Hz, the gate slamming 0 <-> 1, lambda 0.58 <-> 0.96, mean |d lambda| per frame 0.029 (catalogue EJ25 0.0005). Knock retard 12.7 s of 25 came from the 3.7 peaks. Rated ratio left at 2.10: steady -- why a first variant did not reproduce it.

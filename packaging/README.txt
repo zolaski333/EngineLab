@@ -1,8 +1,8 @@
 EngineLab
 =========
 
-A four-stroke engine simulator whose sound comes from the simulated gas
-dynamics, not from samples.
+An engine simulator (four-stroke and two-stroke) whose sound comes from the
+simulated gas dynamics, not from samples.
 
 Project page, documentation and issue tracker:
     https://github.com/zolaski333/EngineLab
@@ -11,10 +11,11 @@ Project page, documentation and issue tracker:
 Getting started
 ---------------
 
-1. Extract this archive anywhere (keep the folders next to EngineLab.exe).
-2. Run EngineLab.exe. Windows SmartScreen may warn that the publisher is
+1. Extract this archive anywhere (keep the folders next to the executable).
+2. Windows: run EngineLab.exe. SmartScreen may warn that the publisher is
    unknown, because the executable is not code-signed: choose
    "More info" > "Run anyway".
+   Linux: run ./EngineLab from the extracted folder.
 3. Pick an engine in the selector at the top of the window.
 4. Hold A to switch the ignition on, then hold S to crank the starter.
 5. Throttle: Q (1 %), W (10 %), E (20 %), R (100 %).
@@ -26,22 +27,28 @@ All key bindings can be changed from the KEYS button.
 What is in this folder
 ----------------------
 
-EngineLab.exe      the application
+EngineLab(.exe)    the application
 engines/           the engine catalogue (editable YAML)
 parts/             camshafts, exhausts, fuels, gearboxes, vehicles
 voicing/           the audio mix, per engine (hot-reloaded YAML)
 examples/          example engine files and scripts (.els)
 assets/            exhaust impulse responses
 tools/             command-line offline audio renderers
-*.dll              Microsoft Visual C++ runtime
+*.dll              Microsoft Visual C++ runtime (Windows archive only)
 
 
 Requirements
 ------------
 
-Windows 10 or 11, 64-bit. The simulation runs in real time on a 6-core desktop
-CPU for most engines; large engines (V8, V12) can fall below real time. The
-realtime factor is shown in the diagnostics.
+Windows 10 or 11, 64-bit; or a 64-bit Linux desktop (built and tested on
+Ubuntu 24.04) with ALSA, X11, OpenGL, FreeType and Fontconfig installed --
+on Ubuntu or Debian:
+    sudo apt install libasound2t64 libfreetype6 libfontconfig1 libx11-6 \
+        libxext6 libxinerama1 libxrandr2 libxcursor1 libgl1
+
+The simulation runs in real time on a 6-core desktop CPU for most engines;
+large engines (V8, V12) can fall below real time. The realtime factor is shown
+in the diagnostics.
 
 
 License
