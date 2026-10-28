@@ -17,20 +17,20 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Diesel consolidation (owner, 2026-10-28), branch
-`plan/diesel-consolidation`.** The diesel's physics only: the owner finds its
-sound good, so a sound change is a side effect to measure and report, never
-a goal. Not the two-stroke diesel, not the rotary (both await the owner and a
-VISION.md amendment). Open gaps at the start: firing peak 231 bar (real
-~180-200), BSFC 171 g/kWh (real ~200-215), injection timing fixed at the
-`injection.start_angle_deg` (the timing curve is telemetry only), one
-reference engine (the TDI). Judge against makers' figures and the literature,
-on more than one diesel. Standing rule: no limit on what a user may build
-(cylinders, size); an engine that needs a faster PC than the reference one is
-allowed.
+**No current plan.** The owner's diesel consolidation (2026-10-28) is merged
+and accepted (the owner heard no difference in the A/B): a diesel's advance is
+its start of injection, the ignition delay runs from the jet at Assanis'
+published value, and Woschni's combustion term applies to compression
+ignition only (journal 2026-10-28). Open, each awaiting the owner: the petrol
+engines' over-efficiency (K20 209-233 g/kWh at WOT, real ~260-290; a fix
+moves every engine's sound); low EGT; the diesel's fixed 8 % premixed share.
+Not started: the two-stroke diesel and the rotary (both need a VISION.md
+amendment). Ask the owner before starting anything new. Standing rule: no
+limit on what a user may build (cylinders, size); an engine that needs a
+faster PC than the reference one is allowed.
 
-The previous plan (2026-10-26) closed on 2026-10-28, released 0.5.0; the
-owner accepted every outcome and every open point below.
+The plan of 2026-10-26 closed on 2026-10-28, released 0.5.0; the owner
+accepted every outcome and every open point below.
 
 What the plan settled (journal 2026-10-28):
 - **Base**: the reference PC (i5-10600) builds on BuildTools 14.44; VISION.md
