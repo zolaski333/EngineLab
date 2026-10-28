@@ -9,11 +9,6 @@ engine:
   firing_order: [1, 3, 4, 2]
   idle_rpm: 800
   redline_rpm: 5000
-  # Simulated stock firing pressure reaches 231 bar at 2,000 rpm full load,
-  # above the 200 bar of a typical passenger-car diesel: the limit sits 10 %
-  # over this engine's own stock peak so the stock calibration does no harm
-  # (journal 2026-10-15). Not a manufacturer figure.
-  peak_pressure_limit_bar: 255
   rotating_inertia_kg_m2: 0.27
   friction_coefficient: 0.16
   octane_rating: 98
@@ -59,11 +54,10 @@ engine:
     turbulent_jet_noise_coefficient: 0.00001
   combustion_calibration:
     wall_heat_transfer_w_per_k: 0.58
-    compression_ignition_delay_scale: 3.0
     compression_ignition_mixing_time_s: 0.0016
     compression_ignition_premixed_fraction: 0.08
   ignition:
-    # Retained as injection-controller phase telemetry; no spark is created.
+    # A diesel has no spark: the advance is the start of injection, deg BTDC.
     rev_limit_rpm: 5000
     limiter_duration_s: 0.070
     timing_curve:

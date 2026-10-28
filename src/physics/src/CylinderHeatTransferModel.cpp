@@ -33,7 +33,9 @@ CylinderHeatTransferResult CylinderHeatTransferModel::evaluate(
     // h = 3.26 B^-0.2 p^0.8 T^-0.55 w^0.8 [W/(m^2 K)].
     // C1 is 6.18 during gas exchange and 2.28 for closed-valve motoring.
     const auto gasVelocityMps = (conditions.gasExchangeStroke ? 6.18 : 2.28)
-        * conditions.meanPistonSpeedMps;
+        * conditions.meanPistonSpeedMps
+        + (std::isfinite(conditions.combustionGasVelocityMps)
+            ? std::max(0.0, conditions.combustionGasVelocityMps) : 0.0);
     result.coefficientWPerM2K = 3.26
         * std::pow(conditions.boreM, -0.2)
         * std::pow(conditions.pressureKpa, 0.8)

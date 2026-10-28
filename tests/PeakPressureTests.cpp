@@ -141,6 +141,24 @@ void railPressureDrivesTheDieselBurn() {
     require(halved.meanPeakBar < rated.meanPeakBar - 2.0, "a slower mixing burn fires lower");
 }
 
+/** A diesel's ECU advance is its start of injection, and its burn follows
+ *  it: the stock TDI fires under a diesel's 200 bar at full load (231 bar
+ *  when it injected from a fixed 20 deg BTDC), and six degrees more advance
+ *  fires it harder (the fixed window ignored the map). */
+void startOfInjectionSetsTheDieselBurn() {
+    const auto config = catalogueEngine("TDI");
+    auto advanced = config;
+    for (auto& point : advanced.ignition.timingCurve) point.advanceDegrees += 6.0;
+    const auto stock = heldFullLoad(config, 10.0);
+    const auto early = heldFullLoad(advanced, 10.0);
+    std::cout << "  TDI held at full load: peak " << stock.meanPeakBar << " bar; with the start of"
+              << " injection 6 deg earlier: " << early.meanPeakBar << " bar\n";
+    require(stock.meanPeakBar > 80.0 && stock.meanPeakBar < 200.0,
+        "the stock TDI fires under a diesel's 200 bar at full load");
+    require(early.meanPeakBar > stock.meanPeakBar + 10.0,
+        "an earlier start of injection fires the diesel harder");
+}
+
 } // namespace
 
 int main() {
@@ -150,5 +168,7 @@ int main() {
     std::cout << "over-pressure damage: ok\n";
     railPressureDrivesTheDieselBurn();
     std::cout << "diesel rail pressure: ok\n";
+    startOfInjectionSetsTheDieselBurn();
+    std::cout << "diesel start of injection: ok\n";
     return 0;
 }

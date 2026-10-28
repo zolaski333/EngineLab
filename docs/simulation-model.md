@@ -315,12 +315,21 @@ the instantaneous cylinder back-pressure is subtracted.
 
 - With direct injection, fuel goes into the cylinder and its latent heat cools
   the charge according to the configured efficiency.
+- A diesel injects from the ECU's advance, which is its start of injection
+  (deg BTDC, latched at the start of compression as a spark is), and never
+  before the injection part's `start_angle_deg`. The ignition delay is
+  Assanis et al.'s, tau = 2.4 phi^-0.2 p^-1.02 exp(2100/T) ms with a cetane
+  correction, integrated (Livengood-Wu) from that start: the unburned fuel a
+  cycle leaves in its residual is not integrated from mid-compression, which
+  used to light every cycle before its own injection and needed a delay
+  scale of 3 to land. The burn then has a premixed part, a fixed share of the
+  fuel present at ignition, and a mixing-controlled rest.
 - On a diesel, the mixing-controlled burn (and the premixed burn, a fixed
   fraction of its time) is calibrated at the injector's rated pressure and
   scales with sqrt(rated / rail pressure): the jet's speed, which drives the
   mixing, goes as the square root of the pressure drop (Chmela and Orthaber).
-  Halving the TDI's rail pressure at full load lowers its firing peak from 198
-  to 177 bar with the injector capacity held.
+  Halving the TDI's rail pressure at full load (3,000 rpm) lowers its firing
+  peak from 136 to 123 bar with the injector capacity held.
 - With port injection, a fraction joins a persistent liquid film on the port.
   Its evaporation depends on temperature and a time constant.
 
@@ -414,9 +423,10 @@ the engine's structural limit (`peak_pressure_limit_bar`; zero takes 120 bar
 naturally aspirated, 140 boosted, 200 for a diesel, the upper end of production
 designs) it adds damage as the square of the excess: 10 % over takes about
 17 minutes to "damaged", 30 % about 2 minutes. The simulated full-load peaks of
-the boosted catalogue engines ran above real ones (Audi I5 175 bar before the
-knock control held it, TDI 231 bar), so those two carry their own limit 10 %
-over that stock peak.
+the Audi I5 ran above a real one (175 bar before the knock control held it),
+so it carries its own limit 10 % over that stock peak. The TDI fired 231 bar
+until its advance became its start of injection; it now peaks at 156-165 bar
+and runs under the diesel default.
 
 ## Forced induction
 
@@ -507,9 +517,13 @@ Without a graph, the historical geometry is first expanded into a compatible
 physical DAG. See [custom-exhaust.md](custom-exhaust.md).
 
 Cylinders use Woschni's instantaneous convective correlation rather than a
-constant conductance, its motored term only: the combustion term would bring
-the TDI's 171 g/kWh at 2,000 rpm to a real diesel's 212, but it stalls lugged
-and launched engines the tests hold (journal 2026-10-23). Intake ducts and every
+constant conductance. A diesel adds its combustion term, C2 = 3.24e-3 m/(s K)
+times Vd Tr / (pr Vr) times the pressure above the motored one, extrapolated
+from the state at intake closing (n = 1.35): without it the TDI turned 51 % of
+its fuel into indicated work at full load (171 g/kWh). A spark engine keeps
+the motored term only: with the combustion term the lugged and launched
+engines the tests hold stall (journal 2026-10-23), and it is not measured
+there since. Intake ducts and every
 cell of the exhaust network have a
 metal wall with finite heat capacity. Internal exchange is integrated
 analytically and conserves gas + wall energy; only the explicitly accounted

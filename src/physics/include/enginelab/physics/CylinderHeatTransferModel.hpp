@@ -2,7 +2,7 @@
 
 namespace enginelab {
 
-/** Inputs to the motored-flow term of the Woschni cylinder heat-transfer law. */
+/** Inputs to the Woschni cylinder heat-transfer law. */
 struct CylinderHeatTransferConditions final {
     double boreM { 0.0 };
     double pistonTravelM { 0.0 };
@@ -14,6 +14,10 @@ struct CylinderHeatTransferConditions final {
     double fixedConductanceWPerK { 0.0 };
     double durationSeconds { 0.0 };
     bool gasExchangeStroke { false };
+    /** Woschni's combustion term, C2 Vd Tr / (pr Vr) (p - p_motored), in
+     *  m/s, added to the gas velocity. The caller supplies it (zero: the
+     *  motored law alone). */
+    double combustionGasVelocityMps { 0.0 };
 };
 
 struct CylinderHeatTransferResult final {
@@ -28,7 +32,8 @@ struct CylinderHeatTransferResult final {
  * Instantaneous cylinder-to-wall convection for a zero-dimensional gas cell.
  *
  * The coefficient follows the motored-flow term of Woschni's correlation;
- * open-valve gas-exchange strokes use its higher mean-gas-speed coefficient.
+ * open-valve gas-exchange strokes use its higher mean-gas-speed coefficient,
+ * and a caller may add the combustion term's gas velocity.
  * The finite-time exchange is integrated analytically against the gas heat
  * capacity, so a solver step cannot cross the prescribed wall temperature.
  */

@@ -789,6 +789,17 @@ private:
     std::array<bool, 32> ignitionPending_ {};
     std::array<bool, 32> sparkScheduleArmed_ {};
     std::array<double, 32> scheduledSparkPhaseDegrees_ {};
+    /** A diesel's injector has reached the ECU's start of injection this
+     *  cycle: the advance the spark schedule latched at the start of
+     *  compression, bounded by the injection part's window. */
+    std::array<bool, 32> dieselInjectionStarted_ {};
+    /** Woschni's reference state, latched at intake closing, from which the
+     *  motored pressure of the closed cycle is extrapolated (polytropic,
+     *  n = 1.35); valid until the exhaust opens. A diesel's only. */
+    std::array<bool, 32> woschniReferenceValid_ {};
+    std::array<double, 32> woschniReferenceVolumeL_ {};
+    std::array<double, 32> woschniReferencePressureKpa_ {};
+    std::array<double, 32> woschniReferenceTemperatureK_ {};
     /** Crank degrees still to travel before the latched spark event fires.
      *  A remaining DISTANCE, not an absolute phase: a commanded retard past
      *  firing TDC places the event after the cycle boundary, which no

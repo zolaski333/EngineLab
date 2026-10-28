@@ -22,6 +22,11 @@ struct CompressionIgnitionConditions final {
     double cyclePhaseDegrees { 0.0 };
     double meanPistonSpeedMps { 0.0 };
     bool enabled { false };
+    /** This cycle's injection has begun. The ignition delay is the jet's,
+     *  counted from the start of injection: the unburned fuel a cycle leaves
+     *  in its residual gas is not a charge, and integrating the delay on it
+     *  from mid-compression lit every cycle before its own injection. */
+    bool injectionStarted { true };
 };
 
 struct CompressionIgnitionResult final {

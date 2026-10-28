@@ -764,7 +764,6 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             }
             auto& calibration = config.combustionCalibration;
             calibration.wallHeatTransferCoefficientWPerK = 0.58;
-            calibration.compressionIgnitionDelayScale = 3.0;
             calibration.compressionIgnitionMixingTimeSeconds = 0.0016;
             calibration.compressionIgnitionPremixedFraction = 0.08;
             config.solver.maximumMechanicalFrequencyHz = 30'000.0;

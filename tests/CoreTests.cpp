@@ -1087,6 +1087,25 @@ int main() {
                 && coldChamber.mixture().fuelMoles > 0.0,
                 "a cold low-pressure diesel mixture must not autoignite");
 
+        // The delay is the jet's: fuel left in the residual must not run
+        // the ignition integral before this cycle's injection begins.
+        enginelab::GasCell residualFuel;
+        residualFuel.configureFuelChemistry(
+            diesel.molarMassGramsPerMole * 0.001,
+            diesel.oxygenMolesPerFuelMole,
+            diesel.productMolesPerFuelMole);
+        residualFuel.initialise(5'000.0, 0.055, 850.0,
+            { 0.002, 0.00752, 0.00008, 0.0 });
+        enginelab::CompressionIgnitionState residualState;
+        for (int step = 0; step < 400; ++step)
+            (void)enginelab::CompressionIgnitionModel::advance(
+                residualState, residualFuel, diesel, calibration,
+                { 700.0 + static_cast<double>(step) * 0.2, 9.0, true, false },
+                25.0e-6);
+        require(!residualState.autoIgnited
+                && residualState.livengoodWuIntegral == 0.0,
+                "no ignition delay runs before the cycle's injection begins");
+
         enginelab::GasCell oxygenLimited;
         oxygenLimited.configureFuelChemistry(
             diesel.molarMassGramsPerMole * 0.001,

@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-28 — Diesel: start of injection from the map, delay from the jet, Woschni's combustion term
+
+- Baseline (DynoSweep, TDI + designed EA288/M57TU/6BT + torture I7): BSFC 163-172 g/kWh at 2,000 rpm (brake eff. ~51 %; real ~195-210), Pmax 230-260 bar, EGT 370-390 C. The K20 (petrol) also reads 209-233 g/kWh at WOT, lambda 0.9 (real ~260-290): the over-efficiency is global, not the diesel's.
+- `PhysicsPerfHarness --trace --settle 12` (new flag), TDI 2,000 rpm: injection from a fixed 700 deg (-20), the advance map unused; the Livengood-Wu delay ran on the residual's unburned fuel from mid-compression, so every cycle lit before its own injection (SOC -7.4 with injection at -3); the delay scale 3.0 compensated. CA50 +2.6, Pmax 215, dp/dtheta 18 bar/deg.
+- One factor each, TDI at 2,000/3,000/4,000: advance = start of injection (latched as a spark): torque unchanged (347), SOC still before injection. Delay from injection: CA50 16/23/28. Scale 3 -> 1 (Assanis as published): SOC -2.2, CA50 15/22/27, Pmax 161. Woschni's combustion term (C2 3.24e-3, diesel only): BSFC 191/195/201/210 at 2,000-3,500, torque 308 at 2,000 (rated 320, -3.8 %), 101 kW at 3,500 (110, -8.6 %), Pmax 156.
+- Generalisation, no tuning: designed EA288 from bore/stroke/CR 320 N.m (-0.1 %), 101 kW (-7.9 %); M57TU 485 N.m (+18 %: the designer's 2.3 boost and fuel map, not the 2003 calibration), 153 kW (+2 %); 6BT at 1.6 boost, 2,800 rpm: 633 N.m / 133 kW against 542 / 119 (+17 / +11 %). All BSFC 183-210 at 2,000-3,000, Pmax 131-165.
+- Idle (`--idle-firing 20 --settle 8`, 5 diesels): rpm sd 14-26, as before (TDI 819 -> 800 rpm). TDI idle: Pmax 47 -> 49, CA50 12 -> 8, dp/dtheta 1.4 -> 1.8.
+- Sound, `AudioRenderHarness --catalogue-filter TDI` (2,790 rpm): RMS +0.8 dB, bands 76/24 -> 70/30 %, brightness 0.067 -> 0.066. One point, not blind-listened, not compared with a recording.
+- Not done: the petrol over-efficiency (its own question); EGT still low (384-672 C); premixed share fixed at 8 % (Watson's would depend on the delay, the idle clatter); the full ctest (the app was running).
+
 ## 2026-10-28 — Optimisation: the half-reserve at 4 processors holds; no lead left inside the bar
 
 - `RealtimeBudgetHarness --relative-rpm 0.9 --free-run --with-audio --audio-rate 48000` under `start /affinity F` (4 processors), `--intake-workers` 1 (the rule) / 2 / 3, order rotated, round 0 discarded, min-max of 3: LS3 0.98-1.00 / 1.06-1.07 / INVALID; 2JZ 1.10-1.12 / 1.07-1.09 / INVALID; Merlin 1.10-1.11 / 1.27 / INVALID. Invalid = the audio contract broke (LS3 12,497 dropped pressure samples). The designed V4 two-stroke is invalid at every count: below real time on 4 processors.
