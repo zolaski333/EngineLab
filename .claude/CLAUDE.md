@@ -37,9 +37,10 @@ PC than the reference one is allowed.
    bit-exact first; otherwise every dyno row within 0.1 % torque and power,
    `held_rpm_stddev` and every catalogue idle unchanged, audio octave bands
    within 0.1 dB and the Geometry harness `shape` at noise level -- one such
-   change measured alone. Done when no further lead is known. So far: the
-   pool counts the processors the affinity allows (2026-10-28); open: the
-   half-reserve rule at 4 processors (measure the whole chain there).
+   change measured alone. Done when no further lead is known. Closed
+   2026-10-28 (journal): the pool counts the processors the affinity allows;
+   the half-reserve rule holds at 4 processors (three workers break the
+   audio); every lead left fails the bar (see Refuted, Performance).
 4. **Knock** -- closed 2026-10-28 (journal): at the limit the I5 runs CA50
    22-30 deg ATDC at 25 bar BMEP, where boosted engines run, so the physics
    stays; its template map was the error. `ignition.knock_limit_curve` holds
@@ -208,7 +209,11 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   runs the pass since 2026-10-20); AVX/AVX2 (dependent-division latency); a
   telemetry cache for listening; state-variable valve-flow reconstruction
   against clicks; whole-project LTO (bit-identical, within noise); `/MP2` on
-  the JUCE project in CI (C1060 beside the app's LTCG link).
+  the JUCE project in CI (C1060 beside the app's LTCG link); using the
+  half-reserve at 4 processors (3 workers drop audio, 2 cost the 2JZ); a
+  parallel two-stroke cylinder pass (Gauss-Seidel volumes and one PRNG
+  sequence below 8 cylinders); coarse closed-valve steps (x1.05, a sound
+  source).
 - **Two-stroke**: a 50 mm mesh; coupling the exhaust every substep beyond
   BDC-to-transfer-close, a characteristic valve, finer transfer coupling (none
   of them real time); un-gating exhaust oxidation before scavenging is right

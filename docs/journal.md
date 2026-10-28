@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-28 — Optimisation: the half-reserve at 4 processors holds; no lead left inside the bar
+
+- `RealtimeBudgetHarness --relative-rpm 0.9 --free-run --with-audio --audio-rate 48000` under `start /affinity F` (4 processors), `--intake-workers` 1 (the rule) / 2 / 3, order rotated, round 0 discarded, min-max of 3: LS3 0.98-1.00 / 1.06-1.07 / INVALID; 2JZ 1.10-1.12 / 1.07-1.09 / INVALID; Merlin 1.10-1.11 / 1.27 / INVALID. Invalid = the audio contract broke (LS3 12,497 dropped pressure samples). The designed V4 two-stroke is invalid at every count: below real time on 4 processors.
+- Kept: three workers lose the sound, two help two engines and cost the 2JZ, and leave no processor for the 3-D view, which the harness does not run.
+- Profile (`SamplingProfiler`, 2JZ, 12 processors): flat; the main thread is one core, the cylinder pass ~28 % of it, nothing above `pow` 4.4 % self; `log10` is Haaland's friction factor (bit-exactness).
+- Not taken, each outside the bar: a parallel two-stroke cylinder pass (below 8 cylinders the shared volumes are Gauss-Seidel and the PRNG is one sequence, so the catalogue idle cannot stay unchanged); coarse steps while valves shut (journal 2026-10-20 lead 2: ceiling x1.05, and the cylinder pressure is a sound source); faster `pow`/`log10` (<= 3 % each).
+
 ## 2026-10-28 — RD350 idle after Blair's friction: a slow coast, not a hang
 
 - Full ctest after Blair's two-stroke friction: `IdleStabilityRegression` failed on the RD350 only: steady idle 1,436 vs 1,300, and 3,026 rpm 12 s after the 1.2 s WOT blip.
