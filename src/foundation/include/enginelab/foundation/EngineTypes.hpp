@@ -964,6 +964,13 @@ struct ForcedInductionConfig final {
     std::uint32_t turbineBladeCount { 0 };
     std::uint32_t superchargerLobeCount { 0 };
     double superchargerDriveRatio { 1.0 };
+    /** A Roots supercharger's (lobes > 0) air displaced per rotor turn, in
+     *  litres. 0: sized to hold `pressureRatio` at the redline
+     *  (`rootsDisplacementLitres`). */
+    double superchargerDisplacementLitres { 0.0 };
+    /** A Roots supercharger's bypass valve, opened by manifold vacuum, in
+     *  mm2. 0: the throttle bores' combined area. */
+    double superchargerBypassAreaMm2 { 0.0 };
     double compressorInducerDiameterMm { 0.0 };
     double turbineExducerDiameterMm { 0.0 };
     /** Vent-to-ambient compressor bypass. Zero area means absent. The valve

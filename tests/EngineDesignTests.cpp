@@ -731,6 +731,52 @@ void carburettedFourPullsFromIdle() {
         "and pulls past 3,000 rpm at 15 % throttle, neither lean nor drowned");
 }
 
+/** A Roots supercharger is a displacement geared to the crank: its boost
+ *  rises with speed as its leak's share falls, and at part throttle the
+ *  manifold's vacuum opens its bypass, so it neither boosts nor pumps there.
+ *  A fraction of the authored ratio scaled by the throttle boosted a
+ *  manifold standing at 70 kPa, and was flat from 30 % of the redline. */
+void rootsSuperchargerFollowsItsDisplacement() {
+    auto spec = sportFour();
+    spec.use = EngineUse::roadCar;
+    spec.boreMm = 77.0;
+    spec.strokeMm = 85.8;
+    spec.induction = Induction::supercharged;
+    spec.boostPressureRatio = 1.75;
+    const auto config = *designed(spec).config;
+    require(config.forcedInduction.superchargerLobeCount > 0
+            && config.forcedInduction.superchargerDisplacementLitres > 0.1,
+        "a road car's supercharger is a Roots with a displacement");
+    const auto held = [&](double rpm, double throttle) {
+        auto rig = std::make_unique<Rig>(config);
+        auto speed = 0.0;
+        EngineState state;
+        for (auto frame = 0; frame < 4 * 240; ++frame) {
+            const auto t = frame * frameSeconds;
+            EngineControls controls;
+            controls.ignitionEnabled = true;
+            controls.starterEngaged = t < 1.0;
+            controls.throttle = t < 1.5 ? 0.0 : throttle;
+            if (t >= 1.5) controls.dynamometerTorqueNm = std::max(0.0, 4.0 * (speed - rpm));
+            state = rig->simulator->step(frameSeconds, controls).state;
+            speed = state.rpm;
+        }
+        return state;
+    };
+    const auto low = held(2'000.0, 1.0);
+    const auto high = held(5'500.0, 1.0);
+    const auto cruise = held(3'000.0, 0.15);
+    std::cout << "  Roots: WOT boost " << low.boostPressureRatio << " at " << low.rpm << " rpm, "
+              << high.boostPressureRatio << " at " << high.rpm << "; 15 % throttle: map "
+              << cruise.manifoldPressureKpa << " kPa, boost " << cruise.boostPressureRatio << ", "
+              << cruise.compressorPowerKw << " kW\n";
+    require(high.boostPressureRatio > low.boostPressureRatio + 0.1,
+        "at full throttle its boost rises with the speed");
+    require(cruise.manifoldPressureKpa < 90.0 && cruise.boostPressureRatio < 1.03
+            && cruise.compressorPowerKw < 0.5,
+        "at part throttle the bypass carries its air: no boost, next to no work");
+}
+
 /** A V's two cylinders of a row share one crank pin, as on the real engines;
  *  each had its own pin, placed for even firing (the owner's report,
  *  2026-10-19). */
@@ -936,6 +982,7 @@ int main() {
     fuelSystemsAreDesigned();
     designedValuesSurviveASave();
     carburettedFourPullsFromIdle();
+    rootsSuperchargerFollowsItsDisplacement();
     catalogueReadsDesigns();
     inlineSevenRuns();
     realtimeIsChecked();

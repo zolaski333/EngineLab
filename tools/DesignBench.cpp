@@ -118,7 +118,8 @@ struct SpecLine final {
             if (value == "natural") spec.induction = enginelab::Induction::natural;
             else if (value == "turbo") spec.induction = enginelab::Induction::turbocharged;
             else if (value == "super") spec.induction = enginelab::Induction::supercharged;
-            else result.error = "the induction is natural, turbo or super";
+            else if (value == "centrifugal") spec.induction = enginelab::Induction::centrifugalSupercharged;
+            else result.error = "the induction is natural, turbo, super or centrifugal";
             continue;
         }
         if (name == "intake") {

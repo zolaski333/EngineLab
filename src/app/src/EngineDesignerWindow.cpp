@@ -87,7 +87,7 @@ public:
         addField(bore_, "Bore (mm)", "84");
         addField(stroke_, "Stroke (mm)", "72");
         addField(displacement_, "or displacement (L)", "");
-        addChoice(induction_, "Induction", { "Natural", "Turbocharged", "Supercharged" });
+        addChoice(induction_, "Induction", { "Natural", "Turbocharged", "Supercharged", "Centrifugal supercharger" });
         twoStrokeIntake_.combo.setTooltip(utf8("Where the carburettor delivers. A reed on the crankcase lets the "
             "charge in whenever the crankcase draws. A port in the cylinder wall is uncovered by the piston skirt "
             "around top dead centre only; without a reed it blows back through the carburettor."));

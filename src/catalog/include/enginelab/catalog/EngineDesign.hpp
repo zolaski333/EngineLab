@@ -19,7 +19,9 @@ enum class EngineUse : std::uint8_t {
     roadCar, sportCar, roadMotorcycle, sportMotorcycle, cruiserMotorcycle, aircraft
 };
 
-enum class Induction : std::uint8_t { natural, turbocharged, supercharged };
+/** `supercharged` fits the use's usual machine: a Roots, a centrifugal one on
+ *  an aircraft. `centrifugalSupercharged` fits a centrifugal one on any use. */
+enum class Induction : std::uint8_t { natural, turbocharged, supercharged, centrifugalSupercharged };
 
 /** How the cylinders of one row of a V or a W meet the crank. Inline, flat
  *  and radial engines are not concerned. */

@@ -882,6 +882,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || config.forcedInduction.turbineBladeCount > 100
         || config.forcedInduction.superchargerLobeCount > 20
         || outOfRange("forcedInduction.superchargerDriveRatio", config.forcedInduction.superchargerDriveRatio, 0.1, 30.0)
+        || outOfRange("forcedInduction.superchargerDisplacementLitres", config.forcedInduction.superchargerDisplacementLitres, 0.0, 1'000.0)
+        || outOfRange("forcedInduction.superchargerBypassAreaMm2", config.forcedInduction.superchargerBypassAreaMm2, 0.0, 1.0e6)
         || outOfRange("forcedInduction.compressorInducerDiameterMm", config.forcedInduction.compressorInducerDiameterMm, 0.0, 500.0)
         || outOfRange("forcedInduction.turbineExducerDiameterMm", config.forcedInduction.turbineExducerDiameterMm, 0.0, 500.0)
         || outOfRange("forcedInduction.blowOffValveFlowAreaMm2", config.forcedInduction.blowOffValveFlowAreaMm2, 0.0, 5'000.0)

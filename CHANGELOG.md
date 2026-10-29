@@ -28,6 +28,10 @@ file formats, always with an in-memory migration).
   car's fixed-venturi carburettor with an accelerator pump and a starter
   circuit, all sized from the engine; it starts, idles, and pulls from idle at
   part throttle.
+- **A supercharger is a machine, not a fraction of a target.** A Roots has a
+  displacement, a leak and a bypass valve the manifold's vacuum opens, so it
+  boosts more as it spins faster and does no work at cruise; a centrifugal one
+  reads its wheel's map. The designer offers both (*Centrifugal supercharger*).
 - **The intake can be an open trumpet.** The Intake & fuel page chooses an
   airbox, a pod filter (the element on the throttle's mouth, no box) or open
   velocity stacks (a bellmouth, no filter).

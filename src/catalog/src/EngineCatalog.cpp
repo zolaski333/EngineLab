@@ -645,6 +645,8 @@ template <typename T>
     assignIfPresent(node, "turbine_blade_count", value.turbineBladeCount);
     assignIfPresent(node, "supercharger_lobe_count", value.superchargerLobeCount);
     assignIfPresent(node, "supercharger_drive_ratio", value.superchargerDriveRatio);
+    assignIfPresent(node, "supercharger_displacement_l", value.superchargerDisplacementLitres);
+    assignIfPresent(node, "supercharger_bypass_area_mm2", value.superchargerBypassAreaMm2);
     assignIfPresent(node, "compressor_inducer_diameter_mm", value.compressorInducerDiameterMm);
     assignIfPresent(node, "turbine_exducer_diameter_mm", value.turbineExducerDiameterMm);
     assignIfPresent(node, "blow_off_valve_flow_area_mm2", value.blowOffValveFlowAreaMm2);
@@ -879,6 +881,7 @@ void applyCrankOffsets(EngineConfig& config) {
     if (induction == "natural") spec.induction = Induction::natural;
     else if (induction == "turbocharged") spec.induction = Induction::turbocharged;
     else if (induction == "supercharged") spec.induction = Induction::supercharged;
+    else if (induction == "centrifugal_supercharged") spec.induction = Induction::centrifugalSupercharged;
     else throw std::runtime_error("Unknown induction: " + induction);
     assignIfPresent(node, "boost_pressure_ratio", spec.boostPressureRatio);
     assignIfPresent(node, "turbochargers", spec.turbochargerCount);

@@ -1882,6 +1882,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto exhaustMassFlowKgPerSecond = std::max(0.0, state_.exhaustFlowGramsPerSecond) * 0.001;
             auto pressureRatioTarget = 1.0;
             auto compressorPowerW = 0.0;
+            auto rootsPowerW = -1.0;
             auto turbinePowerW = 0.0;
             state_.turboBearingPowerKw = 0.0;
             state_.turboShaftNetPowerKw = 0.0;
@@ -1889,14 +1890,37 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto exhaustTemperatureK = std::max(ambientTemperatureK, state_.exhaustTemperatureC + 273.15);
             if (config_.forcedInduction.enabled
                     && config_.forcedInduction.type == ForcedInductionType::supercharger) {
-                const auto speedRatio = std::clamp(state_.rpm
-                    / std::max(1.0, config_.forcedInduction.fullBoostRpm), 0.0, 1.0);
-                const auto drive = speedRatio * std::clamp(std::pow(state_.throttle, 0.72), 0.0, 1.0);
-                pressureRatioTarget = 1.0
-                    + (config_.forcedInduction.pressureRatio - 1.0) * drive;
-                state_.forcedInductionShaftSpeedRpm = state_.rpm
-                    * config_.forcedInduction.superchargerDriveRatio;
+                // Geared to the crank, a supercharger's boost is its machine's
+                // answer to the engine's draw, not a fraction of a target.
+                const auto& charger = config_.forcedInduction;
+                state_.forcedInductionShaftSpeedRpm = state_.rpm * charger.superchargerDriveRatio;
                 state_.wastegateOpening = 0.0;
+                if (charger.superchargerLobeCount > 0) {
+                    // A Roots: a displacement, its leak and a bypass the
+                    // manifold's vacuum opens, so it idles and cruises
+                    // without pumping against the throttle.
+                    const auto bypassOpening = std::clamp((config_.ambientPressureKpa
+                        - state_.manifoldPressureKpa) / rootsBypassFullOpenVacuumKpa, 0.0, 1.0);
+                    const auto roots = rootsOperatingPoint(rootsDisplacementLitres(config_),
+                        state_.forcedInductionShaftSpeedRpm, airMassFlowKgPerSecond,
+                        state_.boostPressureRatio, rootsBypassAreaM2(config_) * bypassOpening,
+                        config_.ambientPressureKpa, ambientTemperatureK);
+                    pressureRatioTarget = roots.pressureRatio;
+                    rootsPowerW = roots.powerWatts;
+                } else {
+                    // A centrifugal wheel on the turbocharger's map, at the
+                    // speed the drive gives it; the authored ratio is held
+                    // above full-boost speed by a relief (the Merlin's boost
+                    // regulator).
+                    auto wheel = charger;
+                    wheel.designShaftSpeedRpm = std::max(1.0, charger.fullBoostRpm * charger.superchargerDriveRatio);
+                    const auto point = compressorOperatingPoint(wheel,
+                        centrifugalSuperchargerDesignMassFlowKgPerSecond(config_),
+                        state_.forcedInductionShaftSpeedRpm * 2.0 * std::numbers::pi / 60.0,
+                        compressorMassFlowKgPerSecond, ambientTemperatureK, config_.ambientPressureKpa);
+                    pressureRatioTarget = std::min(point.pressureRatio, std::max(1.0, charger.pressureRatio));
+                    state_.forcedInductionShaftSpeedRatio = point.speedRatio;
+                }
             } else if (config_.forcedInduction.enabled) {
                 const auto& turbo = config_.forcedInduction;
                 const auto turbochargerCount = std::clamp<std::size_t>(
@@ -2080,6 +2104,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     config_.forcedInduction, compressorMassFlowKgPerSecond,
                     ambientTemperatureK, pressureRatioTarget);
             }
+            // A Roots heats its charge by the work it does on it: its
+            // efficiency is the isentropic work over that.
+            auto chargeCompressionEfficiency = config_.forcedInduction.compressorEfficiency;
+            if (rootsPowerW >= 0.0) {
+                chargeCompressionEfficiency = rootsPowerW > 0.0
+                    ? std::clamp(compressorPowerW * config_.forcedInduction.compressorEfficiency
+                        / rootsPowerW, 0.35, 0.90)
+                    : 0.90;
+                compressorPowerW = rootsPowerW;
+            }
             state_.compressorPowerKw = compressorPowerW * 0.001;
             state_.turbinePowerKw = turbinePowerW * 0.001;
             state_.boostPressureRatio = smooth(state_.boostPressureRatio,
@@ -2097,7 +2131,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto isentropicRiseC = ambientTemperatureK
                 * (std::pow(std::max(1.0, state_.boostPressureRatio),
                     turboIsentropicExponent) - 1.0)
-                / std::max(0.35, config_.forcedInduction.compressorEfficiency);
+                / std::max(0.35, chargeCompressionEfficiency);
             const auto chargeTemperatureC = config_.ambientTemperatureC + isentropicRiseC
                 + config_.forcedInduction.chargeTemperatureRiseC * 0.15 * boostBlend;
             // A charge-air cooler takes back its share of the rise.

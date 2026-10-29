@@ -511,6 +511,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"turbine_blade_count", config.forcedInduction.turbineBladeCount},
                                {"supercharger_lobe_count", config.forcedInduction.superchargerLobeCount},
                                {"supercharger_drive_ratio", config.forcedInduction.superchargerDriveRatio},
+                               {"supercharger_displacement_l", config.forcedInduction.superchargerDisplacementLitres},
+                               {"supercharger_bypass_area_mm2", config.forcedInduction.superchargerBypassAreaMm2},
                                {"compressor_inducer_diameter_mm", config.forcedInduction.compressorInducerDiameterMm},
                                {"turbine_exducer_diameter_mm", config.forcedInduction.turbineExducerDiameterMm},
                                {"blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2},
@@ -783,6 +785,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.turbineBladeCount = forced.value("turbine_blade_count", config.forcedInduction.turbineBladeCount);
             config.forcedInduction.superchargerLobeCount = forced.value("supercharger_lobe_count", config.forcedInduction.superchargerLobeCount);
             config.forcedInduction.superchargerDriveRatio = forced.value("supercharger_drive_ratio", config.forcedInduction.superchargerDriveRatio);
+            config.forcedInduction.superchargerDisplacementLitres = forced.value("supercharger_displacement_l", config.forcedInduction.superchargerDisplacementLitres);
+            config.forcedInduction.superchargerBypassAreaMm2 = forced.value("supercharger_bypass_area_mm2", config.forcedInduction.superchargerBypassAreaMm2);
             config.forcedInduction.compressorInducerDiameterMm = forced.value("compressor_inducer_diameter_mm", config.forcedInduction.compressorInducerDiameterMm);
             config.forcedInduction.turbineExducerDiameterMm = forced.value("turbine_exducer_diameter_mm", config.forcedInduction.turbineExducerDiameterMm);
             config.forcedInduction.blowOffValveFlowAreaMm2 = forced.value("blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2);

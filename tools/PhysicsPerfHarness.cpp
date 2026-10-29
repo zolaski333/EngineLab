@@ -249,7 +249,7 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
     // the first seconds, not in the state it converges to).
     if (watchSettle)
         std::cout << "t_s,rpm,map_kpa,throttle,afr,fuel_mg,misfire,irt_c,net_nm,cylp_bar,"
-                     "boost,wastegate,shaft_krpm,turbine_kw,back_kpa,cycle_nm\n";
+                     "boost,wastegate,shaft_krpm,turbine_kw,back_kpa,cycle_nm,compressor_kw\n";
     // `--settle S` holds longer before the cycle is dumped: a turbo diesel's
     // boost is still rising after the default 4 s.
     const auto holdSeconds = settleSeconds > 0.0 ? settleSeconds : freeIdle ? 12.0 : 4.0;
@@ -270,7 +270,8 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                       << ',' << frame.state.forcedInductionShaftSpeedRpm * 1.0e-3
                       << ',' << frame.state.turbinePowerKw
                       << ',' << frame.state.exhaustBackPressureKpa
-                      << ',' << frame.state.cycleAveragedTorqueNm << '\n';
+                      << ',' << frame.state.cycleAveragedTorqueNm
+                      << ',' << frame.state.compressorPowerKw << '\n';
         }
     }
     for (std::size_t index = 0;

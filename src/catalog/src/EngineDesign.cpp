@@ -1,5 +1,6 @@
 #include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
+#include <enginelab/foundation/ForcedInductionFlow.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
 
@@ -1429,21 +1430,29 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             turbo.turbineExducerDiameterMm = 0.9 * turbo.compressorInducerDiameterMm;
             turbo.shaftInertiaKgM2 = 4.75e-13 * std::pow(turbo.compressorInducerDiameterMm, 5.0);
             config = withTurbochargerCount(std::move(config), spec.turbochargerCount);
-        } else if (spec.induction == Induction::supercharged) {
+        } else if (spec.induction == Induction::supercharged
+                   || spec.induction == Induction::centrifugalSupercharged) {
             auto& charger = config.forcedInduction;
             charger.enabled = true;
             charger.type = ForcedInductionType::supercharger;
             charger.pressureRatio = boost;
             charger.compressorEfficiency = 0.70;
             charger.chargeTemperatureRiseC = 48.0;
-            const auto centrifugal = spec.use == EngineUse::aircraft;
-            charger.fullBoostRpm = (centrifugal ? 0.6 : 0.3) * config.redlineRpm;
-            if (centrifugal) {
+            const auto aircraft = spec.use == EngineUse::aircraft;
+            if (aircraft || spec.induction == Induction::centrifugalSupercharged) {
+                // An aircraft's wheel is regulated from 60 % of its speed up;
+                // a road one (a ProCharger's) reaches its boost at the
+                // redline, its pressure rising with the square of the speed.
+                charger.fullBoostRpm = (aircraft ? 0.6 : 1.0) * config.redlineRpm;
                 charger.compressorBladeCount = 12;
                 charger.superchargerDriveRatio = 8.1;
             } else {
+                // A Roots geared to 14,000 rotor rpm at the redline (an Eaton
+                // M-series' limit), its displacement from the boost there.
+                charger.fullBoostRpm = config.redlineRpm;
                 charger.superchargerLobeCount = 4;
-                charger.superchargerDriveRatio = 2.2;
+                charger.superchargerDriveRatio = std::clamp(14'000.0 / config.redlineRpm, 0.5, 4.0);
+                charger.superchargerDisplacementLitres = rootsDisplacementLitres(config);
             }
         }
 

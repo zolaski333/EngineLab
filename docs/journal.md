@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — Supercharger: a Roots displacement with a bypass, a centrifugal wheel on the map
+
+- The supercharger's boost was `1 + (PR - 1) x rpm/full-boost x throttle^0.72`: a boosted manifold at part throttle, flat above 30 % of the redline. Now a Roots (lobes > 0) solves its mass balance: displacement x rotor speed, a clearance leak of 2,000 rotor rpm at 50 kPa (about an Eaton M-series map), a bypass opened by manifold vacuum (full at 34 kPa); work = displaced volume x rise. A centrifugal one reads the turbocharger's map at the crank-geared speed, the authored ratio held as a regulator.
+- Designed R53-like 1.6 at 1.75 (Roots, 14,000 rotor rpm at the redline): MAP 137 -> 178 kPa over 2,000-6,000 rpm; 230 N.m (real 210), 143 kW (real 120). Designed L67-like 3.8 V6 at 1.5: boost 1.34 at 5,500 (it draws 1.02 of its swept volume at the outlet pressure); 492 N.m / 283 kW against 380 / 179: it breathes 50 % more air than the real 2-valve pushrod (285 against ~190 g/s), the designer's heads, not the blower.
+- R53 at 3,000 rpm: 10 / 20 % throttle MAP 33 / 71 kPa, boost 1.01, 0.07-0.09 kW; WOT 4.2 kW. Idle of the designs 800 rpm, sd 2.5-5. `EngineDesign` test fails on the old law (part-throttle boost).
+- Merlin (centrifugal, regulated at 1.72 from 2,300): identical at 2,750; 2,000 rpm 2,548 N.m for 2,696 (head with the square of the speed). Not measured: the Merlin's sound and idle, the full ctest, a Roots' bearing and belt friction (none modelled).
+
 ## 2026-10-29 — Fuel system and intake style in the designer; a carburetted four-stroke
 
 - `DesignBench` + `DynoSweepHarness --step 1000` (designed K20, port / direct / carburettor): WOT 243.0 / 256.7 / 238.3 N.m, 168.6 / 176.5 / 164.0 kW, lambda 0.88-0.90 / 0.88-0.90 / 0.85-0.88. Direct injection +5.6 % from the evaporating fuel's charge cooling (homogeneous, 420-600 deg). Designed 350 cc 2T twin carb / port / direct: 43.0 / 45.0 / 40.9 N.m at 9,000 rpm.

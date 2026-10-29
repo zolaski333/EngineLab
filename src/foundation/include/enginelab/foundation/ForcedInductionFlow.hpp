@@ -147,6 +147,127 @@ inline constexpr double compressorInducerDesignVelocityMps = 100.0;
     return std::max(0.005, flow / static_cast<double>(std::max(1U, turbo.turbochargerCount)));
 }
 
+/** A centrifugal supercharger's wheel at the centre of its map: the authored
+ *  flow, else the engine's air at full-boost speed and the authored ratio
+ *  (volumetric efficiency 0.9, the turbocharger's sizing). Its design speed
+ *  is the full-boost speed
+ *  through the drive. An inducer is not read: a supercharger's authored
+ *  "inducer" is often the wheel's tip (the Merlin's 250 mm). */
+[[nodiscard]] inline double centrifugalSuperchargerDesignMassFlowKgPerSecond(const EngineConfig& config) noexcept {
+    const auto& charger = config.forcedInduction;
+    if (charger.compressorDesignMassFlowKgPerSecond > 0.0) return charger.compressorDesignMassFlowKgPerSecond;
+    constexpr double referenceDensityKgPerM3 = compressorReferencePressureKpa * 1'000.0
+        / (287.05 * compressorReferenceTemperatureK);
+    const auto ratio = std::max(1.0, charger.pressureRatio);
+    const auto chargeTemperatureRatio = 1.0 + (std::pow(ratio, turboIsentropicExponent) - 1.0)
+        / std::clamp(charger.compressorEfficiency, 0.35, 0.90);
+    const auto cyclesPerRevolution = 360.0 / cycleDegreesOf(config.cycle);
+    return std::max(0.005, referenceDensityKgPerM3 * engineDisplacementLitres(config) * 0.001
+        * std::max(1.0, charger.fullBoostRpm) / 60.0 * cyclesPerRevolution * 0.9 * ratio
+        / chargeTemperatureRatio);
+}
+
+/** A Roots supercharger's clearances return to its inlet the air its rotors
+ *  displace at 2,000 rotor rpm at a 50 kPa rise: a volumetric efficiency of
+ *  0.80 at 10,000 rotor rpm and 0.50 at 4,000, about an Eaton M-series map.
+ *  The clearances are orifices of fixed area, so the leak grows with the
+ *  root of the rise and not with the speed. */
+inline constexpr double rootsLeakageRotorRpm = 2'000.0;
+inline constexpr double rootsLeakageReferenceRiseKpa = 50.0;
+/** Its bypass valve opens with manifold vacuum: shut at none, fully open at
+ *  34 kPa (10 inHg, about the actuator of a GM 3800's M90). */
+inline constexpr double rootsBypassFullOpenVacuumKpa = 34.0;
+inline constexpr double rootsBypassDischargeCoefficient = 0.7;
+
+[[nodiscard]] inline double rootsLeakageM3PerSecond(double displacementLitres, double riseKpa) noexcept {
+    return displacementLitres * 0.001 * rootsLeakageRotorRpm / 60.0
+        * std::sqrt(std::max(0.0, riseKpa) / rootsLeakageReferenceRiseKpa);
+}
+
+/** The authored displacement, else the one that holds the authored ratio at
+ *  the redline, the engine at a volumetric efficiency of 0.9. The boost an
+ *  engine then reaches is its own breathing's: a designed 1.6 four at 1.75
+ *  reaches 1.75 at 6,000 rpm, a designed 3.8 V6 at 1.5 reaches 1.34 (it
+ *  draws 1.02 of its swept volume at the outlet's pressure), as a real
+ *  blower's pulley is chosen on the car. */
+[[nodiscard]] inline double rootsDisplacementLitres(const EngineConfig& config) noexcept {
+    const auto& charger = config.forcedInduction;
+    if (charger.superchargerDisplacementLitres > 0.0) return charger.superchargerDisplacementLitres;
+    const auto ratio = std::max(1.0, charger.pressureRatio);
+    const auto engineRevolutionsPerSecond = std::max(1.0, config.redlineRpm) / 60.0;
+    const auto cyclesPerRevolution = 360.0 / cycleDegreesOf(config.cycle);
+    // The engine draws its volume at the outlet's density, the rotors fill
+    // at the inlet's: the net displacement carries the ratio.
+    const auto drawnM3PerSecond = engineDisplacementLitres(config) * 0.001
+        * engineRevolutionsPerSecond * cyclesPerRevolution * 0.9 * ratio;
+    const auto rotorRevolutionsPerSecond = engineRevolutionsPerSecond
+        * std::max(0.1, charger.superchargerDriveRatio);
+    const auto netM3PerSecondPerLitre = std::max(0.2 * rotorRevolutionsPerSecond * 0.001,
+        rotorRevolutionsPerSecond * 0.001
+            - rootsLeakageM3PerSecond(1.0, (ratio - 1.0) * config.ambientPressureKpa));
+    return drawnM3PerSecond / netM3PerSecondPerLitre;
+}
+
+/** The authored bypass, else the throttle bores' combined area. */
+[[nodiscard]] inline double rootsBypassAreaM2(const EngineConfig& config) noexcept {
+    if (config.forcedInduction.superchargerBypassAreaMm2 > 0.0)
+        return config.forcedInduction.superchargerBypassAreaMm2 * 1.0e-6;
+    const auto radiusM = config.intake.throttleDiameterMm * 0.0005;
+    return static_cast<double>(std::max(1U, config.intake.throttleCount)) * std::numbers::pi * radiusM * radiusM;
+}
+
+struct RootsOperatingPoint final {
+    double pressureRatio { 1.0 };
+    double powerWatts {};
+    double bypassKgPerSecond {};
+};
+
+/** Where a Roots supercharger runs: the outlet pressure at which the air its
+ *  rotors carry, less what its clearances leak back and its bypass returns,
+ *  is the air the engine draws there. The engine's draw is the one measured
+ *  at `currentPressureRatio`, in proportion to the outlet pressure (a throttle
+ *  and the cylinders both pass mass in proportion to the pressure upstream).
+ *  A Roots has no internal compression: each pocket arrives at the inlet's
+ *  pressure and the outlet's gas flows back into it, so the work is the
+ *  displaced volume times the rise. Where the engine draws more than the
+ *  rotors carry it would be a restriction; the ratio is held at 1 there. */
+[[nodiscard]] inline RootsOperatingPoint rootsOperatingPoint(
+    double displacementLitres, double rotorRpm, double engineMassFlowKgPerSecond,
+    double currentPressureRatio, double bypassAreaM2, double inletPressureKpa,
+    double inletTemperatureK) noexcept {
+    RootsOperatingPoint point;
+    const auto inletKpa = std::max(1.0, inletPressureKpa);
+    const auto density = inletKpa * 1'000.0 / (287.05 * std::max(150.0, inletTemperatureK));
+    const auto displacedM3PerSecond = std::max(0.0, displacementLitres) * 0.001
+        * std::max(0.0, rotorRpm) / 60.0;
+    const auto drawPerRatio = std::max(0.0, engineMassFlowKgPerSecond)
+        / std::max(1.0, currentPressureRatio);
+    const auto bypassAt = [&](double riseKpa) {
+        return rootsBypassDischargeCoefficient * std::max(0.0, bypassAreaM2)
+            * std::sqrt(2.0 * density * std::max(0.0, riseKpa) * 1'000.0);
+    };
+    const auto surplusAt = [&](double ratio) {
+        const auto riseKpa = (ratio - 1.0) * inletKpa;
+        return density * (displacedM3PerSecond - rootsLeakageM3PerSecond(displacementLitres, riseKpa))
+            - bypassAt(riseKpa) - drawPerRatio * ratio;
+    };
+    auto low = 1.0;
+    auto high = 1.0;
+    if (surplusAt(1.0) > 0.0) {
+        high = 2.0;
+        while (high < 8.0 && surplusAt(high) > 0.0) high *= 2.0;
+        for (int iteration = 0; iteration < 40; ++iteration) {
+            const auto middle = 0.5 * (low + high);
+            (surplusAt(middle) > 0.0 ? low : high) = middle;
+        }
+    }
+    point.pressureRatio = 0.5 * (low + high);
+    const auto riseKpa = (point.pressureRatio - 1.0) * inletKpa;
+    point.bypassKgPerSecond = bypassAt(riseKpa);
+    point.powerWatts = displacedM3PerSecond * riseKpa * 1'000.0;
+    return point;
+}
+
 /** The pressure ratio parallel compressors hold together, and each one's
  *  share of the flow.
  *

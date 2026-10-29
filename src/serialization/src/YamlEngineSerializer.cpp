@@ -344,6 +344,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "turbine_blade_count" << YAML::Value << config.forcedInduction.turbineBladeCount
         << YAML::Key << "supercharger_lobe_count" << YAML::Value << config.forcedInduction.superchargerLobeCount
         << YAML::Key << "supercharger_drive_ratio" << YAML::Value << config.forcedInduction.superchargerDriveRatio
+        << YAML::Key << "supercharger_displacement_l" << YAML::Value << config.forcedInduction.superchargerDisplacementLitres
+        << YAML::Key << "supercharger_bypass_area_mm2" << YAML::Value << config.forcedInduction.superchargerBypassAreaMm2
         << YAML::Key << "compressor_inducer_diameter_mm" << YAML::Value << config.forcedInduction.compressorInducerDiameterMm
         << YAML::Key << "turbine_exducer_diameter_mm" << YAML::Value << config.forcedInduction.turbineExducerDiameterMm
         << YAML::Key << "blow_off_valve_flow_area_mm2" << YAML::Value << config.forcedInduction.blowOffValveFlowAreaMm2
@@ -901,6 +903,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.turbineBladeCount = forced["turbine_blade_count"].as<std::uint32_t>(config.forcedInduction.turbineBladeCount);
             config.forcedInduction.superchargerLobeCount = forced["supercharger_lobe_count"].as<std::uint32_t>(config.forcedInduction.superchargerLobeCount);
             config.forcedInduction.superchargerDriveRatio = forced["supercharger_drive_ratio"].as<double>(config.forcedInduction.superchargerDriveRatio);
+            config.forcedInduction.superchargerDisplacementLitres = forced["supercharger_displacement_l"].as<double>(config.forcedInduction.superchargerDisplacementLitres);
+            config.forcedInduction.superchargerBypassAreaMm2 = forced["supercharger_bypass_area_mm2"].as<double>(config.forcedInduction.superchargerBypassAreaMm2);
             config.forcedInduction.compressorInducerDiameterMm = forced["compressor_inducer_diameter_mm"].as<double>(config.forcedInduction.compressorInducerDiameterMm);
             config.forcedInduction.turbineExducerDiameterMm = forced["turbine_exducer_diameter_mm"].as<double>(config.forcedInduction.turbineExducerDiameterMm);
             config.forcedInduction.blowOffValveFlowAreaMm2 = forced["blow_off_valve_flow_area_mm2"].as<double>(config.forcedInduction.blowOffValveFlowAreaMm2);
