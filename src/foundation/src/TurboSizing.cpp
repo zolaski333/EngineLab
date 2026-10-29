@@ -52,12 +52,28 @@ EngineConfig withTurbochargerCount(EngineConfig config, std::uint32_t count) {
     const auto now = std::clamp<std::uint32_t>(count, 1U, static_cast<std::uint32_t>(maximumTurbochargers));
     if (!turbo.enabled || turbo.type != ForcedInductionType::turbocharger || was == now) return config;
     const auto share = static_cast<double>(was) / static_cast<double>(now);
+    // Each unit is the old one scaled to its share of the air at the same
+    // pressure ratio, so at the same tip speed: its wheels shrink as the root
+    // of the flow (the areas go as the flow), spin faster by as much, and a
+    // wheel's inertia goes as its mass times its radius squared, the fifth
+    // power of its size. Two units hold half the shaft energy of one at the
+    // design point between them and get half its turbine power each: they
+    // spool sqrt(2) faster, which is why engines carry two. Scaling the
+    // inertia with the flow alone kept the shaft speed and made a pair spool
+    // exactly as the single did.
+    const auto size = std::sqrt(share);
     // Resolved before the count changes: the default reads it.
     turbo.compressorDesignMassFlowKgPerSecond = compressorDesignMassFlowKgPerSecond(config) * share;
     turbo.turbineFlowAreaMm2 *= share;
     turbo.wastegateFlowAreaMm2 *= share;
-    turbo.shaftInertiaKgM2 *= share;
-    turbo.bearingFrictionPowerWatts *= share;
+    turbo.compressorInducerDiameterMm *= size;
+    turbo.turbineExducerDiameterMm *= size;
+    turbo.designShaftSpeedRpm /= size;
+    turbo.shaftInertiaKgM2 *= share * share * size;
+    // Journal bearings: friction torque as the speed and the cube of the
+    // shaft's size, so the loss at the design speed goes as the root of the
+    // share.
+    turbo.bearingFrictionPowerWatts *= size;
     turbo.turbochargerCount = now;
     for (auto& path : config.exhaustPaths)
         if (path.turbocharger >= static_cast<std::int32_t>(now)) path.turbocharger = -1;

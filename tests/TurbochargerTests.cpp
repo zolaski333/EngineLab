@@ -181,17 +181,50 @@ void publishBoostTable(SimpleEcuModel& ecu, double gaugeKpa) {
     return config;
 }
 
-/** A turbocharger split in two equal halves, one per unit. */
+/** A turbocharger split in equal units, each the old one scaled to its
+ *  share of the air at the same tip speed: areas as the share, wheels as its
+ *  root (so they spin faster by as much), inertia as the fifth power of the
+ *  size, journal-bearing loss at the design speed as the root. */
 [[nodiscard]] EngineConfig asTwinUnits(EngineConfig config, std::uint32_t count) {
     auto& turbo = config.forcedInduction;
     const auto share = 1.0 / static_cast<double>(count);
+    const auto size = std::sqrt(share);
     turbo.compressorDesignMassFlowKgPerSecond = compressorDesignMassFlowKgPerSecond(config) * share;
     turbo.turbineFlowAreaMm2 *= share;
     turbo.wastegateFlowAreaMm2 *= share;
-    turbo.shaftInertiaKgM2 *= share;
-    turbo.bearingFrictionPowerWatts *= share;
+    turbo.compressorInducerDiameterMm *= size;
+    turbo.turbineExducerDiameterMm *= size;
+    turbo.designShaftSpeedRpm /= size;
+    turbo.shaftInertiaKgM2 *= share * share * size;
+    turbo.bearingFrictionPowerWatts *= size;
     turbo.turbochargerCount = count;
     return config;
+}
+
+/** Seconds from the throttle opening (held at `heldRpm` by the dyno) until
+ *  the boost first reaches `fraction` of its gauge value 6 s later. */
+[[nodiscard]] double secondsToBoost(const EngineConfig& config, double heldRpm, double fraction) {
+    auto rig = std::make_unique<Rig>(config);
+    constexpr double openSeconds = 3.0;
+    const auto frames = static_cast<int>((openSeconds + 6.0) * 240.0);
+    std::vector<double> boost;
+    auto rpm = 0.0;
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = t < 1.5;
+        controls.throttle = t < openSeconds ? 0.12 : 1.0;
+        if (t >= 1.5) controls.dynamometerTorqueNm = std::max(0.0, 4.0 * (rpm - heldRpm));
+        const auto state = rig->simulator->step(frameSeconds, controls).state;
+        rpm = state.rpm;
+        if (t >= openSeconds) boost.push_back(state.boostPressureRatio);
+    }
+    require(!boost.empty() && boost.back() > 1.1, "the fixture makes boost (else this proves nothing)");
+    const auto target = 1.0 + fraction * (boost.back() - 1.0);
+    for (std::size_t index = 0; index < boost.size(); ++index)
+        if (boost[index] >= target) return static_cast<double>(index) * frameSeconds;
+    return 6.0;
 }
 
 /** Changing the count keeps the set's total size: the same units as a
@@ -239,9 +272,22 @@ void twoIdenticalAreOneDouble() {
     require(std::abs(two.boostRatio - one.boostRatio) < 0.01 * one.boostRatio
             && std::abs(two.torqueNm - one.torqueNm) < 0.01 * one.torqueNm,
         "two identical turbochargers make the boost and torque of one twice the size");
-    require(std::abs(two.shaftRpm[0] - one.shaftRpm[0]) < 0.01 * one.shaftRpm[0]
-            && std::abs(two.shaftRpm[1] - one.shaftRpm[0]) < 0.01 * one.shaftRpm[0],
-        "each half spins as the double one does");
+    // Same pressure ratio, same tip speed: a wheel of 1/sqrt(2) the size
+    // spins sqrt(2) faster.
+    require(std::abs(two.shaftRpm[0] - std::numbers::sqrt2 * one.shaftRpm[0]) < 0.01 * one.shaftRpm[0]
+            && std::abs(two.shaftRpm[1] - std::numbers::sqrt2 * one.shaftRpm[0]) < 0.01 * one.shaftRpm[0],
+        "each half spins sqrt(2) faster than the double one");
+
+    // Each half holds a quarter of the double's kinetic energy at the design
+    // point (inertia x 2^-2.5, speed squared x 2) on half its turbine power:
+    // the pair spools faster, which is why engines carry two.
+    const auto split = withTurbochargerCount(single, 2);
+    const auto heldRpm = 0.45 * single.redlineRpm;
+    const auto oneSpool = secondsToBoost(single, heldRpm, 0.9);
+    const auto twoSpool = secondsToBoost(split, heldRpm, 0.9);
+    std::cout << "  to 90 % boost at " << heldRpm << " rpm: one turbocharger " << oneSpool << " s, two halves "
+              << twoSpool << " s\n";
+    require(twoSpool < 0.85 * oneSpool, "two half-size turbochargers spool faster than one of twice the size");
 
     // A charge-air cooler: the same boost, a denser charge.
     auto cooled = single;
