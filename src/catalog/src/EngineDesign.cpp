@@ -554,11 +554,15 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         const auto stroke = derive("stroke_mm", "Stroke", "mm",
             spec.strokeMm > 0.0 ? spec.strokeMm : bore / std::max(0.1, ratio),
             spec.strokeMm > 0.0 ? "given" : "bore / (bore / stroke)");
-        if (!(bore >= 20.0 && bore <= 200.0 && stroke >= 20.0 && stroke <= 200.0))
-            throw std::invalid_argument("Give a bore and a stroke of 20-200 mm, or a displacement");
+        // No size is refused for being large or small: a model engine and a
+        // ship's are both engines. The bounds only keep the numbers physical.
+        if (!(bore >= minimumBoreStrokeMm && bore <= maximumBoreStrokeMm
+                && stroke >= minimumBoreStrokeMm && stroke <= maximumBoreStrokeMm))
+            throw std::invalid_argument("Give a bore and a stroke of 5-1,000 mm, or a displacement");
         const auto litres = cylinderDisplacementLitres(bore, stroke) * countD;
-        if (litres > 20.0) throw std::invalid_argument("The simulator runs engines of 20 litres at most");
-        if (litres < 0.05 - 1.0e-9) throw std::invalid_argument("The simulator runs engines of 50 cc at least");
+        // Below 10 cc the carburettor and the simulator's parts no longer
+        // scale: a 2.5 cc single stays rich (lambda 0.33) and never fires.
+        if (litres < 0.01 - 1.0e-9) throw std::invalid_argument("The simulator runs engines of 10 cc at least");
 
         // Speeds: the redline from the mean piston speed the use reaches.
         const auto pistonSpeed = diesel ? std::min(16.0, profile.redlinePistonSpeedMps)
@@ -596,7 +600,7 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             : profile.pistonDensityGPerCm3 * (boosted ? 1.25 : 1.0);
         const auto pistonByBore = density * std::pow(bore / 10.0, 3.0);
         const auto piston = derive("piston_mass_g", "Piston mass", "g",
-            std::clamp(pistonByBore, minimumPistonMassGrams, 2'400.0), pistonByBore < minimumPistonMassGrams
+            std::max(pistonByBore, minimumPistonMassGrams), pistonByBore < minimumPistonMassGrams
                 ? format(density) + " g/cm3 x bore^3 gives " + format(pistonByBore) + ", raised to the simulator's floor"
                 : format(density) + " g/cm3 x bore^3");
         const auto rodMass = derive("connecting_rod_mass_g", "Connecting rod mass", "g", 1.3 * piston,
@@ -835,13 +839,18 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         const auto throttleDiameter = std::sqrt(4.0 * throttleArea
             / (std::numbers::pi * static_cast<double>(std::max(1U, intake.throttleCount))));
         const auto throttleRule = format(throttleAreaFactor) + " mm2 per litre and redline rpm, shared by the bodies";
+        // The floors are a 50 cc engine's; below that they shrink with it (a
+        // 25 cc engine on a 15 mm bore and a 0.1 L crankcase did not fire).
+        const auto smallShare = std::min(1.0, litres / 0.05);
+        const auto throttleFloor = minimumThrottleDiameterMm * std::sqrt(smallShare);
+        const auto plenumFloor = minimumPlenumVolumeLitres * smallShare;
         intake.throttleDiameterMm = derive("throttle_diameter_mm", "Throttle diameter", "mm",
-            std::max(minimumThrottleDiameterMm, throttleDiameter), throttleDiameter < minimumThrottleDiameterMm
+            std::max(throttleFloor, throttleDiameter), throttleDiameter < throttleFloor
                 ? throttleRule + " gives " + format(throttleDiameter) + ", raised to the simulator's floor"
                 : throttleRule);
         const auto plenum = (spec.use == EngineUse::aircraft ? 0.7 : twoStroke ? 1.44 : 1.3) * litres;
         intake.plenumVolumeLitres = derive("plenum_volume_l", "Plenum", "L",
-            std::max(minimumPlenumVolumeLitres, plenum), plenum < minimumPlenumVolumeLitres
+            std::max(plenumFloor, plenum), plenum < plenumFloor
                 ? "per litre gives " + format(plenum) + ", raised to the simulator's floor"
                 : std::string("per litre of displacement"));
         // A two-stroke's carburettor feeds one cylinder, so its idle air goes
@@ -1104,7 +1113,17 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             // boxes run 1.8-2.1 x their pipe across and 5-7.5 x it long.
             auto silencerRule = std::string("the family's");
             switch (spec.exhaustSilencer) {
-            case ExhaustSilencer::automatic: break;
+            case ExhaustSilencer::automatic:
+                // The family's box on a pipe it was not drawn for (a tank's
+                // V12 on a car's family) grows with the pipe, in proportion.
+                if (exhaust.mufflerChamberDiameterMm > 1.0 && exhaust.mufflerChamberDiameterMm < 1.5 * pipeBore) {
+                    const auto scale = 1.8 * pipeBore / exhaust.mufflerChamberDiameterMm;
+                    exhaust.mufflerChamberDiameterMm *= scale;
+                    exhaust.mufflerChamberLengthMm *= scale;
+                    exhaust.mufflerPackingThicknessMm *= scale;
+                    silencerRule = "the family's, grown with its pipe to 1.8 x across";
+                }
+                break;
             case ExhaustSilencer::packedBox:
                 exhaust.mufflerChamberDiameterMm = 2.1 * pipeBore;
                 exhaust.mufflerChamberLengthMm = 7.5 * pipeBore;

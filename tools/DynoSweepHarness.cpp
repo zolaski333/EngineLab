@@ -499,8 +499,11 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     // manufacturer quotes rated power below the limiter. See
     // tests/GasExchangeTests.cpp and physics-audit.md (archive/docs-2026-09 tag).
     const auto maxRpm = std::min(0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm),
-        config.ignition.revLimitRpm - 300.0);
-    const auto startRpm = std::max(2000.0, std::round(config.idleRpm * 1.5 / stepRpm) * stepRpm);
+        config.ignition.revLimitRpm - std::min(300.0, 0.1 * config.ignition.revLimitRpm));
+    // From 2,000 rpm, or 40 % of the top on an engine topping out under
+    // 3,000 (a tank's diesel, a ship's).
+    const auto startRpm = std::max(maxRpm < 3000.0 ? std::round(0.4 * maxRpm / stepRpm) * stepRpm : 2000.0,
+        std::round(config.idleRpm * 1.5 / stepRpm) * stepRpm);
     auto first = true;
     SweepSummary summary;
     for (double target = startRpm; target <= maxRpm + 1.0; target += stepRpm) {

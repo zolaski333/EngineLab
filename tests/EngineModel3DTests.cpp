@@ -786,8 +786,8 @@ void checkExhaustResize(const EngineModel3D& model) {
 
     auto edited = config;
     auto outOfRange = config;
-    require(!resizeExhaustComponent(outOfRange, target->pathId, target->elementId, size->lengthMm, 4.0).empty(),
-            name + ": a 4 mm diameter is refused");
+    require(!resizeExhaustComponent(outOfRange, target->pathId, target->elementId, size->lengthMm, 3.0).empty(),
+            name + ": a 3 mm diameter is refused");
     const auto error = resizeExhaustComponent(edited, target->pathId, target->elementId, size->lengthMm + 80.0,
                                               size->diameterMm + 4.0);
     require(error.empty(), name + ": 80 mm longer and 4 mm wider is accepted (" + error + ")");

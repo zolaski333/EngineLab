@@ -1519,13 +1519,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     safeControls.throttle = std::isfinite(controls.throttle) ? std::clamp(controls.throttle, 0.0, 1.0) : 0.0;
     safeControls.load = std::isfinite(controls.load) ? std::clamp(controls.load, 0.0, 1.0) : 0.0;
     safeControls.externalTorqueNm = std::isfinite(controls.externalTorqueNm)
-        ? std::clamp(controls.externalTorqueNm, -5'000.0, 5'000.0) : 0.0;
+        ? std::clamp(controls.externalTorqueNm, -5.0e6, 5.0e6) : 0.0;
     safeControls.externalRotatingInertiaKgM2 =
         std::isfinite(controls.externalRotatingInertiaKgM2)
-        ? std::clamp(controls.externalRotatingInertiaKgM2, 0.0, 100.0)
+        ? std::clamp(controls.externalRotatingInertiaKgM2, 0.0, 1.0e6)
         : 0.0;
     safeControls.dynamometerTorqueNm = std::isfinite(controls.dynamometerTorqueNm)
-        ? std::clamp(controls.dynamometerTorqueNm, 0.0, 10'000.0) : 0.0;
+        ? std::clamp(controls.dynamometerTorqueNm, 0.0, 1.0e7) : 0.0;
     // Gas pressure and crank loading need much finer resolution than UI/runtime
     // updates. Resolution increases with crank speed and remains bounded by the
     // engine definition so slow machines fail observably instead of diverging.

@@ -629,7 +629,7 @@ void resizeAtIdleKeepsEveryEngineRunning() {
         auto original = entry.config;
         normaliseEngineConfig(original);
         // Larger, unless that takes the engine past what the configuration
-        // allows (the Merlin is at the 20 litre ceiling): then smaller.
+        // allows: then smaller.
         auto larger = original;
         const auto size = cylinderSize(original);
         require(size.has_value(), original.name + ": the cylinders share one size");

@@ -329,7 +329,8 @@ holds the working rules, build notes and verified traps of this repository.
   torque), the default voicing, and has been compared with its maker's
   figures only for the 15 catalogue engines rebuilt from their datasheets; a
   sport-motorcycle design of 125 cc or less idles near 2,000 rpm (its cams'
-  overlap), and 50 cc is the smallest engine;
+  overlap), and 10 cc is the smallest engine (no largest: a 193 L marine
+  six and a 71 L 28-cylinder radial design and run);
 - the exhaust designer has no drag-and-drop, no undo/redo and no IR picker —
   the IR stays editable in JSON/YAML;
 - structural modes stay estimated per engine family until sourced measurements

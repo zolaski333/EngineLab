@@ -12,9 +12,9 @@ namespace enginelab {
 namespace {
 
 constexpr double minimumLengthMm = 10.0;
-constexpr double maximumLengthMm = 5'000.0;
-constexpr double minimumDiameterMm = 10.0;
-constexpr double maximumDiameterMm = 400.0;
+constexpr double maximumLengthMm = 30'000.0;
+constexpr double minimumDiameterMm = 4.0;
+constexpr double maximumDiameterMm = 3'000.0;
 
 template <typename Config>
 [[nodiscard]] auto* findPath(Config& config, std::uint32_t pathId) noexcept {

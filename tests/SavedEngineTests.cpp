@@ -103,8 +103,8 @@ struct Run final {
     return store;
 }
 
-/** An engine edited the way the app edits one: smaller bores (the Merlin sits
-    at the 20 L limit), longer runners. */
+/** An engine edited the way the app edits one: smaller bores, longer
+    runners. */
 [[nodiscard]] EngineConfig edited(const EngineConfig& original) {
     auto config = original;
     for (auto& cylinder : config.cylinders) cylinder.boreMm -= 1.0;

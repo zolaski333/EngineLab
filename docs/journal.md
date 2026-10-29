@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — No size cap: from 10 cc to a 193 L marine six
+
+- The designer refused over 20 L and under 50 cc, and validation capped every length, volume, mass and inertia near car sizes. Ranges now scale with a 5-1,000 mm bore and stroke (x5 lengths, x125 volumes and masses, x3,125 inertia); the dyno absorber's 10 kN.m clamp is 10 MN.m; ECU limits: diesel fuel 125 g/cycle, idle 50, rev limit 150 rpm, pressure ratio 6. No catalogue engine sits near an old bound; `DynoSweepHarness` starts at 40 % of the top when the top is under 3,000 rpm (the Merlin's sweep gains rows from 1,250).
+- Designed and swept (DesignBench + DynoSweep): V12 tank diesel 30.5 L 2,923 N.m / 425 kW; 28-cylinder radial 71 L at PR 1.6 ~9,850 N.m / 2,414 kW; V16 16.7 L 1,165 kW; marine six 193 L 12,483 N.m at 568 rpm (pinned at 9,993 before the clamp); 25 cc four-stroke 2.4 kW, two-stroke 3.1 kW. `EngineDesign`: a 30 L radial (refused before) 12.6 bar BMEP at WOT.
+- Gaps, not fixed: the marine six reaches 1.17-1.42 bar of its 3.0 target (the designer's turbine law, 8 bar BMEP against ~25 real); the 25 cc single reads 16.4 bar BMEP (real 5-10, the petrol over-efficiency); 10 cc engines hunt; a 2.5 cc single runs at lambda 0.33 and never fires, hence the 10 cc floor. The 32-cylinder ceiling is architectural (fixed arrays), kept.
+
 ## 2026-10-29 — Intake level: a multi-throttle mouth carries every bore; the designer's airbox gets a snorkel
 
 - An airbox with no inlet duct or bellmouth radiated through ONE throttle bore: a four-throttle 600 breathed through one 34 mm hole. The mouth is now the bores' combined area. Same-binary A/B (catalogue YAML with the old mouth authored, WOT pull, intake stem, low/high window): Hayabusa -69.7/-70.1 -> -57.1/-57.7 dB, CP2 -68.3/-67.3 -> -62.0/-60.9; single-throttle engines and every engine with a snorkel are unchanged. `RealtimeRegression`: four 34 mm bores radiate as one 68 mm bore (18.94 dB both), one 34 mm 6.49 dB (fails before: four = one 34 mm).

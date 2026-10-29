@@ -71,9 +71,10 @@ a ceiling it does not reach. Saved tables without this entry and
 superchargers fall back on the configuration's ratio.
 
 The canonical bounds are shared by validation, the generated metadata and the
-ECU: 10.5 to 18 for AFR, -10° to 55° for advance, and 600 to 25,000 rpm for the
-rev limiter, 0 to 40° per unit of knock for the knock gain, 0 to 250 kPa for
-the boost target. A cell accepted by the tuner is therefore no longer silently
+ECU: 10.5 to 18 for AFR, -10° to 55° for advance, 150 to 25,000 rpm for the
+rev limiter, 50 to 3,000 rpm for the idle target, 0 to 125 g per cycle for a
+diesel's fuel, 0 to 40° per unit of knock for the knock gain, 0 to 510 kPa for
+the boost target (a pressure ratio of 6, the configuration's ceiling). A cell accepted by the tuner is therefore no longer silently
 re-clamped to a different range. The dynamic corrections stay bounded to the
 same domain after the trims are applied.
 

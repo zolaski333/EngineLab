@@ -253,9 +253,7 @@ void everyLayoutDesigns() {
     radial.cylinderCount = 9;
     radial.boreMm = 155.6;
     radial.strokeMm = 174.6;
-    const auto tooBig = designEngine(radial, parts());
-    require(!tooBig.config && tooBig.error.find("20 litres") != std::string::npos,
-        "a 30 litre radial is refused with the simulator's limit");
+    require(designEngine(radial, parts()).config.has_value(), "a 30 litre radial designs (no size cap)");
     radial.boreMm = 114.0;
     radial.strokeMm = 127.0;
     const auto star = designed(radial);
@@ -353,8 +351,12 @@ void everyLayoutDesigns() {
     require(!tooLight.config && tooLight.error.find("rotatingInertiaKgM2") != std::string::npos,
         "a value set below a floor is refused by name");
     tiny.overrides.clear();
-    tiny.displacementLitres = 0.04;
-    require(!designEngine(tiny, parts()).config, "under 50 cc is refused");
+    tiny.displacementLitres = 0.025;
+    require(designEngine(tiny, parts()).config.has_value(), "a 25 cc single designs");
+    tiny.displacementLitres = 0.008;
+    const auto tooSmall = designEngine(tiny, parts());
+    require(!tooSmall.config && tooSmall.error.find("10 cc") != std::string::npos,
+        "under 10 cc is refused with the simulator's limit");
 
     auto twice = inlineSeven();
     twice.firingOrder = { 1, 2, 2, 4, 5, 6, 7 };
@@ -392,7 +394,7 @@ struct Held final {
 #endif
 /** Cranked, then `throttle` held (against a dyno at `dynoRpm` if not zero);
  *  means over the last 2 s of 8. */
-[[nodiscard]] Held held(const EngineConfig& config, double throttle, double dynoRpm) {
+[[nodiscard]] Held held(const EngineConfig& config, double throttle, double dynoRpm, double dynoNmPerRpm = 2.0) {
     auto rig = std::make_unique<Rig>(config);
     constexpr int frames = 8 * 240;
     constexpr int firstMeasured = frames - 2 * 240;
@@ -405,7 +407,7 @@ struct Held final {
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.5;
         controls.throttle = t < 2.0 ? 0.0 : throttle;
-        if (t >= 2.0 && dynoRpm > 0.0) controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (speed - dynoRpm));
+        if (t >= 2.0 && dynoRpm > 0.0) controls.dynamometerTorqueNm = std::max(0.0, dynoNmPerRpm * (speed - dynoRpm));
         const auto state = rig->simulator->step(frameSeconds, controls).state;
         speed = state.rpm;
         if (frame < firstMeasured) continue;
@@ -427,6 +429,36 @@ void inlineSevenRuns() {
     std::cout << "  full load at " << 0.6 * config.redlineRpm << " rpm: " << torque << " N.m\n";
     const auto bmepBar = torque * 4.0 * 3.14159265 / (engineDisplacementLitres(config) * 1.0e-3) * 1.0e-5;
     require(bmepBar > 10.0 && bmepBar < 15.0, "and makes the torque of a good NA engine (BMEP 10-15 bar)");
+}
+
+/** The designer has no size cap: a 30 L radial (refused at 20 L before
+ *  0.6.0) and a 25 cc single (refused under 50 cc) both build and pull at
+ *  full throttle. The bounds are wide: the single reads 16 bar where real
+ *  25 cc engines make 5-10 (the open petrol over-efficiency, journal
+ *  2026-10-29), so this checks that they run, not their BMEP. */
+void enginesOfAnySizeRun() {
+    EngineSpec radial;
+    radial.name = "Radial Nine";
+    radial.use = EngineUse::aircraft;
+    radial.layout = EngineLayout::radial;
+    radial.cylinderCount = 9;
+    radial.boreMm = 155.6;
+    radial.strokeMm = 174.6;
+    EngineSpec single;
+    single.name = "Small Single";
+    single.use = EngineUse::roadMotorcycle;
+    single.cylinderCount = 1;
+    single.displacementLitres = 0.025;
+    for (const auto& spec : { radial, single }) {
+        const auto config = *designed(spec).config;
+        const auto litres = engineDisplacementLitres(config);
+        const auto dynoRpm = 0.6 * config.redlineRpm;
+        const auto run = held(config, 1.0, dynoRpm, 2.0 * std::max(1.0, litres / 2.0));
+        const auto bmepBar = run.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
+        std::cout << "  " << spec.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.torqueNm
+                  << " N.m, BMEP " << bmepBar << " bar\n";
+        require(bmepBar > 4.0 && bmepBar < 20.0, spec.name + " pulls at full throttle");
+    }
 }
 
 /** A catalogue file may hold a design instead of a whole engine. */
@@ -985,6 +1017,7 @@ int main() {
     rootsSuperchargerFollowsItsDisplacement();
     catalogueReadsDesigns();
     inlineSevenRuns();
+    enginesOfAnySizeRun();
     realtimeIsChecked();
     std::cout << "engine design tests passed\n";
     return EXIT_SUCCESS;

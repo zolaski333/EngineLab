@@ -47,9 +47,18 @@ file formats, always with an in-memory migration).
   inspector also sets the blow-off valve's area. The reversal is in the
   physics; it is barely audible yet (the turbo's jet noise is tiny at that
   flow).
+- **An engine of any size.** The designer and the configuration no longer
+  stop at 20 litres and 50 cc: bores and strokes run from 5 to 1,000 mm, and
+  every length, volume, mass and inertia scales with them (a 193 L marine six,
+  a 71 L 28-cylinder radial and a 25 cc single design and run). The smallest
+  engine is 10 cc, where the carburettor and the parts stop scaling. The dyno
+  absorbs up to 10 MN.m (it stopped at 10 kN.m), the ECU's limits follow (a
+  diesel's fuel to 125 g a cycle, idle from 50 rpm, boost to a pressure ratio
+  of 6), and the 3-D view's exhaust editor takes 4-3,000 mm bores and 30 m
+  pipes. The 32-cylinder ceiling stays.
 
 - **The idle speed is set from the ECU page.** `idle.target_rpm` ("Idle
-  target", 300-3,000 rpm) is the speed the idle governor holds with the
+  target", 50-3,000 rpm) is the speed the idle governor holds with the
   throttle shut, on every injected engine, petrol or diesel, four- or
   two-stroke. It starts at the engine's `idle_rpm`, so nothing moves until it
   is changed, and it is saved with the engine's tables. Above `idle_rpm` the

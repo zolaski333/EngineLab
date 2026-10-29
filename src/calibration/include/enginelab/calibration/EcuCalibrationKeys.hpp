@@ -38,21 +38,21 @@ inline constexpr double maximumDieselSmokeLimitAirFuelRatio = 40.0;
 inline constexpr double maximumAirFuelRatio =
     maximumDieselSmokeLimitAirFuelRatio;
 inline constexpr double minimumDieselFuelQuantityMgPerCycle = 0.0;
-inline constexpr double maximumDieselFuelQuantityMgPerCycle = 1'000.0;
+inline constexpr double maximumDieselFuelQuantityMgPerCycle = 125'000.0;
 inline constexpr double minimumIgnitionAdvanceDegrees = -10.0;
 inline constexpr double maximumIgnitionAdvanceDegrees = 55.0;
-inline constexpr double minimumIdleTargetRpm = 300.0;
+inline constexpr double minimumIdleTargetRpm = 50.0;
 inline constexpr double maximumIdleTargetRpm = 3'000.0;
-inline constexpr double minimumRevLimitRpm = 600.0;
+inline constexpr double minimumRevLimitRpm = 150.0;
 inline constexpr double maximumRevLimitRpm = 25'000.0;
 // Knock control: the most spark it may pull (0 = control off, the knock runs
 // free). The key keeps its first name, from when the retard was proportional.
 inline constexpr double minimumKnockRetardGainDegrees = 0.0;
 inline constexpr double maximumKnockRetardGainDegrees = 40.0;
 inline constexpr double defaultKnockRetardGainDegrees = 12.0;
-// Gauge boost: the configuration's pressure ratio stops at 3.5 (253 kPa).
+// Gauge boost: the configuration's pressure ratio stops at 6 (507 kPa).
 inline constexpr double minimumBoostTargetGaugeKpa = 0.0;
-inline constexpr double maximumBoostTargetGaugeKpa = 250.0;
+inline constexpr double maximumBoostTargetGaugeKpa = 510.0;
 inline constexpr double minimumNormalizedLoad = 0.0;
 inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;
