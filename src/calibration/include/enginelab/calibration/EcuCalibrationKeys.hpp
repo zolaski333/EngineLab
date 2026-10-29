@@ -20,6 +20,10 @@ inline constexpr std::string_view revLimit = "limits.rev_rpm";
 // under throttle. Zero: off.
 inline constexpr std::string_view launchLimit = "limits.launch_rpm";
 inline constexpr std::string_view knockRetardGain = "knock.retard_deg_per_intensity";
+// The speed the idle governor holds with the throttle shut. Absent (a
+// carburettor, whose idle stop screw sets it, or saved tables without it):
+// the configuration's idle speed.
+inline constexpr std::string_view idleTarget = "idle.target_rpm";
 
 } // namespace enginelab::calibration::keys
 
@@ -37,6 +41,8 @@ inline constexpr double minimumDieselFuelQuantityMgPerCycle = 0.0;
 inline constexpr double maximumDieselFuelQuantityMgPerCycle = 1'000.0;
 inline constexpr double minimumIgnitionAdvanceDegrees = -10.0;
 inline constexpr double maximumIgnitionAdvanceDegrees = 55.0;
+inline constexpr double minimumIdleTargetRpm = 300.0;
+inline constexpr double maximumIdleTargetRpm = 3'000.0;
 inline constexpr double minimumRevLimitRpm = 600.0;
 inline constexpr double maximumRevLimitRpm = 25'000.0;
 // Knock control: the most spark it may pull (0 = control off, the knock runs

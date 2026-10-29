@@ -2456,13 +2456,17 @@ void EngineViewport::updateInspector() {
                                 std::ceil(hole(10.0)), std::floor(hole(150.0)));
                     edit->value("Needle clip", tune->needleClipPosition, {}, 0, 1.0, 1.0, 1.0, 5.0);
                     edit->value("Air screw", tune->airScrewTurns, " turns out", 2, 0.25, 0.125, 0.0, 5.0);
+                    edit->value("Idle screw", tune->idleScrewTurns, " turns in", 2, 0.25, 0.125, 0.0,
+                                carburettorMaximumIdleScrewTurns);
                     add("Main jet, Mikuni", juce::String(tune->mainJetFlowNumber, 0));
                     add("Pilot jet, Mikuni", juce::String(tune->pilotJetFlowNumber, 1));
                     edit->note = "Jets as the hole a Dellorto or Keihin jet is stamped with, in hundredths of a "
                                  "millimetre; the Mikuni rows are the flow number (cc/min at one metre of head) "
                                  "the same hole passes. The main meters from about a quarter throttle up, the "
                                  "pilot at and just off idle, the needle between them (clip 1 richest, 5 "
-                                 "leanest); turning the air screw out leans the pilot. A new bore scales the "
+                                 "leanest); turning the air screw out leans the pilot. The idle screw holds "
+                                 "the slide open with the throttle shut: there is no idle governor, so "
+                                 "turning it in raises the idle and out lowers it. A new bore scales the "
                                  "main jet with the throat's area, so the mixture holds. Every carburettor "
                                  "changes alike. The running engine takes them.";
                 }
@@ -2470,7 +2474,7 @@ void EngineViewport::updateInspector() {
                                   EngineConfig& edited, const std::vector<double>& values) {
                     if (part == IntakePart::runner)
                         return resizeIntakePart(edited, pathId, part, cylinderIndex, values[0], values[1]);
-                    if (!carburetted || values.size() < 5U)
+                    if (!carburetted || values.size() < 6U)
                         return resizeIntakePart(edited, pathId, part, cylinderIndex, values[0]);
                     // A two-stroke has one per cylinder, bored and jetted alike.
                     const auto before = carburettorTune(edited, pathId);
@@ -2490,7 +2494,7 @@ void EngineViewport::updateInspector() {
                     };
                     const CarburettorTune tuned { jet(values[1], before->mainJetFlowNumber, after->mainJetFlowNumber),
                                                   jet(values[2], before->pilotJetFlowNumber, after->pilotJetFlowNumber),
-                                                  values[3], values[4] };
+                                                  values[3], values[4], values[5] };
                     for (const auto& path : paths)
                         if (carburettorTune(edited, path.id))
                             if (error = tuneCarburettor(edited, path.id, tuned); !error.empty()) return error;

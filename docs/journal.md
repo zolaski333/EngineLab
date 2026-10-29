@@ -5,6 +5,20 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — Tachometer redline from the ECU; a twin-turbo split spools faster
+
+- The tachometer and the RPM trace drew the red zone at `redlineRpm` only; `displayRedlineRpm()` returns the ECU's rev limit once it differs from the authored one (`ActiveLimits`: 2,500 shown after a 2,500 tune).
+- `withTurbochargerCount()` scaled flow areas and inertia by the share and kept the shaft speed: a pair held the single's energy-to-power ratio and spooled identically. Scaled now at constant tip speed (wheel size sqrt(share), speed / sqrt(share), inertia share^2.5, bearing loss sqrt(share)).
+- `Turbocharger` (designed I4 fixture, throttle 0.12 -> 1 at 3,240 rpm): one unit 0.521 s to 90 % boost, two halves 0.425 s; held WOT boost 1.4606 / 1.4607, torque 281.5 / 281.3 N.m, half shafts 185.5k rpm for 131.2k (sqrt(2) x).
+- Not measured: a real engine's single-vs-twin spool, the sound (the catalogue has no split turbocharger: unchanged).
+
+## 2026-10-28 — Idle target on the ECU page, idle stop screw on a carburettor
+
+- `IdleStabilityRegression --target-factor F`: with `idle.target_rpm` at `idle_rpm` the 17 catalogue rows are digit for digit the baseline's. At 1.3/1.6/2.0 x the governor held the target within 1 % until its bypass was fully open, then stopped short: 2JZ 1,125 for 1,220 and 1,520, Aircooled 1,106 for 1,250, I5 1,332, Merlin 1,417, LS3 1,382 for 1,440-1,600.
+- Authority past the bypass when the target is raised (two bypasses per `idle_rpm` of raise): every engine within 2 % at 2 x (2JZ 1,515/1,520, Aircooled 1,534/1,560), std <= 13.7 rpm except the RD350 (12.8-18.9, already 37 at its own idle). A WOT blip then took > 12 s to climb back (2JZ 1,136 for 1,220): the blip's integral decay emptied the raise's air. Keeping it: 1,179.
+- Carburettor (only the designer's two-strokes; the catalogue has none): the governor replaced by the idle stop screw. Designed 2T twin / single at 0.5-8 turns: 828-4,366 / 1,070-4,891 rpm, monotonic; 1.5 turns 1,270 / 1,587 (governed: 1,251 std 40 / 1,283 std 77; screw std 28 / 43). Both already idled rich under the governor (AFR/target 0.60 / 0.63; 0.55 / 0.54 on the screw) and coast back from a WOT blip in more than 12 s: not changed here.
+- Not measured: the sound at a raised idle, the app's ECU page by hand.
+
 ## 2026-10-28 — Diesel: start of injection from the map, delay from the jet, Woschni's combustion term
 
 - Baseline (DynoSweep, TDI + designed EA288/M57TU/6BT + torture I7): BSFC 163-172 g/kWh at 2,000 rpm (brake eff. ~51 %; real ~195-210), Pmax 230-260 bar, EGT 370-390 C. The K20 (petrol) also reads 209-233 g/kWh at WOT, lambda 0.9 (real ~260-290): the over-efficiency is global, not the diesel's.

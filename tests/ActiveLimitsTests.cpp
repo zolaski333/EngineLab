@@ -57,10 +57,14 @@ void checkEcu() {
     require(enginelab::activeRevLimitRpm(config, *ecu.calibrationStore()->snapshot())
                 == config.ignition.revLimitRpm,
         "without a tune the active rev limit is the authored one");
+    require(enginelab::displayRedlineRpm(config, *ecu.calibrationStore()->snapshot()) == config.redlineRpm,
+        "without a tune the tachometer keeps the authored redline");
 
     publishRevLimit(ecu, 2'500.0);
     require(enginelab::activeRevLimitRpm(config, *ecu.calibrationStore()->snapshot()) == 2'500.0,
         "a tuned rev limit replaces the authored one");
+    require(enginelab::displayRedlineRpm(config, *ecu.calibrationStore()->snapshot()) == 2'500.0,
+        "a tuned rev limit moves the tachometer's redline to it");
 
     enginelab::EngineState state;
     state.rpm = 1'800.0;

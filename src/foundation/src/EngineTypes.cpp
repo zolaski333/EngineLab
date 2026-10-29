@@ -283,6 +283,13 @@ double peakCylinderPressureLimitBar(const EngineConfig& config) noexcept {
     return config.forcedInduction.enabled ? 140.0 : 120.0;
 }
 
+const CarburettorConfig* idleCarburettor(const EngineConfig& config) noexcept {
+    for (const auto& path : config.intakePaths)
+        if (path.geometry.carburettor.enabled) return &path.geometry.carburettor;
+    if (config.intakePaths.empty() && config.intake.carburettor.enabled) return &config.intake.carburettor;
+    return nullptr;
+}
+
 double effectiveRotatingInertiaKgM2(const EngineConfig& config) noexcept {
     if (config.crankshafts.empty()) return std::max(0.001, config.rotatingInertiaKgM2);
     double inertia = 0.0;
@@ -892,6 +899,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || outOfRange("intake.carburettor.pilotCircuitFactor", config.intake.carburettor.pilotCircuitFactor, 0.005, 1.0)
         || outOfRange("intake.carburettor.needleClipPosition", config.intake.carburettor.needleClipPosition, 1.0, 5.0)
         || outOfRange("intake.carburettor.airScrewTurns", config.intake.carburettor.airScrewTurns, 0.1, 6.0)
+        || outOfRange("intake.carburettor.idleScrewTurns", config.intake.carburettor.idleScrewTurns, 0.0,
+                      carburettorMaximumIdleScrewTurns)
         || outOfRange("intake.carburettor.jetLiftMm", config.intake.carburettor.jetLiftMm, 0.0, 100.0)
         || outOfRange("intake.carburettor.jetDischargeCoefficient", config.intake.carburettor.jetDischargeCoefficient, 0.05, 1.0)
         || outOfRange("intake.carburettor.wallFilmFraction", config.intake.carburettor.wallFilmFraction, 0.0, 0.98)
@@ -1202,6 +1211,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(intake.carburettor.pilotCircuitFactor, 0.005, 1.0)
             || !inRange(intake.carburettor.needleClipPosition, 1.0, 5.0)
             || !inRange(intake.carburettor.airScrewTurns, 0.1, 6.0)
+            || !inRange(intake.carburettor.idleScrewTurns, 0.0, carburettorMaximumIdleScrewTurns)
             || !inRange(intake.carburettor.jetLiftMm, 0.0, 100.0)
             || !inRange(intake.carburettor.jetDischargeCoefficient, 0.05, 1.0)
             || !inRange(intake.carburettor.wallFilmFraction, 0.0, 0.98)

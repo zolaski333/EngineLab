@@ -15,6 +15,7 @@ void readCarburettor(const YAML::Node& intake, CarburettorConfig& carburettor) {
     carburettor.pilotCircuitFactor = node["pilot_circuit_factor"].as<double>(carburettor.pilotCircuitFactor);
     carburettor.needleClipPosition = node["needle_clip_position"].as<double>(carburettor.needleClipPosition);
     carburettor.airScrewTurns = node["air_screw_turns"].as<double>(carburettor.airScrewTurns);
+    carburettor.idleScrewTurns = node["idle_screw_turns"].as<double>(carburettor.idleScrewTurns);
     carburettor.jetLiftMm = node["jet_lift_mm"].as<double>(carburettor.jetLiftMm);
     carburettor.jetDischargeCoefficient = node["jet_discharge_coefficient"].as<double>(carburettor.jetDischargeCoefficient);
     carburettor.wallFilmFraction = node["wall_film_fraction"].as<double>(carburettor.wallFilmFraction);
@@ -527,6 +528,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "pilot_circuit_factor" << YAML::Value << config.intake.carburettor.pilotCircuitFactor
         << YAML::Key << "needle_clip_position" << YAML::Value << config.intake.carburettor.needleClipPosition
         << YAML::Key << "air_screw_turns" << YAML::Value << config.intake.carburettor.airScrewTurns
+        << YAML::Key << "idle_screw_turns" << YAML::Value << config.intake.carburettor.idleScrewTurns
         << YAML::Key << "jet_lift_mm" << YAML::Value << config.intake.carburettor.jetLiftMm
         << YAML::Key << "jet_discharge_coefficient" << YAML::Value << config.intake.carburettor.jetDischargeCoefficient
         << YAML::Key << "wall_film_fraction" << YAML::Value << config.intake.carburettor.wallFilmFraction
@@ -550,6 +552,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "pilot_circuit_factor" << YAML::Value << path.geometry.carburettor.pilotCircuitFactor
             << YAML::Key << "needle_clip_position" << YAML::Value << path.geometry.carburettor.needleClipPosition
             << YAML::Key << "air_screw_turns" << YAML::Value << path.geometry.carburettor.airScrewTurns
+            << YAML::Key << "idle_screw_turns" << YAML::Value << path.geometry.carburettor.idleScrewTurns
             << YAML::Key << "jet_lift_mm" << YAML::Value << path.geometry.carburettor.jetLiftMm
             << YAML::Key << "jet_discharge_coefficient" << YAML::Value << path.geometry.carburettor.jetDischargeCoefficient
             << YAML::Key << "wall_film_fraction" << YAML::Value << path.geometry.carburettor.wallFilmFraction

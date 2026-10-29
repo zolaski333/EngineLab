@@ -75,6 +75,7 @@ void checkStable(const IEngineSerializer& serializer, std::string_view format, c
     carburettor.pilotCircuitFactor = 0.1725 + offset * 0.001;
     carburettor.needleClipPosition = 2.5 + offset * 0.01;
     carburettor.airScrewTurns = 1.875 + offset * 0.01;
+    carburettor.idleScrewTurns = 2.625 + offset * 0.01;
     carburettor.jetLiftMm = 6.125 + offset * 0.01;
     carburettor.jetDischargeCoefficient = 0.765 + offset * 0.001;
     carburettor.wallFilmFraction = 0.3125 + offset * 0.001;

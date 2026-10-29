@@ -47,7 +47,7 @@ ReadoutStrip::ReadoutStrip(const DashboardModel& model) : model_(model) {
 
 void ReadoutStrip::drawTachometer(juce::Graphics& g, juce::Rectangle<float> area) const {
     const auto& state = model_.state;
-    const auto redline = std::max(1.0, model_.config.redlineRpm);
+    const auto redline = std::max(1.0, model_.redlineRpm > 0.0 ? model_.redlineRpm : model_.config.redlineRpm);
     // Angles are clockwise from twelve o'clock: the arc spans 252 degrees
     // across the top, and the last 1/11 of the scale (above redline) is red.
     constexpr auto start = std::numbers::pi_v<float> * 1.3F;

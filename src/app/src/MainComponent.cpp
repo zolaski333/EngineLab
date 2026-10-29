@@ -5,6 +5,7 @@
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
+#include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <algorithm>
 #include <array>
@@ -1761,6 +1762,7 @@ void MainComponent::timerCallback() {
     currentClutchPressure_ += (clutchTarget - currentClutchPressure_) * (1.0 - std::exp(-clutchRate / 30.0));
     runtime_->setClutchPressure(currentClutchPressure_);
     model_.state = runtime_->snapshot();
+    model_.redlineRpm = displayRedlineRpm(config_, *runtime_->calibrationStore()->snapshot());
     model_.units.ambientPressureKpa = config_.ambientPressureKpa;
     if (ecuTunerWindow_) {
         const auto normalizedLoad = std::clamp(model_.state.manifoldPressureKpa

@@ -658,8 +658,9 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   by a carburettor the throttle is drawn as one (the slide's tower above the
   bore, the float bowl under it) and named *Carburettor*: it also offers the
   main and pilot jets as stamped flow numbers, the needle clip (1 richest to
-  5) and the air screw's turns out (`tuneCarburettor`, mirrored the same
-  way), which the running engine takes as an intake edit;
+  5), the air screw's turns out and the idle stop screw's turns in
+  (`tuneCarburettor`, mirrored the same way), which the running engine takes
+  as an intake edit;
 - the exhaust ports of a cylinder, and a junction, when the engine has
   another exhaust path that can join this one: a `choice` between
   *Separate* and *Joined* that restarts the engine with

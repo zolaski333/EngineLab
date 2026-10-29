@@ -7,6 +7,35 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **The idle speed is set from the ECU page.** `idle.target_rpm` ("Idle
+  target", 300-3,000 rpm) is the speed the idle governor holds with the
+  throttle shut, on every injected engine, petrol or diesel, four- or
+  two-stroke. It starts at the engine's `idle_rpm`, so nothing moves until it
+  is changed, and it is saved with the engine's tables. Above `idle_rpm` the
+  governor opens past its idle valve, as an electronic throttle cracks its
+  plate: every catalogue engine holds twice its idle within 2 %. Below it, an
+  engine whose closed-throttle leak alone outruns the target idles there.
+- **A carburettor's idle is set with its idle stop screw.** A carburettor has
+  no idle governor any more: `idle_screw_turns` (0-8 turns in, 1.5 nominal,
+  "Idle screw" on the 3-D view's carburettor) holds the slide open and the
+  engine idles wherever that air takes it. Turning it in raises the idle.
+
+### Fixed
+
+- **The tachometer's red zone follows the ECU's rev limit.** It started at
+  the authored `redline_rpm` whatever the tuner said; once `limits.rev_rpm` is
+  moved, the red zone (and the RPM trace's line) starts there.
+- **Two turbochargers spool faster than one.** Splitting a turbocharger into
+  several (the designer's "Turbochargers" count) shrank the wheels' flow but
+  kept the shaft speed and scaled the inertia with the flow alone, so a pair
+  spooled exactly as the single did. Each unit is now the single scaled to its
+  share of the air at the same tip speed: wheels 1/sqrt(2) the size, sqrt(2)
+  faster, inertia as the fifth power of the size. A designed I4's pair reaches
+  90 % boost in 0.43 s against the single's 0.52 s, with the same boost and
+  torque.
+
 ### Changed
 
 - **A diesel injects when its map says.** The ECU's advance is a diesel's

@@ -241,6 +241,18 @@ void validateKnownEcuEntry(std::string_view id, const CalibrationEntry& entry,
             addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
                      "The rev limiter must be a scalar calibration.");
         }
+    } else if (id == keys::idleTarget) {
+        const auto& metadata = metadataOf(entry);
+        if (metadata.unit != CalibrationUnit::revolutionsPerMinute) {
+            addIssue(issues, CalibrationErrorCode::incompatibleUnit, std::string(path) + ".unit",
+                     "The idle target must be expressed in rpm.");
+        }
+        validateCanonicalLimits(metadata, ecuLimits::minimumIdleTargetRpm,
+                                ecuLimits::maximumIdleTargetRpm, path, issues);
+        if (!std::holds_alternative<ScalarCalibration>(entry)) {
+            addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
+                     "The idle target must be a scalar calibration.");
+        }
     } else if (id == keys::launchLimit) {
         const auto& metadata = metadataOf(entry);
         if (metadata.unit != CalibrationUnit::revolutionsPerMinute) {

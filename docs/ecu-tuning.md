@@ -15,6 +15,7 @@ The set created with each engine contains:
 |---|---|---|
 | `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target |
 | `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections; on a diesel, the start of injection (deg BTDC), no earlier than the injection part's window |
+| `idle.target_rpm` | scalar | idle speed the idle governor holds (not on a carburettor) |
 | `limits.rev_rpm` | scalar | rev limiter threshold |
 | `limits.launch_rpm` | scalar | launch control (two-step) rev limit; 0 = off |
 | `knock.retard_deg_per_intensity` | scalar | knock control gain (spark-ignition only) |
@@ -94,6 +95,26 @@ damage starts 2 % past it: under its own power the engine stays at its
 limiter, and only a driven engine (a missed downshift) goes past. The redline
 is a display mark. The piston-acceleration term (above 5,500 g) still caps a
 limiter raised too far.
+
+### Idle target
+
+`idle.target_rpm` ("Idle target", 300-3,000 rpm) is the speed the idle
+governor holds with the throttle shut: the idle-air opening on a spark
+engine, the idle fuel on a diesel, four- or two-stroke. The default is the
+engine's `idle_rpm`, so an engine runs exactly as before until it is edited;
+saved tables without it fall back on `idle_rpm` (`activeIdleTargetRpm()`).
+The idle air is sized for `idle_rpm`: above it the governor may open past the
+bypass's full travel, two bypasses more per `idle_rpm` of raise, as an
+electronic throttle cracks its plate, and keeps that extra air through a blip.
+Measured at 1.6 x and 2 x `idle_rpm` on every catalogue engine
+(`IdleStabilityRegression`, journal 2026-10-28): the settled idle within 2 %
+of the target. Below `idle_rpm` the governor can only shut the bypass: an
+engine whose closed-throttle leak alone outruns the target (the Hayabusa, the
+Radial and the CP4 already do at their own) idles where its leak takes it.
+The overrun fuel cut and the dashpot follow the target; the clutch, the
+gearbox and the starter keep `idle_rpm`. A carburetted engine has
+no governor and no such entry: its idle stop screw sets its idle
+(`idle_screw_turns`, the 3-D view's carburettor).
 
 ### Idle and fuel-cut strategies (not tunable)
 

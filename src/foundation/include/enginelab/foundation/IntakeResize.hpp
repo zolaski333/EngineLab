@@ -62,13 +62,15 @@ struct IntakePartSize final {
 [[nodiscard]] double jetFlowNumberForHole(double holeHundredthsMm, double dischargeCoefficient) noexcept;
 
 /** What the 3-D view's inspector tunes on a carburettor: its jets as stamped
- *  flow numbers, the needle clip (1 richest to 5) and the pilot air screw's
- *  turns out (CarburettorConfig). */
+ *  flow numbers, the needle clip (1 richest to 5), the pilot air screw's
+ *  turns out and the idle stop screw's turns in (CarburettorConfig). */
 struct CarburettorTune final {
     double mainJetFlowNumber { 0.0 };
     double pilotJetFlowNumber { 0.0 };
     double needleClipPosition { 0.0 };
     double airScrewTurns { 0.0 };
+    /** The idle stop screw's turns in (CarburettorConfig::idleScrewTurns). */
+    double idleScrewTurns { carburettorNominalIdleScrewTurns };
 };
 
 /** The tune of intake path `pathId`'s carburettor, or nothing when the path

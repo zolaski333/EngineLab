@@ -100,6 +100,9 @@ struct DashboardModel final {
     AudioView audio;
     /** The viewer's display units; every panel formats through it. */
     ui::UnitFormat units;
+    /** Where the tachometer's red zone starts (`displayRedlineRpm`): it
+        follows the ECU's rev limit once that has been moved. */
+    double redlineRpm { 0.0 };
     bool dynoRunning { false };
     bool scriptLive { false };
     std::uint64_t scriptRevision {};

@@ -226,6 +226,7 @@ void assignCarburettor(const YAML::Node& intake, CarburettorConfig& carburettor)
     assignIfPresent(node, "pilot_circuit_factor", carburettor.pilotCircuitFactor);
     assignIfPresent(node, "needle_clip_position", carburettor.needleClipPosition);
     assignIfPresent(node, "air_screw_turns", carburettor.airScrewTurns);
+    assignIfPresent(node, "idle_screw_turns", carburettor.idleScrewTurns);
     assignIfPresent(node, "jet_lift_mm", carburettor.jetLiftMm);
     assignIfPresent(node, "jet_discharge_coefficient", carburettor.jetDischargeCoefficient);
     assignIfPresent(node, "wall_film_fraction", carburettor.wallFilmFraction);

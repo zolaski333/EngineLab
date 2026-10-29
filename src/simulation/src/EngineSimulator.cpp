@@ -256,14 +256,16 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
 /** A carburettor's idle air path against the one its pilot was sized at:
  *  the closed-slide leak plus the bypass at the idle governor's neutral
  *  opening. The ECU's idle air stands in for the slide's idle stop, and
- *  opening that stop uncovers the progression holes, so the pilot follows. */
+ *  opening that stop uncovers the progression holes, so the pilot follows.
+ *  The idle stop screw can hold the slide past the bypass's whole travel. */
 [[nodiscard]] double carburettorIdleCircuitOpening(const IntakeConfig& intake,
                                                    double idleAirOpening) noexcept {
     const auto leak = closedThrottleLeakageAreaM2(intake);
     const auto bypass = std::max(0.0, intake.idleBypassAreaMm2) * 1.0e-6;
     const auto neutral = leak + bypass * carburettorPilotSizingIdleOpening;
     if (!(neutral > 0.0)) return 1.0;
-    return (leak + bypass * std::clamp(idleAirOpening, 0.0, 1.0)) / neutral;
+    return (leak + bypass * std::clamp(idleAirOpening, 0.0,
+        carburettorIdleScrewOpening(carburettorMaximumIdleScrewTurns))) / neutral;
 }
 
 [[nodiscard]] double plenumInletAreaM2(const IntakeConfig& intake,

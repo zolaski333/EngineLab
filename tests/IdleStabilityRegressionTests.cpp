@@ -12,7 +12,10 @@
 // never a number read back from the simulator, so tightening this test can never
 // re-calibrate it onto whatever the simulator currently produces.
 
+#include <enginelab/calibration/EcuCalibration.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -25,7 +28,9 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -83,14 +88,32 @@ void holdThrottle(enginelab::EngineSimulator& simulator, double throttle, double
     }
 }
 
+/** Publishes `config`'s default tables with the idle target set to `rpm`,
+ *  as the ECU page does. */
+void publishIdleTarget(enginelab::SimpleEcuModel& ecu, const enginelab::EngineConfig& config, double rpm) {
+    namespace calibration = enginelab::calibration;
+    auto draft = calibration::makeDefaultEcuCalibration(config);
+    const auto* found = draft.find(calibration::keys::idleTarget);
+    if (found == nullptr) throw std::runtime_error(config.name + ": its tables carry no idle target");
+    auto entry = *found;
+    std::get<calibration::ScalarCalibration>(entry).value = rpm;
+    draft.set(std::move(entry));
+    if (!ecu.calibrationStore()->publish(draft).published)
+        throw std::runtime_error(config.name + ": an idle target of " + std::to_string(rpm) + " rpm must publish");
+}
+
+/** `idleTargetRpm`: the ECU page's idle target instead of the configured idle,
+ *  which still paces the starter, as the configuration does in the app. */
 IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottle,
-                       std::optional<double> exhaustTargetCellLengthM = {}) {
+                       std::optional<double> exhaustTargetCellLengthM = {},
+                       std::optional<double> idleTargetRpm = {}) {
     IdleResult result;
     result.name = config.name;
-    result.idleRpm = config.idleRpm;
+    result.idleRpm = idleTargetRpm.value_or(config.idleRpm);
     result.diesel = config.fuel == enginelab::FuelType::diesel;
 
     enginelab::SimpleEcuModel ecu;
+    if (idleTargetRpm) publishIdleTarget(ecu, config, *idleTargetRpm);
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
@@ -238,6 +261,33 @@ double measureEarlyBlip(const enginelab::EngineConfig& config,
 }
 } // namespace
 
+/** Carburetted two-strokes from the builder, the only carburettors there are:
+ *  every catalogue engine meters with injectors. */
+std::vector<enginelab::EngineSpec> carburettedDesigns() {
+    enginelab::EngineSpec twin;
+    twin.name = "Designed 2T Twin";
+    twin.cycle = enginelab::EngineCycle::twoStroke;
+    twin.use = enginelab::EngineUse::sportMotorcycle;
+    twin.cylinderCount = 2;
+    twin.boreMm = 64.0;
+    twin.strokeMm = 54.0;
+    enginelab::EngineSpec single;
+    single.name = "Designed 2T Single";
+    single.cycle = enginelab::EngineCycle::twoStroke;
+    single.use = enginelab::EngineUse::roadMotorcycle;
+    single.cylinderCount = 1;
+    single.boreMm = 54.0;
+    single.strokeMm = 54.5;
+    return { twin, single };
+}
+
+enginelab::EngineConfig withIdleScrew(enginelab::EngineConfig config, double turns) {
+    for (auto& path : config.intakePaths) path.geometry.carburettor.idleScrewTurns = turns;
+    config.intake.carburettor.idleScrewTurns = turns;
+    enginelab::normaliseEngineConfig(config);
+    return config;
+}
+
 /** `wideOpen`: the gate's phase 4 instead (1.2 s wide open, 12 s recovery).
  *  `early`: the early-blip check (0.5 s wide open 6 s after the start). */
 void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false,
@@ -361,6 +411,47 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
 
+        if (argc > 2 && std::string(argv[1]) == "--target-factor") {
+            // `--target-factor F [name-substring]`: every engine idled on an
+            // ECU idle target of F x its configured idle.
+            const auto factor = std::stod(argv[2]);
+            for (const auto& entry : catalog.entries) {
+                auto config = entry.config;
+                enginelab::normaliseEngineConfig(config);
+                if (argc > 3 && config.name.find(argv[3]) == std::string::npos) continue;
+                if (enginelab::idleCarburettor(config) != nullptr) continue;
+                const auto target = std::clamp(std::round(factor * config.idleRpm / 10.0) * 10.0, 300.0, 3'000.0);
+                const auto r = measureIdle(config, 0.5, {}, target);
+                std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f stall %d/%d afr %5.3f"
+                            "  WOT min %5.0f settled %5.0f\n",
+                    r.name.c_str(), r.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm, r.stdRpm, r.driftRpm,
+                    r.steadyStalled ? 1 : 0, r.blipStalled ? 1 : 0, r.afrRatio,
+                    r.wideOpenBlipMinRpm, r.wideOpenBlipSettledRpm);
+            }
+            return EXIT_SUCCESS;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--screw") {
+            // `--screw [turns ...]`: a designed carburetted two-stroke twin idled
+            // on each idle stop screw setting.
+            std::vector<double> turns;
+            for (int index = 2; index < argc; ++index) turns.push_back(std::stod(argv[index]));
+            if (turns.empty()) turns = { 0.5, 1.0, 1.5, 2.5, 4.0, 6.0, 8.0 };
+            for (const auto& spec : carburettedDesigns()) {
+                auto base = enginelab::designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+                if (!base.config) throw std::runtime_error(spec.name + " does not design");
+                for (const auto turn : turns) {
+                    auto config = withIdleScrew(*base.config, turn);
+                    const auto r = measureIdle(config, 0.5);
+                    std::printf("  %-28s screw %4.2f idle %6.0f: %6.0f %6.0f %6.0f %5.1f %6.1f stall %d/%d"
+                                " afr %5.3f  WOT min %5.0f settled %5.0f\n",
+                        spec.name.c_str(), turn, config.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm,
+                        r.stdRpm, r.driftRpm, r.steadyStalled ? 1 : 0, r.blipStalled ? 1 : 0, r.afrRatio,
+                        r.wideOpenBlipMinRpm, r.wideOpenBlipSettledRpm);
+                }
+            }
+            return EXIT_SUCCESS;
+        }
+
         auto blipThrottle = 0.5;
         auto engineFilter = std::string {};
         auto exhaustTargetCellLengthM = std::optional<double> {};
@@ -479,6 +570,63 @@ int main(int argc, char** argv) {
                 failures.push_back(r.name + ": dips toward stall after a WOT blip 6 s"
                     " after the start (" + std::to_string(static_cast<int>(r.earlyBlipMinRpm))
                     + " rpm)");
+        }
+
+        // (5) An idle target raised on the ECU page holds as the configured one
+        //     does. 1.6 x idle puts most engines past the air their bypass
+        //     passes fully open, which is where the governor first fell short
+        //     (the 2JZ held 1,125 rpm for 1,220): the gate's own bounds,
+        //     tightened to +/-5 % on the mean since the target is the user's.
+        std::cout << "raised idle target (1.6 x idle):\n";
+        for (const auto& entry : catalog.entries) {
+            auto config = entry.config;
+            enginelab::normaliseEngineConfig(config);
+            if (!engineFilter.empty() && config.name.find(engineFilter) == std::string::npos) continue;
+            if (enginelab::idleCarburettor(config) != nullptr) continue;
+            const auto target = std::min(3'000.0, std::round(1.6 * config.idleRpm / 10.0) * 10.0);
+            const auto r = measureIdle(config, blipThrottle, exhaustTargetCellLengthM, target);
+            std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f  WOT blip min %5.0f settled %5.0f\n",
+                r.name.c_str(), r.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm, r.stdRpm, r.driftRpm,
+                r.wideOpenBlipMinRpm, r.wideOpenBlipSettledRpm);
+            const auto label = r.name + " at a " + std::to_string(static_cast<int>(target)) + " rpm target: ";
+            if (r.steadyStalled || r.blipStalled) failures.push_back(label + "stalled");
+            if (std::abs(r.settledMeanRpm - target) > 0.05 * target)
+                failures.push_back(label + "idles at " + std::to_string(static_cast<int>(r.settledMeanRpm)));
+            if (r.stdRpm > 0.06 * target || std::abs(r.driftRpm) > 0.05 * target)
+                failures.push_back(label + "does not hold its idle");
+            const auto slowCoastAllowed = r.wideOpenBlipMinRpm < r.wideOpenBlipSettledRpm
+                && std::any_of(knownSlowCoastAllow.begin(), knownSlowCoastAllow.end(),
+                    [&](const std::string& token) { return r.name.find(token) != std::string::npos; });
+            if (r.wideOpenBlipSettledRpm < 0.85 * target
+                    || (r.wideOpenBlipSettledRpm > 1.15 * target && !slowCoastAllowed))
+                failures.push_back(label + "idle not back 12 s after a WOT blip ("
+                    + std::to_string(static_cast<int>(r.wideOpenBlipSettledRpm)) + " rpm)");
+        }
+
+        // (6) A carburettor's idle is its idle stop screw's: no ECU target in
+        //     its tables, and turning the screw in raises the idle, from a
+        //     slow idle to a fast one, without stalling on the way.
+        if (engineFilter.empty()) {
+            std::cout << "carburettor idle screw:\n";
+            for (const auto& spec : carburettedDesigns()) {
+                const auto designed = enginelab::designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+                if (!designed.config) throw std::runtime_error(spec.name + " does not design");
+                if (enginelab::calibration::makeDefaultEcuCalibration(*designed.config)
+                        .find(enginelab::calibration::keys::idleTarget) != nullptr)
+                    failures.push_back(spec.name + ": a carburettor's tables carry an ECU idle target");
+                auto previousRpm = 0.0;
+                for (const auto turns : { 1.0, 1.5, 2.5, 4.0 }) {
+                    const auto r = measureIdle(withIdleScrew(*designed.config, turns), blipThrottle);
+                    std::printf("  %-28s screw %4.2f: %6.0f rpm (std %5.1f)\n",
+                        spec.name.c_str(), turns, r.settledMeanRpm, r.stdRpm);
+                    const auto label = spec.name + " at " + std::to_string(turns) + " turns: ";
+                    if (r.steadyStalled || r.blipStalled) failures.push_back(label + "stalled");
+                    if (r.settledMeanRpm < previousRpm * 1.10)
+                        failures.push_back(label + "the screw did not raise the idle ("
+                            + std::to_string(static_cast<int>(r.settledMeanRpm)) + " rpm)");
+                    previousRpm = r.settledMeanRpm;
+                }
+            }
         }
 
         if (!failures.empty()) {

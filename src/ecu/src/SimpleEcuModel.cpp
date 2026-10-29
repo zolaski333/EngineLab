@@ -119,6 +119,22 @@ double activeRevLimitRpm(const EngineConfig& config,
         calibration::ecuLimits::minimumRevLimitRpm, calibration::ecuLimits::maximumRevLimitRpm);
 }
 
+double displayRedlineRpm(const EngineConfig& config,
+                         const calibration::CalibrationSnapshot& calibration) noexcept {
+    const auto active = activeRevLimitRpm(config, calibration);
+    const auto authored = std::clamp(config.ignition.revLimitRpm,
+        calibration::ecuLimits::minimumRevLimitRpm, calibration::ecuLimits::maximumRevLimitRpm);
+    return std::abs(active - authored) < 0.5 ? config.redlineRpm : active;
+}
+
+double activeIdleTargetRpm(const EngineConfig& config,
+                           const calibration::CalibrationSnapshot& calibration) noexcept {
+    const auto authored = std::max(calibration::ecuLimits::minimumIdleTargetRpm, config.idleRpm);
+    if (idleCarburettor(config) != nullptr) return authored;
+    return std::clamp(calibration.scalarOr(calibration::keys::idleTarget, authored),
+        calibration::ecuLimits::minimumIdleTargetRpm, calibration::ecuLimits::maximumIdleTargetRpm);
+}
+
 double launchControlRpm(const calibration::CalibrationSnapshot& calibration) noexcept {
     return std::clamp(calibration.scalarOr(calibration::keys::launchLimit, 0.0),
         0.0, calibration::ecuLimits::maximumRevLimitRpm);
@@ -187,8 +203,10 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     auto idleIntegral = idleIntegral_.load(std::memory_order_relaxed);
     auto idleDashpot = idleDashpot_.load(std::memory_order_relaxed);
     auto idleAirOpening = 0.0;
+    const auto idleTargetRpm = activeIdleTargetRpm(config, *calibrationSnapshot);
+    const auto* const carburettor = idleCarburettor(config);
     if (controls.ignitionEnabled || controls.starterEngaged) {
-        const auto targetRpm = std::max(300.0, config.idleRpm);
+        const auto targetRpm = idleTargetRpm;
         const auto normalizedError = (targetRpm - state.rpm) / targetRpm;
         // Derivative damping uses a filtered physical speed, not firing ripple.
         // The former PI loop was underdamped on the high-authority aircraft V12:
@@ -230,6 +248,16 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         const auto integralGain = 0.55 * governorGainShare;
         constexpr double derivativeGainSeconds = 0.12;
         constexpr double minimumIntegral = -0.20;
+        // The idle air is sized for the configured idle. A target set above it
+        // on the ECU page needs more air than the bypass passes fully open
+        // (the 2JZ held 1,125 rpm for 1,520, the Aircooled 1,106 for 1,250),
+        // so the governor may then open past it, as an electronic throttle
+        // cracks its plate once its idle valve is open: two bypasses more per
+        // configured idle of raise. At the configured idle it is exactly the
+        // bypass's own travel.
+        const auto idleAuthority = 1.0 + 2.0 * std::max(0.0,
+            targetRpm / std::max(calibration::ecuLimits::minimumIdleTargetRpm, config.idleRpm) - 1.0);
+        const auto maximumIntegral = 0.58 + (idleAuthority - 1.0);
         if (effectiveThrottle > 0.02) {
             // A real throttle/idle system does not snap from a driven opening
             // to the closed-throttle stop. Preserve a short deceleration-air
@@ -323,7 +351,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         };
         const auto deliveredFor = [&](double integral) noexcept {
             return std::max(postStartAir,
-                std::max(std::clamp(governorCommand(integral), 0.0, 1.0), idleDashpot)
+                std::max(std::clamp(governorCommand(integral), 0.0, idleAuthority), idleDashpot)
                     * driverOverride);
         };
 
@@ -335,11 +363,17 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             // fallen through its combustion threshold.  Track the neutral
             // feed-forward state while overridden so returning to idle is
             // bumpless even after a long rev.
-            idleIntegral *= std::exp(-idleDt * 3.0);
+            //
+            // A raised target's extra air is kept: it is what held the idle
+            // before the blip, and rebuilt from zero at the integral's rate it
+            // took the 2JZ more than 12 s to climb back to 1,220 rpm (1,136).
+            // At the configured idle there is no extra authority to keep.
+            const auto keptIntegral = std::clamp(idleIntegral, 0.0, idleAuthority - 1.0);
+            idleIntegral = keptIntegral + (idleIntegral - keptIntegral) * std::exp(-idleDt * 3.0);
         } else {
             const auto proposedIntegral = std::clamp(
                 idleIntegral + normalizedError * integralGain * idleDt,
-                minimumIntegral, 0.58);
+                minimumIntegral, maximumIntegral);
             const auto proposedCommand = governorCommand(proposedIntegral);
             // Anti-windup has to test the DELIVERED actuator position, not the
             // governor's own command, and this is the difference between an
@@ -366,17 +400,28 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             // direction that takes it back into control (error > 0, engine
             // below target). Otherwise it holds its authority.
             const auto governorOwnsActuator =
-                std::clamp(proposedCommand, 0.0, 1.0) * driverOverride
+                std::clamp(proposedCommand, 0.0, idleAuthority) * driverOverride
                     >= deliveredFor(proposedIntegral) - 1.0e-9;
             const auto admissible = governorOwnsActuator
-                ? ((proposedCommand > 0.0 && proposedCommand < 1.0)
+                ? ((proposedCommand > 0.0 && proposedCommand < idleAuthority)
                     || (proposedCommand <= 0.0 && normalizedError > 0.0)
-                    || (proposedCommand >= 1.0 && normalizedError < 0.0))
+                    || (proposedCommand >= idleAuthority && normalizedError < 0.0))
                 : normalizedError > 0.0;
             if (admissible) idleIntegral = proposedIntegral;
         }
 
-        idleAirOpening = deliveredFor(idleIntegral);
+        if (carburettor != nullptr) {
+            // A carburettor has no governor: its idle stop screw holds the
+            // slide where it was set and the engine idles wherever that air
+            // takes it. The after-start floor stays, as the start aid a
+            // carburettor's choke and fast idle are; nothing else moves it.
+            idleIntegral = 0.0;
+            idleDashpot = 0.0;
+            idleAirOpening = std::max(postStartAir,
+                carburettorIdleScrewOpening(carburettor->idleScrewTurns) * driverOverride);
+        } else {
+            idleAirOpening = deliveredFor(idleIntegral);
+        }
     } else {
         idleIntegral *= std::exp(-idleDt * 5.0);
         idleDashpot *= std::exp(-idleDt * 5.0);
@@ -500,7 +545,6 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     auto decelerationFuelCut = decelerationFuelCutLatched_.load(
         std::memory_order_relaxed);
     const auto decelerationFuelCutWasActive = decelerationFuelCut;
-    const auto idleTargetRpm = std::max(300.0, config.idleRpm);
     // The ratio scales the refill window with each engine's idle speed while
     // retaining real hysteresis against the 1.65-times-idle entry threshold.
     // Resume must precede the idle catch by enough crank travel to purge the

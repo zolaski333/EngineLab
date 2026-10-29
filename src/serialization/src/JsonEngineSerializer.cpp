@@ -116,6 +116,7 @@ using Json = nlohmann::json;
         {"pilot_circuit_factor", carburettor.pilotCircuitFactor},
         {"needle_clip_position", carburettor.needleClipPosition},
         {"air_screw_turns", carburettor.airScrewTurns},
+        {"idle_screw_turns", carburettor.idleScrewTurns},
         {"jet_lift_mm", carburettor.jetLiftMm},
         {"jet_discharge_coefficient", carburettor.jetDischargeCoefficient},
         {"wall_film_fraction", carburettor.wallFilmFraction},
@@ -133,6 +134,7 @@ void readCarburettor(const Json& intake, CarburettorConfig& carburettor) {
     carburettor.pilotCircuitFactor = node.value("pilot_circuit_factor", carburettor.pilotCircuitFactor);
     carburettor.needleClipPosition = node.value("needle_clip_position", carburettor.needleClipPosition);
     carburettor.airScrewTurns = node.value("air_screw_turns", carburettor.airScrewTurns);
+    carburettor.idleScrewTurns = node.value("idle_screw_turns", carburettor.idleScrewTurns);
     carburettor.jetLiftMm = node.value("jet_lift_mm", carburettor.jetLiftMm);
     carburettor.jetDischargeCoefficient = node.value("jet_discharge_coefficient", carburettor.jetDischargeCoefficient);
     carburettor.wallFilmFraction = node.value("wall_film_fraction", carburettor.wallFilmFraction);

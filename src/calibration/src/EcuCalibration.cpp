@@ -151,6 +151,15 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         std::clamp(config.ignition.revLimitRpm, ecuLimits::minimumRevLimitRpm,
                    ecuLimits::maximumRevLimitRpm)
     });
+    if (idleCarburettor(config) == nullptr) {
+        draft.set(ScalarCalibration {
+            metadata(std::string(keys::idleTarget), "Idle target",
+                     "The speed the idle governor holds with the throttle shut, warm and unloaded. It opens and closes the idle air (the fuel on a diesel) to hold it; an engine whose closed-throttle leak alone outruns the target, or whose idle air is all open, idles where its air takes it.",
+                     CalibrationUnit::revolutionsPerMinute, ecuLimits::minimumIdleTargetRpm,
+                     ecuLimits::maximumIdleTargetRpm, 0),
+            std::clamp(config.idleRpm, ecuLimits::minimumIdleTargetRpm, ecuLimits::maximumIdleTargetRpm)
+        });
+    }
     draft.set(ScalarCalibration {
         metadata(std::string(keys::launchLimit), "Launch control",
                  "Rev limit while the vehicle stands in gear with the throttle past half (two-step): the clutch takes up from there. Released above 5 km/h. Zero turns it off.",

@@ -213,6 +213,17 @@ struct ExhaustConfig final {
 /** The idle-air opening a carburettor's pilot jet is sized at: the idle
  *  governor's neutral command (its feed-forward), where a warm engine idles. */
 inline constexpr double carburettorPilotSizingIdleOpening = 0.42;
+/** The idle stop screw's turns at which it holds the slide on that sizing
+ *  opening, and the most it turns in. */
+inline constexpr double carburettorNominalIdleScrewTurns = 1.5;
+inline constexpr double carburettorMaximumIdleScrewTurns = 8.0;
+/** The idle-air opening the idle stop screw holds at `turns` in: each turn
+ *  lifts the slide alike, so the idle path opens in proportion. */
+[[nodiscard]] constexpr double carburettorIdleScrewOpening(double turns) noexcept {
+    const auto held = turns < 0.0 ? 0.0
+        : turns > carburettorMaximumIdleScrewTurns ? carburettorMaximumIdleScrewTurns : turns;
+    return held * (carburettorPilotSizingIdleOpening / carburettorNominalIdleScrewTurns);
+}
 
 /** A slide carburettor: the fuel system that meters from the air itself.
  *
@@ -273,6 +284,11 @@ struct CarburettorConfig final {
     /** Turns out on the pilot air screw. More turns bleed more air into the
      * pilot circuit and lean it; 1.5 is the usual nominal setting. */
     double airScrewTurns { 1.5 };
+    /** Turns in on the idle stop screw, from the slide resting on its seat.
+     * A carburettor has no idle governor: the screw holds the slide open and
+     * the engine idles wherever that air takes it, so turning it in raises
+     * the idle. The nominal 1.5 holds the opening the pilot is sized at. */
+    double idleScrewTurns { carburettorNominalIdleScrewTurns };
     /** Height of the jet outlet above the float-bowl level. It is what stops a
      * carburettor dribbling fuel at rest, and what makes the main circuit go
      * lean before it goes rich. */
@@ -2066,6 +2082,10 @@ struct DynoRun final {
 /** The authored peak firing pressure limit, or a typical one for the fuel and
  * induction when none is authored. */
 [[nodiscard]] double peakCylinderPressureLimitBar(const EngineConfig&) noexcept;
+/** The carburettor that sets the engine's idle: its first intake path's
+ *  (the engine-wide intake on an engine without paths), or nothing when the
+ *  engine meters with injectors and its ECU governs the idle. */
+[[nodiscard]] const CarburettorConfig* idleCarburettor(const EngineConfig&) noexcept;
 [[nodiscard]] double intakeRunnerVolumeLitres(const CylinderConfig&, const IntakeConfig&) noexcept;
 void normaliseEngineConfig(EngineConfig&);
 /** Backfires (overrun afterfire and the wet limiter) are a listening option

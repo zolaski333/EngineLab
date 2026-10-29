@@ -177,7 +177,7 @@ void TelemetryPanel::paint(juce::Graphics& g) {
     for (int grid = 1; grid < 5; ++grid)
         g.drawHorizontalLine(static_cast<int>(plot.getY() + plot.getHeight() * static_cast<float>(grid) / 5.0F),
                              plot.getX(), plot.getRight());
-    const auto redline = std::max(1.0, model_.config.redlineRpm);
+    const auto redline = std::max(1.0, model_.redlineRpm > 0.0 ? model_.redlineRpm : model_.config.redlineRpm);
     const std::array<Trace, 5> traces {{
         { "RPM", colours::accent, 0.0, redline, [](const EngineState& s) { return s.rpm; } },
         { "MAP", colours::intake, 20.0, 110.0, [](const EngineState& s) { return s.manifoldPressureKpa; } },

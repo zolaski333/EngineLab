@@ -13,6 +13,17 @@ namespace enginelab {
  *  here rather than from the authored config. */
 [[nodiscard]] double activeRevLimitRpm(const EngineConfig& config,
                                        const calibration::CalibrationSnapshot& calibration) noexcept;
+/** Where the tachometer's red zone starts: the authored `redlineRpm` while
+ *  the ECU's rev limit is the authored one, the ECU's rev limit once it has
+ *  been moved, so a limiter raised or lowered in the tuner moves the mark. */
+[[nodiscard]] double displayRedlineRpm(const EngineConfig& config,
+                                       const calibration::CalibrationSnapshot& calibration) noexcept;
+/** The idle speed the ECU governs to: the calibration's `idle.target_rpm`,
+ *  else the authored `idleRpm`, in the tuner's range. A carburetted engine
+ *  has no governor and no such key: its idle stop screw sets its idle, and
+ *  this is then the authored `idleRpm`, which its overrun thresholds use. */
+[[nodiscard]] double activeIdleTargetRpm(const EngineConfig& config,
+                                         const calibration::CalibrationSnapshot& calibration) noexcept;
 /** The ECU's knock control authority: the most spark it may pull, from the
  *  calibration's `knock.retard_deg_per_intensity` (12 deg when the
  *  calibration has none). Zero turns knock control off. */

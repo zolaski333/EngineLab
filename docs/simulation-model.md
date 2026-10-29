@@ -229,10 +229,13 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   power needs at AFR 12.8 over the root of the venturi head there, and the
   fuel the idle air needs at AFR 13.5 over the root of the crankcase head. The
   idle air is what the idle path passes at that head (the slide's leak and the
-  bypass at the idle governor's neutral opening), and as the ECU opens or
-  shuts that path, standing in for the slide's idle stop, the pilot follows it
-  the way progression holes do: the idle mixture holds through cranking and
-  idle. On an RD350-sized design the main comes out at 287 against the bike's
+  bypass at the idle governor's neutral opening). A carburettor has no idle
+  governor: its idle stop screw (`idle_screw_turns`, 0-8 turns in) holds the
+  slide on that path, 1.5 turns on the sizing opening and each turn alike, and
+  the engine idles wherever that air takes it; only the after-start floor
+  (the choke's stand-in) opens it further. As the path opens or shuts, the
+  pilot follows it the way progression holes do: the idle mixture holds
+  through cranking and idle. On an RD350-sized design the main comes out at 287 against the bike's
   260-290. The main jet is very nearly its circuit's only restriction so its
   number is used directly; the pilot's is not, because the emulsion passage,
   the air screw's bleed and the outlet all throttle it further, and
