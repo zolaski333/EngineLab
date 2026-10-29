@@ -17,17 +17,21 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**No current plan.** The owner's diesel consolidation (2026-10-28) is merged
-and accepted (the owner heard no difference in the A/B): a diesel's advance is
-its start of injection, the ignition delay runs from the jet at Assanis'
-published value, and Woschni's combustion term applies to compression
-ignition only (journal 2026-10-28). Open, each awaiting the owner: the petrol
-engines' over-efficiency (K20 209-233 g/kWh at WOT, real ~260-290; a fix
-moves every engine's sound); low EGT; the diesel's fixed 8 % premixed share.
-Not started: the two-stroke diesel and the rotary (both need a VISION.md
-amendment). Ask the owner before starting anything new. Standing rule: no
-limit on what a user may build (cylinders, size); an engine that needs a
-faster PC than the reference one is allowed.
+**The owner's requests of 2026-10-29** (an autonomous mandate: implement,
+measure, release, report at the end). Released in 0.6.0: the exhaust set in
+the designer, the H-pipe, the fuel system on either cycle, Roots and
+centrifugal superchargers, compressor surge (off by default), intake trumpets
+and pod filters with the multi-throttle mouth, the tachometer's redline from
+the ECU, a split turbocharger's spool, no size cap (journal 2026-10-29).
+Still in the mandate: the rotary engine, which the owner asked for (VISION.md
+amended with it). Open, each awaiting the owner: the petrol engines'
+over-efficiency (K20 209-233 g/kWh at WOT, real ~260-290; a 25 cc single
+reads 16 bar BMEP; a fix moves every engine's sound); low EGT; the diesel's
+fixed 8 % premixed share; the designer's turbine law on very big engines (a
+193 L marine six reaches 1.4 of its 3.0 bar). Not started: the two-stroke
+diesel (needs a VISION.md amendment). Standing rule: no limit on what a user
+may build (cylinders, size); an engine that needs a faster PC than the
+reference one is allowed.
 
 The plan of 2026-10-26 closed on 2026-10-28, released 0.5.0; the owner
 accepted every outcome and every open point below.

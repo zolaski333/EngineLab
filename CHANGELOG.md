@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-29
+
 ### Added
 
 - **The exhaust is set in the engine designer, before the engine is built.**
