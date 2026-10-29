@@ -66,7 +66,7 @@ factor is shown in the diagnostics.
   solved, with signed SI mass flow at the valves, characteristic waveguides, a
   thermal wall model, and a passive radiation load at the outlet.
 - **Physical exhaust elements**: primaries, collectors, junctions, X-pipes,
-  resonators, expansion chambers (Munjal), porous packing (Delany-Bazley),
+  H-pipes, resonators, expansion chambers (Munjal), porous packing (Delany-Bazley),
   catalysts and multiple outlets.
 - **Emergent cycle-to-cycle variability**: the coupling between gas dynamics,
   fuel film, wave action and the ECU makes consecutive cycles genuinely
@@ -75,13 +75,16 @@ factor is shown in the diagnostics.
   cuts most sparks with the fuel kept, and the next fired cycle's exhaust
   lights the unburnt charge waiting in the pipe. It pops about as loud as a
   recorded bike's overrun; high revs still pop rarely.
-- **Petrol and diesel, four-stroke and two-stroke**: port or direct injection,
-  a common-rail diesel whose burn follows its rail pressure, and piston-ported
-  two-strokes pumped by their crankcase.
+- **Petrol and diesel, four-stroke and two-stroke**: port injection, direct
+  injection or a carburettor on either cycle, a common-rail diesel whose burn
+  follows its rail pressure, and piston-ported two-strokes pumped by their
+  crankcase.
 - **Forced induction**: one to four turbochargers on a compressor map, each
   driven by the exhaust paths that feed it, an optional intercooler, an ECU
-  boost table; or a mechanical supercharger. A turbo can be fitted to any
-  four-stroke engine and is sized for it.
+  boost table, compressor surge (off by default) and a blow-off valve; or a
+  supercharger: a Roots with its displacement, leak and bypass, or a
+  centrifugal one on its map. A turbo can be fitted to any four-stroke engine
+  and is sized for it.
 - **Limits that bite**: knock and its ECU retard, peak firing pressure against
   the block's limit, over-revving damage, coolant and oil temperatures with a
   thermostat and fan, the altitude and temperature of the air.
@@ -136,8 +139,11 @@ factor is shown in the diagnostics.
   turbo, gearbox, the air. An **A/B** button keeps two versions of the engine
   to switch between by ear.
 - **New engine…** designs an engine from nothing: four- or two-stroke, petrol
-  or diesel, inline, V, flat, W or radial, any number of cylinders, a bore and
-  stroke or a displacement, natural or boosted. Every other value (redline,
+  or diesel, inline, V, flat, W or radial, up to 32 cylinders of any size from
+  10 cc up, a bore and stroke or a displacement, natural, turbocharged or
+  supercharged, injected or carburetted, through an airbox, a pod filter or
+  open trumpets. Its Exhaust page sets the system (single, dual, H-pipe,
+  X-pipe) and every length and bore before the engine is built. Every other value (redline,
   cams, pipes, crank and firing order, gearing…) follows from rules fitted to
   real engines, each shown with its rule; *Advanced* sets any of them by hand.
   The design is run for a few seconds first, to check that this computer keeps
