@@ -1042,10 +1042,22 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
     const auto ductLength = mm(geometry.inletDuctLengthMm);
     const auto ductDiameter = geometry.inletDuctDiameterMm > 1.0 ? mm(geometry.inletDuctDiameterMm) : throttle;
     const auto bellmouth = geometry.bellmouthDiameterMm > 1.0 ? mm(geometry.bellmouthDiameterMm) : ductDiameter;
-    if (!charged && airbox <= 0.0F && ductLength <= 1.0F && bellmouth > 1.05F * throttle) {
+    // Several trumpets are authored as one lip of their combined area: each
+    // bore's own lip is that over the root of their count.
+    const auto lip = bellmouth / std::sqrt(static_cast<float>(std::max<std::size_t>(1U, mouths.size())));
+    if (!charged && airbox <= 0.0F && ductLength <= 1.0F && geometry.podFilter) {
+        // A pod filter on each mouth: a clamped collar, then the element, a
+        // cone wider than the bore closed by its end cap.
+        for (const auto mouth : mouths) {
+            appendCylinder(bodies.mesh, Mat4::frameAlongY(mouth, direction), 0.56F * throttle, 0.56F * throttle,
+                           0.25F * throttle, 28, false, false);
+            appendCylinder(bodies.mesh, Mat4::frameAlongY(mouth + direction * (0.25F * throttle), direction),
+                           0.85F * throttle, 0.62F * throttle, 1.4F * throttle, 28, true, true);
+        }
+    } else if (!charged && airbox <= 0.0F && ductLength <= 1.0F && lip > 1.05F * throttle) {
         // Open throttle mouths: a velocity stack on each.
         for (const auto mouth : mouths)
-            appendCylinder(bodies.mesh, Mat4::frameAlongY(mouth, direction), 0.5F * throttle, 0.5F * bellmouth,
+            appendCylinder(bodies.mesh, Mat4::frameAlongY(mouth, direction), 0.5F * throttle, 0.5F * lip,
                            0.45F * throttle, 28, false, false);
     }
     pieces.push_back(std::move(bodies));

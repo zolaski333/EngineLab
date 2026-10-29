@@ -1,6 +1,8 @@
+#include <enginelab/render/DuctLayout3D.hpp>
 #include <enginelab/render/RenderSnapshot.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <numbers>
@@ -81,5 +83,34 @@ int main() {
 
     interpolation.reset();
     require(!interpolation.ready(), "reset must clear interpolation history");
+
+    // The throttle's mouth is drawn as the intake is built: bare, a pod filter
+    // on it, or a velocity stack.
+    const auto throttleVertices = [](bool pod, double bellmouthMm) {
+        auto engine = enginelab::makeDefaultInlineFour();
+        engine.intake.airboxVolumeLitres = 0.0;
+        engine.intake.inletDuctLengthMm = 0.0;
+        engine.intake.podFilter = pod;
+        engine.intake.bellmouthDiameterMm = bellmouthMm;
+        for (auto& path : engine.intakePaths) path.geometry = engine.intake;
+        enginelab::normaliseEngineConfig(engine);
+        std::vector<enginelab::render::PortAnchor> ports;
+        for (std::size_t index = 0; index < engine.cylinders.size(); ++index) {
+            enginelab::render::PortAnchor port;
+            port.cylinderId = engine.cylinders[index].id;
+            port.position = { static_cast<float>(index) * 90.0F, 150.0F, 40.0F };
+            port.direction = { 0.0F, 0.3F, 1.0F };
+            port.inner = { static_cast<float>(index) * 90.0F, 120.0F, 20.0F };
+            port.diameterMm = 32.0F;
+            ports.push_back(port);
+        }
+        std::size_t vertices = 0;
+        for (const auto& piece : enginelab::render::layoutIntake(engine, ports, 86.0F, false))
+            if (piece.kind == enginelab::render::DuctKind::intakeThrottle) vertices += piece.mesh.vertices.size();
+        return vertices;
+    };
+    const auto bare = throttleVertices(false, 0.0);
+    require(throttleVertices(true, 0.0) > bare, "a pod filter is drawn on the throttle's mouth");
+    require(throttleVertices(false, 2.0 * enginelab::IntakeConfig {}.throttleDiameterMm) > bare, "an open trumpet is drawn on the mouth");
     return 0;
 }

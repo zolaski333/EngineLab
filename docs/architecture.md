@@ -497,7 +497,10 @@ this view.
   plenum box of the authored volume (a drum round the crank axis on a
   radial). Upstream follow the throttle bores (on the plenum end, or on its
   face when there are several), the airbox volume, the inlet duct and its
-  bellmouth, in the order the air crosses them.
+  bellmouth, in the order the air crosses them. With neither a box nor a
+  duct, each throttle's mouth carries a pod filter (`pod_filter`: a collar
+  and a cone closed by its cap) or a velocity stack (its own lip, the
+  authored combined lip over the root of the bore count).
 
 **Routing.** `relaxRoutes` bends every routed pipe of the engine together.
 Each is a chain of equal segments with straight ends held fixed: 0.8 diameter
