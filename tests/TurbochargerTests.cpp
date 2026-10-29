@@ -374,6 +374,77 @@ void highBoostHoldsSteady() {
     }
 }
 
+struct LiftOff final {
+    double heldBoost {};
+    double heldTorqueNm {};
+    int reversals {};
+    double firstReversalSeconds { -1.0 };
+    double lastReversalSeconds { -1.0 };
+    double leastDuctFlowKgPerSecond {};
+};
+
+/** Full throttle held at 4,000 rpm, then the throttle shut for 1.5 s. */
+[[nodiscard]] LiftOff liftOff(const EngineConfig& config) {
+    auto rig = std::make_unique<Rig>(config);
+    constexpr double shutSeconds = 6.0;
+    LiftOff run;
+    auto rpm = 0.0;
+    auto reversed = false;
+    auto heldFrames = 0;
+    for (auto frame = 0; frame < static_cast<int>((shutSeconds + 1.5) * 240.0); ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = t < 1.5;
+        controls.throttle = t < 2.0 || t >= shutSeconds ? 0.0 : 1.0;
+        if (t >= 2.0 && t < shutSeconds) controls.dynamometerTorqueNm = std::max(0.0, 4.0 * (rpm - 4'000.0));
+        const auto state = rig->simulator->step(frameSeconds, controls).state;
+        rpm = state.rpm;
+        if (t >= shutSeconds - 1.0 && t < shutSeconds) {
+            run.heldBoost += state.boostPressureRatio;
+            run.heldTorqueNm += state.torqueNm;
+            ++heldFrames;
+        }
+        if (t < shutSeconds) continue;
+        run.leastDuctFlowKgPerSecond = std::min(run.leastDuctFlowKgPerSecond, state.compressorDuctFlowKgPerSecond);
+        const auto now = state.compressorDuctFlowKgPerSecond < 0.0;
+        if (now && !reversed) {
+            ++run.reversals;
+            if (run.firstReversalSeconds < 0.0) run.firstReversalSeconds = t - shutSeconds;
+            run.lastReversalSeconds = t - shutSeconds;
+        }
+        reversed = now;
+    }
+    run.heldBoost /= std::max(1, heldFrames);
+    run.heldTorqueNm /= std::max(1, heldFrames);
+    return run;
+}
+
+/** Greitzer's surge, off by default: with it, a throttle shut on boost with
+ *  no blow-off valve blows the charge back through the wheel in bursts (a
+ *  turbocharger's flutter); a blow-off valve vents the charge instead, and
+ *  the held boost is the map's either way. */
+void liftOffSurgesWithoutBlowOff() {
+    auto config = catalogueEngine("2JZ");
+    require(!config.forcedInduction.compressorSurge, "surge is off by default");
+    config.forcedInduction.blowOffValveFlowAreaMm2 = 0.0;
+    const auto quasiSteady = liftOff(config);
+    config.forcedInduction.compressorSurge = true;
+    const auto bare = liftOff(config);
+    config.forcedInduction.blowOffValveFlowAreaMm2 = 700.0;
+    const auto vented = liftOff(config);
+    std::cout << "  2JZ lift-off at 4,000 rpm: held boost " << quasiSteady.heldBoost << " / " << bare.heldBoost
+              << ", torque " << quasiSteady.heldTorqueNm << " / " << bare.heldTorqueNm
+              << " N.m; no valve: " << bare.reversals << " reversals over " << bare.firstReversalSeconds
+              << " .. " << bare.lastReversalSeconds << " s, least duct flow " << bare.leastDuctFlowKgPerSecond
+              << " kg/s; with a valve: " << vented.reversals << " reversals\n";
+    require(quasiSteady.reversals == 0, "without the surge model the duct is not resolved");
+    require(std::abs(bare.heldBoost - quasiSteady.heldBoost) < 0.03 * quasiSteady.heldBoost,
+        "the held boost is the map's with or without the duct resolved");
+    require(bare.reversals >= 3, "a shut throttle with no valve surges, the flow reversing in bursts");
+    require(vented.reversals == 0, "a blow-off valve vents the charge: no surge");
+}
+
 } // namespace
 
 int main() {
@@ -391,5 +462,7 @@ int main() {
     std::cout << "ECU boost table: ok\n";
     highBoostHoldsSteady();
     std::cout << "high boost holds steady: ok\n";
+    liftOffSurgesWithoutBlowOff();
+    std::cout << "lift-off surge: ok\n";
     return 0;
 }

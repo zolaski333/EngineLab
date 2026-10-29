@@ -212,8 +212,9 @@ closed-throttle leak follows the throttle bore (0.6 mm2 at 60 mm and over)
 and is saved with the engine (`closed_throttle_leak_mm2`; before 0.6.0 a
 reloaded design ran on the 0.6 mm2 default).
 
-The window has three pages. *Engine*: the spec, the speeds and the
-compression. *Intake & fuel*: the fuel system (`fuel_system`: port or direct
+The window has three pages. *Engine*: the spec, the speeds, the
+compression and the induction (natural, turbocharged, supercharged -- a Roots,
+a centrifugal one on an aircraft -- or a centrifugal supercharger). *Intake & fuel*: the fuel system (`fuel_system`: port or direct
 injection, or a carburettor, on either cycle; a diesel injects directly),
 the intake (`intake_style`: an airbox, a pod filter, or open velocity stacks
 with a bellmouth 1.5 times the throttle's combined bore), the throttles,
@@ -544,7 +545,9 @@ manifold at turbine inlet pressure and the downpipe at turbine outlet
 pressure. A turbo's charge piping is not drawn.
 
 **Supercharger.** The solver has no compressor in its network either: the
-supercharger raises the intake pressure by its ratio, geared to the crank.
+supercharger raises the intake pressure to the ratio its machine holds against
+the engine's draw (a Roots' displacement, leak and bypass, or a centrifugal
+wheel's map), geared to the crank (`simulation-model.md`, Forced induction).
 The view draws it (`SuperchargerPlacement`) between the airbox and the
 throttle of the first intake path with a single throttle mouth, beside the
 throttle on the side away from the engine: the airbox or the inlet duct

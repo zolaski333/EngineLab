@@ -907,6 +907,11 @@ private:
     double parallelCompressorSolveAgeSeconds_ { 0.0 };
     /** The boost controller's integral term, as a wastegate opening. */
     double wastegateIntegral_ { 0.0 };
+    /** `compressorSurge`: the charge's pressure, the duct's flow, and the
+     *  mass the throttles passed over the last substep. */
+    double chargePressureKpa_ { 0.0 };
+    double compressorDuctFlowKgPerSecond_ { 0.0 };
+    double throttleFlowKgLastStep_ { 0.0 };
     /** Network-port order -> EngineConfig cylinder order, compiled once. */
     std::array<std::size_t, 32> exhaustNetworkCylinderIndex_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;

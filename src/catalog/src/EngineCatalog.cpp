@@ -652,6 +652,8 @@ template <typename T>
     assignIfPresent(node, "blow_off_valve_flow_area_mm2", value.blowOffValveFlowAreaMm2);
     assignIfPresent(node, "blow_off_valve_opening_pressure_ratio", value.blowOffValveOpeningPressureRatio);
     assignIfPresent(node, "blow_off_valve_discharge_coefficient", value.blowOffValveDischargeCoefficient);
+    assignIfPresent(node, "compressor_surge", value.compressorSurge);
+    assignIfPresent(node, "charge_volume_l", value.chargeVolumeLitres);
     assignIfPresent(node, "tonal_acoustic_efficiency", value.tonalAcousticEfficiency);
     assignIfPresent(node, "turbulent_jet_noise_coefficient", value.turbulentJetNoiseCoefficient);
     assignIfPresent(node, "turbocharger_count", value.turbochargerCount);

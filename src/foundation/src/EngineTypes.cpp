@@ -889,6 +889,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || outOfRange("forcedInduction.blowOffValveFlowAreaMm2", config.forcedInduction.blowOffValveFlowAreaMm2, 0.0, 5'000.0)
         || outOfRange("forcedInduction.blowOffValveOpeningPressureRatio", config.forcedInduction.blowOffValveOpeningPressureRatio, 1.001, 3.0)
         || outOfRange("forcedInduction.blowOffValveDischargeCoefficient", config.forcedInduction.blowOffValveDischargeCoefficient, 0.05, 1.5)
+        || outOfRange("forcedInduction.chargeVolumeLitres", config.forcedInduction.chargeVolumeLitres, 0.0, 10'000.0)
         || outOfRange("forcedInduction.tonalAcousticEfficiency", config.forcedInduction.tonalAcousticEfficiency, 0.0, 0.01)
         || outOfRange("forcedInduction.turbulentJetNoiseCoefficient", config.forcedInduction.turbulentJetNoiseCoefficient, 0.0, 0.1)
         || outOfRange("intake.plenumVolumeLitres", config.intake.plenumVolumeLitres, minimumPlenumVolumeLitres, 50.0)

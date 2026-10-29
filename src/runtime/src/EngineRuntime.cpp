@@ -3,6 +3,7 @@
 #include <enginelab/foundation/ThreadScheduling.hpp>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <numbers>
 #if defined(_WIN32)
@@ -259,9 +260,11 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
     const auto inletPressureKpa = std::max(1.0,
         static_cast<double>(state.ambientPressureKpa.load(
             std::memory_order_relaxed)));
-    const auto correctedFlowKgPerSecond = (std::max(0.0,
-        engineState.airFlowGramsPerSecond * 0.001)
-        + std::max(0.0, engineState.blowOffMassFlowKgPerSecond))
+    // A surging wheel passes the charge both ways, and blows noise both ways.
+    const auto correctedFlowKgPerSecond = (engineState.compressorDuctResolved
+        ? std::abs(engineState.compressorDuctFlowKgPerSecond)
+        : std::max(0.0, engineState.airFlowGramsPerSecond * 0.001)
+            + std::max(0.0, engineState.blowOffMassFlowKgPerSecond))
         * std::sqrt(inletTemperatureK / referenceTemperatureK)
         / (inletPressureKpa / referencePressureKpa);
     state.correctedAirFlowKgPerSecond.store(

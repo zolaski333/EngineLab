@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — Compressor surge: a duct and a charge volume, off by default
+
+- `forced_induction.compressor_surge` resolves Greitzer's model (1976): the duct's flow is a state (dm/dt = A/L x (head - charge), L 0.4 m, A the inducer), the charge between wheel and throttle a volume (1.5 x displacement unless `charge_volume_l`), and left of the surge line (0.4 of design flow) the head follows a Moore-Greitzer cubic to 70 % at no flow. Off, every engine is bit-identical (the branch is not entered).
+- `EngineLab.Turbocharger` lift-off (2JZ, 4,000 rpm WOT then shut): with no blow-off valve the duct flow reverses 18 times over 0.20-1.48 s (~13 Hz, least -0.043 kg/s); a 700 mm2 valve gives none; held boost 1.891 either way, torque 433.7 against 434.1. With surge off the duct is not resolved (no reversal).
+- Sound (2JZ without a valve, two lifts at 4,500 rpm, `listening-test/2026-10-29/flutter/`): the turbo stem's envelope carries 0.47-0.50 of its 4-40 Hz energy at 12 Hz in the lifts against 0.08 without surge, but that stem is -67 dB against a -35 dB master; the master moves 0.130 -> 0.141. The flow swings ~0.04 kg/s at ~17 m/s through the inducer, and the jet source goes as v^8: the reversal is in the physics, not yet audible. What a real flutter is heard by -- separated flow on blades moving at tip speed -- has no source here and no sourced coefficient. Not measured: other engines, a real recording.
+
 ## 2026-10-29 — Supercharger: a Roots displacement with a bypass, a centrifugal wheel on the map
 
 - The supercharger's boost was `1 + (PR - 1) x rpm/full-boost x throttle^0.72`: a boosted manifold at part throttle, flat above 30 % of the redline. Now a Roots (lobes > 0) solves its mass balance: displacement x rotor speed, a clearance leak of 2,000 rotor rpm at 50 kPa (about an Eaton M-series map), a bypass opened by manifold vacuum (full at 34 kPa); work = displaced volume x rise. A centrifugal one reads the turbocharger's map at the crank-geared speed, the authored ratio held as a regulator.

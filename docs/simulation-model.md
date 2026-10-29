@@ -463,8 +463,29 @@ follows a proportional-integral boost controller that holds
 proportional term alone, integral time 0.5 s, frozen while the gate is
 saturated. Like an actuator spring set against the atmosphere, it holds a
 gauge boost: the ratio is the one at sea level (101.325 kPa), and in
-thinner air the ratio it allows rises so the gauge boost stays the same. The supercharger uses a separate closure, without claiming to
-model a complete compressor map.
+thinner air the ratio it allows rises so the gauge boost stays the same.
+
+A supercharger is geared to the crank (`supercharger_drive_ratio`), and its
+boost is its machine's answer to the engine's draw. A Roots
+(`supercharger_lobe_count` > 0) carries `supercharger_displacement_l` per
+rotor turn; its clearances leak back, as orifices of fixed area, the
+displacement of 2,000 rotor rpm at a 50 kPa rise (about an Eaton M-series
+map: volumetric efficiency 0.80 at 10,000 rotor rpm, 0.50 at 4,000), and its
+bypass valve (`supercharger_bypass_area_mm2`, by default the throttle bores'
+area) opens with manifold vacuum, fully at 34 kPa. Its ratio is the one at
+which what it delivers, less leak and bypass, is what the engine draws (the
+draw taken in proportion to the outlet pressure), and its work is the
+displaced volume times the rise (no internal compression), which also heats
+the charge. Its boost therefore rises with speed as the leak's share falls,
+and at part throttle the bypass carries its air: a designed 1.6 four at 3,000
+rpm holds 1.01 at 33-71 kPa of manifold pressure and absorbs under 0.1 kW,
+4.2 kW at full throttle. The designer sizes it for its ratio at the redline
+(volumetric efficiency 0.9), geared to 14,000 rotor rpm there; the boost an
+engine reaches is then its own breathing's. No bearing, gear or belt
+friction is modelled. A centrifugal supercharger reads the turbocharger's
+map below at its geared speed, its design speed the full-boost speed
+through the drive; above it a regulator holds `pressure_ratio` (the
+Merlin's boost control).
 
 The turbocharger's compressor head comes from a generic map scaled to its
 design point (Moraal and Kolmanovsky, SAE 1999-01-0908): the head coefficient
@@ -486,6 +507,21 @@ compressors feed one charge and are solved together every 0.25 ms: the common
 pressure ratio at which the flows their maps pass at their own speeds add up
 to the engine's draw. A turbocharger fed by fewer cylinders spins slower and
 passes less of the air, without any special rule.
+
+`compressor_surge` (off by default) resolves the compressor duct and the
+charge in time, Greitzer's model (ASME J. Eng. Power 98, 1976): the duct's
+flow accelerates on the wheels' head over the charge's pressure (the
+inducer's area over an equivalent length of 0.4 m), and the charge
+(`charge_volume_l`, by default 1.5 times the displacement) fills with that
+flow less what the throttles and the blow-off valve pass. Below the surge
+line the head follows Moore and Greitzer's cubic: zero slope at the surge
+line, a shut-off head of 70 % of it at no flow, rising again for reversed
+flow. Left of its peak the head rises with flow, and that branch surges: a
+throttle shut on boost with no blow-off valve blows the charge back through
+the wheel in bursts, the flutter (a 2JZ shut at 4,000 rpm: 18 reversals in
+1.3 s, about 13 Hz); its sound is the inducer's jet noise from the flow
+through the wheel, both ways. The held boost is the map's with or without
+it (1.8909 / 1.8909 on the 2JZ).
 
 `intercooler_effectiveness` (0 to 0.95, default 0) takes that share of the
 compressor's temperature rise back out of the charge. The 2JZ, EJ25 and I5

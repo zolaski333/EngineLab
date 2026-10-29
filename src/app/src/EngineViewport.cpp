@@ -2213,6 +2213,8 @@ void EngineViewport::updateInspector() {
             edit->value(forced.turbochargerCount > 1U ? "Turbine flow area, each" : "Turbine flow area",
                         forced.turbineFlowAreaMm2, utf8(" mm\xc2\xb2"), 0, 50.0, 5.0, 20.0, 20'000.0);
             edit->value("Intercooler", 100.0 * forced.intercoolerEffectiveness, " %", 0, 5.0, 1.0, 0.0, 95.0);
+            edit->value("Blow-off valve", forced.blowOffValveFlowAreaMm2, utf8(" mm²"), 0, 50.0, 5.0, 0.0, 5'000.0);
+            edit->value("Surge (flutter): 1 on", forced.compressorSurge ? 1.0 : 0.0, "", 0, 1.0, 1.0, 0.0, 1.0);
             edit->value("Turbochargers", static_cast<double>(forced.turbochargerCount), "", 0, 1.0, 1.0, 1.0,
                         static_cast<double>(maximumTurbochargers));
             // Which turbocharger this path's turbine drives, when there is a choice.
@@ -2229,28 +2231,34 @@ void EngineViewport::updateInspector() {
             }
             edit->note = utf8("The wastegate pressure ratio limits the boost; the rated ratio keeps its distance to "
                               "it (the ECU's boost table moves with it). The intercooler removes that share of the "
-                              "compressor's heat. The running engine takes these. Another turbocharger count "
+                              "compressor's heat. A blow-off valve of 0 mm² is none; with surge on, a "
+                              "throttle shut on boost without one blows the charge back through the wheel in bursts "
+                              "(off by default). The running engine takes these. Another turbocharger count "
                               "shares the same total turbo out between identical units, and a path given another "
                               "turbo: both restart the engine.");
             partEditor_ = [choosesUnit, pathIndex](EngineConfig& edited, const std::vector<double>& values) {
                 const auto wastegate = values[0];
                 const auto turbineAreaMm2 = values[1];
                 const auto intercoolerPercent = values[2];
-                const auto count = static_cast<std::uint32_t>(std::lround(values[3]));
+                const auto blowOffAreaMm2 = values[3];
+                const auto surge = values[4] >= 0.5;
+                const auto count = static_cast<std::uint32_t>(std::lround(values[5]));
                 auto& turbo = edited.forcedInduction;
                 const auto margin = turbo.pressureRatio - turbo.wastegatePressureRatio;
                 turbo.wastegatePressureRatio = wastegate;
                 turbo.pressureRatio = std::max(1.0, wastegate + margin);
                 turbo.turbineFlowAreaMm2 = turbineAreaMm2;
                 turbo.intercoolerEffectiveness = std::clamp(intercoolerPercent / 100.0, 0.0, 0.95);
-                if (choosesUnit && values.size() > 4U && pathIndex < edited.exhaustPaths.size()
+                turbo.blowOffValveFlowAreaMm2 = std::max(0.0, blowOffAreaMm2);
+                turbo.compressorSurge = surge;
+                if (choosesUnit && values.size() > 6U && pathIndex < edited.exhaustPaths.size()
                     && count == turbo.turbochargerCount) {
                     // Written only when it changes: an authored index equal to
                     // the default is still another config, and a restart.
                     auto& editedPath = edited.exhaustPaths[pathIndex];
                     const auto now = editedPath.turbocharger >= 0
                         ? editedPath.turbocharger : static_cast<std::int32_t>(pathIndex % turbo.turbochargerCount);
-                    const auto wanted = static_cast<std::int32_t>(std::lround(values[4])) - 1;
+                    const auto wanted = static_cast<std::int32_t>(std::lround(values[6])) - 1;
                     if (wanted != now) editedPath.turbocharger = wanted;
                 }
                 if (count != turbo.turbochargerCount) edited = withTurbochargerCount(std::move(edited), count);

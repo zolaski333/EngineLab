@@ -35,6 +35,13 @@ file formats, always with an in-memory migration).
 - **The intake can be an open trumpet.** The Intake & fuel page chooses an
   airbox, a pod filter (the element on the throttle's mouth, no box) or open
   velocity stacks (a bellmouth, no filter).
+- **Compressor surge, off by default.** `compressor_surge` (or *Surge* in the
+  turbocharger inspector) resolves the duct between wheel and throttle as
+  Greitzer's model: a throttle shut on boost with no blow-off valve makes the
+  air blow back through the wheel in bursts, about 13 per second on a 2JZ. The
+  inspector also sets the blow-off valve's area. The reversal is in the
+  physics; it is barely audible yet (the turbo's jet noise is tiny at that
+  flow).
 
 - **The idle speed is set from the ECU page.** `idle.target_rpm` ("Idle
   target", 300-3,000 rpm) is the speed the idle governor holds with the

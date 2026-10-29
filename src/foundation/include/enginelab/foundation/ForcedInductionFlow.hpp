@@ -122,6 +122,48 @@ inline constexpr double compressorSurgeFlowCoefficientRatio = 0.4;
     return point;
 }
 
+/** A wheel's head down to no flow and reversed (Greitzer, ASME J. Eng.
+ *  Power 98, 1976; Moore and Greitzer, 1986): the map to the surge line,
+ *  then a cubic through the surge line's head with zero slope there, falling
+ *  to a shut-off head of 70 % of it at no flow and rising again for reversed
+ *  flow, where the wheel only resists the charge blowing back. Left of its
+ *  peak the head rises with flow: a dip in flow lowers the head, and the
+ *  charge behind pushes the flow down further. That branch is what surges. */
+inline constexpr double compressorShutOffHeadShare = 0.7;
+/** Greitzer's duct: the inducer's area over an equivalent length of 0.4 m
+ *  (the inlet pipe and the wheel's passages of a car's turbocharger). */
+inline constexpr double compressorDuctLengthM = 0.4;
+
+[[nodiscard]] inline double compressorSurgeHeadPressureRatio(
+    const ForcedInductionConfig& config, double designMassFlowKgPerSecond,
+    double angularSpeedRadPerSecond, double massFlowKgPerSecond,
+    double inletTemperatureK, double inletPressureKpa) noexcept {
+    const auto designOmega = std::max(1.0, config.designShaftSpeedRpm * 2.0 * std::numbers::pi / 60.0);
+    const auto temperatureK = std::max(150.0, inletTemperatureK);
+    const auto speedRatio = std::max(0.0, angularSpeedRadPerSecond) / designOmega
+        * std::sqrt(compressorReferenceTemperatureK / temperatureK);
+    if (speedRatio < 1.0e-6) return 1.0;
+    const auto phi = massFlowKgPerSecond * std::sqrt(temperatureK / compressorReferenceTemperatureK)
+        / (std::max(1.0, inletPressureKpa) / compressorReferencePressureKpa)
+        / std::max(1.0e-6, designMassFlowKgPerSecond) / speedRatio;
+    constexpr auto chokeFourth = compressorChokeFlowCoefficientRatio * compressorChokeFlowCoefficientRatio
+        * compressorChokeFlowCoefficientRatio * compressorChokeFlowCoefficientRatio;
+    const auto psi0 = 1.0 / (1.0 - 1.0 / chokeFourth);
+    auto psi = 0.0;
+    if (phi >= compressorSurgeFlowCoefficientRatio) {
+        psi = std::max(0.0, psi0 * (1.0 - phi * phi * phi * phi / chokeFourth));
+    } else {
+        constexpr auto surgeFourth = compressorSurgeFlowCoefficientRatio * compressorSurgeFlowCoefficientRatio
+            * compressorSurgeFlowCoefficientRatio * compressorSurgeFlowCoefficientRatio;
+        const auto surgeHead = psi0 * (1.0 - surgeFourth / chokeFourth);
+        const auto semiHeight = 0.5 * (1.0 - compressorShutOffHeadShare) * surgeHead;
+        const auto x = phi / (0.5 * compressorSurgeFlowCoefficientRatio) - 1.0;
+        psi = compressorShutOffHeadShare * surgeHead + semiHeight * (1.0 + 1.5 * x - 0.5 * x * x * x);
+    }
+    const auto designHead = std::pow(std::max(1.0, config.pressureRatio), turboIsentropicExponent) - 1.0;
+    return std::pow(1.0 + psi * designHead * speedRatio * speedRatio, 1.0 / turboIsentropicExponent);
+}
+
 /** Axial speed through the inducer at the centre of a typical compressor map. */
 inline constexpr double compressorInducerDesignVelocityMps = 100.0;
 
@@ -145,6 +187,27 @@ inline constexpr double compressorInducerDesignVelocityMps = 100.0;
     const auto flow = referenceDensityKgPerM3 * engineDisplacementLitres(config) * 0.001
         * 0.7 * config.redlineRpm / 120.0 * 0.9 * ratio / chargeTemperatureRatio;
     return std::max(0.005, flow / static_cast<double>(std::max(1U, turbo.turbochargerCount)));
+}
+
+/** One compressor's duct: its authored inducer, else the area passing its
+ *  design flow at 100 m/s. */
+[[nodiscard]] inline double compressorDuctAreaM2(const EngineConfig& config) noexcept {
+    const auto& turbo = config.forcedInduction;
+    if (turbo.compressorInducerDiameterMm > 0.0) {
+        const auto radiusM = turbo.compressorInducerDiameterMm * 0.0005;
+        return std::numbers::pi * radiusM * radiusM;
+    }
+    constexpr double referenceDensityKgPerM3 = compressorReferencePressureKpa * 1'000.0
+        / (287.05 * compressorReferenceTemperatureK);
+    return compressorDesignMassFlowKgPerSecond(config)
+        / (referenceDensityKgPerM3 * compressorInducerDesignVelocityMps);
+}
+
+/** The charge between the compressors and the throttle: the authored
+ *  volume, else 1.5 x the displacement (a car's pipes and intercooler). */
+[[nodiscard]] inline double chargeVolumeM3(const EngineConfig& config) noexcept {
+    return (config.forcedInduction.chargeVolumeLitres > 0.0 ? config.forcedInduction.chargeVolumeLitres
+        : 1.5 * engineDisplacementLitres(config)) * 0.001;
 }
 
 /** A centrifugal supercharger's wheel at the centre of its map: the authored

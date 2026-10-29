@@ -351,6 +351,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "blow_off_valve_flow_area_mm2" << YAML::Value << config.forcedInduction.blowOffValveFlowAreaMm2
         << YAML::Key << "blow_off_valve_opening_pressure_ratio" << YAML::Value << config.forcedInduction.blowOffValveOpeningPressureRatio
         << YAML::Key << "blow_off_valve_discharge_coefficient" << YAML::Value << config.forcedInduction.blowOffValveDischargeCoefficient
+        << YAML::Key << "compressor_surge" << YAML::Value << config.forcedInduction.compressorSurge
+        << YAML::Key << "charge_volume_l" << YAML::Value << config.forcedInduction.chargeVolumeLitres
         << YAML::Key << "tonal_acoustic_efficiency" << YAML::Value << config.forcedInduction.tonalAcousticEfficiency
         << YAML::Key << "turbulent_jet_noise_coefficient" << YAML::Value << config.forcedInduction.turbulentJetNoiseCoefficient
         << YAML::Key << "turbocharger_count" << YAML::Value << config.forcedInduction.turbochargerCount
@@ -910,6 +912,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.blowOffValveFlowAreaMm2 = forced["blow_off_valve_flow_area_mm2"].as<double>(config.forcedInduction.blowOffValveFlowAreaMm2);
             config.forcedInduction.blowOffValveOpeningPressureRatio = forced["blow_off_valve_opening_pressure_ratio"].as<double>(config.forcedInduction.blowOffValveOpeningPressureRatio);
             config.forcedInduction.blowOffValveDischargeCoefficient = forced["blow_off_valve_discharge_coefficient"].as<double>(config.forcedInduction.blowOffValveDischargeCoefficient);
+            config.forcedInduction.compressorSurge = forced["compressor_surge"].as<bool>(config.forcedInduction.compressorSurge);
+            config.forcedInduction.chargeVolumeLitres = forced["charge_volume_l"].as<double>(config.forcedInduction.chargeVolumeLitres);
             config.forcedInduction.tonalAcousticEfficiency = forced["tonal_acoustic_efficiency"].as<double>(config.forcedInduction.tonalAcousticEfficiency);
             config.forcedInduction.turbulentJetNoiseCoefficient = forced["turbulent_jet_noise_coefficient"].as<double>(config.forcedInduction.turbulentJetNoiseCoefficient);
             config.forcedInduction.turbochargerCount = forced["turbocharger_count"].as<std::uint32_t>(config.forcedInduction.turbochargerCount);

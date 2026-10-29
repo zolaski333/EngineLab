@@ -978,6 +978,15 @@ struct ForcedInductionConfig final {
     double blowOffValveFlowAreaMm2 { 0.0 };
     double blowOffValveOpeningPressureRatio { 1.12 };
     double blowOffValveDischargeCoefficient { 0.72 };
+    /** Resolve a turbocharger's compressor duct and charge volume in time
+     *  (Greitzer's surge model), so a throttle shut on boost with no blow-off
+     *  valve surges: the charge blows back through the wheel in bursts, the
+     *  "flutter". Off (the default): the boost follows the map at the flow
+     *  the engine draws. */
+    bool compressorSurge { false };
+    /** The charge's volume between the compressor and the throttle (pipes,
+     *  intercooler), in litres. 0: 1.5 x the engine's displacement. */
+    double chargeVolumeLitres { 0.0 };
     /** Measurable/semi-empirical conversion parameters, not mix gains. */
     double tonalAcousticEfficiency { 1.0e-6 };
     double turbulentJetNoiseCoefficient { 1.0e-5 };
@@ -1818,6 +1827,10 @@ struct EngineState final {
     double forcedInductionShaftSpeedRatio { 0.0 };
     double wastegateOpening { 0.0 };
     double blowOffMassFlowKgPerSecond { 0.0 };
+    /** With `compressorSurge`: the flow through the compressors' duct, kg/s,
+     *  negative while the charge blows back through them. */
+    double compressorDuctFlowKgPerSecond { 0.0 };
+    bool compressorDuctResolved { false };
     /** Each turbocharger. The scalar fields above are their mean shaft speed,
      * summed powers and the common wastegate. */
     struct Turbocharger final {

@@ -518,6 +518,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2},
                                {"blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio},
                                {"blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient},
+                               {"compressor_surge", config.forcedInduction.compressorSurge},
+                               {"charge_volume_l", config.forcedInduction.chargeVolumeLitres},
                                {"tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency},
                                {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient},
                                {"turbocharger_count", config.forcedInduction.turbochargerCount},
@@ -792,6 +794,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.blowOffValveFlowAreaMm2 = forced.value("blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2);
             config.forcedInduction.blowOffValveOpeningPressureRatio = forced.value("blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio);
             config.forcedInduction.blowOffValveDischargeCoefficient = forced.value("blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient);
+            config.forcedInduction.compressorSurge = forced.value("compressor_surge", config.forcedInduction.compressorSurge);
+            config.forcedInduction.chargeVolumeLitres = forced.value("charge_volume_l", config.forcedInduction.chargeVolumeLitres);
             config.forcedInduction.tonalAcousticEfficiency = forced.value("tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency);
             config.forcedInduction.turbulentJetNoiseCoefficient = forced.value("turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient);
             config.forcedInduction.turbochargerCount = forced.value("turbocharger_count", config.forcedInduction.turbochargerCount);

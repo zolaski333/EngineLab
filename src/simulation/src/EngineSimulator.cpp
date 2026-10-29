@@ -1844,6 +1844,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             for (auto& unit : state_.turbochargers) unit = {};
             state_.wastegateOpening = 0.0;
             wastegateIntegral_ = 0.0;
+            chargePressureKpa_ = 0.0;
+            compressorDuctFlowKgPerSecond_ = 0.0;
+            state_.compressorDuctFlowKgPerSecond = 0.0;
             state_.blowOffMassFlowKgPerSecond = 0.0;
             state_.compressorPowerKw = 0.0;
             state_.turbinePowerKw = 0.0;
@@ -1883,6 +1886,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             auto pressureRatioTarget = 1.0;
             auto compressorPowerW = 0.0;
             auto rootsPowerW = -1.0;
+            auto chargeResolved = false;
             auto turbinePowerW = 0.0;
             state_.turboBearingPowerKw = 0.0;
             state_.turboShaftNetPowerKw = 0.0;
@@ -2051,11 +2055,45 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                 : 1.0 / static_cast<double>(turbochargerCount);
                     }
                 }
+                // Greitzer's model: the duct's flow accelerates on the head
+                // the wheels hold over the charge's pressure, and the charge
+                // fills with what the duct brings less what the throttles
+                // and the blow-off valve pass (both from the last substep).
+                // Its time scale is the Helmholtz period of duct and charge,
+                // milliseconds, so it is integrated every substep: the flow
+                // first, then the pressure from it (stable while the period
+                // spans more than ~3 substeps).
+                chargeResolved = turbo.compressorSurge;
+                if (chargeResolved) {
+                    if (!(chargePressureKpa_ > 0.0)) {
+                        chargePressureKpa_ = config_.ambientPressureKpa * state_.boostPressureRatio;
+                        compressorDuctFlowKgPerSecond_ = compressorMassFlowKgPerSecond;
+                    }
+                    auto head = 0.0;
+                    for (std::size_t index = 0; index < turbochargerCount; ++index)
+                        head += compressorSurgeHeadPressureRatio(turbo, designFlowKgPerSecond, shaftOmega[index],
+                            compressorDuctFlowKgPerSecond_ / static_cast<double>(turbochargerCount),
+                            ambientTemperatureK, config_.ambientPressureKpa);
+                    head /= static_cast<double>(turbochargerCount);
+                    const auto ductAreaM2 = compressorDuctAreaM2(config_) * static_cast<double>(turbochargerCount);
+                    compressorDuctFlowKgPerSecond_ += ductAreaM2 / compressorDuctLengthM
+                        * (head * config_.ambientPressureKpa - chargePressureKpa_) * 1'000.0 * subDt;
+                    const auto chargeRatio = std::max(1.0, chargePressureKpa_ / config_.ambientPressureKpa);
+                    const auto chargeTemperatureK = ambientTemperatureK * (1.0
+                        + (std::pow(chargeRatio, turboIsentropicExponent) - 1.0)
+                            / std::max(0.35, turbo.compressorEfficiency));
+                    chargePressureKpa_ = std::max(0.2 * config_.ambientPressureKpa, chargePressureKpa_
+                        + 287.05 * chargeTemperatureK / chargeVolumeM3(config_)
+                            * (compressorDuctFlowKgPerSecond_ * subDt - throttleFlowKgLastStep_
+                                - state_.blowOffMassFlowKgPerSecond * subDt) * 0.001);
+                }
                 auto shaftSpeedSumRpm = 0.0;
                 turbinePowerW = 0.0;
                 for (std::size_t index = 0; index < turbochargerCount; ++index) {
                     auto& unit = state_.turbochargers[index];
-                    const auto unitFlowKgPerSecond = turbochargerCount == 1U ? compressorMassFlowKgPerSecond
+                    const auto unitFlowKgPerSecond = chargeResolved
+                        ? compressorDuctFlowKgPerSecond_ / static_cast<double>(turbochargerCount)
+                        : turbochargerCount == 1U ? compressorMassFlowKgPerSecond
                         : compressorMassFlowKgPerSecond * parallelCompressorFlowShare_[index];
                     const auto shaftAdvance = advanceTurboShaft(turbo, shaftOmega[index],
                         turbochargerTurbinePowerW[index], unitFlowKgPerSecond, ambientTemperatureK,
@@ -2096,7 +2134,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         state_.turbochargers[index].compressorEfficiency = turbo.compressorEfficiency;
                     }
                 }
+                if (chargeResolved) pressureRatioTarget = chargePressureKpa_ / config_.ambientPressureKpa;
             }
+            state_.compressorDuctResolved = chargeResolved;
+            state_.compressorDuctFlowKgPerSecond = chargeResolved ? compressorDuctFlowKgPerSecond_ : 0.0;
             if (!config_.forcedInduction.enabled
                 || config_.forcedInduction.type
                     == ForcedInductionType::supercharger) {
@@ -2116,8 +2157,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             }
             state_.compressorPowerKw = compressorPowerW * 0.001;
             state_.turbinePowerKw = turbinePowerW * 0.001;
-            state_.boostPressureRatio = smooth(state_.boostPressureRatio,
-                config_.forcedInduction.enabled ? pressureRatioTarget : 1.0, subDt, 14.0);
+            state_.boostPressureRatio = chargeResolved ? pressureRatioTarget
+                : smooth(state_.boostPressureRatio,
+                    config_.forcedInduction.enabled ? pressureRatioTarget : 1.0, subDt, 14.0);
             if (!config_.forcedInduction.enabled) {
                 state_.forcedInductionShaftSpeedRpm = 0.0;
                 for (auto& unit : state_.turbochargers) unit = {};
@@ -2157,6 +2199,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 state_.blowOffMassFlowKgPerSecond = 0.0;
             }
 
+            auto throttleFlowKgThisStep = 0.0;
             for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
                 const auto& intake = intakeGeometryAt(config_, pathIndex);
                 const auto throttleRadiusM = intake.throttleDiameterMm * 0.0005;
@@ -2183,6 +2226,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     intakeSourcePressureKpa, temperatureK, inletAreaM2,
                     intake.throttleDischargeCoefficient, subDt, reedFitted);
+                throttleFlowKgThisStep += intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg;
                 const auto plenumInflowKg = std::max(0.0,
                     intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg);
                 if (twoStrokeCrankcase)
@@ -2233,6 +2277,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
             }
+            throttleFlowKgLastStep_ = throttleFlowKgThisStep;
         }
         // Resolve plenum jet mixing as a sudden expansion loss. The equivalent
         // spherical diameter supplies its characteristic length; no numerical
@@ -6476,6 +6521,9 @@ void EngineSimulator::reset() noexcept {
     parallelCompressorSolveAgeSeconds_ = 0.0;
     networkTurbineOutletPressureKpa_ = config_.ambientPressureKpa;
     wastegateIntegral_ = 0.0;
+    chargePressureKpa_ = 0.0;
+    compressorDuctFlowKgPerSecond_ = 0.0;
+    throttleFlowKgLastStep_ = 0.0;
     lastExhaustAcousticStatePublishSeconds_ = -1.0;
     if (pressureSamples_) {
         CylinderPressureSample discarded;
