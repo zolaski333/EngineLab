@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — Big turbocharged engines against their makers: the turbo holds, the engine over-delivers
+
+- Designed (DesignBench, sized turbos, steady dyno 2,000-6,000 rpm): EcoBoost-like 3.5 V6 twin at 1.9: 544 N.m at 2,500 (real 569), 295 kW at 5,000 (real 272), still rising to 324 at 5,500 (real falls). N63-like 4.4 V8 twin at 1.8 (`sport_car`): 649-731 N.m (real 600 flat from 1,750), 420 kW at 5,500 (real 300). 930-like 3.3 flat-6 single at 1.8, CR 7: 431-444 N.m (real 412 at 4,000).
+- Boost holds the target within 1 % over the whole range on all three; exhaust manifold over boost 0.9 at 2,000 rising to 1.26 (V6) and 1.52 (V8) at the top: a small turbine's back-pressure, in the range of a production twin-turbo. The turbo side shows no fault.
+- The excess is the engine: VE at manifold density rises 0.80 -> 0.92 with the sport cams and gross IMEP 22.6 bar at 1.77 bar -- the open petrol over-efficiency (K20 209-233 g/kWh), not the turbocharger. Not changed (it moves every engine's sound; awaiting the owner).
+- Spool: the 930-like design holds 170 kPa at 1,500 rpm; a real K27 came on near 3,000. The designer sizes every turbine for a modern quick spool (0.028 x litres x redline mm2); a laggy period turbo is the inspector's turbine area. Not measured: transient time to boost on a big engine against a real one (no source found).
+
 ## 2026-10-29 — Compressor surge: a duct and a charge volume, off by default
 
 - `forced_induction.compressor_surge` resolves Greitzer's model (1976): the duct's flow is a state (dm/dt = A/L x (head - charge), L 0.4 m, A the inducer), the charge between wheel and throttle a volume (1.5 x displacement unless `charge_volume_l`), and left of the surge line (0.4 of design flow) the head follows a Moore-Greitzer cubic to 70 % at no flow. Off, every engine is bit-identical (the branch is not entered).
