@@ -869,6 +869,25 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 spec.use == EngineUse::aircraft && spec.intakeStyle == IntakeStyle::automatic ? 0.0
                     : profile.motorcycle ? std::clamp(2.5 * litres, 3.0, 10.0) : 4.0 + 0.5 * litres,
                 profile.motorcycle ? "2.5 x litres, 3-10 L" : "4 L + 0.5 x litres");
+            // A car's box breathes through a snorkel: the catalogue's run
+            // 200-400 mm at 1.35 times the throttles' area (1.1-1.56), with a
+            // lip 1.17 times their bore. Without one the box breathed through
+            // a hole of the throttle's bore. A motorcycle's box opens straight
+            // under the tank: its mouth is the bores' combined area.
+            if (intake.airboxVolumeLitres > 0.0) {
+                const auto snorkel = !profile.motorcycle;
+                const auto boresMm = intake.throttleDiameterMm
+                    * std::sqrt(static_cast<double>(std::max(1U, intake.throttleCount)));
+                intake.inletDuctLengthMm = derive("inlet_duct_length_mm", "Airbox snorkel length", "mm",
+                    snorkel ? 250.0 : 0.0, snorkel ? "the catalogue cars' (200-400 mm)"
+                        : "none: a motorcycle's box opens under the tank");
+                intake.inletDuctDiameterMm = derive("inlet_duct_diameter_mm", "Airbox snorkel bore", "mm",
+                    snorkel ? 1.16 * boresMm : 0.0, snorkel ? "1.35 x the throttles' area, the catalogue cars'"
+                        : "none: the bores' combined area");
+                intake.bellmouthDiameterMm = derive("bellmouth_diameter_mm", "Mouth lip", "mm",
+                    snorkel ? 1.17 * intake.inletDuctDiameterMm : 0.0,
+                    snorkel ? "1.17 x the snorkel's bore, the catalogue cars'" : "none: the bores' combined area");
+            }
             break;
         case IntakeStyle::podFilter:
             intake.airboxVolumeLitres = 0.0;

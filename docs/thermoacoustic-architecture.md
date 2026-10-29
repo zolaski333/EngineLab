@@ -1032,6 +1032,10 @@ optional airbox compliance, an inlet duct with thermo-viscous losses, then a
 horn/mouth radiation load and the delay to the observer. Volumes, lengths,
 diameters and areas come exclusively from `EngineConfig`. A zero value for the
 airbox or the duct means the part is absent; it triggers no invented geometry.
+With neither a duct nor a bellmouth the path radiates through its throttle
+bores as one mouth of their combined area (`throttle_count` bores of
+`throttle_diameter_mm`): the bores are what carries the air, and one bore's
+diameter made a four-throttle airbox breathe through a quarter of it.
 The network only carries the acoustic perturbation: a 5 Hz moving average
 removes the conserved flow, so that a perfectly stationary flow since `reset()`
 produces exact silence.

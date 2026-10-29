@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — Intake level: a multi-throttle mouth carries every bore; the designer's airbox gets a snorkel
+
+- An airbox with no inlet duct or bellmouth radiated through ONE throttle bore: a four-throttle 600 breathed through one 34 mm hole. The mouth is now the bores' combined area. Same-binary A/B (catalogue YAML with the old mouth authored, WOT pull, intake stem, low/high window): Hayabusa -69.7/-70.1 -> -57.1/-57.7 dB, CP2 -68.3/-67.3 -> -62.0/-60.9; single-throttle engines and every engine with a snorkel are unchanged. `RealtimeRegression`: four 34 mm bores radiate as one 68 mm bore (18.94 dB both), one 34 mm 6.49 dB (fails before: four = one 34 mm).
+- The designer gave every airbox no snorkel. A car's now gets the catalogue cars' (250 mm, 1.35 x the throttles' area, lip 1.17 x the bore; designer values): a designed K20 at WOT -55.8/-58.3 -> -52.4/-56.2 dB. A motorcycle's box opens under the tank (none).
+- What remains: with a box and its filter the intake stays 25-35 dB under the exhaust stem at 1 m on every road engine, the master moves under 0.2 dB. That is the box's compliance against the throttles (an R6-like 600: -57 boxed, -37 with open trumpets, exhaust -32/-23). The loud intake is a choice: open trumpets (5-10 dB under the exhaust) or a pod filter (+4-6 dB on a K20). Not measured: a real motorcycle's intake against its exhaust (no recording at a known distance).
+
 ## 2026-10-29 — Big turbocharged engines against their makers: the turbo holds, the engine over-delivers
 
 - Designed (DesignBench, sized turbos, steady dyno 2,000-6,000 rpm): EcoBoost-like 3.5 V6 twin at 1.9: 544 N.m at 2,500 (real 569), 295 kW at 5,000 (real 272), still rising to 324 at 5,500 (real falls). N63-like 4.4 V8 twin at 1.8 (`sport_car`): 649-731 N.m (real 600 flat from 1,750), 420 kW at 5,500 (real 300). 930-like 3.3 flat-6 single at 1.8, CR 7: 431-444 N.m (real 412 at 4,000).

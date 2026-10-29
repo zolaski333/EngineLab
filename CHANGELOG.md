@@ -35,6 +35,11 @@ file formats, always with an in-memory migration).
 - **The intake can be an open trumpet.** The Intake & fuel page chooses an
   airbox, a pod filter (the element on the throttle's mouth, no box) or open
   velocity stacks (a bellmouth, no filter).
+- **An airbox on several throttles breathes through all of them.** With no
+  snorkel authored, the box radiated through one throttle's bore; it now
+  radiates through the bores' combined area. A Hayabusa's intake is 12 dB
+  louder, a CP2's 6 dB; engines with one throttle or a snorkel are unchanged.
+  A designed car's airbox now has a snorkel and a lip (designer values).
 - **Compressor surge, off by default.** `compressor_surge` (or *Surge* in the
   turbocharger inspector) resolves the duct between wheel and throttle as
   Greitzer's model: a throttle shut on boost with no blow-off valve makes the

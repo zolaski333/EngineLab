@@ -126,7 +126,9 @@ public:
         addKeyed(runnerDiameter_, "Runner bore (mm)", "intake_runner_diameter_mm", intakePage);
         addKeyed(plenum_, "Plenum (L)", "plenum_volume_l", intakePage);
         addKeyed(airbox_, "Airbox (L)", "airbox_volume_l", intakePage);
-        addKeyed(bellmouth_, "Trumpet lip (mm)", "bellmouth_diameter_mm", intakePage);
+        addKeyed(snorkelLength_, "Airbox snorkel (mm)", "inlet_duct_length_mm", intakePage);
+        addKeyed(snorkelBore_, "Snorkel bore (mm)", "inlet_duct_diameter_mm", intakePage);
+        addKeyed(bellmouth_, "Mouth lip (mm)", "bellmouth_diameter_mm", intakePage);
         addKeyed(injectionStart_, "Injection starts (deg)", "injection_start_deg", intakePage);
         addKeyed(injectionEnd_, "Injection ends (deg)", "injection_end_deg", intakePage);
         addKeyed(mainJet_, "Main jet (cc/min)", "carb_main_jet_flow", intakePage);
@@ -742,7 +744,7 @@ private:
         induction_, boost_, turbos_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
     Field redline_, revLimit_, idle_, compression_;
     Field fuelSystem_, intakeStyle_, twoStrokeIntake_, throttleCount_, throttleDiameter_, runnerLength_,
-        runnerDiameter_, plenum_, airbox_, bellmouth_, injectionStart_, injectionEnd_, mainJet_, pilotJet_,
+        runnerDiameter_, plenum_, airbox_, snorkelLength_, snorkelBore_, bellmouth_, injectionStart_, injectionEnd_, mainJet_, pilotJet_,
         venturi_, pumpStroke_, starterJet_;
     Field exhaustSystem_, silencer_, primaryLength_, primaryDiameter_, collectorDiameter_, midpipeLength_,
         midpipeDiameter_, splitPosition_, crossoverPosition_, balanceLength_, balanceDiameter_, xCoupling_,

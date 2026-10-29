@@ -1413,6 +1413,50 @@ void structuralModalRadiatorRegression() {
         "one-bank engines must be sample-identical across the bank-map fix");
 }
 
+/** An airbox with no snorkel breathes through its throttles' combined area:
+ *  four 34 mm bores radiate as one 68 mm bore does, not as one 34 mm hole. */
+void intakeMouthCarriesEveryBoreRegression() {
+    const auto radiated = [](std::uint32_t bores, double boreMm) {
+        auto config = enginelab::makeDefaultInlineFour();
+        config.intake.airboxVolumeLitres = 3.0;
+        config.intake.inletDuctLengthMm = 0.0;
+        config.intake.inletDuctDiameterMm = 0.0;
+        config.intake.bellmouthDiameterMm = 0.0;
+        config.intake.throttleCount = bores;
+        config.intake.throttleDiameterMm = boreMm;
+        for (auto& path : config.intakePaths) path.geometry = config.intake;
+        enginelab::normaliseEngineConfig(config);
+        enginelab::AcousticIntakeNetwork intake(config);
+        require(intake.valid() && intake.prepare(48'000.0), "the mouth fixture must prepare");
+        const std::array<enginelab::AcousticIntakeNetwork::PathBoundary, 1> paths {{
+            { 0.0036F, 1.15F, 350.0F } }};
+        intake.beginBlock(paths, 1.0);
+        std::array<enginelab::AcousticIntakeNetwork::CylinderBoundary, 4> cylinders {};
+        for (auto& cylinder : cylinders) {
+            cylinder.conductanceAreaM2 = 0.00045F;
+            cylinder.densityKgPerM3 = 1.15F;
+            cylinder.soundSpeedMps = 350.0F;
+            cylinder.physical = true;
+        }
+        auto energy = 0.0;
+        for (std::size_t sample = 0; sample < 24'000; ++sample) {
+            cylinders[0].massFlowKgPerSecond = 0.040F + 0.018F * static_cast<float>(std::sin(
+                2.0 * std::numbers::pi * 200.0 * static_cast<double>(sample) / 48'000.0));
+            const auto pressure = intake.process(cylinders, 1.0F)[0].leftPa;
+            if (sample >= 12'000) energy += static_cast<double>(pressure) * pressure;
+        }
+        return 10.0 * std::log10(energy + 1.0e-30);
+    };
+    const auto oneWide = radiated(1U, 68.0);
+    const auto fourNarrow = radiated(4U, 34.0);
+    const auto oneNarrow = radiated(1U, 34.0);
+    std::cout << "  airbox mouth: one 68 mm bore " << oneWide << " dB, four 34 mm " << fourNarrow
+              << " dB, one 34 mm " << oneNarrow << " dB\n";
+    require(std::abs(oneWide - fourNarrow) < 0.5,
+        "four bores breathe through their combined area, as one bore of that area does");
+    require(oneWide - oneNarrow > 3.0, "a quarter of the mouth radiates less");
+}
+
 void acousticIntakeNetworkRegression() {
     auto config = enginelab::makeDefaultInlineFour();
     config.intake.airboxVolumeLitres = 4.0;
@@ -3516,6 +3560,7 @@ int main(int argc, char** argv) {
         areaStepScatteringRegression();
         structuralModalRadiatorRegression();
         acousticIntakeNetworkRegression();
+        intakeMouthCarriesEveryBoreRegression();
         forcedInductionAcousticsRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();

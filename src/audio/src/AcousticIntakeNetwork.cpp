@@ -42,6 +42,17 @@ namespace {
     return std::numbers::pi * radiusM * radiusM;
 }
 
+/** What the intake breathes through when no inlet duct or bellmouth is
+ *  authored: the throttle bores, all of them, as one mouth of their combined
+ *  area. One bore's diameter made four 34 mm throttles breathe through one
+ *  34 mm hole, a quarter of the area that carries their air, and the intake of
+ *  every multi-throttle engine radiated through that (an R6-like 600 at WOT:
+ *  -69 dB against -57 dB with the combined mouth). */
+[[nodiscard]] double boresMouthDiameterMm(const IntakeConfig& geometry) noexcept {
+    return geometry.throttleDiameterMm
+        * std::sqrt(static_cast<double>(std::max(1U, geometry.throttleCount)));
+}
+
 } // namespace
 
 struct AcousticIntakeNetwork::Impl final {
@@ -187,7 +198,7 @@ struct AcousticIntakeNetwork::Impl final {
                 compiled.geometry.airboxVolumeLitres * 0.001);
             const auto inletDiameterMm = compiled.geometry.inletDuctDiameterMm > 1.0
                 ? compiled.geometry.inletDuctDiameterMm
-                : compiled.geometry.throttleDiameterMm;
+                : boresMouthDiameterMm(compiled.geometry);
             // The filter element belongs to the filter HOUSING. An engine that
             // authors no airbox has no housing, so it gets no element: a
             // carburetted radial breathing through a scoop, or an open-trumpet
@@ -295,7 +306,7 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
             ? path.geometry.bellmouthDiameterMm
             : path.geometry.inletDuctDiameterMm > 1.0
                 ? path.geometry.inletDuctDiameterMm
-                : path.geometry.throttleDiameterMm;
+                : boresMouthDiameterMm(path.geometry);
         const auto radiusM = inletDiameterMm * 0.0005;
         if (!path.radiation.prepare(sampleRateHz, radiusM, 1.0)
             || !path.observer.prepare(sampleRateHz, radiusM, {},
@@ -610,7 +621,7 @@ AcousticIntakeNetwork::process(
             ? path.inletDuct.areaM2
             : circularAreaM2(path.geometry.bellmouthDiameterMm > 1.0
                 ? path.geometry.bellmouthDiameterMm
-                : path.geometry.throttleDiameterMm);
+                : boresMouthDiameterMm(path.geometry));
         const auto inletAdmittance = static_cast<float>(inletAreaM2 / (rho * c));
         const auto inletIncident = path.hasInletDuct
             ? path.inletIncidentAtAirbox : path.radiationIncidentAtAirbox;
