@@ -18,7 +18,8 @@
  * Keys: key, name, cycle (2t/4t), fuel (gasoline/diesel), use, layout,
  * cylinders, bank_count, bank_angle, bore, stroke, displacement, induction
  * (natural/turbo/super), boost, turbo_count, intake (crankcase_reed/cylinder_port),
- * intake_reed (yes/no). Anything else is a DesignValue
+ * intake_reed (yes/no), exhaust_system, exhaust_silencer, fuel_system,
+ * intake_style (the designer's choices, by their file names). Anything else is a DesignValue
  * override by key, so `expansion_chamber_tuned_length_mm=900` or
  * `exhaust_port_open_deg=88` work exactly as the designer's own fields do, and
  * a typo surfaces as the designer's own "unknown key" error.
@@ -128,6 +129,26 @@ struct SpecLine final {
         if (name == "intake_reed") {
             if (value == "yes" || value == "no") spec.twoStrokeIntakeReed = value == "yes";
             else result.error = "intake_reed is yes or no";
+            continue;
+        }
+        if (name == "exhaust_system") {
+            if (const auto system = enginelab::parseExhaustSystem(value)) spec.exhaustSystem = *system;
+            else result.error = "unknown exhaust_system: " + value;
+            continue;
+        }
+        if (name == "exhaust_silencer") {
+            if (const auto silencer = enginelab::parseExhaustSilencer(value)) spec.exhaustSilencer = *silencer;
+            else result.error = "unknown exhaust_silencer: " + value;
+            continue;
+        }
+        if (name == "fuel_system") {
+            if (const auto fuelSystem = enginelab::parseFuelSystem(value)) spec.fuelSystem = *fuelSystem;
+            else result.error = "unknown fuel_system: " + value;
+            continue;
+        }
+        if (name == "intake_style") {
+            if (const auto style = enginelab::parseIntakeStyle(value)) spec.intakeStyle = *style;
+            else result.error = "unknown intake_style: " + value;
             continue;
         }
         double number = 0.0;

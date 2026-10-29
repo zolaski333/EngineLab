@@ -291,6 +291,27 @@ such. The current model is compact and frequency-independent: it does not
 infer the coupling from an angle, an overlap length or a 3D geometry that the
 schema does not hold yet.
 
+### H-pipe: a side branch
+
+An H-pipe joins two pipes by a balance pipe at right angles. In the graph it
+is a `splitter` on one pipe, the balance pipe, and a `merge` on the other,
+the balance pipe on each through port `2`, the side branch:
+
+```yaml
+- { from_component_id: 450, from_port: 2, to_component_id: 460 }
+- { from_component_id: 460, to_component_id: 451, to_port: 2 }
+```
+
+A merge or a splitter carries momentum along its graph axis, from its
+inputs to its outputs. A side branch exchanges mass and energy with it but
+none of that momentum, and sees it at rest, so the names `splitter` and
+`merge` only orient the graph: the balance pipe carries whichever side is
+higher (a designed 6.2 V8 at 3,185 rpm drives it 13.9 kPa either way over
+the cycle). Without the side branch it was a jet pump, the splitter ramming
+its side's flow into it and the merge drawing it out, 0-24 kPa one way at
+every crank angle. Port `2` joins a merge or a splitter to a duct, never to
+another junction. The designer builds it (`exhaust_system: h_pipe`).
+
 ### Terminal resonator
 
 A `resonator` connected from a component, with no outlet and no cylinder
@@ -467,8 +488,9 @@ stays linear and plane. It does not resolve transverse modes, 3D bends or the
 complete mean-flow correction of radiation. The simple termination directivity
 and the independent outlet positions/axes are resolved towards a common
 microphone pair; the model is neither a 3D acoustic field nor a room
-simulation. The compact X is not yet frequency-dispersive, and the DAG still
-forbids the loop needed for a literal H-pipe; both limitations are explicit.
+simulation. The compact X is not yet frequency-dispersive. An H-pipe's
+balance pipe is a side branch at each end (above), so its junctions are
+compact: the T's own length and the turn's loss are the pipes'.
 
 The guide's high-frequency reflections do not return into the 0D cylinder; the
 physical feedback is provided by the non-linear low-band network. IRs are

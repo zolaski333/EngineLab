@@ -197,8 +197,9 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   what the residual can cover binds. It therefore does **not** address torque
   climbing to the rev limiter: that is trapping which never falls, and the
   displacing share is monotonic in engine speed by construction.
-- **Carburettor**: the fuel system a two-stroke actually has, and what the
-  designer fits to every two-stroke it builds
+- **Carburettor**: the fuel system a two-stroke actually has, what the
+  designer fits to every two-stroke it builds, and a choice for a
+  four-stroke
   (`IntakeConfig::carburettor`, `CarburettorModel`). Nothing is commanded: the
   jets are orifices into a float bowl at the pressure outside the engine, and
   the mixture is whatever depression the air draws through them. The fuel goes
@@ -251,6 +252,28 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   Neither is stood in for by a factor, because the first is a two-phase effect
   in the passage that no single algebraic term represents honestly. They are
   measured gaps, not calibrations.
+
+  A four-stroke's carburettor is a car's: a fixed venturi with a butterfly
+  downstream and no needle (`fixed_venturi`), so the main jet meters at
+  its whole area at any opening. The designer sizes its venturi for its
+  signal, 5.1 kPa (Holley's 1.5 inHg rating) at peak power per bore, since a
+  throttle-body-sized throat (2 kPa at peak) leaves the main jet under its
+  lift at low speed; the pilot's head is a manifold idling about 65 kPa
+  below ambient, its air choked across the plates. Two circuits a
+  two-stroke's slide carburettor lacks come with it. The accelerator pump
+  (`accelerator_pump_stroke_cc`, 0.25 cc per litre and bore for a full
+  stroke, about a Weber DGV's; `accelerator_pump_time_constant_s`) squirts
+  in proportion to the throttle's rise. The starter circuit
+  (`starter_jet_flow_number`, a bike's enrichener or a car's choke) is a
+  plain jet on the pilot's drop that opens with the start aid's air above
+  the idle stop screw and closes as that air does; the designer sizes it to
+  run that air at AFR 8. Without it the start aid's air only cracks the
+  slide and feeds the pilot in proportion, which enriches nothing: a 750 cc
+  four on four bores cranked at 75 kPa of manifold pressure and never
+  fired. A choke's AFR 4 flooded a warm 2-litre once it ran with the aid
+  still open. A sport four-stroke's cam (62 deg of overlap) idles too lean
+  on the derived pilot and hunts; it holds with a pilot jet 1.4 times
+  larger (journal 2026-10-29).
 - **Fuelling** (an engine configured without a carburettor): the ECU meters for
   the air that crossed the reed into the crankcase during its last fill
   (latched when the transfers close, just before the pulse), which is the same

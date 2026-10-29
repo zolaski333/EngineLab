@@ -208,7 +208,25 @@ outside the simulator's limits (`validateEngineConfig()`: on a 50-250 cc
 engine the flywheel, final drive, plenum, piston and throttle) is held at the
 limit (`minimumRotatingInertiaKgM2` and the others, `EngineTypes.hpp`), and its
 rule says so; a value set by hand outside them is refused by name. The
-closed-throttle leak follows the throttle bore (0.6 mm2 at 60 mm and over).
+closed-throttle leak follows the throttle bore (0.6 mm2 at 60 mm and over)
+and is saved with the engine (`closed_throttle_leak_mm2`; before 0.6.0 a
+reloaded design ran on the 0.6 mm2 default).
+
+The window has three pages. *Engine*: the spec, the speeds and the
+compression. *Intake & fuel*: the fuel system (`fuel_system`: port or direct
+injection, or a carburettor, on either cycle; a diesel injects directly),
+the intake (`intake_style`: an airbox, a pod filter, or open velocity stacks
+with a bellmouth 1.5 times the throttle's combined bore), the throttles,
+runners, plenum and, as they apply, the injection window or the jets, the
+venturi, the accelerator pump and the starter jet. A petrol four injecting
+directly injects on its intake stroke (420-600 deg, for a homogeneous
+charge), a direct-injected two-stroke from its exhaust port's closing for
+70 deg. *Exhaust*: the system (`exhaust_system`: the family's, single,
+dual, dual with an H-pipe or an X-pipe), the silencer (`exhaust_silencer`:
+none, a packed box, a straight-through one), the primaries, collector, mid pipe,
+split, crossover, balance pipe, silencer body, tailpipe and tip. A value
+left empty shows its derived one in grey; one typed is set by key, as the
+*Advanced* table does.
 
 The crank: banks at the layout's angles (a W's as given), cylinders shared
 over them in id order, one row per pin position along the crank. A V's or a

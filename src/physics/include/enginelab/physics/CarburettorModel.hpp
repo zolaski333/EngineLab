@@ -7,6 +7,10 @@ namespace enginelab {
 struct CarburettorState final {
     /** Fuel wetting the bore and the crankcase walls, waiting to evaporate. */
     double wallFilmMoles { 0.0 };
+    /** The throttle at the last step, whose rise strokes the pump. */
+    double previousThrottle { 0.0 };
+    /** Fuel the pump has displaced that its nozzle has not yet delivered. */
+    double pumpShotMoles { 0.0 };
 };
 
 struct CarburettorMetering final {
@@ -17,6 +21,8 @@ struct CarburettorMetering final {
     double deliveredMoles { 0.0 };
     double mainMoles { 0.0 };
     double pilotMoles { 0.0 };
+    double pumpMoles { 0.0 };
+    double starterMoles { 0.0 };
     double venturiDepressionKpa { 0.0 };
     double venturiVelocityMps { 0.0 };
 };
@@ -103,7 +109,8 @@ public:
                                                    double throttleDiameterMm,
                                                    double throttleFraction,
                                                    double dtSeconds,
-                                                   double idleCircuitOpening = 1.0) noexcept;
+                                                   double idleCircuitOpening = 1.0,
+                                                   double starterCircuitOpening = 0.0) noexcept;
 };
 
 } // namespace enginelab

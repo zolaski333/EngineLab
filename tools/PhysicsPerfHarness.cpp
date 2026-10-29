@@ -474,12 +474,14 @@ void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
                  "fuel_req_mg,fuel_del_mg,trim,misfire,inj_cap_mean,inj_cap_min,"
                  "knock,ve,step_ms,substeps,exhaust_substeps,intake_accepted,"
                  "intake_rejected,metered_mg,runner_vapour_mg,film_mg,cyl_afr,"
-                 "trapped_air_mg\n";
+                 "trapped_air_mg,fuel_gps,air_gps\n";
     const auto steps = static_cast<int>(durationSeconds / dt);
     for (int step = 0; step < steps; ++step) {
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
-        controls.starterEngaged = false;
+        // `--settle 0` traces the start itself: the starter turns the engine
+        // until it holds 85 % of its idle, as the settle's own does.
+        controls.starterEngaged = settleSeconds <= 0.0 && simulator.state().rpm < config.idleRpm * 0.85;
         // `--release S` shuts the throttle after S seconds: the limiter,
         // then lift-off, as a user does it.
         const auto released = releaseSeconds >= 0.0
@@ -524,7 +526,9 @@ void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
                   << ',' << state.cylinderStates[0].portFuelVapourInventoryMg
                   << ',' << state.cylinderStates[0].portLiquidFilmFuelMg
                   << ',' << state.cylinderStates[0].airFuelRatio
-                  << ',' << state.cylinderStates[0].trappedFreshAirMassMg << '\n';
+                  << ',' << state.cylinderStates[0].trappedFreshAirMassMg
+                  << ',' << state.fuelFlowGramsPerSecond
+                  << ',' << state.airFlowGramsPerSecond << '\n';
     }
 }
 
@@ -680,7 +684,7 @@ int main(int argc, char** argv) {
         else if (argument == "--idle-firing" && index + 1 < argc)
             idleFiringSeconds = std::max(1.0, std::stod(argv[++index]));
         else if (argument == "--settle" && index + 1 < argc) {
-            freeRevSettleSeconds = std::max(1.0, std::stod(argv[++index]));
+            freeRevSettleSeconds = std::max(0.0, std::stod(argv[++index]));
             settleGiven = true;
         } else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"

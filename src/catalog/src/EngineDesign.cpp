@@ -175,6 +175,199 @@ struct CylinderPlace final {
     return curve;
 }
 
+/** How the pipes of one designed exhaust path are joined. */
+enum class PathJoin : std::uint8_t {
+    /** Every bank into one pipe (a Y when there are several). */
+    single,
+    /** One bank's collector split into two pipes. */
+    split,
+    /** Two sides joined by a balance pipe. */
+    hPipe,
+    /** Two sides crossing in an X. */
+    xPipe,
+};
+
+/** The sizes one designed exhaust path is built from. */
+struct ExhaustPlan final {
+    /** Primaries, collector, mid pipe, silencer and tip. */
+    ExhaustConfig pipe;
+    double tailpipeLengthMm { 0.0 };
+    /** From the collector to the H's balance pipe or the X's centre (to the
+     *  split of a split collector). */
+    double crossoverPositionMm { 0.0 };
+    double balancePipeLengthMm { 0.0 };
+    double balancePipeDiameterMm { 0.0 };
+    double crossoverCoupling { 0.0 };
+};
+
+/**
+ * One designed four-stroke exhaust path: each bank's primaries into its
+ * collector, the banks of a side meeting in a Y, then the mid pipe joined as
+ * `join` says, a silencer, a tailpipe and a tip on each pipe. `banks` lists
+ * each bank's cylinder ids. Every duct is a finite pipe the gas solver
+ * resolves; the junctions are compact, so they add no trunk length the pipes
+ * do not have.
+ *
+ * An H-pipe is a splitter on one side's pipe, the balance pipe, and a merge on
+ * the other's, the balance pipe on each as a side branch (exhaustSideBranchPort):
+ * it meets the pipes at right angles and takes none of their momentum, so the
+ * names only orient the graph and it carries whichever side is higher. The
+ * acoustic network's guides are bidirectional and its junctions scatter into
+ * every port alike (journal 2026-10-29).
+ */
+[[nodiscard]] ExhaustNetworkConfig designedExhaustNetwork(const ExhaustPlan& plan, PathJoin join,
+    const std::vector<std::vector<std::uint32_t>>& banks, const AcousticPoint3M& singleOutletPosition) {
+    ExhaustNetworkConfig network;
+    const auto& pipe = plan.pipe;
+    const auto primaryLength = std::max(20.0, pipe.primaryLengthMm);
+    const auto primaryDiameter = std::max(10.0, pipe.primaryDiameterMm);
+    const auto collectorDiameter = std::max(primaryDiameter, pipe.collectorDiameterMm);
+    const auto midDiameter = pipe.midpipeDiameterMm > 0.0 ? pipe.midpipeDiameterMm : collectorDiameter;
+    const auto midLength = std::max(0.0, pipe.midpipeLengthMm);
+    const auto add = [&network](std::uint32_t id, ExhaustComponentType type, double lengthMm, double diameterMm) {
+        ExhaustComponentConfig component;
+        component.id = id;
+        component.type = type;
+        component.lengthMm = lengthMm;
+        component.diameterMm = diameterMm;
+        network.components.push_back(component);
+    };
+    const auto connect = [&network](std::uint32_t from, std::uint32_t to,
+                                    std::uint8_t fromPort = unspecifiedExhaustComponentPort,
+                                    std::uint8_t toPort = unspecifiedExhaustComponentPort) {
+        network.connections.push_back({ from, to, fromPort, toPort });
+    };
+    // A pipe of `lengthMm` after `from`, or `from` itself when it has none.
+    const auto chain = [&](std::uint32_t from, std::uint32_t id, double lengthMm, double diameterMm) {
+        if (!(lengthMm >= 1.0)) return from;
+        add(id, ExhaustComponentType::pipe, lengthMm, diameterMm);
+        connect(from, id);
+        return id;
+    };
+
+    // Each bank's primaries into its collector, as the catalogue's.
+    std::vector<std::uint32_t> bankEnds;
+    auto primaryId = std::uint32_t { 1000 };
+    for (std::size_t bank = 0; bank < banks.size(); ++bank) {
+        std::vector<std::uint32_t> primaries;
+        for (const auto cylinder : banks[bank]) {
+            add(primaryId, ExhaustComponentType::pipe, primaryLength, primaryDiameter);
+            network.cylinderConnections.push_back({ cylinder, primaryId });
+            primaries.push_back(primaryId++);
+        }
+        if (primaries.size() == 1) {
+            bankEnds.push_back(primaries.front());
+            continue;
+        }
+        const auto mergeId = static_cast<std::uint32_t>(200 + bank);
+        add(mergeId, ExhaustComponentType::merge, std::max(120.0, primaryLength * 0.35), collectorDiameter);
+        network.components.back().volumeLitres = pipe.collectorVolumeLitres > 0.0
+            ? std::max(0.05, pipe.collectorVolumeLitres) : 0.0;
+        for (const auto primary : primaries) connect(primary, mergeId);
+        bankEnds.push_back(mergeId);
+    }
+
+    // The banks of one side meet in a Y: a leg from each collector into a
+    // compact merge. Returns the Y (or the lone collector) and the length of
+    // mid pipe the legs took.
+    const auto legLength = std::clamp(0.2 * midLength, 150.0, 400.0);
+    const auto meet = [&](std::size_t first, std::size_t last, std::uint32_t side) {
+        if (last - first == 1) return std::pair { bankEnds[first], 0.0 };
+        const auto yId = 300 + side;
+        add(yId, ExhaustComponentType::merge, 0.0, midDiameter);
+        for (auto bank = first; bank < last; ++bank) {
+            const auto legId = static_cast<std::uint32_t>(250 + bank);
+            add(legId, ExhaustComponentType::pipe, legLength, collectorDiameter);
+            connect(bankEnds[bank], legId);
+            connect(legId, yId);
+        }
+        return std::pair { yId, legLength };
+    };
+
+    // The pipes ending at the silencers, and their bores.
+    std::vector<std::pair<std::uint32_t, double>> ends;
+    const auto position = std::clamp(plan.crossoverPositionMm, 0.0, midLength);
+    if (join == PathJoin::single) {
+        const auto [start, used] = meet(0, bankEnds.size(), 0);
+        ends.push_back({ chain(start, 500, midLength - used, midDiameter), midDiameter });
+    } else if (join == PathJoin::split) {
+        const auto [start, used] = meet(0, bankEnds.size(), 0);
+        const auto front = chain(start, 400, position - used, midDiameter);
+        add(450, ExhaustComponentType::splitter, 0.0, midDiameter);
+        connect(front, 450);
+        // Each branch carries half the flow; real twin pipes off one front
+        // pipe run about 0.85 of its bore (2.5 in into 2 x 2.25 in).
+        const auto branch = 0.85 * midDiameter;
+        const auto rear = std::max(100.0, midLength - position);
+        ends.push_back({ chain(450, 500, rear, branch), branch });
+        ends.push_back({ chain(450, 501, rear, branch), branch });
+    } else {
+        const auto half = bankEnds.size() / 2;
+        const auto [left, leftUsed] = meet(0, half, 0);
+        const auto [right, rightUsed] = meet(half, bankEnds.size(), 1);
+        // Every port of a crossover meets a finite duct, and the H's
+        // junctions are kept off the collectors' alike.
+        const auto leftFront = chain(left, 400, std::max(100.0, position - leftUsed), midDiameter);
+        const auto rightFront = chain(right, 401, std::max(100.0, position - rightUsed), midDiameter);
+        const auto rear = std::max(100.0, midLength - position);
+        if (join == PathJoin::hPipe) {
+            add(450, ExhaustComponentType::splitter, 0.0, midDiameter);
+            add(451, ExhaustComponentType::merge, 0.0, midDiameter);
+            add(460, ExhaustComponentType::pipe, std::max(50.0, plan.balancePipeLengthMm),
+                plan.balancePipeDiameterMm > 0.0 ? plan.balancePipeDiameterMm : midDiameter);
+            // The balance pipe meets each pipe at right angles.
+            connect(leftFront, 450);
+            connect(450, 460, exhaustSideBranchPort);
+            connect(460, 451, unspecifiedExhaustComponentPort, exhaustSideBranchPort);
+            connect(rightFront, 451);
+            ends.push_back({ chain(450, 500, rear, midDiameter), midDiameter });
+            ends.push_back({ chain(451, 501, rear, midDiameter), midDiameter });
+        } else {
+            add(455, ExhaustComponentType::crossover, 0.0, midDiameter);
+            network.components.back().restriction = 0.06;
+            network.components.back().crossoverCoupling = std::clamp(plan.crossoverCoupling, 0.0, 1.0);
+            connect(leftFront, 455, unspecifiedExhaustComponentPort, 0);
+            connect(rightFront, 455, unspecifiedExhaustComponentPort, 1);
+            add(500, ExhaustComponentType::pipe, rear, midDiameter);
+            add(501, ExhaustComponentType::pipe, rear, midDiameter);
+            connect(455, 500, 0);
+            connect(455, 501, 1);
+            ends.push_back({ 500, midDiameter });
+            ends.push_back({ 501, midDiameter });
+        }
+    }
+
+    // A silencer, a tailpipe and a tip on each pipe.
+    const auto silenced = pipe.mufflerChamberDiameterMm > 1.0 && pipe.mufflerChamberLengthMm > 1.0;
+    for (std::size_t index = 0; index < ends.size(); ++index) {
+        const auto side = static_cast<std::uint32_t>(index);
+        auto [end, bore] = ends[index];
+        if (silenced) {
+            const auto mufflerId = 600 + side;
+            add(mufflerId, ExhaustComponentType::muffler, pipe.mufflerChamberLengthMm, bore);
+            auto& muffler = network.components.back();
+            const auto radiusM = pipe.mufflerChamberDiameterMm * 0.0005;
+            muffler.volumeLitres = std::numbers::pi * radiusM * radiusM * pipe.mufflerChamberLengthMm;
+            muffler.restriction = pipe.mufflerRestriction;
+            muffler.packingFlowResistivityPaSPerM2 = pipe.mufflerPackingFlowResistivityPaSPerM2;
+            muffler.packingThicknessMm = pipe.mufflerPackingThicknessMm;
+            muffler.perforatedOpenAreaRatio = pipe.mufflerPerforatedOpenAreaRatio;
+            connect(end, mufflerId);
+            end = mufflerId;
+        }
+        end = chain(end, 650 + side, plan.tailpipeLengthMm, bore);
+        const auto outletId = 700 + side;
+        add(outletId, ExhaustComponentType::outlet, 0.0, std::max(10.0, pipe.outletDiameterMm));
+        auto& outlet = network.components.back();
+        outlet.dischargeCoefficient = pipe.outletDischargeCoefficient;
+        outlet.acousticPositionM = singleOutletPosition;
+        if (ends.size() > 1)
+            outlet.acousticPositionM.x = 0.9 * (static_cast<double>(index) / static_cast<double>(ends.size() - 1) - 0.5);
+        connect(end, outletId);
+    }
+    return network;
+}
+
 /** Top speed where the wheel power meets drag and rolling resistance. */
 [[nodiscard]] double topSpeedMps(double wheelPowerW, const VehicleConfig& vehicle) {
     const auto demand = [&vehicle](double speed) {
@@ -245,6 +438,75 @@ std::optional<CrankPins> parseCrankPins(std::string_view name) noexcept {
     return std::nullopt;
 }
 
+const char* exhaustSystemName(ExhaustSystem system) noexcept {
+    switch (system) {
+    case ExhaustSystem::automatic: return "automatic";
+    case ExhaustSystem::single: return "single";
+    case ExhaustSystem::dual: return "dual";
+    case ExhaustSystem::dualHPipe: return "h_pipe";
+    case ExhaustSystem::dualXPipe: return "x_pipe";
+    }
+    return "automatic";
+}
+
+std::optional<ExhaustSystem> parseExhaustSystem(std::string_view name) noexcept {
+    for (const auto system : { ExhaustSystem::automatic, ExhaustSystem::single, ExhaustSystem::dual,
+             ExhaustSystem::dualHPipe, ExhaustSystem::dualXPipe })
+        if (name == exhaustSystemName(system)) return system;
+    return std::nullopt;
+}
+
+const char* exhaustSilencerName(ExhaustSilencer silencer) noexcept {
+    switch (silencer) {
+    case ExhaustSilencer::automatic: return "automatic";
+    case ExhaustSilencer::packedBox: return "packed_box";
+    case ExhaustSilencer::straightThrough: return "straight_through";
+    case ExhaustSilencer::none: return "none";
+    }
+    return "automatic";
+}
+
+std::optional<ExhaustSilencer> parseExhaustSilencer(std::string_view name) noexcept {
+    for (const auto silencer : { ExhaustSilencer::automatic, ExhaustSilencer::packedBox,
+             ExhaustSilencer::straightThrough, ExhaustSilencer::none })
+        if (name == exhaustSilencerName(silencer)) return silencer;
+    return std::nullopt;
+}
+
+const char* fuelSystemName(FuelSystem system) noexcept {
+    switch (system) {
+    case FuelSystem::automatic: return "automatic";
+    case FuelSystem::portInjection: return "port_injection";
+    case FuelSystem::directInjection: return "direct_injection";
+    case FuelSystem::carburettor: return "carburettor";
+    }
+    return "automatic";
+}
+
+std::optional<FuelSystem> parseFuelSystem(std::string_view name) noexcept {
+    for (const auto system : { FuelSystem::automatic, FuelSystem::portInjection, FuelSystem::directInjection,
+             FuelSystem::carburettor })
+        if (name == fuelSystemName(system)) return system;
+    return std::nullopt;
+}
+
+const char* intakeStyleName(IntakeStyle style) noexcept {
+    switch (style) {
+    case IntakeStyle::automatic: return "automatic";
+    case IntakeStyle::airbox: return "airbox";
+    case IntakeStyle::podFilter: return "pod_filter";
+    case IntakeStyle::velocityStacks: return "velocity_stacks";
+    }
+    return "automatic";
+}
+
+std::optional<IntakeStyle> parseIntakeStyle(std::string_view name) noexcept {
+    for (const auto style : { IntakeStyle::automatic, IntakeStyle::airbox, IntakeStyle::podFilter,
+             IntakeStyle::velocityStacks })
+        if (name == intakeStyleName(style)) return style;
+    return std::nullopt;
+}
+
 DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
     DesignedEngine designed;
     if (spec.name.empty()) {
@@ -260,6 +522,15 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         const auto twoStroke = spec.cycle == EngineCycle::twoStroke;
         const auto diesel = spec.fuel == FuelType::diesel;
         const auto boosted = spec.induction != Induction::natural;
+        // The fuel system each kind of engine has in the world, unless one is
+        // chosen: a diesel injects into the cylinder, a two-stroke breathes
+        // through a carburettor, a four-stroke injects into its ports.
+        const auto fuelSystem = spec.fuelSystem != FuelSystem::automatic ? spec.fuelSystem
+            : diesel ? FuelSystem::directInjection
+            : twoStroke ? FuelSystem::carburettor : FuelSystem::portInjection;
+        if (diesel && fuelSystem != FuelSystem::directInjection)
+            throw std::invalid_argument("A diesel's fuel is injected into the cylinder: choose direct injection");
+        const auto carburetted = fuelSystem == FuelSystem::carburettor;
         const auto count = spec.cylinderCount;
         const auto countD = static_cast<double>(count);
         Derivation derive(spec.overrides, designed.values);
@@ -587,18 +858,45 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         intake.closedThrottleLeakageAreaMm2 = derive("closed_throttle_leak_mm2", "Closed throttle leak", "mm2",
             intake.closedThrottleLeakageAreaMm2 * std::min(1.0, intake.throttleDiameterMm / 60.0),
             "per bore: 0.6 mm2 at 60 mm and over, in proportion below");
-        intake.airboxVolumeLitres = derive("airbox_volume_l", "Airbox", "L",
-            spec.use == EngineUse::aircraft ? 0.0 : profile.motorcycle ? std::clamp(2.5 * litres, 3.0, 10.0)
-                : 4.0 + 0.5 * litres, profile.motorcycle ? "2.5 x litres, 3-10 L" : "4 L + 0.5 x litres");
+        // What the throttle breathes from. An airbox is the filter's housing;
+        // a pod filter is the element alone on the mouth; an open trumpet is
+        // the bare bellmouth, no element at all, which is the loud one.
+        switch (spec.intakeStyle) {
+        case IntakeStyle::automatic:
+        case IntakeStyle::airbox:
+            intake.airboxVolumeLitres = derive("airbox_volume_l", "Airbox", "L",
+                spec.use == EngineUse::aircraft && spec.intakeStyle == IntakeStyle::automatic ? 0.0
+                    : profile.motorcycle ? std::clamp(2.5 * litres, 3.0, 10.0) : 4.0 + 0.5 * litres,
+                profile.motorcycle ? "2.5 x litres, 3-10 L" : "4 L + 0.5 x litres");
+            break;
+        case IntakeStyle::podFilter:
+            intake.airboxVolumeLitres = 0.0;
+            intake.podFilter = true;
+            designed.values.push_back({ "intake_style", "Intake", "", 0.0, false,
+                "a pod filter on the throttle: the element with no housing", false });
+            break;
+        case IntakeStyle::velocityStacks:
+            intake.airboxVolumeLitres = 0.0;
+            // A trumpet's lip flares to about 1.5 times its bore, which is
+            // what keeps the inflow attached (Blair's bellmouth). The intake
+            // radiates through one mouth, so several trumpets are one lip of
+            // their combined area.
+            intake.bellmouthDiameterMm = derive("bellmouth_diameter_mm", "Bellmouth lip", "mm",
+                1.5 * intake.throttleDiameterMm * std::sqrt(static_cast<double>(std::max(1U, intake.throttleCount))),
+                "1.5 x the throttle bore, over all the bores' area");
+            designed.values.push_back({ "intake_style", "Intake", "", 0.0, false,
+                "an open trumpet on the throttle: no filter", false });
+            break;
+        }
         intake.throttleGamma = profile.throttleGamma;
-        if (twoStroke) {
-            // A two-stroke gets the fuel system it has in the world. The jets
-            // are sized the way a tuner sizes them and not copied from one
-            // engine: from the fuel the engine needs at each end of its range,
-            // and the head available to push it through at that point. A jet's
-            // stamped number is its flow under one metre of fuel, and flow
-            // goes as the square root of the head, so a number is the fuel
-            // wanted divided by the square root of the head there.
+        if (carburetted) {
+            // A carburettor's jets are sized the way a tuner sizes them and
+            // not copied from one engine: from the fuel the engine needs at
+            // each end of its range, and the head available to push it through
+            // at that point. A jet's stamped number is its flow under one
+            // metre of fuel, and flow goes as the square root of the head, so
+            // a number is the fuel wanted divided by the square root of the
+            // head there.
             //
             // On an RD350-sized design the arithmetic returns a 287 main and a
             // 41 pilot. The bike runs 260-290 and 30-40, which is the only
@@ -606,15 +904,47 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             auto& carburettor = intake.carburettor;
             carburettor.enabled = true;
             const auto bores = std::max(1.0, static_cast<double>(intake.throttleCount));
-            // One crankcase circuit per cylinder, so one carburettor swallows
-            // one cylinder, however the bore was sized.
-            const auto displacementPerBoreM3 = litres * 0.001 / std::max(1.0, countD);
-            const auto throatM = 0.80 * intake.throttleDiameterMm * 0.001;
-            const auto throatAreaM2 = 0.25 * std::numbers::pi * throatM * throatM * bores;
+            // One crankcase circuit per cylinder, so a two-stroke's bores
+            // swallow one cylinder, however they were sized; a four-stroke's
+            // share the plenum and the whole engine's air.
+            const auto displacementPerBoreM3 = twoStroke ? litres * 0.001 / std::max(1.0, countD)
+                : litres * 0.001;
             const auto fuelDensityKgPerM3 = std::max(1.0,
                 config.fuelProperties.densityKgPerL * 1'000.0);
             constexpr double ambientDensityKgPerM3 = 1.2;
             constexpr double gravityMPerS2 = 9.80665;
+            // A two-stroke delivers about 0.85 of its swept volume at peak
+            // power, a four-stroke fills about 0.90 every other turn.
+            const auto wotAirKgPerSecond = twoStroke
+                ? displacementPerBoreM3 * 0.85 * (peakPowerRpm / 60.0) * ambientDensityKgPerM3
+                : displacementPerBoreM3 * 0.90 * (peakPowerRpm / 120.0) * ambientDensityKgPerM3;
+            // A slide carburettor's venturi is about 0.8 of its nominal bore.
+            // A car's is sized for its signal instead: Holley rates a
+            // carburettor's flow at 1.5 inHg (5.1 kPa) of venturi depression,
+            // and one sized to reach that at peak power still meters at low
+            // speed, where a throttle-body-sized throat (2 kPa at peak) left
+            // the main jet under its own lift up to 900 rpm, and the engine
+            // stalled on opening.
+            auto throatM = 0.80 * intake.throttleDiameterMm * 0.001;
+            if (!twoStroke) {
+                constexpr double ratedDepressionPa = 5'080.0;
+                const auto ratedVelocityMps = std::sqrt(2.0 * ratedDepressionPa / ambientDensityKgPerM3);
+                const auto venturiAreaM2 = wotAirKgPerSecond / (ambientDensityKgPerM3 * ratedVelocityMps) / bores;
+                carburettor.venturiDiameterMm = derive("carb_venturi_mm", "Venturi", "mm",
+                    std::sqrt(4.0 * venturiAreaM2 / std::numbers::pi) * 1'000.0,
+                    "5.1 kPa (Holley's 1.5 inHg) of depression at peak power, per bore");
+                throatM = carburettor.venturiDiameterMm * 0.001;
+                // A venturi sized for its signal is a car's fixed one, with
+                // a butterfly and no needle: a slide's taper, which holds the
+                // main jet to a quarter of its area at a fifth of the travel,
+                // left a 2-litre four at lambda 1.7-3.6 after a part-throttle
+                // opening from idle, and it stalled.
+                carburettor.fixedVenturi = true;
+                // Weber's 32/36 DGV pumps about 0.5 cc a stroke on a 2-litre.
+                carburettor.acceleratorPumpStrokeCc = derive("carb_pump_stroke_cc", "Accelerator pump", "cc",
+                    0.25 * litres / bores, "0.25 cc per litre a full stroke, per bore");
+            }
+            const auto throatAreaM2 = 0.25 * std::numbers::pi * throatM * throatM * bores;
             const auto jetNumberFor = [&](double fuelKgPerSecond, double headM) {
                 if (!(fuelKgPerSecond > 0.0) || !(headM > 0.0)) return 0.0;
                 const auto ccPerMinute = fuelKgPerSecond / fuelDensityKgPerM3
@@ -624,8 +954,6 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
 
             // Main circuit, at peak power: the depression is the venturi's own,
             // from the velocity the air has to have to get through the throat.
-            const auto wotAirKgPerSecond = displacementPerBoreM3 * 0.85
-                * (peakPowerRpm / 60.0) * ambientDensityKgPerM3;
             const auto throatVelocityMps = throatAreaM2 > 0.0
                 ? wotAirKgPerSecond / (ambientDensityKgPerM3 * throatAreaM2) : 0.0;
             const auto wotDepressionPa = 0.5 * ambientDensityKgPerM3
@@ -633,15 +961,17 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             const auto wotHeadM = wotDepressionPa
                 / (fuelDensityKgPerM3 * gravityMPerS2);
             // A two-stroke runs its full load rich: the surplus fuel is what
-            // cools the piston and carries the oil.
+            // cools the piston and carries the oil. A four-stroke's best power
+            // is as rich, 12.5-13.
             constexpr double fullLoadAirFuelRatio = 12.8;
             // The hole a Dellorto or Keihin jet of that flow is stamped with.
             const auto holeOf = [&carburettor](double flowNumber) {
                 return " (a " + std::to_string(static_cast<int>(std::lround(
                     jetHoleHundredthsMm(flowNumber, carburettor.jetDischargeCoefficient)))) + " hole)";
             };
-            const auto mainJetFlow = std::clamp(jetNumberFor(wotAirKgPerSecond / fullLoadAirFuelRatio, wotHeadM),
-                20.0, 2'000.0);
+            // Each bore has its own jets and meters its share of the air.
+            const auto mainJetFlow = std::clamp(
+                jetNumberFor(wotAirKgPerSecond / fullLoadAirFuelRatio / bores, wotHeadM), 20.0, 20'000.0);
             carburettor.mainJetFlowNumber = derive("carb_main_jet_flow", "Main jet", "cc/min", mainJetFlow,
                 "the fuel peak power needs at AFR 12.8, over the root of the venturi head there"
                     + holeOf(mainJetFlow));
@@ -654,11 +984,21 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             // Sized instead for a delivery ratio of 0.35 at idle, about three
             // times what a two-stroke idles on, it fed a 350 cc twin AFR ~7
             // and the twin flooded (journal 2026-10-23).
-            constexpr double idleCrankcaseDropPa = 20'000.0;
+            // A four-stroke's manifold idles near 35 kPa, 65 below ambient,
+            // and the air across the plates is then choked (35 / 101 is under
+            // the critical 0.53): its flow is the sonic one, not the
+            // incompressible one the crankcase's mild drop allows.
+            const auto idleCrankcaseDropPa = twoStroke ? 20'000.0 : 65'000.0;
             const auto idleAirAreaM2 = (intake.closedThrottleLeakageAreaMm2 * bores
                 + intake.idleBypassAreaMm2 * carburettorPilotSizingIdleOpening) * 1.0e-6;
+            constexpr double ambientPressurePa = 101'325.0;
+            constexpr double airGamma = 1.4;
+            const auto chokedAirKgPerSecondPerM2 = ambientDensityKgPerM3
+                * std::sqrt(airGamma * ambientPressurePa / ambientDensityKgPerM3)
+                * std::pow(2.0 / (airGamma + 1.0), (airGamma + 1.0) / (2.0 * (airGamma - 1.0)));
             const auto idleAirKgPerSecond = intake.throttleDischargeCoefficient * idleAirAreaM2
-                * std::sqrt(2.0 * ambientDensityKgPerM3 * idleCrankcaseDropPa);
+                * (twoStroke ? std::sqrt(2.0 * ambientDensityKgPerM3 * idleCrankcaseDropPa)
+                             : chokedAirKgPerSecondPerM2);
             const auto idleHeadM = idleCrankcaseDropPa
                 / (fuelDensityKgPerM3 * gravityMPerS2);
             constexpr double idleAirFuelRatio = 13.5;
@@ -666,11 +1006,30 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             // it, so the jet itself has to be the larger by that factor.
             const auto pilotCircuitFactor = std::max(0.01,
                 carburettor.pilotCircuitFactor);
-            const auto pilotJetFlow = std::clamp(jetNumberFor(idleAirKgPerSecond / idleAirFuelRatio, idleHeadM)
-                / pilotCircuitFactor, 5.0, 500.0);
+            const auto pilotJetFlow = std::clamp(jetNumberFor(idleAirKgPerSecond / idleAirFuelRatio / bores,
+                idleHeadM) / pilotCircuitFactor, 5.0, 5'000.0);
             carburettor.pilotJetFlowNumber = derive("carb_pilot_jet_flow", "Pilot jet", "cc/min", pilotJetFlow,
-                "the fuel the idle needs at AFR 13.5, over the root of the crankcase head, "
-                "divided by the circuit's own restriction" + holeOf(pilotJetFlow));
+                std::string("the fuel the idle needs at AFR 13.5, over the root of the ")
+                    + (twoStroke ? "crankcase" : "manifold") + " head, divided by the circuit's own restriction"
+                    + holeOf(pilotJetFlow));
+            if (!twoStroke) {
+                // A four-stroke cranks with its start aid's extra air in, and
+                // that air into a small manifold leaves little depression for
+                // the pilot: a 750 cc four on four bores cranked at 75 kPa,
+                // lambda 1.6-7, and never fired. Its enrichener is what a
+                // real one starts on: a jet that runs the start aid's own air
+                // at AFR 8 on the pilot's head. A choke's AFR 4 flooded a
+                // warm 2-litre at AFR 6.8 once it ran with the aid still open.
+                constexpr double starterAirFuelRatio = 8.0;
+                const auto starterAirKgPerSecond = intake.throttleDischargeCoefficient
+                    * intake.idleBypassAreaMm2 * 1.0e-6 * carburettorPilotSizingIdleOpening
+                    * chokedAirKgPerSecondPerM2;
+                const auto starterJetFlow = std::clamp(jetNumberFor(
+                    starterAirKgPerSecond / starterAirFuelRatio / bores, idleHeadM), 0.5, 5'000.0);
+                carburettor.starterJetFlowNumber = derive("carb_starter_jet_flow", "Starter jet", "cc/min",
+                    starterJetFlow, "the start aid's air at AFR 8, over the root of the manifold head"
+                        + holeOf(starterJetFlow));
+            }
         }
         if (diesel) intake.throttleDischargeCoefficient = 0.86;
         config.plenumVolumeLitres = intake.plenumVolumeLitres;
@@ -705,20 +1064,157 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             : derive("exhaust_outlet_diameter_mm", "Exhaust outlet diameter", "mm", outletDiameter,
                 stacks ? "each stack's lip, 2.7 x the stack (the part's 52 -> 140 mm; narrower jets roar)"
                        : "1.1 x the collector");
+        // A four-stroke's pipes after the collector, its silencer and its
+        // tip: each the family's unless set. A two-stroke has its expansion
+        // chambers below, an aircraft engine its stacks, a radial its ring.
+        const auto pipedExhaust = !twoStroke && !stacks && !radial;
+        ExhaustPlan plan;
+        auto system = spec.exhaustSystem;
+        if (pipedExhaust) {
+            exhaust.midpipeLengthMm = derive("exhaust_midpipe_length_mm", "Mid pipe length", "mm",
+                exhaust.midpipeLengthMm, "the family's (" + std::string(exhaustKey) + "): the downpipe, cat and "
+                    "pipe to the silencer, a car's system 3.5-3.7 m from port to tip, a motorcycle's 1.2-1.5 m");
+            // 0 already means "the collector's" downstream, so a design that
+            // sets nothing keeps writing 0 and builds as it did.
+            const auto pipeBore = derive("exhaust_midpipe_diameter_mm", "Mid pipe diameter", "mm",
+                exhaust.midpipeDiameterMm > 0.0 ? exhaust.midpipeDiameterMm : exhaust.collectorDiameterMm,
+                "the collector's");
+            if (spec.overrides.contains("exhaust_midpipe_diameter_mm")) exhaust.midpipeDiameterMm = pipeBore;
+            // A silencer's body goes with the pipe it ends: the catalogue's
+            // boxes run 1.8-2.1 x their pipe across and 5-7.5 x it long.
+            auto silencerRule = std::string("the family's");
+            switch (spec.exhaustSilencer) {
+            case ExhaustSilencer::automatic: break;
+            case ExhaustSilencer::packedBox:
+                exhaust.mufflerChamberDiameterMm = 2.1 * pipeBore;
+                exhaust.mufflerChamberLengthMm = 7.5 * pipeBore;
+                exhaust.mufflerRestriction = 0.46;
+                exhaust.mufflerPackingFlowResistivityPaSPerM2 = 30'000.0;
+                exhaust.mufflerPackingThicknessMm = 0.55 * pipeBore;
+                exhaust.mufflerPerforatedOpenAreaRatio = 0.25;
+                silencerRule = "a packed road box: 2.1 x the pipe across, 7.5 x long (turbo_downpipe's)";
+                break;
+            case ExhaustSilencer::straightThrough:
+                exhaust.mufflerChamberDiameterMm = 1.8 * pipeBore;
+                exhaust.mufflerChamberLengthMm = 5.0 * pipeBore;
+                exhaust.mufflerRestriction = 0.20;
+                exhaust.mufflerPackingFlowResistivityPaSPerM2 = 16'000.0;
+                exhaust.mufflerPackingThicknessMm = 0.32 * pipeBore;
+                exhaust.mufflerPerforatedOpenAreaRatio = 0.32;
+                silencerRule = "a straight-through can: 1.8 x the pipe across, 5 x long";
+                break;
+            case ExhaustSilencer::none:
+                exhaust.mufflerChamberDiameterMm = 0.0;
+                exhaust.mufflerChamberLengthMm = 0.0;
+                silencerRule = "none: an open pipe";
+                break;
+            }
+            exhaust.mufflerChamberDiameterMm = derive("exhaust_silencer_diameter_mm", "Silencer body diameter", "mm",
+                exhaust.mufflerChamberDiameterMm, silencerRule + " (0: no silencer)");
+            exhaust.mufflerChamberLengthMm = derive("exhaust_silencer_length_mm", "Silencer body length", "mm",
+                exhaust.mufflerChamberLengthMm, silencerRule + " (0: no silencer)");
+            exhaust.mufflerRestriction = derive("exhaust_silencer_restriction", "Silencer flow loss", "",
+                exhaust.mufflerRestriction, "its mean-flow loss coefficient: " + silencerRule);
+            if (exhaust.mufflerChamberDiameterMm > 1.0 && exhaust.mufflerChamberDiameterMm <= pipeBore)
+                throw std::invalid_argument("The silencer's body must be wider than its "
+                    + format(pipeBore) + " mm pipe");
+            // The packing fills at most the annulus between the core and the
+            // shell. The family's boxes keep theirs as authored, so a design
+            // that sets nothing builds as it did.
+            if (spec.exhaustSilencer != ExhaustSilencer::automatic
+                || spec.overrides.contains("exhaust_silencer_diameter_mm")
+                || spec.overrides.contains("exhaust_midpipe_diameter_mm"))
+                exhaust.mufflerPackingThicknessMm = std::min(exhaust.mufflerPackingThicknessMm,
+                    std::max(0.0, 0.5 * (exhaust.mufflerChamberDiameterMm - pipeBore)));
+            if (!(exhaust.mufflerPackingThicknessMm > 0.0)) {
+                exhaust.mufflerPackingThicknessMm = 0.0;
+                exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
+                exhaust.mufflerPerforatedOpenAreaRatio = 0.0;
+            }
+            plan.tailpipeLengthMm = derive("exhaust_tailpipe_length_mm", "Tailpipe length", "mm", 0.0,
+                "none: the silencer's outlet is the tip");
+
+            if (system == ExhaustSystem::dualHPipe || system == ExhaustSystem::dualXPipe) {
+                if (bankCount < 2)
+                    throw std::invalid_argument("An H- or an X-pipe joins two banks' pipes: this engine has one "
+                                                "bank (choose a dual system to split its collector)");
+                if (spec.induction == Induction::turbocharged)
+                    throw std::invalid_argument("An H- or an X-pipe would join the banks ahead of the turbines, "
+                                                "which the simulator places on each collector: choose single or "
+                                                "dual on a turbocharged engine");
+                plan.crossoverPositionMm = derive("exhaust_crossover_position_mm",
+                    system == ExhaustSystem::dualHPipe ? "Balance pipe from the collectors" : "X from the collectors",
+                    "mm", 0.35 * exhaust.midpipeLengthMm,
+                    "a third of the mid pipe: under the gearbox, behind the cats");
+                if (system == ExhaustSystem::dualHPipe) {
+                    plan.balancePipeLengthMm = derive("exhaust_balance_pipe_length_mm", "Balance pipe length", "mm",
+                        250.0, "the gap between two pipes under a car, 250 mm");
+                    plan.balancePipeDiameterMm = derive("exhaust_balance_pipe_diameter_mm",
+                        "Balance pipe diameter", "mm", pipeBore, "the mid pipe's");
+                } else {
+                    plan.crossoverCoupling = derive("exhaust_x_pipe_coupling", "X-pipe coupling", "", 0.30,
+                        "the share of each pipe's pulse the X turns into the other (0-1): the LS3's estimate");
+                    if (!(plan.crossoverCoupling >= 0.0 && plan.crossoverCoupling <= 1.0))
+                        throw std::invalid_argument("The X-pipe coupling is between 0 and 1");
+                }
+            } else if (system == ExhaustSystem::dual && bankCount == 1) {
+                plan.crossoverPositionMm = derive("exhaust_split_position_mm", "Split from the collector", "mm",
+                    0.35 * exhaust.midpipeLengthMm, "a third of the mid pipe, then two pipes of 0.85 x its bore");
+            }
+        }
         config.exhaust = exhaust;
-        for (std::uint32_t path = 0; path < paths; ++path) {
+        plan.pipe = exhaust;
+        // The family's layout, or the one asked for; built here when the
+        // catalogue's compiler cannot express it.
+        if (system == ExhaustSystem::automatic && plan.tailpipeLengthMm >= 1.0)
+            system = paths == 1 ? ExhaustSystem::single : ExhaustSystem::dual;
+        const auto designedNetwork = pipedExhaust && system != ExhaustSystem::automatic;
+        // Which path each bank's exhaust goes into.
+        std::vector<std::uint32_t> bankPath(radial ? count : bankCount, 0);
+        auto pathCount = paths;
+        if (designedNetwork) {
+            pathCount = system == ExhaustSystem::dual && bankCount >= 2 ? 2U : 1U;
+            for (std::uint32_t bank = 0; bank < bankCount; ++bank)
+                bankPath[bank] = pathCount == 2 && bank >= bankCount / 2 ? 1U : 0U;
+        } else {
+            for (std::uint32_t bank = 0; bank < bankPath.size(); ++bank)
+                bankPath[bank] = paths > 1 && !twoStroke ? bank % paths : 0U;
+        }
+        for (std::uint32_t path = 0; path < pathCount; ++path) {
             ExhaustPathConfig pathConfig;
             pathConfig.id = path + 1;
             pathConfig.geometry = exhaust;
+            std::vector<std::vector<std::uint32_t>> pathBanks;
             for (std::uint32_t index = 0; index < count; ++index) {
-                const auto owner = twoStroke ? index : paths == 1 ? 0U : places[index].bankIndex % paths;
+                const auto owner = twoStroke ? index : pathCount == 1 ? 0U : bankPath[places[index].bankIndex];
                 if (owner == path) pathConfig.cylinderIds.push_back(index + 1);
             }
-            if (paths > 1)
-                pathConfig.acousticPositionM.x = 0.9 * (static_cast<double>(path) / static_cast<double>(paths - 1) - 0.5);
+            for (std::uint32_t bank = 0; bank < bankCount && designedNetwork; ++bank) {
+                if (bankPath[bank] != path) continue;
+                pathBanks.emplace_back();
+                for (std::uint32_t index = 0; index < count; ++index)
+                    if (places[index].bankIndex == bank) pathBanks.back().push_back(index + 1);
+            }
+            if (pathCount > 1)
+                pathConfig.acousticPositionM.x = 0.9 * (static_cast<double>(path) / static_cast<double>(pathCount - 1) - 0.5);
+            if (designedNetwork) {
+                const auto join = system == ExhaustSystem::dualHPipe ? PathJoin::hPipe
+                    : system == ExhaustSystem::dualXPipe ? PathJoin::xPipe
+                    : system == ExhaustSystem::dual && pathCount == 1 ? PathJoin::split : PathJoin::single;
+                pathConfig.network = designedExhaustNetwork(plan, join, pathBanks, pathConfig.acousticPositionM);
+            }
             config.exhaustPaths.push_back(std::move(pathConfig));
         }
-        for (auto& path : config.exhaustPaths) compileLegacyExhaustPath(path, exhaustKey);
+        if (!designedNetwork)
+            for (auto& path : config.exhaustPaths) compileLegacyExhaustPath(path, exhaustKey);
+        if (pipedExhaust)
+            designed.values.push_back({ "exhaust_system", "Exhaust system", "", 0.0, false,
+                system == ExhaustSystem::single ? "one pipe and one silencer"
+                    : system == ExhaustSystem::dual ? (bankCount >= 2 ? "one pipe and silencer per side"
+                                                                      : "the collector split into two pipes")
+                    : system == ExhaustSystem::dualHPipe ? "a pipe per side, joined by a balance pipe (H)"
+                    : system == ExhaustSystem::dualXPipe ? "a pipe per side, crossing in an X"
+                    : paths == 1 ? "the family's: one pipe" : "the family's: one pipe per bank", false });
 
         // Banks, for the cams and the exhaust each one feeds.
         for (std::uint32_t bank = 0; bank < (radial ? count : bankCount); ++bank) {
@@ -728,7 +1224,7 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             bankConfig.camshafts = config.camshafts;
             for (std::uint32_t index = 0; index < count; ++index)
                 if (places[index].bankIndex == bank) bankConfig.cylinderIds.push_back(index + 1);
-            bankConfig.exhaustPathId = paths > 1 && !twoStroke ? bank % paths + 1 : 1;
+            bankConfig.exhaustPathId = bankPath[bank] + 1;
             config.banks.push_back(std::move(bankConfig));
         }
 
@@ -745,15 +1241,44 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             injection.wallFilmFraction = 0.10;
             injection.vaporisationTimeConstantSeconds = 0.020;
             injection.portChargeCoolingEfficiency = 0.30;
+        } else if (diesel) {
+            config.injection = part(parts.injections, "common_rail_diesel");
+        } else if (fuelSystem == FuelSystem::directInjection) {
+            // Petrol injected into the cylinder for a homogeneous charge: on
+            // the intake stroke, from about 300 deg before firing TDC, so the
+            // spray has the intake's turbulence and the compression to mix
+            // (Zhao, Lai and Harrington 1999). The part's own window, late in
+            // compression, is the stratified lean-burn one, which needs a
+            // spray-guided cloud the zero-dimensional charge does not hold.
+            config.injection = part(parts.injections, "direct_injection");
+            config.injection.startAngleDegrees = derive("injection_start_deg", "Injection starts", "deg ATDC",
+                420.0, "on the intake stroke, 300 deg before firing TDC: a homogeneous charge");
+            config.injection.endAngleDegrees = derive("injection_end_deg", "Injection window ends", "deg ATDC",
+                600.0, "120 deg before firing TDC, early in compression");
         } else {
-            config.injection = part(parts.injections, diesel ? "common_rail_diesel" : profile.injectionPart);
+            config.injection = part(parts.injections, profile.injectionPart);
+        }
+        if (twoStroke && fuelSystem == FuelSystem::directInjection) {
+            // Into the cylinder once the piston has shut the exhaust port, so
+            // none of it short-circuits into the pipe: the reason a two-stroke
+            // is injected directly at all. The window follows the port.
+            config.injection = part(parts.injections, "direct_injection");
+            config.injection.mode = InjectionMode::direct;
         }
         // Rich full-load air flow at 1.1 x displacement and the boost, at the
-        // redline; each injector at most 80 % open.
+        // redline; each injector at most 80 % open. A petrol direct injector
+        // meters only inside its window, which is a share of the cycle.
         const auto airKgPerSecond = 1.18 * litres * 1.0e-3 * config.redlineRpm / (twoStroke ? 60.0 : 120.0) * 1.1 * boost;
         const auto fuelMgPerSecond = airKgPerSecond / (diesel ? 18.0 : 12.0) * 1.0e6;
-        const auto injectorFlow = std::max(config.injection.injectorFlowMgPerSecond, fuelMgPerSecond / countD / 0.8);
-        config.injection.injectorFlowMgPerSecond = twoStroke ? injectorFlow
+        const auto petrolDirectWindow = !diesel && fuelSystem == FuelSystem::directInjection
+            ? (twoStroke ? 70.0 : std::fmod(config.injection.endAngleDegrees - config.injection.startAngleDegrees
+                + cycleDegrees, cycleDegrees)) / cycleDegrees
+            : 1.0;
+        if (!(petrolDirectWindow > 0.0))
+            throw std::invalid_argument("The injection window ends where it starts");
+        const auto injectorFlow = std::max(config.injection.injectorFlowMgPerSecond,
+            fuelMgPerSecond / countD / 0.8 / petrolDirectWindow);
+        config.injection.injectorFlowMgPerSecond = twoStroke || carburetted ? injectorFlow
             : derive("injector_flow_mg_s", "Injector flow", "mg/s", injectorFlow,
                 "the part's, or the full-load fuel at 80 % duty if more");
         if (diesel) {
@@ -797,6 +1322,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             config.twoStroke.transferPortOpenDegrees = derive("transfer_port_open_deg", "Transfer ports open",
                 "deg ATDC", sport ? 116.0 : 118.0, "the use's");
             config.twoStroke.intake = spec.twoStrokeIntake;
+            if (fuelSystem == FuelSystem::directInjection) {
+                const auto exhaustCloses = 360.0 - config.twoStroke.exhaustPortOpenDegrees;
+                config.injection.startAngleDegrees = derive("injection_start_deg", "Injection starts", "deg ATDC",
+                    exhaustCloses, "as the piston shuts the exhaust port: nothing short-circuits");
+                config.injection.endAngleDegrees = derive("injection_end_deg", "Injection window ends", "deg ATDC",
+                    std::min(350.0, config.injection.startAngleDegrees + 70.0), "70 deg later");
+            }
             if (spec.twoStrokeIntake == TwoStrokeIntake::cylinderPort) {
                 config.twoStroke.intakePortReed = spec.twoStrokeIntakeReed;
                 designed.values.push_back({ "two_stroke_intake", "Intake", "", 0.0, false,

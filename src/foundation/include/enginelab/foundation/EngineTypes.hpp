@@ -34,6 +34,15 @@ enum class ExhaustComponentType : std::uint8_t {
  * connection. All historical two-field connection initialisers retain this
  * sentinel and therefore preserve their exact topology semantics. */
 inline constexpr std::uint8_t unspecifiedExhaustComponentPort { 0xffU };
+/** On a merge or a splitter, the port of a duct that meets it at right angles,
+ * as an H-pipe's balance pipe meets each side's pipe. A junction carries
+ * momentum along its graph axis, from its inputs toward its outputs; a side
+ * branch exchanges mass and energy with it but none of that momentum, and
+ * sees it at rest. Without it the balance pipe was a jet pump: the splitter
+ * rammed its side's flow into it and the merge drew it out, holding the
+ * splitter 0-24 kPa under the merge at every crank angle (journal
+ * 2026-10-29). */
+inline constexpr std::uint8_t exhaustSideBranchPort { 2U };
 /** Global CPU bound for acoustic-only delay lines authored as sealed branches. */
 inline constexpr std::size_t maximumExhaustAcousticSideBranches { 8 };
 /** Turbochargers one engine can carry (ForcedInductionConfig::turbochargerCount). */
@@ -281,6 +290,12 @@ struct CarburettorConfig final {
     /** Needle clip position, 1 (needle highest, richest) to 5. The taper in
      * the needle jet is what meters between the pilot and the main. */
     double needleClipPosition { 3.0 };
+    /** A fixed-venturi carburettor, a car's Weber, Solex or Holley: no slide
+     * and no needle, the throttle a butterfly downstream of the venturi.
+     * Its main jet meters at its whole area at any opening, and the
+     * venturi's depression alone sets the flow, so the needle clip is
+     * ignored. */
+    bool fixedVenturi { false };
     /** Turns out on the pilot air screw. More turns bleed more air into the
      * pilot circuit and lean it; 1.5 is the usual nominal setting. */
     double airScrewTurns { 1.5 };
@@ -300,6 +315,24 @@ struct CarburettorConfig final {
      * exists. Zero is a dry bore. */
     double wallFilmFraction { 0.25 };
     double wallFilmTimeConstantSeconds { 0.12 };
+    /** Accelerator pump: fuel squirted into the bore as the throttle opens,
+     * in cubic centimetres for a stroke from shut to wide open. A car's
+     * carburettor has one because its main circuit cannot answer a sudden
+     * opening: the air arrives at once, the venturi's depression and the
+     * jet's fuel only as the engine speeds up, and the film takes its share
+     * first. A motorcycle's slide carburettor usually has none. Zero is no
+     * pump. */
+    double acceleratorPumpStrokeCc { 0.0 };
+    /** How long the pump's nozzle takes to deliver a shot (its first-order
+     * time constant). */
+    double acceleratorPumpTimeConstantSeconds { 0.15 };
+    /** Starter circuit (the enrichener a bike's choke lever works, or a
+     * car's choke): its own jet, fed by the manifold's depression, opening
+     * with the start aid's extra air and closing as that air does. Without
+     * one the start aid's air only cracks the slide, which feeds the pilot
+     * in proportion and so enriches nothing. Flow number in cc/min under
+     * one metre of fuel, as the other jets; zero is no circuit. */
+    double starterJetFlowNumber { 0.0 };
 };
 
 struct IntakeConfig final {
@@ -319,6 +352,10 @@ struct IntakeConfig final {
     /** Optional upstream acoustic hardware. Zero volume/length means the
      * throttle mouth is directly exposed rather than inventing an airbox. */
     double airboxVolumeLitres { 0.0 };
+    /** A filter element on the mouth with no housing around it (a pod or
+     * cone filter). An airbox always carries its element; without one the
+     * mouth is bare unless this is set. */
+    bool podFilter { false };
     double inletDuctLengthMm { 0.0 };
     /** Zero inherits the throttle diameter. */
     double inletDuctDiameterMm { 0.0 };

@@ -225,12 +225,16 @@ void assignCarburettor(const YAML::Node& intake, CarburettorConfig& carburettor)
     assignIfPresent(node, "pilot_jet_flow_number", carburettor.pilotJetFlowNumber);
     assignIfPresent(node, "pilot_circuit_factor", carburettor.pilotCircuitFactor);
     assignIfPresent(node, "needle_clip_position", carburettor.needleClipPosition);
+    assignIfPresent(node, "fixed_venturi", carburettor.fixedVenturi);
     assignIfPresent(node, "air_screw_turns", carburettor.airScrewTurns);
     assignIfPresent(node, "idle_screw_turns", carburettor.idleScrewTurns);
     assignIfPresent(node, "jet_lift_mm", carburettor.jetLiftMm);
     assignIfPresent(node, "jet_discharge_coefficient", carburettor.jetDischargeCoefficient);
     assignIfPresent(node, "wall_film_fraction", carburettor.wallFilmFraction);
     assignIfPresent(node, "wall_film_time_constant_s", carburettor.wallFilmTimeConstantSeconds);
+    assignIfPresent(node, "accelerator_pump_stroke_cc", carburettor.acceleratorPumpStrokeCc);
+    assignIfPresent(node, "accelerator_pump_time_constant_s", carburettor.acceleratorPumpTimeConstantSeconds);
+    assignIfPresent(node, "starter_jet_flow_number", carburettor.starterJetFlowNumber);
 }
 
 [[nodiscard]] AcousticPoint3M decodePoint(
@@ -848,7 +852,7 @@ void applyCrankOffsets(EngineConfig& config) {
     requireKnownKeys(node, { "name", "cycle", "fuel", "use", "layout", "cylinders", "bank_count", "bank_angle_deg",
         "bank_angles_deg", "bore_mm", "stroke_mm", "displacement_l", "induction", "boost_pressure_ratio", "turbochargers",
         "firing_order", "crank_offsets_deg", "crank_pins", "two_stroke_intake", "two_stroke_intake_reed",
-        "overrides" }, "design");
+        "exhaust_system", "exhaust_silencer", "fuel_system", "intake_style", "overrides" }, "design");
     EngineSpec spec;
     spec.name = node["name"].as<std::string>();
     const auto cycle = node["cycle"].as<std::string>("four_stroke");
@@ -892,6 +896,21 @@ void applyCrankOffsets(EngineConfig& config) {
         spec.twoStrokeIntake = *parsed;
     }
     assignIfPresent(node, "two_stroke_intake_reed", spec.twoStrokeIntakeReed);
+    const auto choice = [&node](const char* key, auto parse, auto& target, const char* options) {
+        const auto value = node[key];
+        if (!value) return;
+        const auto name = value.template as<std::string>();
+        const auto parsed = parse(name);
+        if (!parsed) throw std::runtime_error(std::string("Unknown ") + key + ": " + name + " (" + options + ")");
+        target = *parsed;
+    };
+    choice("exhaust_system", parseExhaustSystem, spec.exhaustSystem, "automatic, single, dual, h_pipe or x_pipe");
+    choice("exhaust_silencer", parseExhaustSilencer, spec.exhaustSilencer,
+        "automatic, packed_box, straight_through or none");
+    choice("fuel_system", parseFuelSystem, spec.fuelSystem,
+        "automatic, port_injection, direct_injection or carburettor");
+    choice("intake_style", parseIntakeStyle, spec.intakeStyle,
+        "automatic, airbox, pod_filter or velocity_stacks");
     if (const auto overrides = node["overrides"])
         for (const auto& item : overrides) spec.overrides[item.first.as<std::string>()] = item.second.as<double>();
     return spec;
@@ -947,12 +966,14 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
         assignIfPresent(intake, "runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
         assignIfPresent(intake, "airbox_volume_l", config.intake.airboxVolumeLitres);
+        assignIfPresent(intake, "pod_filter", config.intake.podFilter);
         assignIfPresent(intake, "individual_throttles", config.intake.individualThrottles);
         assignIfPresent(intake, "throttle_distance_from_valve_mm", config.intake.throttleDistanceFromValveMm);
         assignIfPresent(intake, "inlet_duct_length_mm", config.intake.inletDuctLengthMm);
         assignIfPresent(intake, "inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
         assignIfPresent(intake, "bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
         assignIfPresent(intake, "idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
+        assignIfPresent(intake, "closed_throttle_leak_mm2", config.intake.closedThrottleLeakageAreaMm2);
         assignIfPresent(intake, "throttle_gamma", config.intake.throttleGamma);
         config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
         config.throttleDiameterMm = config.intake.throttleDiameterMm;
@@ -1110,12 +1131,14 @@ void applyCrankOffsets(EngineConfig& config) {
                 assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);
                 assignIfPresent(geometry, "runner_plenum_diameter_mm", pathConfig.geometry.runnerPlenumDiameterMm);
                 assignIfPresent(geometry, "airbox_volume_l", pathConfig.geometry.airboxVolumeLitres);
+                assignIfPresent(geometry, "pod_filter", pathConfig.geometry.podFilter);
                 assignIfPresent(geometry, "individual_throttles", pathConfig.geometry.individualThrottles);
                 assignIfPresent(geometry, "throttle_distance_from_valve_mm", pathConfig.geometry.throttleDistanceFromValveMm);
                 assignIfPresent(geometry, "inlet_duct_length_mm", pathConfig.geometry.inletDuctLengthMm);
                 assignIfPresent(geometry, "inlet_duct_diameter_mm", pathConfig.geometry.inletDuctDiameterMm);
                 assignIfPresent(geometry, "bellmouth_diameter_mm", pathConfig.geometry.bellmouthDiameterMm);
                 assignIfPresent(geometry, "idle_bypass_area_mm2", pathConfig.geometry.idleBypassAreaMm2);
+                assignIfPresent(geometry, "closed_throttle_leak_mm2", pathConfig.geometry.closedThrottleLeakageAreaMm2);
                 assignIfPresent(geometry, "throttle_gamma", pathConfig.geometry.throttleGamma);
             }
             config.intakePaths.push_back(std::move(pathConfig));

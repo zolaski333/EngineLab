@@ -115,12 +115,16 @@ using Json = nlohmann::json;
         {"pilot_jet_flow_number", carburettor.pilotJetFlowNumber},
         {"pilot_circuit_factor", carburettor.pilotCircuitFactor},
         {"needle_clip_position", carburettor.needleClipPosition},
+        {"fixed_venturi", carburettor.fixedVenturi},
         {"air_screw_turns", carburettor.airScrewTurns},
         {"idle_screw_turns", carburettor.idleScrewTurns},
         {"jet_lift_mm", carburettor.jetLiftMm},
         {"jet_discharge_coefficient", carburettor.jetDischargeCoefficient},
         {"wall_film_fraction", carburettor.wallFilmFraction},
         {"wall_film_time_constant_s", carburettor.wallFilmTimeConstantSeconds},
+        {"accelerator_pump_stroke_cc", carburettor.acceleratorPumpStrokeCc},
+        {"accelerator_pump_time_constant_s", carburettor.acceleratorPumpTimeConstantSeconds},
+        {"starter_jet_flow_number", carburettor.starterJetFlowNumber},
     };
 }
 
@@ -133,12 +137,16 @@ void readCarburettor(const Json& intake, CarburettorConfig& carburettor) {
     carburettor.pilotJetFlowNumber = node.value("pilot_jet_flow_number", carburettor.pilotJetFlowNumber);
     carburettor.pilotCircuitFactor = node.value("pilot_circuit_factor", carburettor.pilotCircuitFactor);
     carburettor.needleClipPosition = node.value("needle_clip_position", carburettor.needleClipPosition);
+    carburettor.fixedVenturi = node.value("fixed_venturi", carburettor.fixedVenturi);
     carburettor.airScrewTurns = node.value("air_screw_turns", carburettor.airScrewTurns);
     carburettor.idleScrewTurns = node.value("idle_screw_turns", carburettor.idleScrewTurns);
     carburettor.jetLiftMm = node.value("jet_lift_mm", carburettor.jetLiftMm);
     carburettor.jetDischargeCoefficient = node.value("jet_discharge_coefficient", carburettor.jetDischargeCoefficient);
     carburettor.wallFilmFraction = node.value("wall_film_fraction", carburettor.wallFilmFraction);
     carburettor.wallFilmTimeConstantSeconds = node.value("wall_film_time_constant_s", carburettor.wallFilmTimeConstantSeconds);
+    carburettor.acceleratorPumpStrokeCc = node.value("accelerator_pump_stroke_cc", carburettor.acceleratorPumpStrokeCc);
+    carburettor.acceleratorPumpTimeConstantSeconds = node.value("accelerator_pump_time_constant_s", carburettor.acceleratorPumpTimeConstantSeconds);
+    carburettor.starterJetFlowNumber = node.value("starter_jet_flow_number", carburettor.starterJetFlowNumber);
 }
 
 [[nodiscard]] Json structuralNvhJson(
@@ -380,12 +388,13 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
             {"runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm},
             {"airbox_volume_l", path.geometry.airboxVolumeLitres},
+            {"pod_filter", path.geometry.podFilter},
             {"individual_throttles", path.geometry.individualThrottles},
             {"throttle_distance_from_valve_mm", path.geometry.throttleDistanceFromValveMm},
             {"inlet_duct_length_mm", path.geometry.inletDuctLengthMm},
             {"inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm},
             {"bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm},
-            {"idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2}, {"throttle_gamma", path.geometry.throttleGamma}}} });
+            {"idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2}, {"closed_throttle_leak_mm2", path.geometry.closedThrottleLeakageAreaMm2}, {"throttle_gamma", path.geometry.throttleGamma}}} });
     Json banks = Json::array();
     for (const auto& bank : config.banks) banks.push_back({ {"id", bank.id}, {"angle_deg", bank.angleDegrees},
         {"cylinder_ids", bank.cylinderIds}, {"intake_id", bank.intakeId}, {"exhaust_path_id", bank.exhaustPathId},
@@ -567,12 +576,13 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
                      {"runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm},
                      {"airbox_volume_l", config.intake.airboxVolumeLitres},
+                     {"pod_filter", config.intake.podFilter},
                      {"individual_throttles", config.intake.individualThrottles},
                      {"throttle_distance_from_valve_mm", config.intake.throttleDistanceFromValveMm},
                      {"inlet_duct_length_mm", config.intake.inletDuctLengthMm},
                      {"inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm},
                      {"bellmouth_diameter_mm", config.intake.bellmouthDiameterMm},
-                     {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma},
+                     {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"closed_throttle_leak_mm2", config.intake.closedThrottleLeakageAreaMm2}, {"throttle_gamma", config.intake.throttleGamma},
                      {"carburettor", carburettorJson(config.intake.carburettor)}}},
         {"intake_paths", intakePaths}, {"banks", banks}, {"exhaust_paths", exhaustPaths},
         {"acoustic_observer", {
@@ -885,12 +895,14 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
             config.intake.runnerPlenumDiameterMm = intake.value("runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
             config.intake.airboxVolumeLitres = intake.value("airbox_volume_l", config.intake.airboxVolumeLitres);
+            config.intake.podFilter = intake.value("pod_filter", config.intake.podFilter);
             config.intake.individualThrottles = intake.value("individual_throttles", config.intake.individualThrottles);
             config.intake.throttleDistanceFromValveMm = intake.value("throttle_distance_from_valve_mm", config.intake.throttleDistanceFromValveMm);
             config.intake.inletDuctLengthMm = intake.value("inlet_duct_length_mm", config.intake.inletDuctLengthMm);
             config.intake.inletDuctDiameterMm = intake.value("inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
             config.intake.bellmouthDiameterMm = intake.value("bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
             config.intake.idleBypassAreaMm2 = intake.value("idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
+            config.intake.closedThrottleLeakageAreaMm2 = intake.value("closed_throttle_leak_mm2", config.intake.closedThrottleLeakageAreaMm2);
             config.intake.throttleGamma = intake.value("throttle_gamma", config.intake.throttleGamma);
         }
         if (engine.contains("crankshafts")) {
@@ -1074,12 +1086,14 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
                     path.geometry.runnerPlenumDiameterMm = geometry.value("runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm);
                     path.geometry.airboxVolumeLitres = geometry.value("airbox_volume_l", path.geometry.airboxVolumeLitres);
+                    path.geometry.podFilter = geometry.value("pod_filter", path.geometry.podFilter);
                     path.geometry.individualThrottles = geometry.value("individual_throttles", path.geometry.individualThrottles);
                     path.geometry.throttleDistanceFromValveMm = geometry.value("throttle_distance_from_valve_mm", path.geometry.throttleDistanceFromValveMm);
                     path.geometry.inletDuctLengthMm = geometry.value("inlet_duct_length_mm", path.geometry.inletDuctLengthMm);
                     path.geometry.inletDuctDiameterMm = geometry.value("inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm);
                     path.geometry.bellmouthDiameterMm = geometry.value("bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm);
                     path.geometry.idleBypassAreaMm2 = geometry.value("idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2);
+                    path.geometry.closedThrottleLeakageAreaMm2 = geometry.value("closed_throttle_leak_mm2", path.geometry.closedThrottleLeakageAreaMm2);
                     path.geometry.throttleGamma = geometry.value("throttle_gamma", path.geometry.throttleGamma);
                 }
                 config.intakePaths.push_back(std::move(path));

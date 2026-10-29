@@ -905,6 +905,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || outOfRange("intake.carburettor.jetDischargeCoefficient", config.intake.carburettor.jetDischargeCoefficient, 0.05, 1.0)
         || outOfRange("intake.carburettor.wallFilmFraction", config.intake.carburettor.wallFilmFraction, 0.0, 0.98)
         || outOfRange("intake.carburettor.wallFilmTimeConstantSeconds", config.intake.carburettor.wallFilmTimeConstantSeconds, 1.0e-4, 5.0)
+        || outOfRange("intake.carburettor.acceleratorPumpStrokeCc", config.intake.carburettor.acceleratorPumpStrokeCc, 0.0, 100.0)
+        || outOfRange("intake.carburettor.acceleratorPumpTimeConstantSeconds", config.intake.carburettor.acceleratorPumpTimeConstantSeconds, 1.0e-3, 5.0)
+        || outOfRange("intake.carburettor.starterJetFlowNumber", config.intake.carburettor.starterJetFlowNumber, 0.0, 20'000.0)
         || outOfRange("intake.runnerLengthMm", config.intake.runnerLengthMm, 20.0, 2'000.0)
         || outOfRange("intake.runnerDiameterMm", config.intake.runnerDiameterMm, 10.0, 150.0)
         || !(config.intake.runnerPlenumDiameterMm == 0.0
@@ -1216,6 +1219,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(intake.carburettor.jetDischargeCoefficient, 0.05, 1.0)
             || !inRange(intake.carburettor.wallFilmFraction, 0.0, 0.98)
             || !inRange(intake.carburettor.wallFilmTimeConstantSeconds, 1.0e-4, 5.0)
+            || !inRange(intake.carburettor.acceleratorPumpStrokeCc, 0.0, 100.0)
+            || !inRange(intake.carburettor.acceleratorPumpTimeConstantSeconds, 1.0e-3, 5.0)
+            || !inRange(intake.carburettor.starterJetFlowNumber, 0.0, 20'000.0)
             || !inRange(intake.runnerLengthMm, 20.0, 2'000.0)
             || !inRange(intake.runnerDiameterMm, 10.0, 150.0)
             || !(intake.runnerPlenumDiameterMm == 0.0
@@ -1429,9 +1435,15 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                         return "Each exhaust crossover output port may be connected exactly once";
                     usedCrossoverOutputs[connection.fromComponentId]
                         [connection.fromPort] = true;
+                } else if (connection.fromPort == exhaustSideBranchPort
+                        && (fromType == ExhaustComponentType::merge
+                            || fromType == ExhaustComponentType::splitter)) {
+                    if (toType == ExhaustComponentType::merge || toType == ExhaustComponentType::splitter
+                        || toType == ExhaustComponentType::crossover)
+                        return "A side branch (port 2) joins a merge or a splitter to a duct";
                 } else if (connection.fromPort
                         != unspecifiedExhaustComponentPort) {
-                    return "from_port may only be set on an exhaust crossover";
+                    return "from_port may only be set on an exhaust crossover, or 2 (a side branch) on a merge or a splitter";
                 }
                 if (toType == ExhaustComponentType::crossover) {
                     if (!validPort(connection.toPort))
@@ -1441,9 +1453,15 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                         return "Each exhaust crossover input port may be connected exactly once";
                     usedCrossoverInputs[connection.toComponentId]
                         [connection.toPort] = true;
+                } else if (connection.toPort == exhaustSideBranchPort
+                        && (toType == ExhaustComponentType::merge
+                            || toType == ExhaustComponentType::splitter)) {
+                    if (fromType == ExhaustComponentType::merge || fromType == ExhaustComponentType::splitter
+                        || fromType == ExhaustComponentType::crossover)
+                        return "A side branch (port 2) joins a merge or a splitter to a duct";
                 } else if (connection.toPort
                         != unspecifiedExhaustComponentPort) {
-                    return "to_port may only be set on an exhaust crossover";
+                    return "to_port may only be set on an exhaust crossover, or 2 (a side branch) on a merge or a splitter";
                 }
                 if (fromType == ExhaustComponentType::crossover
                     && toType == ExhaustComponentType::crossover)

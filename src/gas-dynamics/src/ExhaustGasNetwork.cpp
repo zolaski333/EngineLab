@@ -2138,7 +2138,7 @@ bool ExhaustGasNetwork::evaluateStage(
     };
     const auto addJunctionFlow = [&junctionResiduals, &junctionPrimitives, this](
         std::size_t junctionIndex, const ConservedFlowRate& flow,
-        double openingAreaM2, double sign) noexcept {
+        double openingAreaM2, double sign, bool sideBranch = false) noexcept {
         const auto inverseVolume = 1.0 / layout_.junctions()[junctionIndex].volumeM3;
         for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
             junctionResiduals[junctionIndex].speciesMassDensityKgPerM3[species] +=
@@ -2151,7 +2151,9 @@ bool ExhaustGasNetwork::evaluateStage(
         // momentum toward its trunk without inventing a net force at rest.
         const auto resolvedAxialForceN = flow.momentumN
             - junctionPrimitives[junctionIndex].pressurePa * openingAreaM2;
-        if (config_.evolveJunctionAxialMomentum) {
+        // A side branch's face lies along the axis: its flow and the wall
+        // around it push across the axis, not along it.
+        if (config_.evolveJunctionAxialMomentum && !sideBranch) {
             junctionResiduals[junctionIndex].momentumDensityKgPerM2S +=
                 sign * resolvedAxialForceN * inverseVolume;
         }
@@ -2259,6 +2261,29 @@ bool ExhaustGasNetwork::evaluateStage(
                     downInlet ? down.reconstructedLeftPrimitives_[downCell]
                               : down.reconstructedRightPrimitives_[downCell])
                 : EulerFlux {};
+        } else if (connection.upstreamPort == exhaustSideBranchPort
+                   || connection.downstreamPort == exhaustSideBranchPort) {
+            // A duct meeting a junction at right angles sees it at rest: the
+            // junction's velocity is along its own axis, across the branch.
+            auto upstreamState = endpointState(upstream);
+            auto upstreamPrimitive = endpointPrimitive(upstream);
+            auto downstreamState = endpointState(downstream);
+            auto downstreamPrimitive = endpointPrimitive(downstream);
+            const auto atRest = [](ConservativeState& state, PrimitiveState& primitive) noexcept {
+                state.totalEnergyDensityJPerM3 -= 0.5 * state.momentumDensityKgPerM2S * primitive.velocityMps;
+                state.momentumDensityKgPerM2S = 0.0;
+                primitive.velocityMps = 0.0;
+            };
+            if (upstream.type == ExhaustEndpointType::junction
+                && connection.upstreamPort == exhaustSideBranchPort)
+                atRest(upstreamState, upstreamPrimitive);
+            if (downstream.type == ExhaustEndpointType::junction
+                && connection.downstreamPort == exhaustSideBranchPort)
+                atRest(downstreamState, downstreamPrimitive);
+            result.rawFlux = effectiveArea > 0.0
+                ? mixtureModel_.riemannFluxPrepared(
+                    upstreamState, upstreamPrimitive, downstreamState, downstreamPrimitive)
+                : EulerFlux {};
         } else {
             result.rawFlux = effectiveArea > 0.0
                 ? mixtureModel_.riemannFluxPrepared(
@@ -2281,12 +2306,14 @@ bool ExhaustGasNetwork::evaluateStage(
         const auto effectiveArea = result.effectiveAreaM2;
         const auto flow = makeFlowRate(result.rawFlux, effectiveArea);
         if (upstream.type == ExhaustEndpointType::junction) {
-            addJunctionFlow(upstream.elementIndex, flow, effectiveArea, -1.0);
+            addJunctionFlow(upstream.elementIndex, flow, effectiveArea, -1.0,
+                connection.upstreamPort == exhaustSideBranchPort);
         } else if (!assignDuctBoundary(upstream, result.upstreamDuctFlux)) {
             return false;
         }
         if (downstream.type == ExhaustEndpointType::junction) {
-            addJunctionFlow(downstream.elementIndex, flow, effectiveArea, 1.0);
+            addJunctionFlow(downstream.elementIndex, flow, effectiveArea, 1.0,
+                connection.downstreamPort == exhaustSideBranchPort);
         } else if (!assignDuctBoundary(downstream, result.downstreamDuctFlux)) {
             return false;
         }

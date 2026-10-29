@@ -10,7 +10,9 @@
 #include <atomic>
 #include <cmath>
 #include <exception>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -86,8 +88,6 @@ public:
         addField(stroke_, "Stroke (mm)", "72");
         addField(displacement_, "or displacement (L)", "");
         addChoice(induction_, "Induction", { "Natural", "Turbocharged", "Supercharged" });
-        addChoice(twoStrokeIntake_, "Intake",
-            { "Reed on the crankcase", "Cylinder port with a reed", "Cylinder port (piston port)" });
         twoStrokeIntake_.combo.setTooltip(utf8("Where the carburettor delivers. A reed on the crankcase lets the "
             "charge in whenever the crankcase draws. A port in the cylinder wall is uncovered by the piston skirt "
             "around top dead centre only; without a reed it blows back through the carburettor."));
@@ -103,6 +103,80 @@ public:
         crankPins_.combo.setTooltip(utf8("A V's two cylinders of a row share one pin, as on real engines (a 90° "
             "twin fires 270-450). Automatic splits the pins when sharing cannot fire six or more evenly."));
         bankAngles_.editor.setTooltip(utf8("Each bank's angle from vertical, e.g. -52.5 -37.5 37.5 52.5."));
+        addKeyed(redline_, "Redline (rpm)", "redline_rpm", enginePage);
+        addKeyed(revLimit_, "Rev limiter (rpm)", "rev_limit_rpm", enginePage);
+        addKeyed(idle_, "Idle (rpm)", "idle_rpm", enginePage);
+        addKeyed(compression_, "Compression ratio", "compression_ratio", enginePage);
+
+        currentPage_ = intakePage;
+        addChoice(fuelSystem_, "Fuel system",
+            { "Automatic", "Port injection", "Direct injection", "Carburettor" });
+        fuelSystem_.combo.setTooltip(utf8("Automatic is what the engine has in the world: a diesel injects into "
+            "the cylinder, a two-stroke breathes through a carburettor, a four-stroke injects into its ports. "
+            "A carburettor meters the fuel from the air it passes; nothing commands it. On a two-stroke, port "
+            "injection feeds the crankcase and direct injection the cylinder once the exhaust port has shut."));
+        addChoice(intakeStyle_, "Air intake", { "Automatic", "Airbox", "Pod filter", "Open trumpet" });
+        intakeStyle_.combo.setTooltip(utf8("An airbox is the filter's housing. A pod filter is the element alone "
+            "on the throttle. An open trumpet is the bare bellmouth, no filter at all: the loudest intake."));
+        addChoice(twoStrokeIntake_, "Two-stroke intake",
+            { "Reed on the crankcase", "Cylinder port with a reed", "Cylinder port (piston port)" });
+        addKeyed(throttleCount_, "Throttle bodies", "throttle_count", intakePage);
+        addKeyed(throttleDiameter_, "Throttle bore (mm)", "throttle_diameter_mm", intakePage);
+        addKeyed(runnerLength_, "Runner length (mm)", "intake_runner_length_mm", intakePage);
+        addKeyed(runnerDiameter_, "Runner bore (mm)", "intake_runner_diameter_mm", intakePage);
+        addKeyed(plenum_, "Plenum (L)", "plenum_volume_l", intakePage);
+        addKeyed(airbox_, "Airbox (L)", "airbox_volume_l", intakePage);
+        addKeyed(bellmouth_, "Trumpet lip (mm)", "bellmouth_diameter_mm", intakePage);
+        addKeyed(injectionStart_, "Injection starts (deg)", "injection_start_deg", intakePage);
+        addKeyed(injectionEnd_, "Injection ends (deg)", "injection_end_deg", intakePage);
+        addKeyed(mainJet_, "Main jet (cc/min)", "carb_main_jet_flow", intakePage);
+        addKeyed(pilotJet_, "Pilot jet (cc/min)", "carb_pilot_jet_flow", intakePage);
+        addKeyed(venturi_, "Venturi (mm)", "carb_venturi_mm", intakePage);
+        addKeyed(pumpStroke_, "Accelerator pump (cc)", "carb_pump_stroke_cc", intakePage);
+        addKeyed(starterJet_, "Starter jet (cc/min)", "carb_starter_jet_flow", intakePage);
+
+        currentPage_ = exhaustPage;
+        addChoice(exhaustSystem_, "Exhaust system", { "Automatic", "Single", "Dual", "Dual with an H-pipe",
+            "Dual with an X-pipe" });
+        exhaustSystem_.combo.setTooltip(utf8("Single: the collectors merge into one pipe. Dual: one pipe per bank "
+            "(a one-bank engine splits its collector). An H-pipe joins two banks' pipes by a short balance pipe; "
+            "an X-pipe crosses them. Automatic keeps the family's layout. Every length is set below, before the "
+            "engine is built."));
+        addChoice(silencer_, "Silencer", { "Automatic", "Packed box", "Straight-through", "None" });
+        silencer_.combo.setTooltip(utf8("A packed box is a quiet factory silencer; straight-through is a "
+            "perforated core in packing, a sport one; none is a straight pipe."));
+        addKeyed(primaryLength_, "Header primaries (mm)", "exhaust_primary_length_mm", exhaustPage);
+        addKeyed(primaryDiameter_, "Primary bore (mm)", "exhaust_primary_diameter_mm", exhaustPage);
+        addKeyed(collectorDiameter_, "Collector bore (mm)", "exhaust_collector_diameter_mm", exhaustPage);
+        addKeyed(midpipeLength_, "Mid pipe length (mm)", "exhaust_midpipe_length_mm", exhaustPage);
+        addKeyed(midpipeDiameter_, "Mid pipe bore (mm)", "exhaust_midpipe_diameter_mm", exhaustPage);
+        addKeyed(splitPosition_, "Split from collector (mm)", "exhaust_split_position_mm", exhaustPage);
+        addKeyed(crossoverPosition_, "H / X from collectors (mm)", "exhaust_crossover_position_mm", exhaustPage);
+        addKeyed(balanceLength_, "Balance pipe length (mm)", "exhaust_balance_pipe_length_mm", exhaustPage);
+        addKeyed(balanceDiameter_, "Balance pipe bore (mm)", "exhaust_balance_pipe_diameter_mm", exhaustPage);
+        addKeyed(xCoupling_, "X-pipe coupling (0-1)", "exhaust_x_pipe_coupling", exhaustPage);
+        addKeyed(silencerDiameter_, "Silencer body bore (mm)", "exhaust_silencer_diameter_mm", exhaustPage);
+        addKeyed(silencerLength_, "Silencer body length (mm)", "exhaust_silencer_length_mm", exhaustPage);
+        addKeyed(silencerLoss_, "Silencer flow loss", "exhaust_silencer_restriction", exhaustPage);
+        addKeyed(tailpipe_, "Tailpipe (mm)", "exhaust_tailpipe_length_mm", exhaustPage);
+        addKeyed(outletDiameter_, "Tip bore (mm)", "exhaust_outlet_diameter_mm", exhaustPage);
+        addKeyed(chamberLength_, "Expansion chamber (mm)", "expansion_chamber_tuned_length_mm", exhaustPage);
+        currentPage_ = enginePage;
+
+        static constexpr std::array<const char*, 3> pageNames { "Engine", "Intake & fuel", "Exhaust" };
+        for (std::size_t index = 0; index < pageButtons_.size(); ++index) {
+            auto& button = pageButtons_[index];
+            button.setButtonText(utf8(pageNames[index]));
+            button.setClickingTogglesState(true);
+            button.setRadioGroupId(1);
+            button.onClick = [this, index] {
+                if (!pageButtons_[index].getToggleState()) return;
+                page_ = static_cast<int>(index);
+                applyVisibility();
+            };
+            addAndMakeVisible(button);
+        }
+        pageButtons_.front().setToggleState(true, juce::dontSendNotification);
 
         table_.setModel(this);
         table_.setRowHeight(24);
@@ -157,7 +231,7 @@ public:
         graphics.setColour(ui::colours::muted);
         graphics.setFont(ui::uiFont(13.0F));
         graphics.drawText(utf8("From nothing: say what the engine is, every other value follows from rules fitted to "
-                               "real engines. Advanced sets any of them by hand."),
+                               "real engines. A grey value is the rule's: type over it to set it."),
             16, 36, getWidth() - 32, 20, juce::Justification::centredLeft);
     }
 
@@ -173,13 +247,19 @@ public:
         status_.setBounds(bounds.removeFromBottom(64));
         bounds.removeFromBottom(8);
 
-        auto form = bounds.removeFromLeft(360);
+        auto form = bounds.removeFromLeft(380);
         bounds.removeFromLeft(16);
-        for (auto* field : visibleFields()) {
-            auto row = form.removeFromTop(30);
-            field->label.setBounds(row.removeFromLeft(160));
-            field->control().setBounds(row.reduced(0, 2));
-            form.removeFromTop(4);
+        auto tabs = form.removeFromTop(30);
+        const auto tabWidth = tabs.getWidth() / static_cast<int>(pageButtons_.size());
+        for (auto& button : pageButtons_) button.setBounds(tabs.removeFromLeft(tabWidth).reduced(1, 0));
+        form.removeFromTop(8);
+        const auto fields = visibleFields();
+        // A long page packs its rows closer rather than running off the window.
+        const auto rowHeight = std::clamp(form.getHeight() / std::max(1, static_cast<int>(fields.size())), 22, 34);
+        for (auto* field : fields) {
+            auto row = form.removeFromTop(rowHeight);
+            field->label.setBounds(row.removeFromLeft(180));
+            field->control().setBounds(row.reduced(0, std::min(2, (rowHeight - 20) / 2)));
         }
         if (advanced_.getToggleState()) {
             auto edit = bounds.removeFromBottom(30);
@@ -200,11 +280,18 @@ private:
         juce::TextEditor editor;
         juce::ComboBox combo;
         bool isCombo { false };
-        bool advancedOnly { false };
+        int page { 0 };
+        /** The design value this field sets by hand; empty for a spec field. */
+        std::string key;
         juce::Component& control() { return isCombo ? static_cast<juce::Component&>(combo) : editor; }
     };
 
+    static constexpr int enginePage = 0;
+    static constexpr int intakePage = 1;
+    static constexpr int exhaustPage = 2;
+
     void addField(Field& field, const char* label, const char* text) {
+        field.page = currentPage_;
         field.label.setText(utf8(label), juce::dontSendNotification);
         field.label.setColour(juce::Label::textColourId, ui::colours::muted);
         field.editor.setText(utf8(text), false);
@@ -214,7 +301,17 @@ private:
         fields_.push_back(&field);
     }
 
+    /** A design value set before the build: empty, it shows the rule's value
+        in grey and the rule decides. */
+    void addKeyed(Field& field, const char* label, const char* key, int page) {
+        addField(field, label, "");
+        field.page = page;
+        field.key = key;
+        field.editor.setTooltip(utf8("Empty: the rule's value, shown in grey. Type a value to set it by hand."));
+    }
+
     void addChoice(Field& field, const char* label, std::initializer_list<const char*> options) {
+        field.page = currentPage_;
         field.isCombo = true;
         field.label.setText(utf8(label), juce::dontSendNotification);
         field.label.setColour(juce::Label::textColourId, ui::colours::muted);
@@ -237,24 +334,39 @@ private:
         return visible;
     }
 
-    void showMode() {
+    /** Whether a field describes this engine, whatever page is shown. A
+        keyed field shows when the last design derived its value. */
+    [[nodiscard]] bool applies(const Field& field) const {
         const auto advanced = advanced_.getToggleState();
         const auto layout = layouts[static_cast<std::size_t>(std::max(0, layout_.combo.getSelectedItemIndex()))];
-        const auto show = [](Field& field, bool visible) {
-            field.label.setVisible(visible);
-            field.control().setVisible(visible);
-        };
-        for (auto* field : fields_) show(*field, true);
-        show(bankAngle_, layout == EngineLayout::vLayout || layout == EngineLayout::custom);
-        show(bankCount_, layout == EngineLayout::custom);
-        const auto boosted = induction_.combo.getSelectedItemIndex() > 0;
-        show(boost_, boosted);
-        show(twoStrokeIntake_, cycle_.combo.getSelectedItemIndex() == 1);
-        show(turbos_, induction_.combo.getSelectedItemIndex() == 1);
-        show(firingOrder_, advanced && layout != EngineLayout::radial);
-        show(crankPins_, advanced && (layout == EngineLayout::vLayout || layout == EngineLayout::custom));
-        show(crankOffsets_, advanced);
-        show(bankAngles_, advanced && layout == EngineLayout::custom);
+        if (!field.key.empty()) return designedKeys_.contains(field.key);
+        if (&field == &bankAngle_) return layout == EngineLayout::vLayout || layout == EngineLayout::custom;
+        if (&field == &bankCount_) return layout == EngineLayout::custom;
+        if (&field == &boost_) return induction_.combo.getSelectedItemIndex() > 0;
+        if (&field == &twoStrokeIntake_) return cycle_.combo.getSelectedItemIndex() == 1;
+        if (&field == &turbos_) return induction_.combo.getSelectedItemIndex() == 1;
+        if (&field == &firingOrder_) return advanced && layout != EngineLayout::radial;
+        if (&field == &crankPins_)
+            return advanced && (layout == EngineLayout::vLayout || layout == EngineLayout::custom);
+        if (&field == &crankOffsets_) return advanced;
+        if (&field == &bankAngles_) return advanced && layout == EngineLayout::custom;
+        return true;
+    }
+
+    /** Shows the fields of the page shown that apply to this engine. */
+    void applyVisibility() {
+        for (auto* field : fields_) {
+            const auto visible = field->page == page_ && applies(*field);
+            field->label.setVisible(visible);
+            field->control().setVisible(visible);
+        }
+        resized();
+        repaint();
+    }
+
+    void showMode() {
+        const auto advanced = advanced_.getToggleState();
+        applyVisibility();
         for (auto* component : std::initializer_list<juce::Component*> {
                  &overrideLabel_, &overrideEditor_, &overrideSet_, &overrideReset_ })
             component->setVisible(advanced);
@@ -262,6 +374,12 @@ private:
         resized();
         repaint();
         if (!advanced) redesign();
+    }
+
+    [[nodiscard]] Field* keyedField(const std::string& key) {
+        for (auto* field : fields_)
+            if (field->key == key) return field;
+        return nullptr;
     }
 
     void timerCallback() override {
@@ -279,8 +397,8 @@ private:
         spec.layout = layouts[static_cast<std::size_t>(std::max(0, layout_.combo.getSelectedItemIndex()))];
         spec.induction = static_cast<Induction>(std::max(0, induction_.combo.getSelectedItemIndex()));
         spec.turbochargerCount = static_cast<std::uint32_t>(std::max(0, turbos_.combo.getSelectedItemIndex()) + 1);
-        const auto number = [&error](const Field& field, double& target) {
-            if (!field.label.isVisible()) return true;
+        const auto number = [this, &error](const Field& field, double& target) {
+            if (!applies(field)) return true;
             const auto value = numberOf(field.editor.getText());
             if (!value) {
                 error = field.label.getText() + utf8(" must be a positive number.");
@@ -305,7 +423,7 @@ private:
             error = utf8("Give either bore and stroke or the displacement, not both.");
             return std::nullopt;
         }
-        if (firingOrder_.label.isVisible()) {
+        if (applies(firingOrder_)) {
             const auto order = numbersOf(firingOrder_.editor.getText());
             if (!order) {
                 error = utf8("The firing order is a list of cylinder ids.");
@@ -313,14 +431,14 @@ private:
             }
             for (const auto id : *order) spec.firingOrder.push_back(static_cast<std::uint32_t>(id));
         }
-        if (twoStrokeIntake_.label.isVisible()) {
+        if (applies(twoStrokeIntake_)) {
             const auto intake = twoStrokeIntake_.combo.getSelectedItemIndex();
             spec.twoStrokeIntake = intake > 0 ? TwoStrokeIntake::cylinderPort : TwoStrokeIntake::crankcaseReed;
             spec.twoStrokeIntakeReed = intake != 2;
         }
-        if (crankPins_.label.isVisible())
+        if (applies(crankPins_))
             spec.crankPins = static_cast<CrankPins>(std::max(0, crankPins_.combo.getSelectedItemIndex()));
-        if (crankOffsets_.label.isVisible()) {
+        if (applies(crankOffsets_)) {
             const auto offsets = numbersOf(crankOffsets_.editor.getText());
             if (!offsets) {
                 error = utf8("The crank offsets are a list of degrees.");
@@ -328,7 +446,7 @@ private:
             }
             spec.crankOffsetsDegrees = *offsets;
         }
-        if (bankAngles_.label.isVisible()) {
+        if (applies(bankAngles_)) {
             // Signed angles: read them as they are written.
             auto tokens = juce::StringArray::fromTokens(bankAngles_.editor.getText().replaceCharacters(",;", "  "),
                 " ", "");
@@ -341,7 +459,25 @@ private:
                 spec.bankAnglesDegrees.push_back(token.getDoubleValue());
             }
         }
+        spec.fuelSystem = static_cast<FuelSystem>(std::max(0, fuelSystem_.combo.getSelectedItemIndex()));
+        spec.intakeStyle = static_cast<IntakeStyle>(std::max(0, intakeStyle_.combo.getSelectedItemIndex()));
+        spec.exhaustSystem = static_cast<ExhaustSystem>(std::max(0, exhaustSystem_.combo.getSelectedItemIndex()));
+        spec.exhaustSilencer = static_cast<ExhaustSilencer>(std::max(0, silencer_.combo.getSelectedItemIndex()));
         spec.overrides = overrides_;
+        // A value typed in a field is the hand-set value of its key, over one
+        // set in the table. A field whose key the design no longer derives
+        // is left out, or it would be refused as unknown.
+        for (const auto* field : fields_) {
+            if (field->key.empty() || !applies(*field)) continue;
+            const auto text = field->editor.getText().trim();
+            if (text.isEmpty()) continue;
+            const auto value = numberOf(text);
+            if (!value) {
+                error = field->label.getText() + utf8(" must be a positive number.");
+                return std::nullopt;
+            }
+            spec.overrides[field->key] = *value;
+        }
         return spec;
     }
 
@@ -378,6 +514,7 @@ private:
         else if (const auto described = spec(error)) designed_ = designEngine(*described, parts_);
         if (error.isEmpty() && !designed_.config) error = utf8(designed_.error.c_str());
         build_.setEnabled(designed_.config.has_value() && !probing_);
+        if (designed_.config) learnKeys();
         if (designed_.config) {
             const auto& config = *designed_.config;
             const auto balance = analyseCrankBalance(config);
@@ -409,6 +546,22 @@ private:
         table_.updateContent();
         table_.repaint();
         showSelected();
+    }
+
+    /** The keys this design derives, and each keyed field's grey rule value.
+        A failed design keeps the last ones, so its fields stay put. */
+    void learnKeys() {
+        std::set<std::string> keys;
+        for (const auto& value : designed_.values) {
+            if (!value.settable) continue;
+            keys.insert(value.key);
+            if (auto* field = keyedField(value.key))
+                field->editor.setTextToShowWhenEmpty(shown(value.value) + (value.unit.empty() ? juce::String()
+                    : " " + utf8(value.unit.c_str())), ui::colours::faint);
+        }
+        if (keys == designedKeys_) return;
+        designedKeys_ = std::move(keys);
+        applyVisibility();
     }
 
     int getNumRows() override { return static_cast<int>(designed_.values.size()); }
@@ -465,13 +618,20 @@ private:
         if (value == nullptr) return;
         const auto text = overrideEditor_.getText().trim();
         if (text.isEmpty() || !text.containsOnly("-0123456789.")) return;
-        overrides_[value->key] = text.getDoubleValue();
+        if (auto* field = keyedField(value->key); field != nullptr && text.containsOnly("0123456789.")) {
+            field->editor.setText(text, false);
+            overrides_.erase(value->key);
+        } else {
+            overrides_[value->key] = text.getDoubleValue();
+        }
         redesign();
     }
 
     void resetOverride() {
         if (const auto* value = selectedValue()) {
-            overrides_.erase(value->key);
+            const auto key = value->key;
+            if (auto* field = keyedField(key)) field->editor.setText({}, false);
+            overrides_.erase(key);
             redesign();
         }
     }
@@ -574,8 +734,19 @@ private:
     DesignedEngine designed_;
     std::map<std::string, double> overrides_;
     std::vector<Field*> fields_;
+    std::set<std::string> designedKeys_;
+    int currentPage_ { enginePage };
+    int page_ { enginePage };
+    std::array<juce::TextButton, 3> pageButtons_;
     Field name_, cycle_, fuel_, use_, layout_, cylinders_, bankAngle_, bankCount_, bore_, stroke_, displacement_,
-        induction_, boost_, turbos_, twoStrokeIntake_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
+        induction_, boost_, turbos_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
+    Field redline_, revLimit_, idle_, compression_;
+    Field fuelSystem_, intakeStyle_, twoStrokeIntake_, throttleCount_, throttleDiameter_, runnerLength_,
+        runnerDiameter_, plenum_, airbox_, bellmouth_, injectionStart_, injectionEnd_, mainJet_, pilotJet_,
+        venturi_, pumpStroke_, starterJet_;
+    Field exhaustSystem_, silencer_, primaryLength_, primaryDiameter_, collectorDiameter_, midpipeLength_,
+        midpipeDiameter_, splitPosition_, crossoverPosition_, balanceLength_, balanceDiameter_, xCoupling_,
+        silencerDiameter_, silencerLength_, silencerLoss_, tailpipe_, outletDiameter_, chamberLength_;
     juce::TableListBox table_;
     juce::Label overrideLabel_;
     juce::TextEditor overrideEditor_;

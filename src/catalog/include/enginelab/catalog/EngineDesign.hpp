@@ -35,6 +35,65 @@ enum class CrankPins : std::uint8_t {
     separate
 };
 
+/** How a four-stroke's exhaust leaves the engine. A two-stroke has one
+ *  expansion chamber per cylinder and an aircraft engine open stacks, whatever
+ *  this says. */
+enum class ExhaustSystem : std::uint8_t {
+    /** The family's: one pipe per bank on a V or a flat of four cylinders or
+     *  more, else one pipe. */
+    automatic,
+    /** Every cylinder into one pipe and one silencer (a V's banks meet in a
+     *  Y). */
+    single,
+    /** Two pipes and two silencers: one per side of a V, a flat or a W; an
+     *  inline engine's collector splits in two. */
+    dual,
+    /** Dual, the banks' two pipes joined by a balance pipe (an H-pipe). */
+    dualHPipe,
+    /** Dual, the banks' two pipes crossing in an X. */
+    dualXPipe,
+};
+
+/** The silencer at the end of each pipe. */
+enum class ExhaustSilencer : std::uint8_t {
+    /** The family's box. */
+    automatic,
+    /** A large, long, heavily packed road box. */
+    packedBox,
+    /** A short straight-through sports can, lightly packed. */
+    straightThrough,
+    /** None: an open pipe. */
+    none,
+};
+
+/** What a four-stroke petrol engine's fuel comes from. A diesel injects
+ *  directly into the cylinder whatever this says. */
+enum class FuelSystem : std::uint8_t {
+    /** The family's: port injection (continuous on an aircraft engine), a
+     *  carburettor on a two-stroke. */
+    automatic,
+    /** An injector in each intake port. */
+    portInjection,
+    /** An injector in each cylinder. */
+    directInjection,
+    /** A carburettor on each throttle bore, metering from the air: a slide
+     *  one on a two-stroke, a fixed venturi on a four-stroke. */
+    carburettor,
+};
+
+/** What the air enters through. */
+enum class IntakeStyle : std::uint8_t {
+    /** The family's: an airbox on a car or a motorcycle, the bare throttle on
+     *  an aircraft engine. */
+    automatic,
+    /** A closed airbox ahead of the throttle, its filter inside. */
+    airbox,
+    /** A filter on the throttle's mouth with no box around it. */
+    podFilter,
+    /** Open velocity stacks (trumpets): the bellmouths draw from the air. */
+    velocityStacks,
+};
+
 /**
  * The short description an engine is designed from, with no base engine.
  * A zero or empty field is derived. Bore and stroke, or the displacement, are
@@ -78,6 +137,10 @@ struct EngineSpec final {
      *  cylinder port has a reed (a crankcase intake always has one). */
     TwoStrokeIntake twoStrokeIntake { TwoStrokeIntake::crankcaseReed };
     bool twoStrokeIntakeReed { true };
+    ExhaustSystem exhaustSystem { ExhaustSystem::automatic };
+    ExhaustSilencer exhaustSilencer { ExhaustSilencer::automatic };
+    FuelSystem fuelSystem { FuelSystem::automatic };
+    IntakeStyle intakeStyle { IntakeStyle::automatic };
     /** Values set by hand, by DesignValue key. They win over the derived ones,
      *  and what is derived from them follows. An unknown key is an error. */
     std::map<std::string, double> overrides;
@@ -126,5 +189,13 @@ struct DesignedEngine final {
 [[nodiscard]] std::optional<EngineUse> parseEngineUse(std::string_view) noexcept;
 [[nodiscard]] const char* crankPinsName(CrankPins) noexcept;
 [[nodiscard]] std::optional<CrankPins> parseCrankPins(std::string_view) noexcept;
+[[nodiscard]] const char* exhaustSystemName(ExhaustSystem) noexcept;
+[[nodiscard]] std::optional<ExhaustSystem> parseExhaustSystem(std::string_view) noexcept;
+[[nodiscard]] const char* exhaustSilencerName(ExhaustSilencer) noexcept;
+[[nodiscard]] std::optional<ExhaustSilencer> parseExhaustSilencer(std::string_view) noexcept;
+[[nodiscard]] const char* fuelSystemName(FuelSystem) noexcept;
+[[nodiscard]] std::optional<FuelSystem> parseFuelSystem(std::string_view) noexcept;
+[[nodiscard]] const char* intakeStyleName(IntakeStyle) noexcept;
+[[nodiscard]] std::optional<IntakeStyle> parseIntakeStyle(std::string_view) noexcept;
 
 } // namespace enginelab

@@ -11,6 +11,7 @@
 #include <enginelab/foundation/CrankBalance.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/RealtimeCapacityProbe.hpp>
+#include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
@@ -467,6 +468,269 @@ void pinsMatchTheFiring(const EngineConfig& config) {
     return spec;
 }
 
+[[nodiscard]] const ExhaustComponentConfig* componentOf(const EngineConfig& config, std::uint32_t id) {
+    for (const auto& path : config.exhaustPaths) {
+        if (!path.network) continue;
+        for (const auto& component : path.network->components)
+            if (component.id == id) return &component;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::size_t outletsOf(const EngineConfig& config) {
+    std::size_t outlets = 0;
+    for (const auto& path : config.exhaustPaths)
+        if (path.network)
+            outlets += static_cast<std::size_t>(std::count_if(path.network->components.begin(),
+                path.network->components.end(),
+                [](const ExhaustComponentConfig& part) { return part.type == ExhaustComponentType::outlet; }));
+    return outlets;
+}
+
+/** The exhaust is set in the designer, before the engine is built: one pipe
+ *  or two, an H- or an X-pipe, the mid pipe, the silencer and the tailpipe
+ *  (the owner's report, 2026-10-29: every design came with a long pipe that
+ *  could only be changed node by node afterwards). */
+void exhaustIsDesigned() {
+    auto v8 = vee(8, 90.0, EngineUse::sportCar, 6.2);
+    const auto family = designed(v8);
+    require(family.config->exhaustPaths.size() == 2 && outletsOf(*family.config) == 2,
+        "a V8 keeps the family's pipe per bank when nothing is chosen");
+
+    v8.exhaustSystem = ExhaustSystem::single;
+    const auto single = designed(v8);
+    require(single.config->exhaustPaths.size() == 1 && outletsOf(*single.config) == 1
+            && componentOf(*single.config, 300) && componentOf(*single.config, 300)->type == ExhaustComponentType::merge,
+        "a single system meets the banks in a Y and leaves through one tip");
+
+    v8.exhaustSystem = ExhaustSystem::dual;
+    const auto dual = designed(v8);
+    require(dual.config->exhaustPaths.size() == 2 && outletsOf(*dual.config) == 2, "dual: a pipe per bank");
+
+    v8.exhaustSystem = ExhaustSystem::dualHPipe;
+    const auto h = designed(v8);
+    const auto* balance = componentOf(*h.config, 460);
+    require(h.config->exhaustPaths.size() == 1 && outletsOf(*h.config) == 2 && balance
+            && std::abs(balance->lengthMm - 250.0) < 1.0e-9
+            && componentOf(*h.config, 450)->type == ExhaustComponentType::splitter
+            && componentOf(*h.config, 451)->type == ExhaustComponentType::merge,
+        "an H-pipe: a balance pipe between a splitter on one pipe and a merge on the other");
+
+    v8.exhaustSystem = ExhaustSystem::dualXPipe;
+    v8.overrides["exhaust_x_pipe_coupling"] = 0.5;
+    const auto x = designed(v8);
+    const auto* crossing = componentOf(*x.config, 455);
+    require(x.config->exhaustPaths.size() == 1 && outletsOf(*x.config) == 2 && crossing
+            && crossing->type == ExhaustComponentType::crossover && std::abs(crossing->crossoverCoupling - 0.5) < 1.0e-9,
+        "an X-pipe crossing the two pipes, its coupling as set");
+    v8.overrides.clear();
+
+    auto four = inlineSeven();
+    four.cylinderCount = 4;
+    four.exhaustSystem = ExhaustSystem::dual;
+    const auto split = designed(four);
+    require(outletsOf(*split.config) == 2 && componentOf(*split.config, 450)->type == ExhaustComponentType::splitter,
+        "an inline engine's dual system splits its collector");
+    four.exhaustSystem = ExhaustSystem::dualHPipe;
+    const auto refused = designEngine(four, parts());
+    require(!refused.config && refused.error.find("one bank") != std::string::npos,
+        "an H-pipe on one bank is refused, saying why");
+    auto turbo = vee(8, 90.0, EngineUse::sportCar, 4.4);
+    turbo.induction = Induction::turbocharged;
+    turbo.exhaustSystem = ExhaustSystem::dualXPipe;
+    require(!designEngine(turbo, parts()).config, "an X-pipe ahead of the turbines is refused");
+
+    four.exhaustSystem = ExhaustSystem::single;
+    four.exhaustSilencer = ExhaustSilencer::none;
+    four.overrides["exhaust_midpipe_length_mm"] = 800.0;
+    four.overrides["exhaust_tailpipe_length_mm"] = 300.0;
+    const auto shortPipe = designed(four);
+    const auto* mid = componentOf(*shortPipe.config, 500);
+    const auto* tail = componentOf(*shortPipe.config, 650);
+    const auto mufflers = std::count_if(shortPipe.config->exhaustPaths.front().network->components.begin(),
+        shortPipe.config->exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& part) { return part.type == ExhaustComponentType::muffler; });
+    require(mid && std::abs(mid->lengthMm - 800.0) < 1.0e-9 && tail && std::abs(tail->lengthMm - 300.0) < 1.0e-9
+            && mufflers == 0,
+        "the mid pipe and the tailpipe take the lengths set, and no silencer is none");
+    four.exhaustSilencer = ExhaustSilencer::packedBox;
+    four.overrides["exhaust_midpipe_diameter_mm"] = 60.0;
+    const auto boxed = designed(four);
+    const auto* box = componentOf(*boxed.config, 600);
+    require(box && box->type == ExhaustComponentType::muffler && std::abs(box->diameterMm - 60.0) < 1.0e-9
+            && std::abs(box->lengthMm - 450.0) < 1.0e-9,
+        "a packed box sized from its pipe (7.5 x 60 mm long)");
+}
+
+/** An H-pipe's balance pipe carries flow both ways: the solvers' junctions
+ *  have no preferred direction, so the side that pulses pushes into the
+ *  other, whichever the graph names the splitter. */
+void hPipeFlowsBothWays() {
+    auto spec = vee(8, 90.0, EngineUse::sportCar, 6.2);
+    spec.exhaustSystem = ExhaustSystem::dualHPipe;
+    const auto config = *designed(spec).config;
+    auto rig = std::make_unique<Rig>(config);
+    auto speed = 0.0;
+    auto most = 0.0;
+    auto least = 0.0;
+    for (auto frame = 0; frame < 5 * 240; ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = t < 1.5;
+        controls.throttle = t < 2.0 ? 0.0 : 1.0;
+        if (t >= 2.0) controls.dynamometerTorqueNm = std::max(0.0, 4.0 * (speed - 3'000.0));
+        speed = rig->simulator->step(frameSeconds, controls).state.rpm;
+        if (t < 3.5) continue;
+        rig->simulator->captureGasFieldNow();
+        // The balance pipe is a cell or two at the production mesh: what
+        // drives it is the pressure of the junction at each end.
+        auto splitter = 0.0;
+        auto merge = 0.0;
+        for (const auto& element : rig->simulator->gasField().elements) {
+            if (element.kind != GasFieldElementKind::exhaustJunction) continue;
+            if (element.componentId == 450) splitter = element.pressurePa[0];
+            if (element.componentId == 451) merge = element.pressurePa[0];
+        }
+        require(splitter > 0.0 && merge > 0.0, "the H's two junctions are in the gas field");
+        most = std::max(most, splitter - merge);
+        least = std::min(least, splitter - merge);
+    }
+    std::cout << "  H-pipe balance pipe at " << speed << " rpm: splitter minus merge " << least << " to " << most
+              << " Pa\n";
+    require(most > 500.0 && least < -500.0, "the balance pipe is driven from either side over the cycle");
+}
+
+[[nodiscard]] EngineSpec sportFour() {
+    EngineSpec spec;
+    spec.name = "Sport four";
+    spec.use = EngineUse::sportCar;
+    spec.cylinderCount = 4;
+    spec.boreMm = 86.0;
+    spec.strokeMm = 86.0;
+    return spec;
+}
+
+[[nodiscard]] EngineSpec twinTwoStroke() {
+    EngineSpec spec;
+    spec.name = "Two-stroke twin";
+    spec.cycle = EngineCycle::twoStroke;
+    spec.use = EngineUse::sportMotorcycle;
+    spec.cylinderCount = 2;
+    spec.displacementLitres = 0.347;
+    return spec;
+}
+
+/** The fuel system and the intake are chosen in the designer, on either cycle
+ *  (the owner's request, 2026-10-29): port or direct injection, or a
+ *  carburettor; an airbox, a pod filter or open velocity stacks. */
+void fuelSystemsAreDesigned() {
+    auto spec = sportFour();
+    const auto port = designed(spec);
+    require(!port.config->intake.carburettor.enabled && port.config->injection.mode == InjectionMode::port,
+        "a four-stroke injects into its ports when nothing is chosen");
+
+    spec.fuelSystem = FuelSystem::directInjection;
+    const auto direct = designed(spec);
+    require(direct.config->injection.mode == InjectionMode::direct
+            && std::abs(direct.config->injection.startAngleDegrees - 420.0) < 1.0e-9
+            && std::abs(direct.config->injection.endAngleDegrees - 600.0) < 1.0e-9,
+        "a direct-injected petrol four injects on its intake stroke, for a homogeneous charge");
+
+    spec.fuelSystem = FuelSystem::carburettor;
+    const auto carb = designed(spec);
+    const auto& carburettor = carb.config->intake.carburettor;
+    require(carburettor.enabled && carburettor.fixedVenturi && carburettor.acceleratorPumpStrokeCc > 0.0
+            && carburettor.starterJetFlowNumber > 0.0 && carburettor.venturiDiameterMm > 0.0,
+        "a carburetted four-stroke gets a fixed venturi, an accelerator pump and a starter circuit");
+    // The venturi is sized for 5.1 kPa at peak power: a 2-litre four's at
+    // 0.90 of its swept volume every other turn.
+    require(carburettor.venturiDiameterMm > 30.0 && carburettor.venturiDiameterMm < 45.0,
+        "a 2-litre four's single venturi is 30-45 mm");
+
+    auto diesel = spec;
+    diesel.fuel = FuelType::diesel;
+    const auto refused = designEngine(diesel, parts());
+    require(!refused.config && refused.error.find("direct injection") != std::string::npos,
+        "a carburetted diesel is refused, saying why");
+
+    auto twin = twinTwoStroke();
+    const auto twinCarb = designed(twin);
+    require(twinCarb.config->intake.carburettor.enabled && !twinCarb.config->intake.carburettor.fixedVenturi
+            && twinCarb.config->intake.carburettor.starterJetFlowNumber == 0.0,
+        "a two-stroke keeps its slide carburettor, with no starter circuit");
+    twin.fuelSystem = FuelSystem::directInjection;
+    const auto twinDirect = designed(twin);
+    require(!twinDirect.config->intake.carburettor.enabled
+            && twinDirect.config->injection.mode == InjectionMode::direct,
+        "a two-stroke can inject into its cylinders");
+
+    spec = sportFour();
+    spec.intakeStyle = IntakeStyle::podFilter;
+    const auto pod = designed(spec);
+    require(pod.config->intake.podFilter && pod.config->intake.airboxVolumeLitres == 0.0,
+        "a pod filter has no box");
+    spec.intakeStyle = IntakeStyle::velocityStacks;
+    const auto stacks = designed(spec);
+    require(!stacks.config->intake.podFilter && stacks.config->intake.airboxVolumeLitres == 0.0
+            && stacks.config->intake.bellmouthDiameterMm > stacks.config->intake.throttleDiameterMm,
+        "velocity stacks draw from the air through a bellmouth wider than the throttle");
+}
+
+/** What the designer derives survives a save: the throttle's closed leak was
+ *  never written, so a designed engine reloaded ran on the 0.6 mm2 default. */
+void designedValuesSurviveASave() {
+    auto spec = sportFour();
+    spec.fuelSystem = FuelSystem::carburettor;
+    spec.intakeStyle = IntakeStyle::podFilter;
+    const auto config = *designed(spec).config;
+    const YamlEngineSerializer serializer;
+    const auto decoded = serializer.decode(serializer.encode(config));
+    require(decoded.config.has_value(), "a designed engine reloads");
+    const auto& before = config.intake;
+    const auto& after = decoded.config->intake;
+    require(after.closedThrottleLeakageAreaMm2 == before.closedThrottleLeakageAreaMm2
+            && after.podFilter == before.podFilter
+            && after.carburettor.fixedVenturi == before.carburettor.fixedVenturi
+            && after.carburettor.acceleratorPumpStrokeCc == before.carburettor.acceleratorPumpStrokeCc
+            && after.carburettor.starterJetFlowNumber == before.carburettor.starterJetFlowNumber,
+        "the closed leak, the pod filter and the carburettor's circuits are saved");
+    require(std::abs(before.closedThrottleLeakageAreaMm2 - 0.6) > 1.0e-3,
+        "and the designed leak is not the default the loss went unseen behind");
+}
+
+/** A carburetted four-stroke starts on its starter circuit, idles on its
+ *  pilot, and pulls from idle at part throttle. A slide's needle on a car's
+ *  fixed venturi held the main jet to a quarter of its area there, and the
+ *  engine went to lambda 1.7-3.6 and stalled. */
+void carburettedFourPullsFromIdle() {
+    auto spec = sportFour();
+    spec.fuelSystem = FuelSystem::carburettor;
+    const auto config = *designed(spec).config;
+    auto rig = std::make_unique<Rig>(config);
+    auto idle = 0.0;
+    auto pulled = 0.0;
+    auto lambda = 0.0;
+    for (auto frame = 0; frame < static_cast<int>(7.5 * 240); ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = t < 6.0 && rig->simulator->state().rpm < 0.85 * config.idleRpm;
+        controls.throttle = t < 6.0 ? 0.0 : 0.15;
+        const auto state = rig->simulator->step(frameSeconds, controls).state;
+        if (t > 5.0 && t < 6.0) idle = state.rpm;
+        if (t > 7.0) {
+            pulled = state.rpm;
+            lambda = state.lambda;
+        }
+    }
+    std::cout << "  carburetted four idles at " << idle << " rpm, at 15 % throttle " << pulled
+              << " rpm, lambda " << lambda << '\n';
+    require(idle > 0.6 * config.idleRpm && idle < 1.5 * config.idleRpm, "it starts and idles");
+    require(pulled > 3'000.0 && lambda > 0.75 && lambda < 1.05,
+        "and pulls past 3,000 rpm at 15 % throttle, neither lean nor drowned");
+}
+
 /** A V's two cylinders of a row share one crank pin, as on the real engines;
  *  each had its own pin, placed for even firing (the owner's report,
  *  2026-10-19). */
@@ -667,6 +931,11 @@ int main() {
     overridesWin();
     everyLayoutDesigns();
     vCranksSharePins();
+    exhaustIsDesigned();
+    hPipeFlowsBothWays();
+    fuelSystemsAreDesigned();
+    designedValuesSurviveASave();
+    carburettedFourPullsFromIdle();
     catalogueReadsDesigns();
     inlineSevenRuns();
     realtimeIsChecked();

@@ -263,13 +263,19 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     std::vector<double> pipeTemperatureSumK;
     std::vector<std::uint32_t> pipeComponentIds;
     auto pipeTemperatureFrames = 0.0;
+    // A four-stroke's carburettor meters nothing at full throttle and
+    // cranking speed: the venturi's depression is under the jet's lift and the
+    // manifold sits at ambient, so it is started shut, as one is in the world.
+    // A two-stroke's crankcase draws its pilot even at full throttle.
+    const auto startsShut = config.cycle == enginelab::EngineCycle::fourStroke
+        && (config.intakePaths.empty() ? config.intake : config.intakePaths.front().geometry).carburettor.enabled;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
         const auto absorberOutput = absorber.advance(
             dt, targetRpm, simulator.state());
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = simulator.state().rpm < 550.0;
-        controls.throttle = 1.0;
+        controls.throttle = startsShut && controls.starterEngaged ? 0.0 : 1.0;
         controls.dynamometerTorqueNm =
             absorberOutput.brakeTorqueNm;
         if (step == settleSteps)

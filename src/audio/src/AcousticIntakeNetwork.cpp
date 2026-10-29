@@ -193,8 +193,10 @@ struct AcousticIntakeNetwork::Impl final {
             // carburetted radial breathing through a scoop, or an open-trumpet
             // ITB stack, is legitimately bright. Inventing an element for those
             // would be inventing hardware, and it measurably over-darkened the
-            // Radial R5 past `EngineLab.AudioRender`'s low-band gate.
-            compiled.hasAirFilter = compiled.geometry.airboxVolumeLitres > 0.0;
+            // Radial R5 past `EngineLab.AudioRender`'s low-band gate. A pod
+            // filter is the element without the housing.
+            compiled.hasAirFilter = compiled.geometry.airboxVolumeLitres > 0.0
+                || compiled.geometry.podFilter;
             compiled.hasInletDuct = compiled.geometry.inletDuctLengthMm > 1.0;
             if (compiled.hasInletDuct) {
                 compiled.inletDuct.lengthM = compiled.geometry.inletDuctLengthMm * 0.001;

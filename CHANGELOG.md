@@ -9,6 +9,29 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- **The exhaust is set in the engine designer, before the engine is built.**
+  The designer has three pages: Engine, Intake & fuel, Exhaust. The Exhaust
+  page chooses the system (the family's, single, dual, dual with an H-pipe or
+  an X-pipe) and the silencer (none, a packed box, a straight-through one),
+  and every length and bore along it: primaries, collector, mid pipe, split,
+  crossover, balance pipe, silencer body, tailpipe and tip. An empty field
+  shows its derived value in grey; a typed one is kept. A factory system's
+  published dimensions go straight in, with no node editing afterwards.
+- **An H-pipe.** Two pipes joined by a balance pipe at right angles, which
+  carries whichever side pulses higher. In a custom exhaust it is a side
+  branch, port `2` of a merge or a splitter.
+- **The fuel system is a choice, on either cycle.** Port injection, direct
+  injection, or a carburettor, on a four-stroke or a two-stroke (a diesel
+  injects directly). A direct-injected petrol four injects on its intake
+  stroke; on a designed K20 it makes 5 % more torque than port injection, from
+  the charge the evaporating fuel cools. A carburetted four-stroke gets a
+  car's fixed-venturi carburettor with an accelerator pump and a starter
+  circuit, all sized from the engine; it starts, idles, and pulls from idle at
+  part throttle.
+- **The intake can be an open trumpet.** The Intake & fuel page chooses an
+  airbox, a pod filter (the element on the throttle's mouth, no box) or open
+  velocity stacks (a bellmouth, no filter).
+
 - **The idle speed is set from the ECU page.** `idle.target_rpm` ("Idle
   target", 300-3,000 rpm) is the speed the idle governor holds with the
   throttle shut, on every injected engine, petrol or diesel, four- or
@@ -24,6 +47,10 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **A designed engine reloads as it was designed.** Its closed-throttle leak
+  was not saved, so a designed engine reopened from *My engines* ran on the
+  0.6 mm2 default instead of its own (a designed 350 cc two-stroke twin,
+  1,300 rpm target, idled about 2,360 rpm instead of 1,800).
 - **The tachometer's red zone follows the ECU's rev limit.** It started at
   the authored `redline_rpm` whatever the tuner said; once `limits.rev_rpm` is
   moved, the red zone (and the RPM trace's line) starts there.

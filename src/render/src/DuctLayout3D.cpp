@@ -218,7 +218,9 @@ void buildNodes(PathLayout& layout) {
         ins.push_back({ connection.toPort, { to->second, from->second } });
         outs.push_back({ connection.fromPort, { from->second, to->second } });
     }
-    const auto byPort = [](const auto& a, const auto& b) { return a.first < b.first; };
+    // A side branch (an H's balance pipe) after the through pipe.
+    const auto rank = [](std::uint8_t port) { return port == exhaustSideBranchPort ? 0x100 : static_cast<int>(port); };
+    const auto byPort = [rank](const auto& a, const auto& b) { return rank(a.first) < rank(b.first); };
     std::stable_sort(ins.begin(), ins.end(), byPort);
     std::stable_sort(outs.begin(), outs.end(), byPort);
     for (const auto& [port, link] : ins) layout.nodes[link.first].ins.push_back(link.second);

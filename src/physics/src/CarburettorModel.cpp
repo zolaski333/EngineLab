@@ -77,7 +77,8 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
                                              double throttleDiameterMm,
                                              double throttleFraction,
                                              double dtSeconds,
-                                             double idleCircuitOpening) noexcept {
+                                             double idleCircuitOpening,
+                                             double starterCircuitOpening) noexcept {
     CarburettorMetering result;
     if (!(dtSeconds > 0.0) || !std::isfinite(dtSeconds)) return result;
 
@@ -102,7 +103,7 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
             * result.venturiVelocityMps * result.venturiVelocityMps;
         result.venturiDepressionKpa = depressionPa * 0.001;
         const auto mainAreaM2 = jetAreaM2(carburettor.mainJetFlowNumber, coefficient)
-            * needleOpenFraction(carburettor, throttleFraction);
+            * (carburettor.fixedVenturi ? 1.0 : needleOpenFraction(carburettor, throttleFraction));
         const auto mainFlowKgPerSecond = orificeMassFlowKgPerSecond(
             mainAreaM2, coefficient, fuelDensityKgPerM3,
             depressionPa - liftPressurePa);
@@ -125,7 +126,31 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
         pilotAreaM2, coefficient, fuelDensityKgPerM3, pilotDropPa - liftPressurePa);
     result.pilotMoles = pilotFlowKgPerSecond * dtSeconds / fuelMolarMassKg;
 
-    result.meteredMoles = result.mainMoles + result.pilotMoles;
+    // Starter circuit: a plain jet on the same drop, open as far as the
+    // start aid's extra air is.
+    if (carburettor.starterJetFlowNumber > 0.0 && starterCircuitOpening > 0.0) {
+        const auto starterAreaM2 = jetAreaM2(carburettor.starterJetFlowNumber, coefficient)
+            * std::min(starterCircuitOpening, 4.0);
+        result.starterMoles = orificeMassFlowKgPerSecond(starterAreaM2, coefficient,
+            fuelDensityKgPerM3, pilotDropPa - liftPressurePa) * dtSeconds / fuelMolarMassKg;
+    }
+
+    // Accelerator pump: the throttle's rise strokes a piston that displaces
+    // its share of the pump's volume, and the nozzle delivers that over its
+    // own time. A closing throttle refills it and delivers nothing.
+    const auto throttle = std::clamp(throttleFraction, 0.0, 1.0);
+    if (carburettor.acceleratorPumpStrokeCc > 0.0) {
+        const auto rise = std::max(0.0, throttle - state.previousThrottle);
+        state.pumpShotMoles += rise * carburettor.acceleratorPumpStrokeCc * 1.0e-6
+            * fuelDensityKgPerM3 / fuelMolarMassKg;
+        result.pumpMoles = state.pumpShotMoles * (1.0 - std::exp(-dtSeconds
+            / std::max(1.0e-3, carburettor.acceleratorPumpTimeConstantSeconds)));
+        state.pumpShotMoles = std::max(0.0, state.pumpShotMoles - result.pumpMoles);
+    }
+    state.previousThrottle = throttle;
+
+    result.meteredMoles = result.mainMoles + result.pilotMoles + result.pumpMoles
+        + result.starterMoles;
 
     // What the walls take, and what they give back. A carburettor wets its
     // bore and then the crankcase, and the charge gets the difference: this is

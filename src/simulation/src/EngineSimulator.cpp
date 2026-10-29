@@ -2164,19 +2164,35 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     const auto boundaryDensityKgPerM3 =
                         intakeSourcePressureKpa * 1'000.0
                         / (airGasConstantJPerKgK * std::max(1.0, temperatureK));
+                    // One carburettor per bore, all alike: each passes its
+                    // share of the air and meters for that share, so the
+                    // bores' fuel is one bore's times their count. The pilot
+                    // drop is to whatever sits behind the plates: the plenum,
+                    // or with individual throttles the runners' balance tap.
+                    const auto bores = static_cast<double>(std::max(1U, intake.throttleCount));
+                    const auto pilotPressureKpa = intakePortShut ? intakeSourcePressureKpa
+                        : intake.individualThrottles ? individualThrottleMapKpa_[pathIndex]
+                        : intakePlenumGas_[pathIndex].pressureKpa();
+                    // With a starter circuit the start aid's air above the
+                    // idle stop is the enrichener's own passage, and carries
+                    // its jet's fuel rather than the pilot's.
+                    const auto screwOpening = carburettorIdleScrewOpening(intake.carburettor.idleScrewTurns);
+                    const auto starterFitted = intake.carburettor.starterJetFlowNumber > 0.0;
                     const auto metering = CarburettorModel::meter(
                         intake.carburettor, config_.fuelProperties,
                         carburettorStates_[pathIndex],
-                        plenumInflowKg / subDt, boundaryDensityKgPerM3,
-                        intakeSourcePressureKpa,
-                        intakePortShut ? intakeSourcePressureKpa : intakePlenumGas_[pathIndex].pressureKpa(),
+                        plenumInflowKg / subDt / bores, boundaryDensityKgPerM3,
+                        intakeSourcePressureKpa, pilotPressureKpa,
                         intake.throttleDiameterMm, state_.throttle, subDt,
-                        carburettorIdleCircuitOpening(intake, ecuCommand.idleAirOpening));
+                        carburettorIdleCircuitOpening(intake, starterFitted
+                            ? std::min(ecuCommand.idleAirOpening, screwOpening) : ecuCommand.idleAirOpening),
+                        starterFitted ? std::max(0.0, ecuCommand.idleAirOpening - screwOpening)
+                            / carburettorPilotSizingIdleOpening : 0.0);
                     if (metering.deliveredMoles > 0.0)
                         intakePlenumGas_[pathIndex].injectFuelMoles(
-                            metering.deliveredMoles,
+                            metering.deliveredMoles * bores,
                             config_.injection.fuelTemperatureC + 273.15);
-                    carburettorFuelMassKgThisStep_ += metering.meteredMoles
+                    carburettorFuelMassKgThisStep_ += metering.meteredMoles * bores
                         * config_.fuelProperties.molarMassGramsPerMole * 0.001;
                 }
                 if (intake.individualThrottles)

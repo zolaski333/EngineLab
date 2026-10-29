@@ -5,6 +5,21 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — Fuel system and intake style in the designer; a carburetted four-stroke
+
+- `DesignBench` + `DynoSweepHarness --step 1000` (designed K20, port / direct / carburettor): WOT 243.0 / 256.7 / 238.3 N.m, 168.6 / 176.5 / 164.0 kW, lambda 0.88-0.90 / 0.88-0.90 / 0.85-0.88. Direct injection +5.6 % from the evaporating fuel's charge cooling (homogeneous, 420-600 deg). Designed 350 cc 2T twin carb / port / direct: 43.0 / 45.0 / 40.9 N.m at 9,000 rpm.
+- The carburetted four first stalled on tip-in from idle: the two-stroke's slide needle taper metered a car carburettor's main jet at 18 % shut (lambda 1.7-3.6). `fixed_venturi`: K20 at 15 % throttle 6,254 rpm lambda 0.88 (`EngineDesign` test, fails without it).
+- A designed 750 cc four on four bores never started: the start aid's air cracked the slides with no enrichment, 75 kPa while cranking. Starter circuit at a choke's AFR 4: a warm K20 flooded at AFR 6.8 once running (refuted). At AFR 8: K20, 6.2 V8 and a road four start in ~1.5 s and idle at 900 / 755 / 808 rpm.
+- A 0-D idle MAP balance to size the pilot predicted 11-13 kPa where the engines measured 30-37: reverted, the pilot keeps the 65 kPa head.
+- Known limit: a sport four (62 deg overlap) hunts and stalls on the derived pilot; it holds at 1,630-1,715 rpm with a pilot 1.4-1.5 x larger. Not the bore count (1 vs 4 the same).
+- `closed_throttle_leak_mm2` was never saved: a reloaded designed 2T twin idled 2,364 +- 129 rpm, 1,795 +- 360 with its own 0.26 mm2. Bit-exact: DynoSweep RD350, K20A, 2JZ at `--step 2500`; a 2T twin from an old design.
+- Pod filter and velocity stacks: torque identical to the airbox at WOT (the style changes the acoustic intake, not the 1-D runner's loss). Not measured: any sound, the app's pages by hand.
+
+## 2026-10-29 — Exhaust in the designer; an H-pipe is a side branch
+
+- A merge or splitter carries momentum along its axis. A balance pipe between a splitter and a merge was a jet pump: 0-24 kPa one way at every crank angle on a designed 6.2 V8 (refuted as an H-pipe). As port 2, a side branch exchanging mass and energy without momentum: 13.9 kPa either way over the cycle at 3,185 rpm (`EngineDesign` test `hPipeFlowsBothWays`).
+- Designed engines' primaries, collector, mid pipe, silencer and tailpipe are now designer values; a typed one is kept. Not measured: the sound of the H vs X vs dual, a real system's published dimensions against its maker's curve.
+
 ## 2026-10-29 — Tachometer redline from the ECU; a twin-turbo split spools faster
 
 - The tachometer and the RPM trace drew the red zone at `redlineRpm` only; `displayRedlineRpm()` returns the ECU's rev limit once it differs from the authored one (`ActiveLimits`: 2,500 shown after a 2,500 tune).
