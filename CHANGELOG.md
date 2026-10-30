@@ -7,6 +7,44 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-10-30
+
+### Fixed
+
+- **A very big designed turbo engine reaches its boost.** The designer gave
+  every turbocharger a 130,000 rpm design speed, whatever its wheel: a
+  162 mm marine wheel ran 1,100 m/s and never finished spooling (1.34 of
+  3.0 bar on a 193 L six). The design speed now comes from the tip speed the
+  boost needs, so the six reaches 2.96 bar in 3-4 s.
+- **A designed diesel's injector is sized on its injection window**, not on
+  the whole cycle as before: the marine six ran at lambda 3.0 and a quarter
+  of its torque (10.7 kN.m, now 38.9 kN.m). The catalogue's diesels keep
+  their own injectors.
+- **The rev limiter's bands scale with a slow engine's limit.** On a 750 rpm
+  limit the fixed 220 rpm band cut the fuel from 530 rpm. Engines limited
+  above 2,450 rpm (the whole catalogue) are unchanged.
+- **A big designed diesel gets a crank of its size** (inertia scaled by the
+  cylinder's size), so it no longer hunts under the dyno's brake.
+- The dyno instruments hold an engine whose idle is below 550 rpm: their
+  starter released at 550 rpm whatever the engine.
+
+### Changed
+
+- **The intake's airbox and plenum are volumes with a length.** Above its
+  first mode an airbox behaves as an expansion chamber, and it was modelled
+  as a point volume that swallowed 16 to 35 dB of the intake between 1.6 and
+  4.5 kHz. It now loses what a chamber of its size does (1 to 9 dB): the
+  induction's upper notes come through an airbox. The master moves by under
+  1 dB on most catalogue engines (the I5 and the TDI the most): with a stock
+  airbox the intake stays well under the exhaust, as on a real car.
+
+### Added
+
+- `IntakeTransferHarness`: the intake's acoustic transfer, frequency by
+  frequency, with and without its airbox and filter.
+- `TurboDownstreamAuthorityHarness --spool <rpm>`: the turbo's spool second
+  by second at a held speed.
+
 ## [0.7.1] — 2026-10-30
 
 The application is 0.7.0's. The release builds of 0.6.0 and 0.7.0 failed one

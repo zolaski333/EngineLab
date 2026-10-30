@@ -638,7 +638,10 @@ turbine areas were re-fitted when the turbine moved (2026-10-12, see
 an engine that has none, from scaling laws fitted to the four catalogue
 turbochargers (turbine area 0.028 mm² per litre and per redline rpm, full
 boost at 45 % of the redline, inducer from the square root of the air flow,
-rotor inertia from the inducer). The boost follows the compression ratio, as
+rotor inertia from the inducer, design shaft speed from the tip speed the
+boost's head needs: 337 m/s at 2.3, the TDI-like's 39 mm wheel at 165,000 rpm,
+as the square root of the head, so a 162 mm marine wheel runs 46,400 rpm). The
+engine designer sizes its turbochargers with the same laws. The boost follows the compression ratio, as
 on a street conversion: 0.5 bar from 10.5:1, 0.7 from 9.5:1, 0.9 below, 1.3 on
 a diesel. The engine keeps its own ignition map, so a high-compression engine
 may knock at boost. The 3-D view's inspector fits it (or takes it off) from any

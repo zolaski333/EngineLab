@@ -10,7 +10,7 @@ body:
     attributes:
       label: EngineLab version
       description: Shown in the title bar, or the release archive name.
-      placeholder: 0.7.1
+      placeholder: 0.7.2
     validations:
       required: true
   - type: input

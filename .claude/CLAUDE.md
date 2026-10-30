@@ -24,10 +24,11 @@ system on either cycle, Roots and centrifugal superchargers, compressor surge
 tachometer, a split turbo's spool, no size cap. Released in 0.7.0: the rotary
 (VISION.md amended; a 13B at +10 % torque, -8 % power, ports estimated).
 Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
+0.7.2: a big designed engine's turbo reaches its boost (a 193 L six 2.96 of
+3.0 bar) and the airbox is an expansion chamber, not a point volume.
 Open, each awaiting the owner: the petrol over-efficiency (K20 209-233 g/kWh
 at WOT, real ~260-290; a fix moves every engine's sound); low EGT; the
-diesel's fixed 8 % premix; the designer's turbine law on very big engines (a
-193 L marine six reaches 1.4 of its 3.0 bar). Not started: the two-stroke
+diesel's fixed 8 % premix. Not started: the two-stroke
 diesel (needs a VISION.md amendment). Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.
 
