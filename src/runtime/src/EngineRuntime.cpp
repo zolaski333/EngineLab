@@ -824,6 +824,7 @@ void EngineRuntime::stop() {
             DynoRunStatus::cancelled,
             DynoStopReason::runtimeStopped);
     else if (dynoSessionActive_.exchange(false, std::memory_order_acq_rel)) {
+        dynoStartPublished_.store(false, std::memory_order_release);
         {
             const std::scoped_lock lock(dynoMutex_);
             pendingDynoCalibration_.reset();
@@ -1026,6 +1027,7 @@ void EngineRuntime::stopDyno() {
 
 void EngineRuntime::beginDynoSession() {
     if (dynoActive_) return;
+    dynoStartPublished_.store(false, std::memory_order_release);
     {
         const std::scoped_lock lock(dynoMutex_);
         activeDynoConfig_ = pendingDynoConfig_;
@@ -1109,6 +1111,7 @@ void EngineRuntime::finishDynoSession(
     ecu_.releasePinnedCalibrationSnapshot();
     dynoActive_ = false;
     dynoRequestedRunning_.store(false, std::memory_order_release);
+    dynoStartPublished_.store(false, std::memory_order_release);
     dynoRunStatus_.store(status, std::memory_order_release);
     dynoSessionActive_.store(false, std::memory_order_release);
 }
@@ -1206,10 +1209,14 @@ void EngineRuntime::run(std::stop_token stopToken) {
                                   : DynoStopReason::operatorCancelled);
         } else if (!dynoDesired
                    && dynoSessionActive_.load(std::memory_order_acquire)
-                   && dynoStartPublished_.load(std::memory_order_acquire)) {
+                   && dynoStartPublished_.load(std::memory_order_acquire)
+                   && !dynoRequestedRunning_.load(std::memory_order_acquire)) {
             // startDyno()/stopDyno() may both be called between two simulation
             // ticks. No session ever began, so there is no fabricated empty run
             // to archive, but the public state must still leave `running`.
+            // The request is read again after the published flag: a start
+            // that completed since dynoDesired was read is not a stop.
+            dynoStartPublished_.store(false, std::memory_order_release);
             dynoRunStatus_.store(
                 DynoRunStatus::cancelled, std::memory_order_release);
             {
