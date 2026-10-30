@@ -12,9 +12,10 @@
 namespace enginelab::cam_controller {
 
 namespace detail {
+// A four-stroke's cycle; a rotary face's is 1,080 deg, passed as `period`.
 inline constexpr double shaftPeriodDegrees = 720.0;
-[[nodiscard]] inline bool validPhase(double phase) noexcept {
-    return std::isfinite(phase) && phase >= 0.0 && phase < shaftPeriodDegrees;
+[[nodiscard]] inline bool validPhase(double phase, double period = shaftPeriodDegrees) noexcept {
+    return std::isfinite(phase) && phase >= 0.0 && phase < period;
 }
 [[nodiscard]] inline bool roundoffClose(double first, double second,
                                         double scale = shaftPeriodDegrees) noexcept {
@@ -23,8 +24,9 @@ inline constexpr double shaftPeriodDegrees = 720.0;
     return std::abs(first - second) <= 32.0 * std::numeric_limits<double>::epsilon()
         * std::max({scale, std::abs(first), std::abs(second)});
 }
-[[nodiscard]] inline bool samePhase(double first, double second) noexcept {
-    return roundoffClose(std::remainder(first - second, shaftPeriodDegrees), 0.0);
+[[nodiscard]] inline bool samePhase(double first, double second,
+                                     double period = shaftPeriodDegrees) noexcept {
+    return roundoffClose(std::remainder(first - second, period), 0.0);
 }
 }
 
@@ -62,16 +64,23 @@ public:
     [[nodiscard]] std::optional<double> lastTravelDegrees() const noexcept {
         return lastTravelDegrees_;
     }
+    // The shaft angle of one cycle: 720 deg, or a rotary face's 1,080.
+    void setPeriod(double periodDegrees) noexcept {
+        if (periodDegrees == period_) return;
+        period_ = periodDegrees;
+        reset();
+    }
+    [[nodiscard]] double period() const noexcept { return period_; }
 
     // Begin/end are the actual normalized shaft angles from the mechanical
     // integrator. Travel is its unwrapped forward angle. RPM is linear within
     // this physical step; the crossing time is solved from that acceleration.
-    // The end angle disambiguates an exact wrap rounded just below 720 degrees.
+    // The end angle disambiguates an exact wrap rounded just below one period.
     [[nodiscard]] ShaftAdvanceResult advance(double beginPhase, double endPhase,
         double travelDegrees, double durationSeconds, double firstRpm,
         double lastRpm) noexcept {
         const auto invalid = [this]() noexcept { reset(); return ShaftAdvanceResult {}; };
-        if (!detail::validPhase(beginPhase) || !detail::validPhase(endPhase)
+        if (!detail::validPhase(beginPhase, period_) || !detail::validPhase(endPhase, period_)
             || !(durationSeconds > 0.0) || !std::isfinite(durationSeconds)
             || !(travelDegrees >= 0.0) || !std::isfinite(travelDegrees)
             || !(firstRpm >= 0.0) || !(lastRpm >= 0.0)
@@ -80,14 +89,14 @@ public:
         const auto integralDegrees = (firstRpm + lastRpm) * 0.5 * 6.0 * durationSeconds;
         if (!std::isfinite(integralDegrees)
             || !detail::roundoffClose(integralDegrees, travelDegrees)) return invalid();
-        if (expectedBeginPhase_ && !detail::samePhase(*expectedBeginPhase_, beginPhase))
+        if (expectedBeginPhase_ && !detail::samePhase(*expectedBeginPhase_, beginPhase, period_))
             return invalid();
         const auto turns = std::round((beginPhase + travelDegrees - endPhase)
-            / detail::shaftPeriodDegrees);
+            / period_);
         if (!(turns >= 0.0) || !std::isfinite(turns)
             || turns >= static_cast<double>(std::numeric_limits<std::uint64_t>::max())
             || !detail::roundoffClose(beginPhase + travelDegrees,
-                endPhase + turns * detail::shaftPeriodDegrees)) return invalid();
+                endPhase + turns * period_)) return invalid();
         const auto crossings = static_cast<std::uint64_t>(turns);
         if (travelDegrees == 0.0) {
             // A stalled shaft supplies no new cycle. Never leave a high
@@ -116,7 +125,7 @@ public:
         if (crossings == 0) {
             segment(durationSeconds, firstRpm, lastRpm);
         } else {
-            const auto firstCrossing = crossingTime(detail::shaftPeriodDegrees - beginPhase);
+            const auto firstCrossing = crossingTime(period_ - beginPhase);
             segment(firstCrossing, firstRpm, rpmAt(firstCrossing));
             if (aligned_) {
                 if (!publish(seconds_, minimum_, maximum_, 1)) return invalid();
@@ -127,9 +136,9 @@ public:
             if (crossings > 1) {
                 // Intermediate complete cycles need no storage or loop. Only
                 // the newest complete physical cycle qualifies the next call.
-                const auto lastDistance = detail::shaftPeriodDegrees
+                const auto lastDistance = period_
                     * static_cast<double>(crossings) - beginPhase;
-                const auto previousCrossing = crossingTime(lastDistance - detail::shaftPeriodDegrees);
+                const auto previousCrossing = crossingTime(lastDistance - period_);
                 lastCrossing = crossingTime(lastDistance);
                 const auto first = rpmAt(previousCrossing);
                 const auto last = rpmAt(lastCrossing);
@@ -165,7 +174,7 @@ private:
             return false;
         generation_ += count;
         completed_ = ShaftCycleMeasurement { epoch_, generation_, seconds,
-            minimum, maximum, 120.0 / seconds };
+            minimum, maximum, period_ / 6.0 / seconds };
         return std::isfinite(completed_->meanRpm);
     }
     std::uint64_t epoch_ {};
@@ -178,6 +187,7 @@ private:
     std::optional<double> expectedBeginPhase_;
     std::optional<double> lastTravelDegrees_;
     std::optional<ShaftCycleMeasurement> completed_;
+    double period_ { detail::shaftPeriodDegrees };
 };
 
 struct BaseCircleWitness final {
@@ -191,22 +201,23 @@ struct BaseCircleWitness final {
 };
 
 [[nodiscard]] inline BaseCircleWitness commonBaseCircle(const CamshaftConfig& cam,
-    const ValveTrainState& state, double phase, std::uint64_t revision) noexcept {
+    const ValveTrainState& state, double phase, std::uint64_t revision,
+    double period = detail::shaftPeriodDegrees) noexcept {
     BaseCircleWitness result { false, false, false, revision, phase, state, {} };
-    if (!detail::validPhase(phase) || !std::isfinite(state.intakeAdvanceDegrees)
+    if (!detail::validPhase(phase, period) || !std::isfinite(state.intakeAdvanceDegrees)
         || !std::isfinite(state.exhaustAdvanceDegrees) || !std::isfinite(state.liftMultiplier)
         || state.liftMultiplier < 0.0) return result;
     result.valid = true;
     result.common = true;
-    const auto intakeCenter = 360.0 + cam.intakeCenterlineDegrees - state.intakeAdvanceDegrees;
-    const auto exhaustCenter = 360.0 - cam.exhaustCenterlineDegrees - state.exhaustAdvanceDegrees;
+    const auto intakeCenter = period * 0.5 + cam.intakeCenterlineDegrees - state.intakeAdvanceDegrees;
+    const auto exhaustCenter = period * 0.5 - cam.exhaustCenterlineDegrees - state.exhaustAdvanceDegrees;
     for (std::size_t mode = 0; mode < 2; ++mode) {
         const auto high = mode != 0;
         const auto intakeDuration = high ? cam.highIntakeDurationDegrees : cam.intakeDurationDegrees;
         const auto exhaustDuration = high ? cam.highExhaustDurationDegrees : cam.exhaustDurationDegrees;
         if (!std::isfinite(intakeDuration) || !std::isfinite(exhaustDuration)
             || !(intakeDuration > 0.0) || !(exhaustDuration > 0.0)
-            || intakeDuration > 720.0 || exhaustDuration > 720.0
+            || intakeDuration > period || exhaustDuration > period
             || !std::isfinite(intakeCenter) || !std::isfinite(exhaustCenter)) {
             result.valid = result.common = false;
             return result;
@@ -214,9 +225,9 @@ struct BaseCircleWitness final {
         // The physical lift evaluator hard-gates custom samples with this
         // exact support, including the max(1,duration/2) rule. An internal
         // zero plateau is not an opportunity to create a new nominal IVC/EVO.
-        const auto withinIntake = std::abs(std::remainder(phase - intakeCenter, 720.0))
+        const auto withinIntake = std::abs(std::remainder(phase - intakeCenter, period))
             < std::max(1.0, intakeDuration * 0.5);
-        const auto withinExhaust = std::abs(std::remainder(phase - exhaustCenter, 720.0))
+        const auto withinExhaust = std::abs(std::remainder(phase - exhaustCenter, period))
             < std::max(1.0, exhaustDuration * 0.5);
         result.common = result.common && !withinIntake && !withinExhaust;
     }
@@ -227,11 +238,11 @@ struct BaseCircleWitness final {
         result.actualLiftMm[mode * 2] = profiledValveLiftMm(phase, intakeCenter,
             high ? cam.highIntakeDurationDegrees : cam.intakeDurationDegrees,
             high ? cam.highIntakeLiftMm : cam.intakeLiftMm,
-            high ? cam.highIntakeLiftProfile : cam.intakeLiftProfile) * state.liftMultiplier;
+            high ? cam.highIntakeLiftProfile : cam.intakeLiftProfile, period) * state.liftMultiplier;
         result.actualLiftMm[mode * 2 + 1] = profiledValveLiftMm(phase, exhaustCenter,
             high ? cam.highExhaustDurationDegrees : cam.exhaustDurationDegrees,
             high ? cam.highExhaustLiftMm : cam.exhaustLiftMm,
-            high ? cam.highExhaustLiftProfile : cam.exhaustLiftProfile) * state.liftMultiplier;
+            high ? cam.highExhaustLiftProfile : cam.exhaustLiftProfile, period) * state.liftMultiplier;
         result.common = result.common
             && result.actualLiftMm[mode * 2] == 0.0
             && result.actualLiftMm[mode * 2 + 1] == 0.0;
@@ -243,23 +254,24 @@ struct BaseCircleWitness final {
 }
 
 [[nodiscard]] inline bool commonBaseCircleArc(const CamshaftConfig& cam,
-    const ValveTrainState& currentVvt, double previousPhase, double travel) noexcept {
-    if (!detail::validPhase(previousPhase) || !std::isfinite(travel)
-        || travel < 0.0 || travel >= 720.0) return false;
+    const ValveTrainState& currentVvt, double previousPhase, double travel,
+    double period = detail::shaftPeriodDegrees) noexcept {
+    if (!detail::validPhase(previousPhase, period) || !std::isfinite(travel)
+        || travel < 0.0 || travel >= period) return false;
     const auto outside = [&](double center, double duration) noexcept {
-        const auto start = std::remainder(previousPhase - center, 720.0);
+        const auto start = std::remainder(previousPhase - center, period);
         const auto end = start + travel;
         const auto half = std::max(1.0, duration * 0.5);
         for (const auto copy : {-1.0, 0.0, 1.0}) {
-            const auto middle = copy * 720.0;
+            const auto middle = copy * period;
             // crossedPhase counts both distance==0 and distance==travel.
             // A zero-lift support endpoint can still create a new IVC/EVO.
             if (start <= middle + half && end >= middle - half) return false;
         }
         return true;
     };
-    const auto intakeCenter = 360.0 + cam.intakeCenterlineDegrees - currentVvt.intakeAdvanceDegrees;
-    const auto exhaustCenter = 360.0 - cam.exhaustCenterlineDegrees - currentVvt.exhaustAdvanceDegrees;
+    const auto intakeCenter = period * 0.5 + cam.intakeCenterlineDegrees - currentVvt.intakeAdvanceDegrees;
+    const auto exhaustCenter = period * 0.5 - cam.exhaustCenterlineDegrees - currentVvt.exhaustAdvanceDegrees;
     return outside(intakeCenter, cam.intakeDurationDegrees)
         && outside(intakeCenter, cam.highIntakeDurationDegrees)
         && outside(exhaustCenter, cam.exhaustDurationDegrees)
@@ -327,9 +339,9 @@ public:
     // becoming newly crossed just because the discrete profile changed.
     [[nodiscard]] bool finish(const CamshaftConfig& cam, const ValveTrainState& currentVvt,
         double currentPhase, std::optional<double> actualTravelSincePrevious,
-        std::uint64_t camRevision) noexcept {
+        std::uint64_t camRevision, double period = detail::shaftPeriodDegrees) noexcept {
         if (!enabled_ || !cam.variableProfileEnabled) return false;
-        const auto validSnapshot = detail::validPhase(currentPhase)
+        const auto validSnapshot = detail::validPhase(currentPhase, period)
             && std::isfinite(currentVvt.intakeAdvanceDegrees)
             && std::isfinite(currentVvt.exhaustAdvanceDegrees)
             && std::isfinite(currentVvt.liftMultiplier) && currentVvt.liftMultiplier >= 0.0;
@@ -343,18 +355,18 @@ public:
             // stable-profile path. Its actual previous VVT is retained.
             armed_ = false; previous_ = snapshot; return applied_;
         }
-        const auto current = commonBaseCircle(cam, currentVvt, currentPhase, camRevision);
+        const auto current = commonBaseCircle(cam, currentVvt, currentPhase, camRevision, period);
         const auto previous = previous_ ? commonBaseCircle(cam, previous_->actualVvtState,
-            previous_->phaseDegrees, previous_->camRevision) : BaseCircleWitness {};
+            previous_->phaseDegrees, previous_->camRevision, period) : BaseCircleWitness {};
         const auto coherent = previous_ && actualTravelSincePrevious
             && std::isfinite(*actualTravelSincePrevious) && *actualTravelSincePrevious >= 0.0
-            && *actualTravelSincePrevious < 720.0
+            && *actualTravelSincePrevious < period
             && detail::samePhase(currentPhase,
-                previous_->phaseDegrees + *actualTravelSincePrevious);
+                previous_->phaseDegrees + *actualTravelSincePrevious, period);
         const auto safe = coherent && previous.valid && previous.common && current.common
             && previous.camRevision == current.camRevision
             && commonBaseCircleArc(cam, currentVvt, previous_->phaseDegrees,
-                *actualTravelSincePrevious);
+                *actualTravelSincePrevious, period);
         if (armed_ && requested_ != applied_ && safe) applied_ = requested_;
         armed_ = requested_ != applied_ && current.common;
         previous_ = snapshot;

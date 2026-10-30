@@ -7,6 +7,13 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **A rotary's intake ports can open in stages.** The switched cam profile
+  (*Profile switch*, `switch_rpm`) now works on a rotary, as a Renesis opens
+  its auxiliary ports near 6,300 rpm. It switched only on a piston engine
+  before. The catalogue 13B is unchanged.
+
 ## [0.7.5] — 2026-10-30
 
 ### Fixed
