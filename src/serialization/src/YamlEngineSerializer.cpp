@@ -31,9 +31,11 @@ void readCarburettor(const YAML::Node& intake, CarburettorConfig& carburettor) {
     const auto encoded = object[key];
     if (!encoded) return unspecifiedExhaustComponentPort;
     const auto value = encoded.as<unsigned>();
-    if (value > 1U)
+    // 0 and 1 are a crossover's ports, 2 a merge's or a splitter's side
+    // branch (an H-pipe's balance pipe); validation says which fits where.
+    if (value > exhaustSideBranchPort)
         throw std::invalid_argument(
-            std::string("Exhaust crossover port must be 0 or 1: ") + key);
+            std::string("Exhaust port must be 0, 1 or 2 (a side branch): ") + key);
     return static_cast<std::uint8_t>(value);
 }
 [[nodiscard]] const char* afterfireStrategyName(
