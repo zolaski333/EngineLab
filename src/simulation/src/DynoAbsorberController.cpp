@@ -26,6 +26,18 @@ DynoAbsorberController::DynoAbsorberController(
         controllerTorqueScaleNm_,
         absorberBrakeMeanEffectivePressurePa * displacementM3
             / (4.0 * std::numbers::pi));
+    // The acceleration feedback is a virtual inertia, and behind the speed
+    // and acceleration filters (8 and 6 rad/s) and a frame's delay it is
+    // stable only while it stays within a few times the shaft's own. Scaled
+    // with displacement alone it reached 26-56 times on the catalogue: light
+    // shafts (Hayabusa, CP3, CP4, the 13B) swung 15-61 rpm at a held point,
+    // and a CP2 the dyno caught at 1,800 rpm fell into a brake limit cycle
+    // that its stall recovery re-entered 293 times. Capped at 16 times the
+    // shaft, every catalogue point holds within 9 rpm (journal 2026-10-30).
+    constexpr double maximumVirtualInertiaRatio = 16.0;
+    accelerationGain_ = std::min(controllerTorqueScaleNm_ / 800.0,
+        maximumVirtualInertiaRatio * effectiveRotatingInertiaKgM2(config)
+            * std::numbers::pi / 30.0);
 }
 
 void DynoAbsorberController::reset(
@@ -106,7 +118,7 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     const auto errorRpm = filteredRpm_ - filteredTargetRpm_;
     const auto proportionalGain = controllerTorqueScaleNm_ / 600.0;
     const auto integralGain = controllerTorqueScaleNm_ / 1'800.0;
-    const auto accelerationGain = controllerTorqueScaleNm_ / 800.0;
+    const auto accelerationGain = accelerationGain_;
 
     // Ramp the absorber into contact across the final 60 rpm. Switching the
     // full feed-forward torque at one threshold creates a relaxation

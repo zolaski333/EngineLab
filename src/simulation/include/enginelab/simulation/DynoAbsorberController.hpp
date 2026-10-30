@@ -46,6 +46,8 @@ public:
 
 private:
     double controllerTorqueScaleNm_ { 1.0 };
+    /** N.m per rpm/s: the acceleration feedback, a virtual inertia. */
+    double accelerationGain_ { 0.0 };
     double maximumBrakeTorqueNm_ { 1.0 };
     double integralTorqueNm_ {};
     double feedForwardTorqueNm_ {};

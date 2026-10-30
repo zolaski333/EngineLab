@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — `UserDynoHighRpmStart`: the absorber's virtual inertia
+
+- The test failed about once in 30 starts. `UserDynoHarness --start-rpm`, 31 CP2 starts at 2,400-4,200 rpm: one (3,960) fell to 555 rpm, under the 560 stall line, after the dyno caught it near 1,800 rpm; `--trace` showed a brake limit cycle its stall recovery re-entered 293 times.
+- The absorber's acceleration feedback (scale / 800 N.m per rpm/s) is a virtual inertia scaled with displacement alone: 26-56 times the shaft's own on light shafts. Behind the 8 and 6 rad/s filters and a frame's delay it swung the brake. `DynoSweepHarness --step 1000`, held scatter uncapped: Hayabusa 15-61 rpm, 13B 16-46, CP3/CP4 20-36.
+- Capped at 16 times the shaft (k4, k8 and k16 each 31/31 starts, worst minimum 1,363 / 1,206 / 740 rpm; k16 kept for the least torque change): mean held sd over the catalogue 9.89 -> 1.66 rpm, worst 8.75; torque mean -0.03 %, worst 1.3 % (boosted points at 2,000-4,000 rpm); the K20 at 7,000 rpm +0.7 %.
+- New `DynoHold` test: the Hayabusa and the 13B held at 3,000 rpm after a 2,000 rpm hold, as the sweep steps. Uncapped the Hayabusa scatters 62.6 rpm (fails), capped 8.0; the 13B 0.8. A synthetic single-inertia plant, even with firing ripple and a cycle-held feed-forward, stays stable uncapped: the cycle needs the simulator's own lags.
+- Not measured: the start test over more than 31 starts with the cap (62/62 with a 60 rpm band as well).
+
 ## 2026-10-30 — The intake's airbox was a point compliance above its first mode
 
 - New `IntakeTransferHarness`: one runner driven sinusoidally, the mouth's level as authored, with the element alone (pod, no box) and bare. K20-like (4.5 L box, 250 x 70 mm snorkel): the box's insertion loss at 1.6 / 2.2 / 3.2 / 4.5 kHz was 16.0 / 22.7 / 29.5 / 35.4 dB, rising 6 dB an octave like a shunt compliance. A 4.5 L box on a 70 mm duct has a plane-wave bound of ~12 dB (area ratio 14) and modes from ~800 Hz.

@@ -81,7 +81,8 @@ struct Result final {
 };
 
 [[nodiscard]] Result runOne(
-    const enginelab::EngineConfig& config, bool completeSweep) {
+    const enginelab::EngineConfig& config, bool completeSweep, bool trace,
+    double startRpm) {
     Result result;
     result.engine = config.name;
     const auto entryRpm = sweepEntryRpm(config);
@@ -89,6 +90,7 @@ struct Result final {
     result.requestedHighStartRpm = std::min(
         ceilingRpm - 300.0,
         std::max(entryRpm + 900.0, entryRpm * 1.75));
+    if (startRpm > 0.0) result.requestedHighStartRpm = startRpm;
 
     enginelab::EngineRuntime runtime(config);
     runtime.setRealtimeThrottleEnabled(false);
@@ -132,6 +134,7 @@ struct Result final {
     const auto minimumRunningRpm =
         std::max(300.0, config.idleRpm * 0.40);
     auto run = runtime.currentDynoRun();
+    auto lastTraceTime = -1.0;
     const auto validPointCount = [](const enginelab::DynoRun& candidate) {
         return static_cast<std::size_t>(std::count_if(
             candidate.points.begin(), candidate.points.end(),
@@ -158,6 +161,13 @@ struct Result final {
             result.maximumProgress, state.dynoProgress);
         if (state.rpm < minimumRunningRpm)
             result.stalled = true;
+        if (trace && state.simulationTimeSeconds - lastTraceTime >= 0.02) {
+            lastTraceTime = state.simulationTimeSeconds;
+            std::cout << "trace t=" << state.simulationTimeSeconds - dynoStartSimulationTime
+                      << " rpm=" << state.rpm << " preparing=" << state.dynoPreparing
+                      << " target=" << state.dynoTargetRpm << " brake=" << state.dynoBrakeTorqueNm
+                      << " recoveries=" << state.dynoRecoveryCount << " points=" << validPointCount(run) << '\n';
+        }
     }
 
     result.finalRpm = state.rpm;
@@ -289,6 +299,8 @@ int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
     std::string filter;
     bool completeSweep = false;
+    bool trace = false;
+    double startRpm = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc)
@@ -297,9 +309,13 @@ int main(int argc, char** argv) {
             filter = argv[++index];
         else if (argument == "--complete")
             completeSweep = true;
+        else if (argument == "--trace")
+            trace = true;
+        else if (argument == "--start-rpm" && index + 1 < argc)
+            startRpm = std::stod(argv[++index]);
         else if (argument == "--help") {
             std::cout << "Usage: EngineLabUserDynoHarness "
-                         "[--filter NAME] [--complete] "
+                         "[--filter NAME] [--complete] [--trace] [--start-rpm RPM] "
                          "[--catalog-root PATH]\n";
             return 0;
         } else {
@@ -349,7 +365,7 @@ int main(int argc, char** argv) {
     std::size_t passed = 0;
     for (const auto* entry : selectedEntries) {
         ++matched;
-        const auto result = runOne(entry->config, completeSweep);
+        const auto result = runOne(entry->config, completeSweep, trace, startRpm);
         const auto pass = result.failure.empty();
         if (pass) ++passed;
         std::cout << std::left << std::setw(31) << result.engine
