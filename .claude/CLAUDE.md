@@ -23,6 +23,7 @@ system on either cycle, Roots and centrifugal superchargers, compressor surge
 (off by default), trumpets and pod filters, the ECU's redline on the
 tachometer, a split turbo's spool, no size cap. Released in 0.7.0: the rotary
 (VISION.md amended; a 13B at +10 % torque, -8 % power, ports estimated).
+Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
 Open, each awaiting the owner: the petrol over-efficiency (K20 209-233 g/kWh
 at WOT, real ~260-290; a fix moves every engine's sound); low EGT; the
 diesel's fixed 8 % premix; the designer's turbine law on very big engines (a
