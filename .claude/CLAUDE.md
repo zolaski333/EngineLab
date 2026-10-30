@@ -22,7 +22,7 @@ the end). Released in 0.6.0: the designer's exhaust and H-pipe, the fuel
 system on either cycle, Roots and centrifugal superchargers, compressor surge
 (off by default), trumpets and pod filters, the ECU's redline on the
 tachometer, a split turbo's spool, no size cap. Released in 0.7.0: the rotary
-(VISION.md amended; a 13B at +10 % torque, -8 % power, ports estimated).
+(VISION.md amended; a 13B at +10 % torque, -8 % power; Mazda's port timing, port areas estimated).
 Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
 0.7.2: a big designed engine's turbo reaches its boost (a 193 L six 2.96 of
 3.0 bar) and the airbox is an expansion chamber, not a point volume.

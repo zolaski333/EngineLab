@@ -398,7 +398,11 @@ all follow it. Four-strokes and two-strokes are bit-identical to before.
     an H-pipe or an X-pipe (one bank), or more than 10 rotors is refused.
 - **Catalogue**: `engines/18_mazda_13b_renesis_like.engine.yaml`, a 13B-MSP
   high-power-class twin-rotor (Mazda: 184 kW at 8,500 rpm, 211 N.m at 5,500).
-  Its port timings and sizes are estimates, not Mazda's drawings. Measured
+  Its port timing is Mazda's for the high-power primary port (service manual:
+  intake 3 deg ATDC to 65 deg ABDC, exhaust 50 deg BBDC to 3 deg BTDC; Mazda
+  Technical Review 21, 2003, gives the same exhaust and intake opening); its
+  port areas are estimates, and its secondary and auxiliary ports are one
+  equivalent port, not staged with speed. Measured
   (`DynoSweepHarness`, WOT): 233 N.m at 5,500 (+10 %), 169 kW at 8,500
   (-8 %), idle 801 rpm. Its torque is flat from 2,000 to 5,500 rpm and falls
   to 190 N.m at 8,500, where the real engine's variable intake keeps about

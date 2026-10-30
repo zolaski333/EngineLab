@@ -327,8 +327,8 @@ holds the working rules, build notes and verified traps of this repository.
   but still fall short of their maker's torque (the RD350LC-like twin makes
   29-33 N.m at 8,000 rpm against 37-40, though 34 kW at 9,000 rpm against
   the maker's 34.5);
-- a rotary's ports are estimated, not drawn from a maker's housing, and it
-  has no variable intake: the 13B makes 10 % more than Mazda's torque at
+- a rotary's port timing is Mazda's, but its port areas are estimated and it
+  has no variable intake (the 13B's three ports are one): the 13B makes 10 % more than Mazda's torque at
   5,500 rpm and 8 % less power at 8,500. A rotary is petrol-only and the 2-D
   cutaway draws its faces as pistons;
 - 0-D cylinder chambers and low-band quasi-1-D networks — this is not 3-D CFD;
