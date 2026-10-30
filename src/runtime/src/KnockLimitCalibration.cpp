@@ -99,7 +99,7 @@ KnockLimitCalibration measureFullLoadSpark(const EngineConfig& engine, const std
                 const auto absorberOutput = absorber.advance(frameSeconds, targetRpm, simulator.state());
                 EngineControls controls;
                 controls.ignitionEnabled = true;
-                controls.starterEngaged = simulator.state().rpm < 550.0;
+                controls.starterEngaged = simulator.state().rpm < dynoStarterCutoutRpm(config);
                 controls.throttle = 1.0;
                 controls.dynamometerTorqueNm = absorberOutput.brakeTorqueNm;
                 if (step < settleSteps) {

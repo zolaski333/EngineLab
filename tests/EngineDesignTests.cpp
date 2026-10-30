@@ -389,6 +389,7 @@ struct Held final {
     /** Lowest and highest speed over the measured window. */
     double minRpm { 1.0e9 };
     double maxRpm { 0.0 };
+    double boost { 0.0 };
 };
 
 // MSVC 17.4 fails with C1001 compiling this loop optimised; the simulator it
@@ -417,6 +418,7 @@ struct Held final {
         if (frame < firstMeasured) continue;
         result.rpm += state.rpm * weight;
         result.torqueNm += state.torqueNm * weight;
+        result.boost += state.boostPressureRatio * weight;
         result.minRpm = std::min(result.minRpm, state.rpm);
         result.maxRpm = std::max(result.maxRpm, state.rpm);
     }
@@ -470,6 +472,32 @@ void enginesOfAnySizeRun() {
         require(run.maxRpm - run.minRpm < 100.0, spec.name + " is held at its speed, not swung about it");
         require(bmepBar > 4.0 && bmepBar < 20.0, spec.name + " pulls at full throttle");
     }
+
+    // A 193 L marine diesel six at 3.0 bar, a MAN 32/40's size (about
+    // 38 kN.m, 25 bar): its turbo reaches the boost it was sized for. On the
+    // 130,000 rpm every wheel had, its 162 mm one held 5 MJ and read 1.3 bar
+    // after 6 s (journal 2026-10-30).
+    EngineSpec marine;
+    marine.name = "Marine Six";
+    marine.fuel = FuelType::diesel;
+    marine.cylinderCount = 6;
+    marine.boreMm = 320.0;
+    marine.strokeMm = 400.0;
+    marine.induction = Induction::turbocharged;
+    marine.boostPressureRatio = 3.0;
+    marine.overrides = { { "redline_rpm", 750.0 }, { "idle_rpm", 350.0 } };
+    const auto config = *designed(marine).config;
+    const auto litres = engineDisplacementLitres(config);
+    const auto stableNmPerRpm = 0.5 * config.rotatingInertiaKgM2 / frameSeconds * 3.14159265 / 30.0;
+    const auto run = held(config, 1.0, 0.8 * config.redlineRpm, stableNmPerRpm);
+    const auto bmepBar = run.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
+    std::cout << "  " << marine.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.torqueNm
+              << " N.m, BMEP " << bmepBar << " bar, boost " << run.boost << " of "
+              << config.forcedInduction.wastegatePressureRatio << '\n';
+    require(run.maxRpm - run.minRpm < 100.0, "the marine six is held at its speed");
+    // Still spooling 4-6 s after the throttle opened from idle: 2.69 of 2.96.
+    require(run.boost > 0.85 * config.forcedInduction.wastegatePressureRatio, "the marine six reaches its boost");
+    require(bmepBar > 20.0 && bmepBar < 30.0, "and pulls like a turbocharged medium-speed diesel");
 }
 
 /** A catalogue file may hold a design instead of a whole engine. */

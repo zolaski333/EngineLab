@@ -180,12 +180,16 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto launchActive = launchRpm > 0.0 && state.gear >= 1
         && state.vehicleSpeedMps < launchControlReleaseSpeedMps && controls.throttle > 0.5;
     const auto cutRpm = launchActive ? std::min(revLimit, launchRpm) : revLimit;
+    // The limiter's bands are a car's 220 and 180 rpm, the radial's 9 % and
+    // 7 % of its 2,450 below that: a 750 rpm marine six cut fuel from 530 rpm
+    // and sat on its limiter at its full-load speed (journal 2026-10-30).
+    const auto limiterBandScale = std::min(1.0, cutRpm / 2'450.0);
     auto limiterActive = limiterLatched_.load(std::memory_order_relaxed);
     if (state.rpm >= cutRpm) {
         limiterActive = true;
         limiterReleaseTime_.store(state.simulationTimeSeconds + config.ignition.limiterDurationSeconds,
                                   std::memory_order_relaxed);
-    } else if (state.rpm < cutRpm - 180.0
+    } else if (state.rpm < cutRpm - 180.0 * limiterBandScale
                && state.simulationTimeSeconds >= limiterReleaseTime_.load(std::memory_order_relaxed)) {
         limiterActive = false;
     }
@@ -533,7 +537,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // recover: it alone took the 2JZ idle from 728/709 rpm (sigma 12.1) to
     // 682/559 (sigma 52.8) and the Audi I5 from 760/737 to 718/594. A real
     // start-mode retard is gated on the ECU's run/start state, not on speed.
-    const auto softLimit = state.rpm > cutRpm - 220.0;
+    const auto softLimit = state.rpm > cutRpm - 220.0 * limiterBandScale;
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
     // A quickshifter cuts the way the limiter does: spark, and fuel too
     // unless the limiter keeps it, so a wet cut sends the charge unburnt to

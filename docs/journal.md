@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — The 193 L marine six reaches its 3.0 bar: five faults, none in the turbine
+
+- Designed marine six (320 x 400 mm, 3.0 bar, 750 rpm), `TurboDownstreamAuthorityHarness --spool` (now prints the wheel's speed ratio, flow coefficient, lambda, fuel and limits) and `DynoSweepHarness --settle 10`. Each fault was measured alone.
+- The designer gave every wheel the default 130,000 rpm: its 162 mm one ran 1,100 m/s at the inducer and held 5 MJ, still spooling after 8 s at 1.34 (+117 kW net on the shaft). Design speed now from the tip speed, 337 m/s at 2.3 (the TDI-like's 39 mm at 165,000) as the root of the head: 46,400 rpm, 2.96 in 3.3-4 s. Validation takes 1,000-2,000,000 rpm and inertia from 1e-10 (a 25 cc turbo).
+- A diesel's injector was sized as if open the whole cycle: 80 g/s over a 94 deg window, 1.7 g a stroke, lambda 3.0 at 3.0 bar, 10.7 kN.m. Sized on its window (as petrol DI was): 416 g/s, lambda 1.2, 38.9 kN.m. Car diesels (EA288) keep their part's injector.
+- The limiter's bands were 220 / 180 rpm whatever the speed: on a 750 rpm limit fuel was cut from 530. They scale below 2,450 rpm (the radial's 9 % / 7 %), so no catalogue engine moves. The dyno loops (sweep, turbo harness, knock calibration) kept the starter in below 550 rpm, where the simulator takes no brake: now 86 % of a slower idle.
+- On 26 kg m2 (a car diesel's 0.135 per litre) it gained 1,700 rpm in the brake's lag, hit the limiter and lost its boost (291-825 rpm). A diesel's per-litre inertia now goes as (cylinder / 0.5 L)^(2/3), a similar crank: 418 kg m2.
+- Result: 39.6 kN.m / 2.27 MW at 549 rpm, 38.7 / 2.43 at 601, 34.9 / 2.38 at 650, 3.0 bar, held within 1 rpm. A MAN 32/40 of the same bore and stroke: about 500 kW a cylinder at 720-750 rpm. `EngineDesign` now requires the six to pass 0.85 of its boost at 600 rpm (1.02 before, 2.69 after: still spooling 6 s from idle).
+- Not measured: above 650 rpm the car diesel's fuel table falls (2.6 g at 750); EGT 670-755 C at lambda 1.2; low EGT and the 8 % premix stay open.
+
 ## 2026-10-30 — CI: the 25 cc single's 16 bar was the test's absorber
 
 - GitHub CI failed `EngineLab.EngineDesign` under GCC on 0.6.0 and 0.7.0 ("Small Single pulls at full throttle"); Windows passed. A job log needs a signed-in reader: the CI now names each failed test and the lines before its FAIL in a public annotation.

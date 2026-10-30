@@ -7,6 +7,19 @@
 
 namespace enginelab {
 
+double turbochargerDesignShaftSpeedRpm(double pressureRatio, double inducerDiameterMm) {
+    // The tip speed the head needs (Euler: the head goes as the tip speed
+    // squared), anchored on the TDI-like's authored wheel: 39 mm at 165,000
+    // rpm for 2.3, 337 m/s. The default 130,000 rpm on every size put a 193 L
+    // marine six's 162 mm wheel at 1,100 m/s: 5 MJ in its shaft, still
+    // spooling after 8 s at 1.34 of its 3.0 (journal 2026-10-30).
+    constexpr double anchorTipSpeedMps = 3.14159265 * 0.039 * 165'000.0 / 60.0;
+    const auto anchorHead = std::pow(2.3, turboIsentropicExponent) - 1.0;
+    const auto head = std::pow(std::max(1.01, pressureRatio), turboIsentropicExponent) - 1.0;
+    const auto tipSpeedMps = anchorTipSpeedMps * std::sqrt(head / anchorHead);
+    return tipSpeedMps * 60.0 / (3.14159265 * 0.001 * std::max(1.0, inducerDiameterMm));
+}
+
 ForcedInductionConfig sizedTurbocharger(const EngineConfig& config) {
     const auto litres = std::max(0.05, breathingDisplacementLitres(config));
     const auto redline = std::max(1'000.0, config.redlineRpm);
@@ -28,6 +41,7 @@ ForcedInductionConfig sizedTurbocharger(const EngineConfig& config) {
     turbo.compressorInducerDiameterMm = 7.8 * std::sqrt(litres * redline / 1'000.0 * turbo.pressureRatio);
     turbo.turbineExducerDiameterMm = 0.9 * turbo.compressorInducerDiameterMm;
     turbo.shaftInertiaKgM2 = 4.75e-13 * std::pow(turbo.compressorInducerDiameterMm, 5.0);
+    turbo.designShaftSpeedRpm = turbochargerDesignShaftSpeedRpm(turbo.pressureRatio, turbo.compressorInducerDiameterMm);
     turbo.compressorBladeCount = 6;
     turbo.turbineBladeCount = 11;
     // A diesel has no throttle to close against the compressor.

@@ -18,6 +18,9 @@ namespace enginelab {
  *   square root of the air mass flow (within 5 %); turbine exducer 0.9 x it;
  * - rotor inertia 4.75e-13 kg m^2 x inducer(mm)^5, a wheel's mass times its
  *   radius squared (within 40 %: a family estimate);
+ * - design shaft speed from a tip speed that goes as the root of the head,
+ *   337 m/s at 2.3 (the TDI-like's 39 mm at 165,000 rpm): a wheel's speed
+ *   falls as it grows;
  * - wastegate port 1.5 x and blow-off valve 0.65 x the turbine area (2JZ).
  *
  * The pressure ratio follows the compression ratio, as on a street
@@ -27,6 +30,10 @@ namespace enginelab {
  * may knock, and the knock counter shows it.
  */
 [[nodiscard]] ForcedInductionConfig sizedTurbocharger(const EngineConfig&);
+
+/** A centrifugal wheel's design shaft speed, rpm, for its pressure ratio
+ *  and inducer: the tip speed above, so a bigger wheel turns slower. */
+[[nodiscard]] double turbochargerDesignShaftSpeedRpm(double pressureRatio, double inducerDiameterMm);
 
 /** The engine with sizedTurbocharger() fitted, everything else unchanged.
  *  The simulator puts the turbine on each exhaust path's collector (or at

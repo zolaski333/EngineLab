@@ -183,7 +183,7 @@ void spool(const enginelab::EngineConfig& config, double holdRpm, double partThr
             enginelab::EngineControls controls;
             controls.ignitionEnabled = true;
             controls.throttle = throttle;
-            controls.starterEngaged = simulator.state().rpm < 550.0;
+            controls.starterEngaged = simulator.state().rpm < enginelab::dynoStarterCutoutRpm(config);
             controls.dynamometerTorqueNm = output.brakeTorqueNm;
             states.push_back(simulator.step(dt, controls).state);
         }
@@ -232,6 +232,29 @@ void spool(const enginelab::EngineConfig& config, double holdRpm, double partThr
               << std::setprecision(1) << "  torque_Nm=" << mean(full, 1.0,
                      [](const enginelab::EngineState& state) {
                          return state.cycleAveragedTorqueNm; })
+              << "  comp_kW=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) { return state.compressorPowerKw; })
+              << std::setprecision(3) << "  N/Nd=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) {
+                         return state.forcedInductionShaftSpeedRatio; })
+              << "  phi/phid=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) {
+                         return state.turbochargers[0].compressorFlowCoefficientRatio; })
+              << "  eta_c=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) {
+                         return state.turbochargers[0].compressorEfficiency; })
+              << "  comp_kg_s=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) {
+                         return state.turbochargers[0].compressorMassFlowKgPerSecond; })
+              << "  lambda=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) { return state.lambda; })
+              << std::setprecision(0) << "  air_mg=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) {
+                         return state.deliveredAirMassMgPerCycle; })
+              << "  fuel_mg=" << mean(full, 1.0,
+                     [](const enginelab::EngineState& state) {
+                         return state.injectedFuelMgPerCycle; })
+              << "  limits=0x" << std::hex << full.back().activeLimits << std::dec
               << '\n';
 }
 

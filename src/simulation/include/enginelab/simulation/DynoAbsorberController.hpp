@@ -2,6 +2,8 @@
 
 #include <enginelab/foundation/EngineTypes.hpp>
 
+#include <algorithm>
+
 namespace enginelab {
 
 struct DynoAbsorberOutput final {
@@ -57,5 +59,13 @@ private:
     bool fullContactLatched_ { false };
     bool initialised_ { false };
 };
+
+/** Below this speed a dyno run keeps the starter in, and the simulator then
+ *  takes no brake: 550 rpm, or 86 % of a slower idle (the catalogue's
+ *  slowest is 640). A 350 rpm marine six held at 550 was dropped by its
+ *  brake at 549 rpm and sat 90 rpm above every lower target. */
+[[nodiscard]] inline double dynoStarterCutoutRpm(const EngineConfig& config) noexcept {
+    return config.idleRpm > 0.0 ? std::min(550.0, 0.86 * config.idleRpm) : 550.0;
+}
 
 } // namespace enginelab

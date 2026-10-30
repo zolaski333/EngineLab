@@ -690,13 +690,20 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             "Valves per side", "", diesel ? 2.0 : static_cast<double>(profile.valvesPerSide), "the use's")));
         // Below 0.22 L the per-litre rule falls under the simulator's 0.01
         // floor (a 125 cc sport single: 0.0056): it is raised to the floor.
-        const auto inertiaPerLitre = (diesel ? 0.135 : twoStroke ? 0.087 : rotary ? 0.042
+        // A diesel's 0.135 is a car's on 0.5 L cylinders; a geometrically
+        // similar crank and flywheel go as the bore to the fifth, so per litre
+        // as the cylinder to the two-thirds above that. A 193 L marine six
+        // on 26 kg m2 gained 1,700 rpm inside the brake's 0.13 s lag, hit its
+        // limiter and lost its boost (journal 2026-10-30).
+        const auto similarCrank = diesel ? std::max(1.0, std::pow(litres / countD / 0.5, 2.0 / 3.0)) : 1.0;
+        const auto inertiaPerLitre = (diesel ? 0.135 * similarCrank : twoStroke ? 0.087 : rotary ? 0.042
             : profile.inertiaKgM2PerLitre) * litres;
         config.rotatingInertiaKgM2 = derive("rotating_inertia_kg_m2", "Rotating inertia", "kg m2",
             std::max(minimumRotatingInertiaKgM2, inertiaPerLitre),
             inertiaPerLitre < minimumRotatingInertiaKgM2
                 ? "per litre gives " + format(inertiaPerLitre) + ", raised to the simulator's floor"
                 : rotary ? std::string("the catalogue 13B's, per litre swept in 720 deg (0.11 on 2.6 L)")
+                : diesel && similarCrank > 1.0 ? std::string("a car diesel's 0.135 per litre, x (cylinder / 0.5 L)^(2/3): a similar crank")
                 : std::string("per litre, the use's (cars 0.09-0.10, sport bikes 0.045, cruisers 0.11)"));
         config.frictionCoefficient = derive("friction_coefficient", "Friction coefficient", "",
             diesel ? 0.16 : twoStroke ? 0.07 : rotary ? 0.11 : profile.frictionCoefficient,
@@ -1457,18 +1464,20 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             config.injection.mode = InjectionMode::direct;
         }
         // Rich full-load air flow at 1.1 x displacement and the boost, at the
-        // redline; each injector at most 80 % open. A petrol direct injector
-        // meters only inside its window, which is a share of the cycle.
+        // redline; each injector at most 80 % open. A direct injector meters
+        // only inside its window, which is a share of the cycle: a diesel's
+        // 94 deg sized as if open the whole cycle held a 193 L marine six to
+        // 1.7 g a stroke, lambda 3.0 at 3.0 bar (journal 2026-10-30).
         const auto airKgPerSecond = 1.18 * litres * 1.0e-3 * config.redlineRpm / (twoStroke ? 60.0 : 120.0) * 1.1 * boost;
         const auto fuelMgPerSecond = airKgPerSecond / (diesel ? 18.0 : 12.0) * 1.0e6;
-        const auto petrolDirectWindow = !diesel && fuelSystem == FuelSystem::directInjection
-            ? (twoStroke ? 70.0 : std::fmod(config.injection.endAngleDegrees - config.injection.startAngleDegrees
-                + cycleDegrees, cycleDegrees)) / cycleDegrees
+        const auto directWindow = diesel || fuelSystem == FuelSystem::directInjection
+            ? (twoStroke && !diesel ? 70.0 : std::fmod(config.injection.endAngleDegrees
+                - config.injection.startAngleDegrees + cycleDegrees, cycleDegrees)) / cycleDegrees
             : 1.0;
-        if (!(petrolDirectWindow > 0.0))
+        if (!(directWindow > 0.0))
             throw std::invalid_argument("The injection window ends where it starts");
         const auto injectorFlow = std::max(config.injection.injectorFlowMgPerSecond,
-            fuelMgPerSecond / countD / 0.8 / petrolDirectWindow);
+            fuelMgPerSecond / countD / 0.8 / directWindow);
         config.injection.injectorFlowMgPerSecond = twoStroke || carburetted ? injectorFlow
             : derive("injector_flow_mg_s", "Injector flow", "mg/s", injectorFlow,
                 "the part's, or the full-load fuel at 80 % duty if more");
@@ -1630,6 +1639,7 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             turbo.compressorInducerDiameterMm = 7.8 * std::sqrt(litres * config.redlineRpm / 1'000.0 * boost);
             turbo.turbineExducerDiameterMm = 0.9 * turbo.compressorInducerDiameterMm;
             turbo.shaftInertiaKgM2 = 4.75e-13 * std::pow(turbo.compressorInducerDiameterMm, 5.0);
+            turbo.designShaftSpeedRpm = turbochargerDesignShaftSpeedRpm(boost, turbo.compressorInducerDiameterMm);
             config = withTurbochargerCount(std::move(config), spec.turbochargerCount);
         } else if (spec.induction == Induction::supercharged
                    || spec.induction == Induction::centrifugalSupercharged) {

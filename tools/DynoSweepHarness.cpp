@@ -274,7 +274,7 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             dt, targetRpm, simulator.state());
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
-        controls.starterEngaged = simulator.state().rpm < 550.0;
+        controls.starterEngaged = simulator.state().rpm < enginelab::dynoStarterCutoutRpm(config);
         controls.throttle = startsShut && controls.starterEngaged ? 0.0 : 1.0;
         controls.dynamometerTorqueNm =
             absorberOutput.brakeTorqueNm;
