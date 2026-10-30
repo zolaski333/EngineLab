@@ -384,6 +384,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "compression_ignition_delay_scale" << YAML::Value << config.combustionCalibration.compressionIgnitionDelayScale
         << YAML::Key << "compression_ignition_mixing_time_s" << YAML::Value << config.combustionCalibration.compressionIgnitionMixingTimeSeconds
         << YAML::Key << "compression_ignition_premixed_fraction" << YAML::Value << config.combustionCalibration.compressionIgnitionPremixedFraction
+        << YAML::Key << "compression_ignition_mixed_premix" << YAML::Value << config.combustionCalibration.compressionIgnitionMixedPremix
         << YAML::Key << "cycle_variation_cov" << YAML::Value << config.combustionCalibration.cycleVariationCoefficientOfVariation
         << YAML::Key << "cycle_variation_correlation" << YAML::Value << config.combustionCalibration.cycleVariationCorrelation
         << YAML::EndMap
@@ -980,6 +981,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.compressionIgnitionDelayScale = calibration["compression_ignition_delay_scale"].as<double>(config.combustionCalibration.compressionIgnitionDelayScale);
             config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration["compression_ignition_mixing_time_s"].as<double>(config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
             config.combustionCalibration.compressionIgnitionPremixedFraction = calibration["compression_ignition_premixed_fraction"].as<double>(config.combustionCalibration.compressionIgnitionPremixedFraction);
+            config.combustionCalibration.compressionIgnitionMixedPremix = calibration["compression_ignition_mixed_premix"].as<bool>(config.combustionCalibration.compressionIgnitionMixedPremix);
             config.combustionCalibration.cycleVariationCoefficientOfVariation = calibration["cycle_variation_cov"].as<double>(config.combustionCalibration.cycleVariationCoefficientOfVariation);
             config.combustionCalibration.cycleVariationCorrelation = calibration["cycle_variation_correlation"].as<double>(config.combustionCalibration.cycleVariationCorrelation);
         }

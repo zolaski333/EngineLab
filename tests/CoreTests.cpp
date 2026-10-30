@@ -1070,6 +1070,46 @@ int main() {
         require(usefulBurnDuration > 0.0 && usefulBurnDuration < 0.008,
                 "compression-ignition duration must exclude the negligible numerical burn tail");
 
+        // The premixed charge is the fuel that has mixed by autoignition, so
+        // a longer delay burns more of it in the first rapid phase (Watson's
+        // correlation). A fixed fraction burnt the same share whatever the
+        // delay: over the first 100 us, 0.165 and 0.161 at 0.43 and 0.73 ms of
+        // delay, against 0.216 and 0.274 now. Both chambers burn completely.
+        const auto earlyBurnShare = [&](double temperatureK, double& delaySeconds) {
+            enginelab::GasCell chamber;
+            chamber.configureFuelChemistry(
+                diesel.molarMassGramsPerMole * 0.001,
+                diesel.oxygenMolesPerFuelMole,
+                diesel.productMolesPerFuelMole);
+            chamber.initialise(5'000.0, 0.055, temperatureK,
+                { 0.002, 0.00752, 0.00008, 0.0 });
+            const auto fuelBefore = chamber.mixture().fuelMoles;
+            enginelab::CompressionIgnitionState state;
+            auto early = 0.0;
+            auto stepsSinceIgnition = -1;
+            for (int step = 0; step < 400 && stepsSinceIgnition < 4; ++step) {
+                const auto result = enginelab::CompressionIgnitionModel::advance(
+                    state, chamber, diesel, calibration,
+                    { 700.0 + static_cast<double>(step) * 0.2, 9.0, true },
+                    25.0e-6);
+                if (state.autoIgnited && stepsSinceIgnition < 0) {
+                    stepsSinceIgnition = 0;
+                    delaySeconds = static_cast<double>(step + 1) * 25.0e-6;
+                }
+                if (stepsSinceIgnition >= 0) {
+                    early += result.reaction.burnedFuelMoles;
+                    ++stepsSinceIgnition;
+                }
+            }
+            return early / fuelBefore;
+        };
+        auto shortDelay = 0.0, longDelay = 0.0;
+        const auto shortDelayShare = earlyBurnShare(950.0, shortDelay);
+        const auto longDelayShare = earlyBurnShare(760.0, longDelay);
+        require(longDelay > 1.5 * shortDelay && shortDelayShare > 0.0
+                && longDelayShare > 1.15 * shortDelayShare,
+                "a longer compression-ignition delay must premix, and so burn early, more of its fuel");
+
         enginelab::GasCell coldChamber;
         coldChamber.configureFuelChemistry(
             diesel.molarMassGramsPerMole * 0.001,

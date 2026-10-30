@@ -1060,9 +1060,16 @@ struct CombustionCalibrationConfig final {
     /** Mixing-controlled diffusion-burn time constant after autoignition. */
     double compressionIgnitionMixingTimeSeconds { 0.0014 };
     /** Fraction of fuel accumulated during ignition delay which burns in the
-     *  initial premixed phase; the remainder is mixing controlled.
+     *  initial premixed phase; the remainder is mixing controlled. Used only
+     *  when `compressionIgnitionMixedPremix` is off.
      */
     double compressionIgnitionPremixedFraction { 0.20 };
+    /** The premixed share is the fuel that has mixed by autoignition: from
+     *  the start of injection the delay's fuel mixes at the diffusion burn's
+     *  own rate, so a long delay (idle, cold, low cetane) premixes more and a
+     *  long injection less, as Watson's correlation reads. Off, the fixed
+     *  fraction above applies to the fuel present at ignition. */
+    bool compressionIgnitionMixedPremix { true };
     /** Standard deviation of the physical burn-rate multiplier from one
      * cylinder cycle to the next. Zero is an exact deterministic bypass. */
     double cycleVariationCoefficientOfVariation { 0.0 };

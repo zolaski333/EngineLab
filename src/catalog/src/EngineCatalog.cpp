@@ -1085,6 +1085,7 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(calibration, "compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale);
         assignIfPresent(calibration, "compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
         assignIfPresent(calibration, "compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
+        assignIfPresent(calibration, "compression_ignition_mixed_premix", config.combustionCalibration.compressionIgnitionMixedPremix);
         assignIfPresent(calibration, "cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation);
         assignIfPresent(calibration, "cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation);
     }

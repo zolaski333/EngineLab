@@ -293,6 +293,16 @@ target_compile_definitions(EngineLabTurboFitTests PRIVATE
 enginelab_set_warnings(EngineLabTurboFitTests)
 add_test(NAME EngineLab.TurboFit COMMAND EngineLabTurboFitTests)
 
+add_executable(EngineLabDynoHoldTests DynoHoldTests.cpp)
+target_link_libraries(EngineLabDynoHoldTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Runtime)
+target_compile_definitions(EngineLabDynoHoldTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabDynoHoldTests)
+add_test(NAME EngineLab.DynoHold COMMAND EngineLabDynoHoldTests)
+set_tests_properties(EngineLab.DynoHold PROPERTIES TIMEOUT 300)
+
 add_executable(EngineLabEcuCalibrationIntegrationTests EcuCalibrationIntegrationTests.cpp)
 target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)

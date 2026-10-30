@@ -5,6 +5,30 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — The petrol over-efficiency and the low EGT are the gas's constant gamma
+
+- K20 BSFC 209-233 g/kWh at WOT (real ~250-290). Gross indicated efficiency 0.41 at 7,000 rpm, lambda 0.90; a fuel-air cycle at r = 11.5 gives ~0.45 and a real engine ~0.37. Phasing is not it: `CombustionPhasing` CA50 11 / 9 / 8 deg at 2,200 / 3,000 / 4,200 rpm.
+- Refuted: Woschni's combustion term on spark engines (as the diesel has it). `DynoSweepHarness` catalogue: BSFC only +2-7 %, EGT 10-50 C *lower* (the hotter wall takes it from the exhaust), torque -15 % on the 13B.
+- The cause is the gas: N2 at 5/2 R and the products at gamma 1.26 at every temperature expand a burnt charge at ~1.35. Thermally perfect species (Cv linear in T, JANAF 300-2,600 K, cylinders and 1-D ducts alike), branch `exp/thermally-perfect-gas` (d063387): K20 BSFC min 239 g/kWh, gross efficiency 0.367, EGT +40-70 C over the catalogue, gross IMEP -11 to -13 % at every speed, VE and pmep unchanged.
+- Not merged: makers' points go from torque ~+5 % / power ~0 % to torque ~-9 % / power ~-17 %; eight leave 15 % (`CatalogReference` fails). The constant gamma hid a 10-15 % shortfall of air or friction. The high-speed friction term added on 2026-08-27 is 0.1-0.24 bar, not it; the CP2's Cycle World curve falls 0.876 from 6,500 to 8,750 rpm and the simulator 0.78 (0.81 before): a high-rpm breathing or friction deficit that predates the gas.
+- To merge, one measured reference for the air (a VE or an airflow at WOT on a catalogue engine) or for the friction (a motored strip). No per-engine retune. Low EGT is the same cause: closed with this entry, not fixed separately.
+
+## 2026-10-30 — The diesel's premixed share is the fuel mixed by autoignition
+
+- The premixed burn was a fixed 8 % (the TDI and designed diesels; 20 % by default) of the fuel at ignition, whatever the delay. Watson's correlation (beta = 1 - 0.926 phi^0.37 / tau_id^0.26) gives about half at idle and nearly none at full load.
+- Now the fuel injected mixes from the start of injection at the diffusion burn's own rate (mixing time / turbulence, x rail factor); what has mixed at autoignition is the premixed inventory (capped at 0.8). TDI: ~26 % at idle, ~14 % at 2,000 rpm full load. `compression_ignition_mixed_premix: false` keeps the fixed share; the inert 0.08 values are gone.
+- TDI `DynoSweepHarness --step 500`, old -> new: torque -0.14 % at 2,000 rpm, within 0.07 % elsewhere; Pmax +0.2-0.5 bar; held sd unchanged. `PhysicsPerfHarness --trace 1 --idle`: Pmax 49.3 -> 51.3 bar, max dp/dtheta 1.84 -> 2.99 bar/deg.
+- AbClipRenderer TDI (`listening-test/2026-10-30-premix/`), raw level per octave 63 Hz-8 kHz: idle +1.1 / 1.3 / 2.0 / 3.4 / 3.9 / 0.5 / 0.8 / 4.2 dB (the clatter); rev within 0.07 dB.
+- CoreTests: a 760 K chamber (0.73 ms delay) must burn 1.15 times the share of a 950 K one (0.43 ms) over its first 100 us: 1.27 now, 0.98 with the fixed share (fails). Not measured: against a measured heat-release rate; the TDI has no pilot, which would cut the main's premix on a real EA288.
+
+## 2026-10-30 — `UserDynoHighRpmStart`: the absorber's virtual inertia
+
+- The test failed about once in 30 starts. `UserDynoHarness --start-rpm`, 31 CP2 starts at 2,400-4,200 rpm: one (3,960) fell to 555 rpm, under the 560 stall line, after the dyno caught it near 1,800 rpm; `--trace` showed a brake limit cycle its stall recovery re-entered 293 times.
+- The absorber's acceleration feedback (scale / 800 N.m per rpm/s) is a virtual inertia scaled with displacement alone: 26-56 times the shaft's own on light shafts. Behind the 8 and 6 rad/s filters and a frame's delay it swung the brake. `DynoSweepHarness --step 1000`, held scatter uncapped: Hayabusa 15-61 rpm, 13B 16-46, CP3/CP4 20-36.
+- Capped at 16 times the shaft (k4, k8 and k16 each 31/31 starts, worst minimum 1,363 / 1,206 / 740 rpm; k16 kept for the least torque change): mean held sd over the catalogue 9.89 -> 1.66 rpm, worst 8.75; torque mean -0.03 %, worst 1.3 % (boosted points at 2,000-4,000 rpm); the K20 at 7,000 rpm +0.7 %.
+- New `DynoHold` test: the Hayabusa and the 13B held at 3,000 rpm after a 2,000 rpm hold, as the sweep steps. Uncapped the Hayabusa scatters 62.6 rpm (fails), capped 8.0; the 13B 0.8. A synthetic single-inertia plant, even with firing ripple and a cycle-held feed-forward, stays stable uncapped: the cycle needs the simulator's own lags.
+- Not measured: the start test over more than 31 starts with the cap (62/62 with a 60 rpm band as well).
+
 ## 2026-10-30 — The intake's airbox was a point compliance above its first mode
 
 - New `IntakeTransferHarness`: one runner driven sinusoidally, the mouth's level as authored, with the element alone (pod, no box) and bare. K20-like (4.5 L box, 250 x 70 mm snorkel): the box's insertion loss at 1.6 / 2.2 / 3.2 / 4.5 kHz was 16.0 / 22.7 / 29.5 / 35.4 dB, rising 6 dB an octave like a shunt compliance. A 4.5 L box on a 70 mm duct has a plane-wave bound of ~12 dB (area ratio 14) and modes from ~800 Hz.

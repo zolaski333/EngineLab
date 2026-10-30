@@ -429,10 +429,17 @@ the instantaneous cylinder back-pressure is subtracted.
   correction, integrated (Livengood-Wu) from that start: the unburned fuel a
   cycle leaves in its residual is not integrated from mid-compression, which
   used to light every cycle before its own injection and needed a delay
-  scale of 3 to land. The burn then has a premixed part, a fixed share of the
-  fuel present at ignition, and a mixing-controlled rest.
+  scale of 3 to land. The burn then has a premixed part and a
+  mixing-controlled rest. The premixed part is the fuel that has mixed by
+  autoignition: from the start of injection the injected fuel mixes at the
+  diffusion burn's own rate (the mixing time below), so a long delay against
+  a short injection premixes more. On the TDI it is ~26 % at idle and ~14 %
+  at full load and 2,000 rpm, the direction of Watson's correlation (about
+  half at light load, little at full load); it was a fixed 8 %.
+  `compression_ignition_mixed_premix: false` restores a fixed
+  `compression_ignition_premixed_fraction` of the fuel present at ignition.
 - On a diesel, the mixing-controlled burn (and the premixed burn, a fixed
-  fraction of its time) is calibrated at the injector's rated pressure and
+  fraction of its time, and the premixing before ignition) is calibrated at the injector's rated pressure and
   scales with sqrt(rated / rail pressure): the jet's speed, which drives the
   mixing, goes as the square root of the pressure drop (Chmela and Orthaber).
   Halving the TDI's rail pressure at full load (3,000 rpm) lowers its firing

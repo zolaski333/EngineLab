@@ -206,7 +206,7 @@ file's header says which question it answers and lists its options.
 | `ShiftTransientHarness` | the exhaust mass-flow step (the "crack") of a clutchless full-throttle upshift, and with `--audio-output` its sound |
 | `ThermalHarness` | coolant and oil temperatures over repeated dyno passes, tied to the power lost from pass to pass |
 | `TurboDownstreamAuthorityHarness` | does the exhaust after the turbine change a turbocharged engine's power? `--spool <rpm>` instead steps the throttle at one held speed and prints the spool second by second: boost, shaft speed against design (`N/Nd`), flow coefficient against design, compressor efficiency and power, lambda, the cylinder's air and fuel, and the active limits |
-| `UserDynoHarness` | the dyno started as a user does, from an engine already running above the first point: a preparation phase, no stall, points from the low end |
+| `UserDynoHarness` | the dyno started as a user does, from an engine already running above the first point: a preparation phase, no stall, points from the low end. `--start-rpm RPM` sets the speed the dyno is started from; `--trace` prints speed, target, brake, recoveries and points every 20 ms |
 
 `WasapiLoopbackRecorder.cpp` is not part of the build: a standalone recorder of
 the sound card's output (compile line in its header), used to measure another

@@ -9,6 +9,8 @@ struct CompressionIgnitionState final {
     double livengoodWuIntegral { 0.0 };
     double ignitionDelaySeconds { 0.0 };
     double premixedFuelMolesRemaining { 0.0 };
+    /** Fuel mixed during the delay, from the start of injection. */
+    double preparedFuelMoles { 0.0 };
     double cumulativeBurnedFuelMoles { 0.0 };
     double cycleFuelReferenceMoles { 0.0 };
     double elapsedBurnSeconds { 0.0 };
