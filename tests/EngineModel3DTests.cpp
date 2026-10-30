@@ -1257,7 +1257,49 @@ void checkTwoStrokeDrawing(EngineConfig config) {
     require(without.powerValvePart(0) == 0xFFFFU, label + "without a power valve no blade is drawn");
 }
 
+/** An H-pipe is drawn as an H: each side's pipe keeps its lane through its
+ *  junction, and the balance pipe crosses between them. Its side branch was
+ *  laid out as a fork and a collector: the left pipe stepped aside and the
+ *  right one ran down the middle (owner report 2026-10-30). */
+void checkHPipeDrawing() {
+    EngineSpec spec;
+    spec.name = "Designed H-pipe V8";
+    spec.use = EngineUse::sportCar;
+    spec.layout = EngineLayout::vLayout;
+    spec.cylinderCount = 8;
+    spec.displacementLitres = 5.0;
+    spec.exhaustSystem = ExhaustSystem::dualHPipe;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "an H-pipe V8 designs: " + designed.error);
+    const EngineModel3D model(*designed.config);
+    const auto duct = [&](std::uint32_t id) -> const SceneDuct& {
+        const auto found = std::find_if(model.ducts().begin(), model.ducts().end(), [id](const SceneDuct& candidate) {
+            return candidate.kind == DuctKind::exhaustComponent && candidate.elementId == id
+                && candidate.centreline.size() >= 2U;
+        });
+        require(found != model.ducts().end(), "the H's pipe " + std::to_string(id) + " is drawn");
+        return *found;
+    };
+    const auto across = [](Vec3 a, Vec3 b) { return std::hypot(a.x - b.x, a.y - b.y); };
+    const auto& leftFront = duct(400);
+    const auto& rightFront = duct(401);
+    const auto& leftRear = duct(500);
+    const auto& rightRear = duct(501);
+    const auto& balance = duct(460);
+    const auto lanes = across(leftFront.centreline.back(), rightFront.centreline.back());
+    const auto bore = 2.0F * rightRear.radii.front();
+    const auto leftStep = across(leftFront.centreline.back(), leftRear.centreline.front());
+    const auto rightStep = across(rightFront.centreline.back(), rightRear.centreline.front());
+    const auto crossing = across(balance.centreline.front(), balance.centreline.back());
+    std::cout << "  H-pipe: lanes " << lanes << " mm apart, rear pipes step " << leftStep << " / " << rightStep
+              << " mm, balance pipe spans " << crossing << " mm\n";
+    require(lanes > 2.0F * bore, "the two sides run in lanes of their own");
+    require(leftStep < 0.25F * bore && rightStep < 0.25F * bore, "each side's pipe keeps its lane through the H");
+    require(crossing > lanes - 2.0F * bore, "the balance pipe crosses from one side to the other");
+}
+
 int main() {
+    checkHPipeDrawing();
     checkTubeContact();
     checkRouter();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);

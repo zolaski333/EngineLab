@@ -122,6 +122,11 @@ struct Node final {
     const ExhaustComponentConfig* component {};
     std::vector<std::size_t> ins;
     std::vector<std::size_t> outs;
+    /** How many of `ins` and `outs`, at their ends, are side branches (an
+        H's balance pipe): they meet the junction across its flank, and take
+        no part in its lane, its place along the trunk or its slots. */
+    std::size_t sideIns {};
+    std::size_t sideOuts {};
     std::vector<std::uint32_t> cylinders;
     bool routed {};
     bool stack {};
@@ -223,8 +228,14 @@ void buildNodes(PathLayout& layout) {
     const auto byPort = [rank](const auto& a, const auto& b) { return rank(a.first) < rank(b.first); };
     std::stable_sort(ins.begin(), ins.end(), byPort);
     std::stable_sort(outs.begin(), outs.end(), byPort);
-    for (const auto& [port, link] : ins) layout.nodes[link.first].ins.push_back(link.second);
-    for (const auto& [port, link] : outs) layout.nodes[link.first].outs.push_back(link.second);
+    for (const auto& [port, link] : ins) {
+        layout.nodes[link.first].ins.push_back(link.second);
+        if (port == exhaustSideBranchPort) ++layout.nodes[link.first].sideIns;
+    }
+    for (const auto& [port, link] : outs) {
+        layout.nodes[link.first].outs.push_back(link.second);
+        if (port == exhaustSideBranchPort) ++layout.nodes[link.first].sideOuts;
+    }
 
     // Upstream first; a malformed cycle is broken rather than followed.
     std::vector<int> state(layout.nodes.size(), 0);
@@ -274,14 +285,19 @@ void buildNodes(PathLayout& layout) {
     return found == list.end() ? 0U : static_cast<std::size_t>(std::distance(list.begin(), found));
 }
 
+[[nodiscard]] std::size_t throughIns(const Node& node) noexcept { return node.ins.size() - node.sideIns; }
+[[nodiscard]] std::size_t throughOuts(const Node& node) noexcept { return node.outs.size() - node.sideOuts; }
+
 /** Lane of the `k`-th branch leaving `node`. An X (as many outputs as
-    inputs) sends each output back to the side its input came from. */
+    inputs) sends each output back to the side its input came from; a side
+    branch leaves from the junction itself. */
 [[nodiscard]] Vec3 outLane(const PathLayout& layout, const Node& node, std::size_t k) {
-    const auto n = node.outs.size();
+    const auto n = throughOuts(node);
+    if (k >= n) return node.lane;
     if (n <= 1U) return node.turbo ? node.exitLane : node.lane;
-    if (node.ins.size() == n) return layout.nodes[node.ins[k]].lane;
+    if (throughIns(node) == n) return layout.nodes[node.ins[k]].lane;
     float widest = node.body;
-    for (const auto out : node.outs) widest = std::max(widest, layout.nodes[out].body);
+    for (std::size_t j = 0; j < n; ++j) widest = std::max(widest, layout.nodes[node.outs[j]].body);
     return node.lane + node.spread * ((static_cast<float>(k) - 0.5F * static_cast<float>(n - 1U)) * 1.9F * widest);
 }
 
@@ -295,7 +311,15 @@ void buildNodes(PathLayout& layout) {
 }
 
 [[nodiscard]] Vec3 slotPosition(const Node& node, std::size_t index) {
-    return slot(at(node.lane, node.zIn), index, node.ins.size() + node.cylinders.size(), slotRadius(node), node.spread);
+    return slot(at(node.lane, node.zIn), index, throughIns(node) + node.cylinders.size(), slotRadius(node), node.spread);
+}
+
+/** Where a side branch meets `node`: on its flank, halfway along it, facing
+    `toward`; `direction` is the way out of the junction. */
+[[nodiscard]] Vec3 flank(const Node& node, Vec3 toward, Vec3& direction) {
+    const auto across = Vec3 { toward.x - node.lane.x, toward.y - node.lane.y, 0.0F };
+    direction = length(across) > 1.0e-3F ? normalise(across) : node.spread;
+    return at(node.lane, 0.5F * (node.zIn + node.zOut)) + direction * (0.5F * node.body);
 }
 
 [[nodiscard]] Vec3 inSlot(const Node& node, std::size_t k) {
@@ -315,11 +339,13 @@ void buildNodes(PathLayout& layout) {
     router's clearance between them. */
 void sizeSlots(PathLayout& layout, const std::vector<PortAnchor>& ports, float gap) {
     for (auto& node : layout.nodes) {
-        const auto n = node.ins.size() + node.cylinders.size();
+        const auto n = throughIns(node) + node.cylinders.size();
         if (n < 2U) continue;
         float entry = 0.0F;
-        for (const auto in : node.ins)
-            entry = std::max(entry, 0.5F * std::max(layout.nodes[in].diameter, layout.nodes[in].outletDiameter));
+        for (std::size_t k = 0; k < throughIns(node); ++k) {
+            const auto& in = layout.nodes[node.ins[k]];
+            entry = std::max(entry, 0.5F * std::max(in.diameter, in.outletDiameter));
+        }
         for (const auto cylinder : node.cylinders)
             if (const auto* port = portOf(ports, cylinder)) entry = std::max(entry, 0.5F * port->diameterMm);
         const auto half = entry + 0.5F * gap;
@@ -328,10 +354,20 @@ void sizeSlots(PathLayout& layout, const std::vector<PortAnchor>& ports, float g
     }
 }
 
+/** Where a side branch from `node` heads: what it joins, else across. */
+[[nodiscard]] Vec3 sideTarget(const PathLayout& layout, const Node& node, std::size_t k) {
+    const auto& branch = layout.nodes[node.outs[k]];
+    return branch.outs.empty() ? node.lane + node.spread : layout.nodes[branch.outs.front()].lane;
+}
+
 [[nodiscard]] Vec3 outSlot(const PathLayout& layout, const Node& node, std::size_t k) {
-    const auto n = node.outs.size();
+    const auto n = throughOuts(node);
+    if (k >= n) {
+        Vec3 direction;
+        return flank(node, sideTarget(layout, node, k), direction);
+    }
     if (node.turbo) return at(node.exitLane, node.exitZ);
-    if (n > 1U && node.ins.size() == n) {
+    if (n > 1U && throughIns(node) == n) {
         // An X: each branch leaves on the side it is heading to.
         const auto target = outLane(layout, node, k);
         const auto offset = Vec3 { target.x - node.lane.x, target.y - node.lane.y, 0.0F };
@@ -459,7 +495,11 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         Vec3 laneSum {};
         int lanes = 0;
         bool spreadSet = false;
-        for (const auto in : node.ins) {
+        // A side branch comes in across: it neither moves the junction along
+        // the trunk nor pulls it towards the pipe it comes from (an H's merge
+        // sat halfway between the two sides).
+        for (std::size_t k = 0; k < throughIns(node); ++k) {
+            const auto in = node.ins[k];
             const auto& upstream = nodes[in];
             float candidate {};
             if (upstream.routed && upstream.ins.empty()) {
@@ -550,7 +590,12 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         return true;
     }
     const auto& parent = layout.nodes[node.ins.front()];
-    at = outSlot(layout, parent, indexIn(parent.outs, i));
+    const auto k = indexIn(parent.outs, i);
+    if (k >= throughOuts(parent)) {
+        at = flank(parent, sideTarget(layout, parent, k), direction);
+        return true;
+    }
+    at = outSlot(layout, parent, k);
     direction = zAxis;
     return true;
 }
@@ -560,12 +605,12 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
     cross, so the pipes do not have to pass round one another. */
 void assignSlots(PathLayout& layout, const std::vector<PortAnchor>& ports) {
     for (auto& node : layout.nodes) {
-        const auto n = node.ins.size() + node.cylinders.size();
+        const auto n = throughIns(node) + node.cylinders.size();
         node.slotOf.resize(n);
         for (std::size_t k = 0; k < n; ++k) node.slotOf[k] = k;
         std::vector<std::size_t> routed;
         std::vector<Vec3> from;
-        for (std::size_t k = 0; k < node.ins.size(); ++k) {
+        for (std::size_t k = 0; k < throughIns(node); ++k) {
             const auto upstream = node.ins[k];
             if (!layout.nodes[upstream].routed) continue;
             Vec3 start, direction;
@@ -822,8 +867,8 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
 
             // Joins with no authored duct: ports and side branches straight
             // onto a junction.
-            const auto slots = node.ins.size() + node.cylinders.size();
-            for (std::size_t k = 0; slots > 1U && k < node.ins.size(); ++k) {
+            const auto slots = throughIns(node) + node.cylinders.size();
+            for (std::size_t k = 0; slots > 1U && k < throughIns(node); ++k) {
                 const auto& upstream = nodes[node.ins[k]];
                 if (upstream.routed) continue;
                 const auto a = outSlot(layout, upstream, indexIn(upstream.outs, i));
@@ -842,7 +887,7 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
                 if (port == nullptr) continue;
                 auto joint = pieceFor(node, DuctKind::exhaustFeeder);
                 joint.authoredLengthMm = 0.0F;
-                const auto b = inSlot(node, node.ins.size() + k);
+                const auto b = inSlot(node, throughIns(node) + k);
                 joint.centreline = resample(routeWithLength(port->position, port->direction, b, zAxis, 0.0F, downAxis), 12.0F);
                 joint.radii.assign(joint.centreline.size(), 0.5F * port->diameterMm);
                 appendTube(joint.mesh, joint.centreline, joint.radii, 16);
@@ -858,9 +903,18 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             if (!routeStart(layout, i, ports, a, dirA, fromPort)) continue;
             const auto joins = !node.outs.empty();
             Vec3 b = a + dirA * node.drawLength;
+            auto dirB = joins ? zAxis : dirA;
             if (joins) {
                 const auto& downstream = nodes[node.outs.front()];
-                b = inSlot(downstream, indexIn(downstream.ins, i));
+                const auto k = indexIn(downstream.ins, i);
+                if (k >= throughIns(downstream)) {
+                    // Into the flank, from the side it comes from.
+                    Vec3 outward;
+                    b = flank(downstream, a, outward);
+                    dirB = outward * -1.0F;
+                } else {
+                    b = inSlot(downstream, k);
+                }
             }
             auto piece = pieceFor(node, DuctKind::exhaustComponent);
             piece.nearEngine = fromPort;
@@ -870,11 +924,11 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             if (fromPort && std::abs(dirA.z) > 0.9F && std::abs(a.x) + std::abs(a.y) > 1.0F)
                 bulge = normalise(Vec3 { a.x, a.y, 0.0F });
             RoutedPipe route;
-            route.points = routeWithLength(a, dirA, b, zAxis, node.drawLength, bulge);
+            route.points = routeWithLength(a, dirA, b, dirB, node.drawLength, bulge);
             route.radius = 0.5F * std::max(node.diameter, node.outletDiameter);
             route.lengthMm = node.drawLength;
             route.startDirection = dirA;
-            route.endDirection = joins ? zAxis : dirA;
+            route.endDirection = dirB;
             route.startLead = startLead(node, fromPort);
             route.endLead = joins ? endLead(node) : 0.0F;
             routes.push_back(std::move(route));

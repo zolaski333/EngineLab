@@ -236,6 +236,13 @@ public:
         }
 
         const auto& network = *path->network;
+        // A side branch (an H's balance pipe) meets its junction at right
+        // angles: it stands in the junction's column, not downstream of it.
+        // Counted as a step, it pushed one side's pipe two columns behind the
+        // other's and crossed the drawing (owner report 2026-10-30).
+        const auto lateral = [](const ExhaustComponentConnectionConfig& connection) {
+            return connection.fromPort == exhaustSideBranchPort || connection.toPort == exhaustSideBranchPort;
+        };
         std::unordered_map<std::uint32_t, int> levels;
         for (const auto& component : network.components) levels.emplace(component.id, 0);
         for (std::size_t pass = 0; pass < network.components.size(); ++pass) {
@@ -244,9 +251,58 @@ public:
                 const auto source = levels.find(connection.fromComponentId);
                 const auto target = levels.find(connection.toComponentId);
                 if (source == levels.end() || target == levels.end()) continue;
-                const auto candidate = std::min(static_cast<int>(network.components.size()), source->second + 1);
+                const auto candidate = std::min(static_cast<int>(network.components.size()),
+                                                source->second + (lateral(connection) ? 0 : 1));
                 if (candidate > target->second) {
                     target->second = candidate;
+                    changed = true;
+                }
+            }
+            if (!changed) break;
+        }
+        // Each node's row follows what feeds it (the mean row of its
+        // cylinders and sources), so each bank's pipes keep to its side and a
+        // balance pipe sits between the two it joins.
+        std::unordered_map<std::uint32_t, double> rowKeys;
+        const auto cylinderCount = path->cylinderIds.size();
+        for (std::size_t index = 0; index < network.components.size(); ++index) {
+            const auto id = network.components[index].id;
+            double sum = 0.0;
+            int count = 0;
+            for (const auto& mapping : network.cylinderConnections) {
+                if (mapping.componentId != id) continue;
+                const auto row = std::find(path->cylinderIds.begin(), path->cylinderIds.end(), mapping.cylinderId);
+                sum += static_cast<double>(std::distance(path->cylinderIds.begin(), row));
+                ++count;
+            }
+            rowKeys[id] = count > 0 ? sum / count : static_cast<double>(cylinderCount + index);
+        }
+        for (std::size_t pass = 0; pass < network.components.size(); ++pass) {
+            bool changed = false;
+            for (const auto& component : network.components) {
+                if (std::any_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+                        [&](const auto& mapping) { return mapping.componentId == component.id; }))
+                    continue;
+                double sum = 0.0;
+                int count = 0;
+                // Through flow first; a node fed only sideways sits between
+                // the junctions it joins.
+                for (const auto sideways : { false, true }) {
+                    for (const auto& connection : network.connections) {
+                        if (lateral(connection) != sideways) continue;
+                        const auto other = connection.toComponentId == component.id ? connection.fromComponentId
+                            : sideways && connection.fromComponentId == component.id ? connection.toComponentId
+                            : 0U;
+                        if (other == 0U || other == component.id) continue;
+                        sum += rowKeys[other];
+                        ++count;
+                    }
+                    if (count > 0) break;
+                }
+                if (count == 0) continue;
+                const auto key = sum / count;
+                if (std::abs(key - rowKeys[component.id]) > 1.0e-9) {
+                    rowKeys[component.id] = key;
                     changed = true;
                 }
             }
@@ -262,6 +318,10 @@ public:
             static_cast<std::size_t>(maximumLevel + 1));
         for (const auto& component : network.components)
             columns[static_cast<std::size_t>(levels[component.id])].push_back(&component);
+        for (auto& column : columns)
+            std::stable_sort(column.begin(), column.end(), [&rowKeys](const auto* a, const auto* b) {
+                return rowKeys[a->id] < rowKeys[b->id];
+            });
 
         const auto graph = getLocalBounds().toFloat().reduced(16.0F);
         const auto cylinderWidth = std::min(86.0F, graph.getWidth() * 0.14F);
@@ -289,12 +349,24 @@ public:
             const auto source = nodeBounds_.find(connection.fromComponentId);
             const auto target = nodeBounds_.find(connection.toComponentId);
             if (source == nodeBounds_.end() || target == nodeBounds_.end()) continue;
-            const juce::Point<float> start { source->second.getRight(), source->second.getCentreY() };
-            const juce::Point<float> end { target->second.getX(), target->second.getCentreY() };
             juce::Path link;
-            link.startNewSubPath(start);
-            const auto controlOffset = std::max(14.0F, std::abs(end.x - start.x) * 0.38F);
-            link.cubicTo(start.x + controlOffset, start.y, end.x - controlOffset, end.y, end.x, end.y);
+            juce::Point<float> end;
+            if (lateral(connection)) {
+                // Edge to edge, across the flow.
+                const auto down = target->second.getCentreY() >= source->second.getCentreY();
+                const juce::Point<float> start { source->second.getCentreX(),
+                                                 down ? source->second.getBottom() : source->second.getY() };
+                end = { target->second.getCentreX(), down ? target->second.getY() : target->second.getBottom() };
+                const auto controlOffset = std::max(10.0F, std::abs(end.y - start.y) * 0.38F) * (down ? 1.0F : -1.0F);
+                link.startNewSubPath(start);
+                link.cubicTo(start.x, start.y + controlOffset, end.x, end.y - controlOffset, end.x, end.y);
+            } else {
+                const juce::Point<float> start { source->second.getRight(), source->second.getCentreY() };
+                end = { target->second.getX(), target->second.getCentreY() };
+                link.startNewSubPath(start);
+                const auto controlOffset = std::max(14.0F, std::abs(end.x - start.x) * 0.38F);
+                link.cubicTo(start.x + controlOffset, start.y, end.x - controlOffset, end.y, end.x, end.y);
+            }
             graphics.strokePath(link, juce::PathStrokeType(2.0F));
             graphics.fillEllipse(end.x - 3.5F, end.y - 3.5F, 7.0F, 7.0F);
         }
@@ -1392,15 +1464,15 @@ private:
         if (oldType != type) {
             auto nextInputPort = std::uint8_t { 0 };
             auto nextOutputPort = std::uint8_t { 0 };
+            // A merge and a splitter keep their side branch (an H's balance pipe).
+            const auto junction = type == ExhaustComponentType::merge || type == ExhaustComponentType::splitter;
+            const auto port = [&](std::uint8_t current, std::uint8_t& next) {
+                if (type == ExhaustComponentType::crossover && next <= 1U) return next++;
+                return junction && current == exhaustSideBranchPort ? current : unspecifiedExhaustComponentPort;
+            };
             for (auto& connection : network->connections) {
-                if (connection.toComponentId == newId)
-                    connection.toPort = type == ExhaustComponentType::crossover
-                            && nextInputPort <= 1U
-                        ? nextInputPort++ : unspecifiedExhaustComponentPort;
-                if (connection.fromComponentId == newId)
-                    connection.fromPort = type == ExhaustComponentType::crossover
-                            && nextOutputPort <= 1U
-                        ? nextOutputPort++ : unspecifiedExhaustComponentPort;
+                if (connection.toComponentId == newId) connection.toPort = port(connection.toPort, nextInputPort);
+                if (connection.fromComponentId == newId) connection.fromPort = port(connection.fromPort, nextOutputPort);
             }
         }
         selectedComponentId_ = newId;
