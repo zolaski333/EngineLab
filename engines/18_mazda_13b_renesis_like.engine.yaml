@@ -3,10 +3,13 @@ family: sport compact
 # A Wankel twin-rotor of the RX-8's 13B-MSP "Renesis" class (high-power
 # version): Mazda quotes 250 PS (184 kW) at 8,500 rpm and 211 N.m at 5,500
 # rpm, 9,000 rpm redline. Rotor geometry is the 13B's (R 105, e 15, b 80:
-# 654 cc a face). Port timing, port sizes, runners and the exhaust are
-# estimated-family values, not Mazda's drawings: a side-exhaust Renesis has
-# no overlap, its exhaust opening about 50 deg (eccentric shaft) before bottom
-# dead centre and its intake closing about 65 deg after.
+# 654 cc a face). The port timing is the high-power primary port's from
+# Mazda's RX-8 service manual (eccentric-shaft degrees): intake 3 deg ATDC to
+# 65 deg ABDC, exhaust 50 deg BBDC to 3 deg BTDC, no overlap; Mazda Technical
+# Review 21 (2003) gives the same exhaust opening and closing and intake
+# opening. The secondary (36 deg ABDC) and auxiliary (38-80 deg) ports are
+# lumped into this one: no staged intake. Port sizes, runners and the exhaust
+# are estimated-family values.
 engine:
   name: 13B Renesis-like 2-Rotor
   cycle: rotary

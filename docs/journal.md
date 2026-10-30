@@ -5,6 +5,11 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — The 13B's port timing is Mazda's
+
+- The catalogue 13B was written with "estimated" ports. Mazda's RX-8 service manual (high power) gives intake primary 3 deg ATDC to 65 deg ABDC, secondary close 36, auxiliary 38/80, exhaust 50 deg BBDC to 3 deg BTDC; Mazda Technical Review 21 (2003, side-exhaust RE) gives EO 50 BBDC (72 on the peripheral port), EC 3 BTDC, IO 3 ATDC. The catalogue's cams (intake 332 deg about 169, exhaust 317 about 161.5) give exactly the primary's four events: no change to the engine.
+- What stays estimated: the port areas, and the staging. The real engine opens its secondary and auxiliary ports with speed; here they are one port, which fits the -8 % at 8,500 rpm (190 N.m against ~206). Documentation corrected; physics untouched.
+
 ## 2026-10-30 — A dyno start could cancel itself
 
 - Full `ctest`: `UserDynoRampLS3Complete` failed in 0.20 s, the engine at 2,467 rpm, no session ever seen active; alone it passed 35/35. `EngineRuntime::startDyno()` claimed `dynoSessionActive_` before it published `dynoRequestedRunning_`; a physics tick between the two read "active, not desired", the path meant for a start and a stop inside one tick, and cancelled the run.
