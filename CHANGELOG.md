@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.5] — 2026-10-30
+
 ### Fixed
 
 - **A dyno start could still cancel itself on Linux.** 0.7.4 closed the

@@ -30,7 +30,7 @@ Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
 shaft. The petrol over-efficiency and low EGT are the gas's constant gamma:
 the thermally perfect gas is on `exp/thermally-perfect-gas`, not merged until
 a measured WOT airflow explains the 10-15 % torque it exposes (the friction
-is under Blair's, journal 2026-10-30). 0.7.4: the intake layer goes to 4.
+is under Blair's, journal 2026-10-30). 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux.
 A two-stroke diesel was never asked for (it needs a VISION.md amendment).
 Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.
@@ -55,7 +55,7 @@ What the plan settled (journal 2026-10-28):
   under the measured limit (the designer measures it at build).
 - Known and accepted: H1 low-speed hunting. The `UserDynoRampCP2Complete`
   start loop had the absorber-inertia signature fixed in 0.7.3; a dyno start
-  that cancelled itself was fixed in 0.7.4 (journal 2026-10-30).
+  that cancelled itself was fixed in 0.7.4 and 0.7.5 (journal 2026-10-30).
 
 **Closed**: Linux (2026-10-20, `docs/platforms.md`); editing on the engine
 (2026-10-23); backfires (0.4.2, Audio workshop only, off on every load; known
