@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.6] — 2026-10-30
+
 ### Added
 
 - **A rotary's intake ports can open in stages.** The switched cam profile
