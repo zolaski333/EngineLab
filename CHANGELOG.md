@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.3] — 2026-10-30
+
 ### Changed
 
 - **A diesel's premixed burn follows its ignition delay.** It was a fixed
