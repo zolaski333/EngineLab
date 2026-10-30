@@ -7,6 +7,17 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-10-30
+
+The application is 0.7.0's. The release builds of 0.6.0 and 0.7.0 failed one
+test under GCC (the designer's size test: its dyno absorber swung the 25 cc
+single, not the engine), so neither was published; 0.7.1 is their release.
+
+### Fixed
+
+- The designer's size test holds its engines with a stable absorber, and the
+  CI names each failed test in a public annotation.
+
 ## [0.7.0] — 2026-10-30
 
 ### Added
