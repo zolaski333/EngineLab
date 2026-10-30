@@ -1069,6 +1069,34 @@ void rotaryIsDesigned() {
         [](const auto& connection) { return connection.componentId == 800; });
     require(passage && passage->type == ExhaustComponentType::merge && toPassage == 3 && componentOf(config, 801),
         "a rotor's three faces open onto one exhaust passage");
+    // The automatic exhaust, the designer's default, too: it gave each face
+    // its own primary, three exhausts a rotor (owner report 2026-10-30).
+    auto automatic = spec;
+    automatic.exhaustSystem = ExhaustSystem::automatic;
+    const auto automaticDesign = designed(automatic);
+    const auto& automaticNetwork = *automaticDesign.config->exhaustPaths.front().network;
+    std::vector<std::uint32_t> fedByFaces;
+    for (const auto& connection : automaticNetwork.cylinderConnections) fedByFaces.push_back(connection.componentId);
+    std::sort(fedByFaces.begin(), fedByFaces.end());
+    const auto rotorPorts = std::unique(fedByFaces.begin(), fedByFaces.end()) - fedByFaces.begin();
+    require(fedByFaces.size() == 6U && rotorPorts == 2,
+        "with the automatic exhaust, a rotor's three faces open onto one passage too");
+    // Sized by its whole displacement, Mazda's count (8 L on 4 rotors: rotors
+    // of 2 L), or by its rotor alone, as a piston engine by bore and stroke.
+    auto big = spec;
+    big.cylinderCount = 4;
+    big.displacementLitres = 8.0;
+    const auto bigDesign = designed(big);
+    require(bigDesign.config->rotary.rotorCount == 4
+            && near(rotaryFaceDisplacementLitres(bigDesign.config->rotary) * 4.0, 8.0, 1.0e-6),
+        "8 L on 4 rotors is 4 rotors of 2 L");
+    auto byRotor = spec;
+    byRotor.displacementLitres = 0.0;
+    byRotor.overrides["generating_radius_mm"] = 120.0;
+    const auto byRotorDesign = designed(byRotor);
+    require(near(byRotorDesign.config->rotary.generatingRadiusMm, 120.0, 1.0e-9)
+            && near(byRotorDesign.config->rotary.eccentricityMm, 120.0 / 7.0, 1.0e-6),
+        "a rotor given by its radius alone keeps the 13B's proportions");
     const auto graph = ExhaustGraph::makeForEngine(config);
     require(gasdynamics::ExhaustNetworkLayout::compile(graph, gasdynamics::realtimeExhaustFeedbackDiscretisation()).valid(),
         "and the designed rotary's exhaust compiles");

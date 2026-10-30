@@ -1300,8 +1300,8 @@ PartsLibrary loadPartsLibrary(const std::filesystem::path& rootDirectory) {
     return loadParts(rootDirectory);
 }
 
-void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey) {
-    compileCatalogueExhaustPath(path, presetKey);
+void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey, std::size_t facesPerPort) {
+    compileCatalogueExhaustPath(path, presetKey, facesPerPort);
 }
 
 AudioVoicingLoadResult loadAudioVoicing(

@@ -1394,7 +1394,10 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             config.exhaustPaths.push_back(std::move(pathConfig));
         }
         if (!designedNetwork)
-            for (auto& path : config.exhaustPaths) compileLegacyExhaustPath(path, exhaustKey);
+            // A rotor's three faces share its one port (a primary per face
+            // gave a designed rotary three exhausts a rotor, in the physics
+            // too: owner report 2026-10-30).
+            for (auto& path : config.exhaustPaths) compileLegacyExhaustPath(path, exhaustKey, rotary ? 3U : 1U);
         if (pipedExhaust)
             designed.values.push_back({ "exhaust_system", "Exhaust system", "", 0.0, false,
                 system == ExhaustSystem::single ? "one pipe and one silencer"
