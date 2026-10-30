@@ -12,8 +12,6 @@ constexpr double minimumTemperatureK = 80.0;
 constexpr double maximumInputTemperatureK = 5'000.0;
 // Gamma for plain air (diatomic, 5 dof)
 constexpr double gammaAir = 1.4;
-// Gamma for fully burned combustion products (CO2/H2O mixture, ~4.25 dof effective)
-constexpr double gammaBurned = 1.26;
 constexpr double gasolineEnergyJPerKg = 44'000'000.0;
 
 [[nodiscard]] GasMixture atmosphericComposition(double totalMoles) noexcept {
@@ -147,7 +145,7 @@ void GasCell::initialise(double pressureKpa, double volumeLitres, double tempera
         mixture_ = { composition.oxygenMoles * scale, composition.inertMoles * scale,
                      composition.fuelMoles * scale, composition.burnedMoles * scale };
     }
-    internalEnergyJ_ = requestedMoles * molarHeatCapacityCvEffective() * safeTemperature;
+    internalEnergyJ_ = internalEnergyAtTemperatureJ(safeTemperature);
     momentumXKgMps_ = 0.0;
     momentumYKgMps_ = 0.0;
 }
@@ -166,13 +164,33 @@ void GasCell::setGeometry(double characteristicAreaM2, double dx, double dy) noe
 void GasCell::setVolumeAdiabatic(double volumeLitres) noexcept {
     const auto newVolume = std::max(minimumVolumeM3, volumeLitres * 0.001);
     if (std::abs(newVolume - volumeM3_) <= std::numeric_limits<double>::epsilon()) return;
-    const auto gamma = heatCapacityRatioEffective();
-    const auto ratio = volumeM3_ / newVolume;
+    const auto n = totalMoles();
+    if (n <= 1.0e-15 || internalEnergyJ_ <= 0.0) {
+        volumeM3_ = newVolume;
+        return;
+    }
     // Exact finite change for a closed ideal-gas control mass with frozen
-    // composition: U2/U1 = (V1/V2)^(gamma-1).  A trapezoidal P dV estimate
-    // violates P*V^gamma for the large volume changes of an engine cylinder.
-    internalEnergyJ_ = std::max(0.0,
-        internalEnergyJ_ * std::pow(ratio, gamma - 1.0));
+    // composition: n Cv(T) dT = -n R T dV / V integrates, with Cv = a + b T,
+    // to a ln(T2/T1) + b (T2 - T1) = R ln(V1/V2). A trapezoidal P dV
+    // estimate violates it for the large volume changes of an engine
+    // cylinder. Newton from the frozen-gamma estimate, quadratic from there:
+    // three steps leave a few ULPs over a whole crank substep.
+    const auto coefficients = heatCapacityCoefficients();
+    const auto a = coefficients.interceptJPerK / n;
+    const auto b = coefficients.slopeJPerK2 / n;
+    const auto initialTemperature = temperatureForEnergy(coefficients, internalEnergyJ_);
+    const auto logRatio = std::log(volumeM3_ / newVolume);
+    auto temperature = initialTemperature * std::exp(
+        universalGasConstant * logRatio / (a + b * initialTemperature));
+    if (b != 0.0) {
+        for (int iteration = 0; iteration < 3; ++iteration) {
+            const auto residual = a * std::log(temperature / initialTemperature)
+                + b * (temperature - initialTemperature) - universalGasConstant * logRatio;
+            temperature -= residual / (a / temperature + b);
+        }
+    }
+    internalEnergyJ_ = std::max(0.0, temperature * (coefficients.interceptJPerK
+        + 0.5 * coefficients.slopeJPerK2 * temperature));
     volumeM3_ = newVolume;
 }
 
@@ -247,8 +265,7 @@ bool GasCell::tryApplyInventoryDelta(const GasInventoryDelta& delta) noexcept {
 void GasCell::injectFuelMoles(double moles, double temperature) noexcept {
     const auto added = std::max(0.0, moles);
     mixture_.fuelMoles += added;
-    constexpr double gasolineVapourCvJPerMolK = 145.0;
-    internalEnergyJ_ += added * gasolineVapourCvJPerMolK
+    internalEnergyJ_ += added * fuelVapourCvJPerMolK
         * std::clamp(temperature, minimumTemperatureK, maximumInputTemperatureK);
 }
 
@@ -314,40 +331,58 @@ double GasCell::pressureKpa() const noexcept {
     return n * universalGasConstant * temperatureK() / volumeM3_ / 1'000.0;
 }
 
+GasCell::HeatCapacityCoefficients GasCell::heatCapacityCoefficients() const noexcept {
+    return {
+        mixture_.oxygenMoles * oxygenCvInterceptJPerMolK
+            + mixture_.inertMoles * inertCvInterceptJPerMolK
+            + mixture_.fuelMoles * fuelVapourCvJPerMolK
+            + mixture_.burnedMoles * burnedCvInterceptJPerMolK,
+        mixture_.oxygenMoles * oxygenCvSlopeJPerMolK2
+            + mixture_.inertMoles * inertCvSlopeJPerMolK2
+            + mixture_.burnedMoles * burnedCvSlopeJPerMolK2,
+    };
+}
+
+double GasCell::temperatureForEnergy(
+    HeatCapacityCoefficients coefficients, double internalEnergyJ) noexcept {
+    if (!(coefficients.interceptJPerK > 0.0) || !(internalEnergyJ > 0.0)) return 0.0;
+    // The root of a T + b T^2 / 2 = U written without the cancellation of
+    // (-a + sqrt(a^2 + 2 b U)) / b.
+    return 2.0 * internalEnergyJ / (coefficients.interceptJPerK + std::sqrt(
+        coefficients.interceptJPerK * coefficients.interceptJPerK
+        + 2.0 * coefficients.slopeJPerK2 * internalEnergyJ));
+}
+
+double GasCell::internalEnergyAtTemperatureJ(double temperatureK) const noexcept {
+    const auto coefficients = heatCapacityCoefficients();
+    return temperatureK * (coefficients.interceptJPerK
+        + 0.5 * coefficients.slopeJPerK2 * temperatureK);
+}
+
 double GasCell::temperatureK() const noexcept {
-    // Use effective Cv based on current gas composition.
-    // Burned products have higher heat capacity (CO2: Cv ≈ 28.8 J/mol/K,
-    // H2O: Cv ≈ 25.2 J/mol/K) compared to diatomic air (Cv = 20.8 J/mol/K).
-    // Species-weighted heat capacity keeps fuel vapour and products distinct.
-    const auto n = totalMoles();
-    if (n <= 1.0e-15) return 0.0;
-    const auto heatCapacity = n * molarHeatCapacityCvEffective();
     // Do not cap the derived temperature: internalEnergyJ_ is the conserved
     // sensible energy. Capping only this view would hide energy above the cap
     // and make pressure inconsistent with the cell's thermodynamic state.
-    return std::max(0.0, internalEnergyJ_ / heatCapacity);
+    if (totalMoles() <= 1.0e-15) return 0.0;
+    return temperatureForEnergy(heatCapacityCoefficients(), internalEnergyJ_);
 }
 
 double GasCell::molarHeatCapacityCvEffective() const noexcept {
     const auto n = totalMoles();
     if (n <= 1.0e-15) return molarHeatCapacityCv;
-    constexpr double burnedProductsCvJPerMolK = universalGasConstant / (gammaBurned - 1.0);
-    constexpr double gasolineVapourCvJPerMolK = 145.0;
-    const auto heatCapacity = (mixture_.oxygenMoles + mixture_.inertMoles) * molarHeatCapacityCv
-        + mixture_.fuelMoles * gasolineVapourCvJPerMolK
-        + mixture_.burnedMoles * burnedProductsCvJPerMolK;
-    return std::clamp(heatCapacity / n, molarHeatCapacityCv, gasolineVapourCvJPerMolK);
+    const auto coefficients = heatCapacityCoefficients();
+    const auto temperature = temperatureForEnergy(coefficients, internalEnergyJ_);
+    return std::clamp((coefficients.interceptJPerK + coefficients.slopeJPerK2 * temperature) / n,
+        0.5 * molarHeatCapacityCv, fuelVapourCvJPerMolK);
 }
 
 double GasCell::heatCapacityRatioEffective() const noexcept {
     const auto n = totalMoles();
     if (n <= 1.0e-15) return gammaAir;
-    // Exact thermodynamic identity gamma = 1 + R/Cv, evaluated on the current
-    // species-mole-weighted Cv (molarHeatCapacityCvEffective). This is NOT a
-    // linear blend in burned fraction: as combustion products (higher Cv)
-    // replace air, Cv rises, so gamma falls smoothly from 1.40 (air) toward
-    // ~1.26 (fully burned). The mixture Cv carries the non-linearity.
-    return std::clamp(1.0 + universalGasConstant / molarHeatCapacityCvEffective(), 1.05, gammaAir);
+    // The local gamma = 1 + R/Cv(T), on the species-mole-weighted Cv at the
+    // cell's temperature: 1.40 for air at 300 K, ~1.34 at 1,000 K, ~1.27
+    // for a stoichiometric charge's products at 2,000 K.
+    return std::clamp(1.0 + universalGasConstant / molarHeatCapacityCvEffective(), 1.05, 1.67);
 }
 
 double GasCell::speedOfSoundMps() const noexcept {
@@ -391,8 +426,12 @@ GasFlowResult ConservativeGasSystem::transfer(GasCell& source, GasCell& sink, do
     GasFlowResult result;
     const auto totalEnergyBefore = totalEnergy(source, sink);
     const auto sourceMoles = source.totalMoles();
-    const auto specificEnthalpy = (source.molarHeatCapacityCvEffective()
-        + GasCell::universalGasConstant) * source.temperatureK();
+    // h = u + R T per mole, u the source's own mean (the mixture's Cv varies
+    // with temperature, so u is not Cv T).
+    const auto specificEnthalpy = sourceMoles > 1.0e-15
+        ? source.internalEnergyJ_ / sourceMoles
+            + GasCell::universalGasConstant * source.temperatureK()
+        : 0.0;
     const auto thermalLimit = source.internalEnergyJ_ / std::max(1.0, specificEnthalpy) * 0.98;
     const auto amount = std::clamp(moles, 0.0, std::min(sourceMoles * 0.999, thermalLimit));
     if (amount <= 1.0e-15 || sourceMoles <= 1.0e-15) return result;

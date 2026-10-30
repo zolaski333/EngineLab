@@ -30,15 +30,20 @@ enum class GasSpecies : std::size_t {
 
 struct SpeciesThermodynamics final {
     double molarMassKgPerMol { 0.0289652 };
+    /** Cv(T) = molarHeatCapacityCvJPerMolK + slope T: the intercept at 0 K. */
     double molarHeatCapacityCvJPerMolK { 20.7861565454 };
+    /** J/(mol K^2); zero is a calorically perfect species. */
+    double molarHeatCapacityCvSlopeJPerMolK2 { 0.0 };
 };
 
-/** Calorically-perfect mixture model used during one network solve.
+/** Thermally perfect mixture model used during one network solve.
  *
- * Heat capacity is species-weighted on every cell. Therefore gamma is allowed
- * to vary spatially with burned-gas and fuel-vapour concentration while each
- * species remains calorically perfect. Fuel constants can be replaced when an
- * EngineConfig selects chemistry other than the default gasoline surrogate.
+ * Heat capacity is species-weighted on every cell, and each species' Cv is
+ * linear in temperature, so gamma varies with burned-gas and fuel-vapour
+ * concentration and with temperature. The standard gas carries GasCell's
+ * laws, so a cylinder's energy means the same temperature in the duct. Fuel
+ * constants can be replaced when an EngineConfig selects chemistry other
+ * than the default gasoline surrogate.
  */
 struct ThermodynamicModel final {
     std::array<SpeciesThermodynamics, gasSpeciesCount> species {};
@@ -151,9 +156,20 @@ private:
         const ConservativeState& right,
         const PrimitiveState& rightPrimitive) const noexcept;
 
+    /** A species' internal energy per kilogram at `temperatureK`, from 0 K. */
+    [[nodiscard]] double speciesInternalEnergyJPerKg(
+        std::size_t index, double temperatureK) const noexcept {
+        return temperatureK * (specificHeatCapacityCvJPerKgK_[index]
+            + 0.5 * specificHeatCapacityCvSlopeJPerKgK2_[index] * temperatureK);
+    }
+
     ThermodynamicModel model_;
     std::array<double, gasSpeciesCount> inverseMolarMassKg_ {};
     std::array<double, gasSpeciesCount> specificHeatCapacityCvJPerKgK_ {};
+    std::array<double, gasSpeciesCount> specificHeatCapacityCvSlopeJPerKgK2_ {};
+    /** Any species' Cv varies with temperature (otherwise the calorically
+     *  perfect path, bit for bit). */
+    bool thermallyPerfect_ { false };
     bool modelIsValid_ { false };
 };
 

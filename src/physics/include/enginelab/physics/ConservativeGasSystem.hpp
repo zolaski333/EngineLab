@@ -25,8 +25,9 @@ struct GasInventoryDelta;
  * derived from the conserved state.
  *
  * Physics extensions (v2):
- *  - Variable heat-capacity ratio γ based on burned-gas fraction.
- *    Air: γ = 1.40 (diatomic, 5 dof). Burned products: γ ≈ 1.26 (CO₂/H₂O).
+ *  - Thermally perfect species, Cv linear in temperature, so γ follows both
+ *    the composition and the temperature: air 1.40 at 300 K, a burnt
+ *    stoichiometric charge ~1.27 at 2,000 K.
  *  - Two-dimensional momentum in global coordinates. Tube orientation is
  *    geometry, not a replacement for the momentum vector.
  *  - Dynamic pressure contribution for driving isentropic flow: enables
@@ -40,6 +41,22 @@ class GasCell final {
 public:
     static constexpr double universalGasConstant = 8.31446261815324;
     static constexpr double molarHeatCapacityCv = 20.7861565454; // 5/2 * R  (diatomic air)
+    /** Each species is thermally perfect: Cv(T) = intercept + slope T, in
+     *  J/(mol K), least-squares fits to JANAF between 300 and 2,600 K (O2 and
+     *  N2 held at 5/2 R at 300 K; the products are 8 CO2 to 9 H2O, within 2 %
+     *  of a diesel's 12 to 11.5). A calorically perfect gas kept N2 at 5/2 R
+     *  and the products at gamma 1.26 at every temperature, so a burnt charge
+     *  expanded at gamma ~1.35 instead of ~1.28: the cycle extracted too much
+     *  work and left a cold exhaust. The fuel vapour stays at its constant Cv.
+     *  `gasdynamics::ThermodynamicModel::standardCombustionGas` carries the
+     *  same laws, so energy crossing the valves means the same temperature. */
+    static constexpr double oxygenCvSlopeJPerMolK2 = 0.005292;
+    static constexpr double inertCvSlopeJPerMolK2 = 0.003980;
+    static constexpr double burnedCvSlopeJPerMolK2 = 0.008630;
+    static constexpr double oxygenCvInterceptJPerMolK = molarHeatCapacityCv - 300.0 * oxygenCvSlopeJPerMolK2;
+    static constexpr double inertCvInterceptJPerMolK = molarHeatCapacityCv - 300.0 * inertCvSlopeJPerMolK2;
+    static constexpr double burnedCvInterceptJPerMolK = 29.536;
+    static constexpr double fuelVapourCvJPerMolK = 145.0;
     static constexpr double airMolarMassKg = 0.0289652;
     static constexpr double oxygenMolarMassKg = 0.0319988;
     static constexpr double inertMolarMassKg = 0.0280134;
@@ -137,13 +154,10 @@ public:
     }
 
     /**
-     * Effective heat-capacity ratio γ = Cp/Cv = 1 + R/Cv, evaluated on the
-     * current species-mole-weighted Cv (see molarHeatCapacityCvEffective).
-     * This is the exact thermodynamic identity, NOT a linear interpolation in
-     * burned fraction: the mixture Cv carries the non-linearity, so γ falls
-     * smoothly from 1.40 (air) toward ~1.26 (fully burned products) as their
-     * higher Cv comes to dominate. Corrects the ~8-12 % peak-pressure
-     * over-prediction of holding γ_air = 1.40 for hot post-combustion gas.
+     * Local heat-capacity ratio γ = Cp/Cv = 1 + R/Cv(T), evaluated on the
+     * current species-mole-weighted Cv at the cell's temperature (see
+     * molarHeatCapacityCvEffective): 1.40 for air at 300 K, ~1.27 for a
+     * stoichiometric charge's products at 2,000 K.
      */
     [[nodiscard]] double heatCapacityRatioEffective() const noexcept;
     [[nodiscard]] double molarHeatCapacityCvEffective() const noexcept;
@@ -175,8 +189,23 @@ public:
         return burnedGasMolarMassKg_;
     }
 
+    /** The internal energy the cell's gas holds at `temperatureK`,
+     *  integrated from 0 K: sum n (intercept T + slope T^2 / 2). */
+    [[nodiscard]] double internalEnergyAtTemperatureJ(double temperatureK) const noexcept;
+
 private:
     friend class ConservativeGasSystem;
+    /** The extensive heat capacity's two coefficients, sum n intercept
+     *  (J/K) and sum n slope (J/K^2). */
+    struct HeatCapacityCoefficients final {
+        double interceptJPerK {};
+        double slopeJPerK2 {};
+    };
+    [[nodiscard]] HeatCapacityCoefficients heatCapacityCoefficients() const noexcept;
+    /** The temperature at which the cell's gas holds `internalEnergyJ`: the
+     *  positive root of intercept T + slope T^2 / 2 = U. */
+    [[nodiscard]] static double temperatureForEnergy(
+        HeatCapacityCoefficients coefficients, double internalEnergyJ) noexcept;
     GasMixture mixture_ {};
     double internalEnergyJ_ { 0.0 };
     double volumeM3_ { 0.001 };

@@ -67,7 +67,15 @@ A transfer simultaneously carries:
 An equilibrium search bounds the transfer before the non-physical reversal of
 the gradient. Dissipating momentum beyond the speed of sound converts the
 kinetic energy back into heat. The effective properties `Cv`, `gamma`, molar
-mass and speed of sound depend on the composition.
+mass and speed of sound depend on the composition and the temperature: each
+species is thermally perfect, its `Cv` a straight line in temperature fitted
+to the JANAF tables over 300-2,600 K (O2 and N2 held at 5/2 R at 300 K; the
+products as 8 CO2 to 9 H2O; the fuel vapour constant), so the internal energy
+is a quadratic in T with an exact root and gamma is the local 1 + R/Cv(T):
+1.40 for air at 300 K, ~1.27 for a burnt charge at 2,000 K. The cylinders and
+the 1-D ducts carry the same laws. A calorically perfect gas (N2 at 5/2 R,
+the products at gamma 1.26 at every temperature) expanded a burnt charge at
+~1.35 and so extracted ~13 % too much work.
 
 Temperature and pressure stay derived from all the conserved internal energy,
 including beyond the usual thermal range of the engine: no display ceiling can
