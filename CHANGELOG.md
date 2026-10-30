@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-30
+
 ### Added
 
 - **Rotary (Wankel) engines.** `cycle: rotary` runs one to ten rotors, each
