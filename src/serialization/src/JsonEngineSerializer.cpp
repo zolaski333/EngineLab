@@ -548,6 +548,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale},
                       {"compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds},
                       {"compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction},
+                      {"compression_ignition_mixed_premix", config.combustionCalibration.compressionIgnitionMixedPremix},
                       {"cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation},
                       {"cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation}}},
         {"exhaust_afterfire", {{"enabled", config.exhaustAfterfire.enabled},
@@ -864,6 +865,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.compressionIgnitionDelayScale = calibration.value("compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale);
             config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration.value("compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
             config.combustionCalibration.compressionIgnitionPremixedFraction = calibration.value("compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
+            config.combustionCalibration.compressionIgnitionMixedPremix = calibration.value("compression_ignition_mixed_premix", config.combustionCalibration.compressionIgnitionMixedPremix);
             config.combustionCalibration.cycleVariationCoefficientOfVariation = calibration.value("cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation);
             config.combustionCalibration.cycleVariationCorrelation = calibration.value("cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation);
         }

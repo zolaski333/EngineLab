@@ -55,7 +55,6 @@ engine:
   combustion_calibration:
     wall_heat_transfer_w_per_k: 0.58
     compression_ignition_mixing_time_s: 0.0016
-    compression_ignition_premixed_fraction: 0.08
   ignition:
     # A diesel has no spark: the advance is the start of injection, deg BTDC.
     rev_limit_rpm: 5000

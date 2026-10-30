@@ -7,6 +7,22 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Changed
+
+- **A diesel's premixed burn follows its ignition delay.** It was a fixed
+  share of the fuel (8 % on the TDI); it is now the fuel that has mixed with
+  the air by the time it autoignites, so a long delay (idle, a cold engine,
+  low cetane) burns harder at first. The TDI's idle clatters 1-4 dB louder;
+  full load barely moves (torque within 0.15 %). A file can keep the fixed
+  share with `compression_ignition_mixed_premix: false`.
+
+### Fixed
+
+- **The dyno holds a light engine steady.** Its brake swung light shafts
+  (Hayabusa, CP3, CP4, the 13B) by 15-61 rpm about a held point and could
+  stall a CP2 it caught at low speed; every catalogue point now holds within
+  9 rpm, and torque moves within 1.3 %.
+
 ## [0.7.2] — 2026-10-30
 
 ### Fixed

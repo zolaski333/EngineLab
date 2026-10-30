@@ -88,6 +88,19 @@ CompressionIgnitionResult CompressionIgnitionModel::advance(
         && chamber.mixture().oxygenMoles > 1.0e-12
         && pressureBar >= 4.0 && temperatureK >= 400.0;
 
+    const auto turbulenceFactor = std::clamp(
+        0.65 + std::max(0.0, conditions.meanPistonSpeedMps) * 0.075,
+        0.65, 2.0);
+    const auto mixingTime = std::max(50.0e-6,
+        calibration.compressionIgnitionMixingTimeSeconds
+            / turbulenceFactor);
+    // The delay's fuel mixes at the diffusion burn's own rate from the start
+    // of injection; what has mixed when it lights is the premixed charge.
+    if (!state.autoIgnited && conditions.enabled && conditions.injectionStarted) {
+        state.preparedFuelMoles = std::min(availableFuel, state.preparedFuelMoles);
+        state.preparedFuelMoles += (availableFuel - state.preparedFuelMoles)
+            * (1.0 - std::exp(-dtSeconds / mixingTime));
+    }
     if (!state.autoIgnited && inductionEligible) {
         state.ignitionDelaySeconds = ignitionDelaySeconds(calibration,
             fuel.cetaneNumber, pressureBar, temperatureK, phi);
@@ -98,21 +111,17 @@ CompressionIgnitionResult CompressionIgnitionModel::advance(
             state.active = true;
             state.startPhaseDegrees =
                 normalisedCyclePhase(conditions.cyclePhaseDegrees);
+            const auto premixedFraction = calibration.compressionIgnitionMixedPremix
+                && availableFuel > 1.0e-15
+                ? state.preparedFuelMoles / availableFuel
+                : calibration.compressionIgnitionPremixedFraction;
             state.premixedFuelMolesRemaining = burnableFuel
-                * std::clamp(
-                    calibration.compressionIgnitionPremixedFraction,
-                    0.0, 0.8);
+                * std::clamp(premixedFraction, 0.0, 0.8);
         }
     }
 
     auto efficiency = 0.0;
     if (state.autoIgnited && conditions.enabled && burnableFuel > 1.0e-15) {
-        const auto turbulenceFactor = std::clamp(
-            0.65 + std::max(0.0, conditions.meanPistonSpeedMps) * 0.075,
-            0.65, 2.0);
-        const auto mixingTime = std::max(50.0e-6,
-            calibration.compressionIgnitionMixingTimeSeconds
-                / turbulenceFactor);
         const auto premixedTime = std::max(30.0e-6, mixingTime * 0.14);
 
         const auto premixedInventory = std::min(

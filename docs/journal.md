@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — The diesel's premixed share is the fuel mixed by autoignition
+
+- The premixed burn was a fixed 8 % (the TDI and designed diesels; 20 % by default) of the fuel at ignition, whatever the delay. Watson's correlation (beta = 1 - 0.926 phi^0.37 / tau_id^0.26) gives about half at idle and nearly none at full load.
+- Now the fuel injected mixes from the start of injection at the diffusion burn's own rate (mixing time / turbulence, x rail factor); what has mixed at autoignition is the premixed inventory (capped at 0.8). TDI: ~26 % at idle, ~14 % at 2,000 rpm full load. `compression_ignition_mixed_premix: false` keeps the fixed share; the inert 0.08 values are gone.
+- TDI `DynoSweepHarness --step 500`, old -> new: torque -0.14 % at 2,000 rpm, within 0.07 % elsewhere; Pmax +0.2-0.5 bar; held sd unchanged. `PhysicsPerfHarness --trace 1 --idle`: Pmax 49.3 -> 51.3 bar, max dp/dtheta 1.84 -> 2.99 bar/deg.
+- AbClipRenderer TDI (`listening-test/2026-10-30-premix/`), raw level per octave 63 Hz-8 kHz: idle +1.1 / 1.3 / 2.0 / 3.4 / 3.9 / 0.5 / 0.8 / 4.2 dB (the clatter); rev within 0.07 dB.
+- CoreTests: a 760 K chamber (0.73 ms delay) must burn 1.15 times the share of a 950 K one (0.43 ms) over its first 100 us: 1.27 now, 0.98 with the fixed share (fails). Not measured: against a measured heat-release rate; the TDI has no pilot, which would cut the main's premix on a real EA288.
+
 ## 2026-10-30 — `UserDynoHighRpmStart`: the absorber's virtual inertia
 
 - The test failed about once in 30 starts. `UserDynoHarness --start-rpm`, 31 CP2 starts at 2,400-4,200 rpm: one (3,960) fell to 555 rpm, under the 560 stall line, after the dyno caught it near 1,800 rpm; `--trace` showed a brake limit cycle its stall recovery re-entered 293 times.
