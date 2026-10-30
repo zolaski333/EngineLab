@@ -130,9 +130,13 @@ EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
     for (const auto& cylinder : config_.cylinders) bore = std::max(bore, static_cast<float>(cylinder.boreMm));
     // A two-stroke's barrels stand apart: its transfers are cast in their flanks.
     pitch_ = bore * (config_.cycle == EngineCycle::twoStroke && !radialLike_ ? 1.5F : 1.25F);
-    buildCylinders();
-    buildCrankshaft();
-    buildStructure();
+    if (config_.cycle == EngineCycle::rotary) {
+        buildRotary();
+    } else {
+        buildCylinders();
+        buildCrankshaft();
+        buildStructure();
+    }
     buildDucts();
     buildGearbox();
     computeBounds();
@@ -151,6 +155,165 @@ double EngineModel3D::cyclePhaseDegrees(std::size_t cylinder, double crankAngleD
     if (cylinder >= cylinders_.size()) return 0.0;
     const auto cycle = cycleDegreesOf(config_.cycle);
     return std::fmod(std::fmod(crankAngleDegrees - cylinders_[cylinder].crankOffsetDegrees, cycle) + cycle, cycle);
+}
+
+namespace {
+/** A rotor's centre and turn at shaft angle `psi` (radians from its first
+    face's firing top dead centre): the centre orbits at e, the rotor turns a
+    third as fast, so each apex runs on the epitrochoid e u(3t) + R u(t). At
+    psi = 0 the first face's flank is at the housing's waist below the shaft,
+    the plugs' side, the rotor pushed against it. */
+[[nodiscard]] Vec2 rotorCentre(float e, float psi) noexcept {
+    return { e * std::cos(psi - 0.5F * pi), e * std::sin(psi - 0.5F * pi) };
+}
+[[nodiscard]] float rotorTurn(float psi) noexcept { return (psi - 0.5F * pi) / 3.0F - 2.0F * pi / 3.0F; }
+/** The flank of face `face` (0-2) is the rotor's flank (3 - face) % 3: the
+    next to reach the waist as the rotor turns. */
+[[nodiscard]] int flankOfFace(std::size_t face) noexcept { return static_cast<int>((3U - face % 3U) % 3U); }
+} // namespace
+
+void EngineModel3D::buildRotary() {
+    const auto& rotary = config_.rotary;
+    const auto radius = static_cast<float>(rotary.generatingRadiusMm);
+    const auto e = static_cast<float>(rotary.eccentricityMm);
+    const auto width = static_cast<float>(rotary.rotorWidthMm);
+    const auto rotorCount = std::max<std::size_t>(1U, config_.cylinders.size() / 3U);
+    pitch_ = 1.7F * width;
+    const auto housingWidth = 1.3F * width;
+    // How far a flank bulges past its chord: three quarters of the room the
+    // waist leaves it at top dead centre (R - e against e + R / 2).
+    const auto bulge = 0.75F * std::max(0.0F, 0.5F * radius - 2.0F * e);
+    Mesh housings;
+    Mesh running;
+    float zMin = 1.0e9F, zMax = -1.0e9F;
+    for (std::size_t i = 0; i < config_.cylinders.size(); ++i) {
+        const auto& config = config_.cylinders[i];
+        const auto rotorIndex = i / 3U;
+        Cylinder face;
+        face.bore = static_cast<float>(config.boreMm);
+        face.z = (static_cast<float>(rotorIndex) - 0.5F * static_cast<float>(rotorCount - 1U)) * pitch_;
+        face.axis = yAxis;
+        face.exhaustSide = xAxis;
+        // The ducts leave from the housing's top, over its ports.
+        face.deckCentre = { 0.0F, 1.12F * (radius - e) + 0.1F * radius, face.z };
+        face.chamberCentre = face.deckCentre;
+        face.crankOffsetDegrees = config.crankOffsetDegrees;
+        face.cams = &config_.camshafts;
+        face.intakeValveAxis = yAxis;
+        face.exhaustValveAxis = yAxis;
+        face.pistonPart = face.rodPart = face.intakeValvePart = face.exhaustValvePart = 0xFFFFU;
+        Mesh flame;
+        appendSphere(flame, Mat4::identity(), 0.28F * radius, 18, 10);
+        face.flamePart = addPart(std::move(flame), SceneMaterial::flame, layerCombustion);
+        cylinders_.push_back(face);
+        zMin = std::min(zMin, face.z);
+        zMax = std::max(zMax, face.z);
+        if (i % 3U != 0U) continue;
+
+        // The rotor: three apexes R out, the flanks bulging between them,
+        // its phasing gear's ring on the face, in its own frame.
+        std::vector<Vec2> outline;
+        for (int flank = 0; flank < 3; ++flank) {
+            const auto a0 = 2.0F * pi * static_cast<float>(flank) / 3.0F;
+            const auto a1 = a0 + 2.0F * pi / 3.0F;
+            const Vec2 p0 { 0.985F * radius * std::cos(a0), 0.985F * radius * std::sin(a0) };
+            const Vec2 p1 { 0.985F * radius * std::cos(a1), 0.985F * radius * std::sin(a1) };
+            const Vec2 out { std::cos(a0 + pi / 3.0F), std::sin(a0 + pi / 3.0F) };
+            for (int step = 0; step < 12; ++step) {
+                const auto t = static_cast<float>(step) / 12.0F;
+                const auto lift = bulge * std::sin(pi * t);
+                outline.push_back({ p0.x + (p1.x - p0.x) * t + out.x * lift, p0.y + (p1.y - p0.y) * t + out.y * lift });
+            }
+        }
+        Mesh rotor;
+        appendConvexExtrusion(rotor, Mat4::identity(), outline, 0.96F * width);
+        for (const auto side : { -1.0F, 1.0F })
+            appendTorus(rotor, Mat4::translation({ 0, 0, side * 0.49F * width }) * Mat4::rotationX(pi * 0.5F),
+                        0.34F * radius, 0.025F * radius, 40, 6);
+        rotors_.push_back({ addPart(std::move(rotor), SceneMaterial::piston, layerMechanism), face.z,
+                            config.crankOffsetDegrees });
+
+        // The housing round it: the epitrochoid it runs on, drawn on both
+        // side faces, inside a shell over its hull.
+        std::vector<Vec3> trochoid;
+        std::vector<Vec2> hull;
+        for (int step = 0; step <= 96; ++step) {
+            const auto t = 2.0F * pi * static_cast<float>(step) / 96.0F;
+            const Vec2 p { e * std::cos(3.0F * t) + radius * std::cos(t), e * std::sin(3.0F * t) + radius * std::sin(t) };
+            hull.push_back({ 1.14F * p.x, 1.14F * p.y });
+            trochoid.push_back({ p.x, p.y, 0.0F });
+        }
+        for (const auto side : { -0.5F, 0.5F }) {
+            auto loop = trochoid;
+            for (auto& p : loop) p.z = face.z + side * width;
+            appendTube(running, loop, { 0.012F * radius }, 6);
+        }
+        appendConvexExtrusion(housings, Mat4::translation({ 0, 0, face.z }), hull, housingWidth);
+        solids_.push_back(boxSolid(xAxis, yAxis, zAxis, { 0, 0, face.z },
+                                   { 2.3F * (radius + e), 2.3F * (radius - e) + 0.3F * radius, housingWidth }));
+    }
+    (void)addPart(std::move(housings), SceneMaterial::blockShell, layerStructure);
+    (void)addPart(std::move(running), SceneMaterial::headShell, layerStructure);
+
+    // The eccentric shaft: a journal per rotor e off its axis, the nose
+    // pulley and the flywheel, in the shaft's frame.
+    Mesh shaft;
+    const auto start = zMin - 0.5F * pitch_, end = zMax + 0.5F * pitch_;
+    appendShaft(shaft, {}, start, end - start, 0.17F * radius, 32);
+    for (const auto& rotor : rotors_) {
+        const auto lobe = rotorCentre(e, static_cast<float>(-rotor.offsetDegrees * pi / 180.0));
+        appendShaft(shaft, { lobe.x, lobe.y, 0.0F }, rotor.z - 0.48F * width, 0.96F * width, 0.36F * radius, 40);
+    }
+    const auto pulleyLength = 0.25F * width;
+    appendShaft(shaft, {}, start - pulleyLength, pulleyLength, 0.55F * radius, 40);
+    appendBox(shaft, Mat4::translation({ 0, 0.45F * radius, start - pulleyLength - 0.01F * radius }),
+              { 0.05F * radius, 0.18F * radius, 0.03F * radius });
+    solids_.push_back(cylinderSolid(zAxis * (start - pulleyLength), zAxis, 0.55F * radius, pulleyLength));
+    const auto flywheelRadius = 1.25F * radius;
+    const auto flywheelThickness = 0.2F * width;
+    appendShaft(shaft, {}, end, flywheelThickness, flywheelRadius, 64);
+    appendBox(shaft, Mat4::translation({ 0, flywheelRadius * 0.82F, end + flywheelThickness + 0.01F * radius }),
+              { 0.07F * radius, 0.2F * flywheelRadius, 0.03F * radius });
+    solids_.push_back(cylinderSolid(zAxis * end, zAxis, flywheelRadius, flywheelThickness));
+    flywheelEndZ_ = end + flywheelThickness;
+    flywheelRadius_ = flywheelRadius;
+    rotaryShaftPart_ = addPart(std::move(shaft), SceneMaterial::steel, layerMechanism);
+}
+
+void EngineModel3D::poseRotary(const ScenePoseInput& input, std::vector<SceneInstance>& out) const {
+    const auto e = static_cast<float>(config_.rotary.eccentricityMm);
+    const auto radius = static_cast<float>(config_.rotary.generatingRadiusMm);
+    const auto angle = static_cast<float>(input.crankAngleDegrees * pi / 180.0);
+    if (rotaryShaftPart_ < out.size()) out[rotaryShaftPart_].transform = Mat4::rotationZ(angle);
+    for (const auto& rotor : rotors_) {
+        const auto psi = angle - static_cast<float>(rotor.offsetDegrees * pi / 180.0);
+        const auto centre = rotorCentre(e, psi);
+        out[rotor.part].transform = Mat4::translation({ centre.x, centre.y, rotor.z }) * Mat4::rotationZ(rotorTurn(psi));
+    }
+    for (std::size_t i = 0; i < cylinders_.size() && i / 3U < rotors_.size(); ++i) {
+        // A face's flame rides its flank, out from the rotor.
+        const auto& rotor = rotors_[i / 3U];
+        const auto psi = angle - static_cast<float>(rotor.offsetDegrees * pi / 180.0);
+        const auto centre = rotorCentre(e, psi);
+        const auto middle = rotorTurn(psi) + 2.0F * pi * static_cast<float>(flankOfFace(i)) / 3.0F + pi / 3.0F;
+        const Vec3 at { centre.x + 0.62F * radius * std::cos(middle), centre.y + 0.62F * radius * std::sin(middle),
+                        rotor.z };
+        const auto phase = cyclePhaseDegrees(i, input.crankAngleDegrees);
+        const auto burn = burnEnvelope(phase, cycleDegreesOf(config_.cycle)) * std::clamp(input.combustion[i], 0.0F, 1.0F);
+        const auto scale = 0.6F + 0.5F * burn;
+        const Vec3 along { -std::sin(middle), std::cos(middle), 0.0F };
+        const Vec3 outward { std::cos(middle), std::sin(middle), 0.0F };
+        out[cylinders_[i].flamePart].transform = Mat4::basis(along * scale, outward * (0.35F * scale),
+                                                              zAxis * (0.8F * scale), at);
+        out[cylinders_[i].flamePart].intensity = burn;
+        // The runner glows while a face draws from its port.
+        const auto& cams = config_.camshafts;
+        const auto lift = profiledValveLiftMm(phase, 540.0 + cams.intakeCenterlineDegrees, cams.intakeDurationDegrees,
+            cams.intakeLiftMm, cams.intakeLiftProfile);
+        if (cylinders_[i / 3U * 3U].runnerPart < out.size() && lift > 0.0)
+            out[cylinders_[i / 3U * 3U].runnerPart].intensity = static_cast<float>(
+                std::clamp(lift / std::max(0.1, cams.intakeLiftMm), 0.0, 1.0));
+    }
 }
 
 void EngineModel3D::buildCylinders() {
@@ -635,6 +798,8 @@ void EngineModel3D::buildDucts() {
         const auto& config = config_.cylinders[i];
         const auto b = cylinder.bore;
         bore = std::max(bore, b);
+        // A rotor's three faces open onto its one pair of ports.
+        if (config_.cycle == EngineCycle::rotary && i % 3U != 0U) continue;
         const auto axis = cylinder.axis;
         const auto side = cylinder.exhaustSide;
 
@@ -847,14 +1012,16 @@ void EngineModel3D::buildSupercharger() {
 
 void EngineModel3D::buildGearbox() {
     const auto& ratios = config_.transmission.gearRatios;
-    if (ratios.size() < 2U || throws_.empty() || flywheelRadius_ <= 0.0F) return;
+    if (ratios.size() < 2U || (throws_.empty() && rotors_.empty()) || flywheelRadius_ <= 0.0F) return;
     float b = 0.0F, zMin = 1.0e9F, zMax = -1.0e9F;
     for (const auto& c : cylinders_) {
         b = std::max(b, c.bore);
         zMin = std::min(zMin, c.z);
         zMax = std::max(zMax, c.z);
     }
-    const auto origin = throws_.front().origin;
+    // A rotary's eccentric shaft is its crank: on the Z axis, turning with
+    // the crank angle (poseRotary).
+    const auto origin = throws_.empty() ? Vec3 {} : throws_.front().origin;
     const auto pairCount = ratios.size();
     // Shaft centre distance, gear face width and pair pitch, in bores: an
     // MT-07 box runs about 70 mm between its shafts for an 80 mm bore.
@@ -862,7 +1029,8 @@ void EngineModel3D::buildGearbox() {
     const auto width = 0.15F * b;
     const auto spacing = 0.26F * b;
     const auto span = spacing * static_cast<float>(pairCount + 1U);
-    const auto turn = std::remainder(throwRotation(throws_.front(), 10.0) - throwRotation(throws_.front(), 0.0), 2.0F * pi);
+    const auto turn = throws_.empty() ? 1.0F
+        : std::remainder(throwRotation(throws_.front(), 10.0) - throwRotation(throws_.front(), 0.0), 2.0F * pi);
     const auto crankSense = turn >= 0.0F ? 1.0F : -1.0F;
     const auto motorcycle = config_.vehicle.massKg < 500.0;
     float zStart = 0.0F;
@@ -1073,7 +1241,8 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
     for (std::size_t k = 0; k < rotatingParts_.size(); ++k)
         if (rotatingThrow_[k] < throwTransforms.size()) out[rotatingParts_[k]].transform = throwTransforms[rotatingThrow_[k]];
 
-    for (std::size_t i = 0; i < cylinders_.size(); ++i) {
+    if (config_.cycle == EngineCycle::rotary) poseRotary(input, out);
+    for (std::size_t i = 0; i < cylinders_.size() && config_.cycle != EngineCycle::rotary; ++i) {
         const auto& cylinder = cylinders_[i];
         const auto k = evaluateCylinderKinematics(config_, reference_, i, angle, 0.0);
         const auto wrist = world(k.wristPinXMm, k.wristPinYMm, cylinder.z);
@@ -1179,6 +1348,8 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
 }
 
 PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
+    for (std::size_t r = 0; r < rotors_.size(); ++r)
+        if (part == rotors_[r].part) return { PartRole::piston, static_cast<int>(3U * r), -1 };
     for (std::size_t i = 0; i < cylinders_.size(); ++i) {
         const auto& c = cylinders_[i];
         const auto cylinder = static_cast<int>(i);

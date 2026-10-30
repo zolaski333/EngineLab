@@ -217,7 +217,8 @@ struct ExhaustPlan final {
  * every port alike (journal 2026-10-29).
  */
 [[nodiscard]] ExhaustNetworkConfig designedExhaustNetwork(const ExhaustPlan& plan, PathJoin join,
-    const std::vector<std::vector<std::uint32_t>>& banks, const AcousticPoint3M& singleOutletPosition) {
+    const std::vector<std::vector<std::uint32_t>>& banks, const AcousticPoint3M& singleOutletPosition,
+    std::size_t facesPerPort = 1) {
     ExhaustNetworkConfig network;
     const auto& pipe = plan.pipe;
     const auto primaryLength = std::max(20.0, pipe.primaryLengthMm);
@@ -249,11 +250,25 @@ struct ExhaustPlan final {
     // Each bank's primaries into its collector, as the catalogue's.
     std::vector<std::uint32_t> bankEnds;
     auto primaryId = std::uint32_t { 1000 };
+    // Above the silencers (600s), tails (650s) and outlets (700s).
+    auto passageId = std::uint32_t { 800 };
     for (std::size_t bank = 0; bank < banks.size(); ++bank) {
         std::vector<std::uint32_t> primaries;
-        for (const auto cylinder : banks[bank]) {
+        for (std::size_t first = 0; first < banks[bank].size(); first += facesPerPort) {
             add(primaryId, ExhaustComponentType::pipe, primaryLength, primaryDiameter);
-            network.cylinderConnections.push_back({ cylinder, primaryId });
+            if (facesPerPort == 1) {
+                network.cylinderConnections.push_back({ banks[bank][first], primaryId });
+            } else {
+                // A rotor's faces open in turn onto one port: its passage, a
+                // merge of the primary's bore 2.5 bores long, as the
+                // catalogue's rotary (ExhaustGraph).
+                add(passageId, ExhaustComponentType::merge, 0.0, primaryDiameter);
+                network.components.back().volumeLitres = std::numbers::pi * 0.25 * primaryDiameter
+                    * primaryDiameter * 2.5 * primaryDiameter * 1.0e-6;
+                for (auto face = first; face < std::min(banks[bank].size(), first + facesPerPort); ++face)
+                    network.cylinderConnections.push_back({ banks[bank][face], passageId });
+                connect(passageId++, primaryId);
+            }
             primaries.push_back(primaryId++);
         }
         if (primaries.size() == 1) {
@@ -518,6 +533,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         designed.error = "An engine has 1 to 32 cylinders";
         return designed;
     }
+    // A rotary's count is its rotors, each of three faces the simulator runs
+    // as cylinders, 32 at most.
+    const auto rotary = spec.cycle == EngineCycle::rotary;
+    if (rotary && spec.cylinderCount > 10) {
+        designed.error = "A rotary has 1 to 10 rotors";
+        return designed;
+    }
     try {
         const auto profile = profileFor(spec.use);
         const auto twoStroke = spec.cycle == EngineCycle::twoStroke;
@@ -532,7 +554,21 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         if (diesel && fuelSystem != FuelSystem::directInjection)
             throw std::invalid_argument("A diesel's fuel is injected into the cylinder: choose direct injection");
         const auto carburetted = fuelSystem == FuelSystem::carburettor;
-        const auto count = spec.cylinderCount;
+        if (rotary) {
+            if (diesel)
+                throw std::invalid_argument("A rotary burns petrol: its long chamber cannot hold a diesel's "
+                                            "compression");
+            if (spec.layout != EngineLayout::inlineLayout)
+                throw std::invalid_argument("A rotary's rotors stand one behind another on the shaft: choose inline");
+            if (!spec.firingOrder.empty() || !spec.crankOffsetsDegrees.empty())
+                throw std::invalid_argument("A rotary fires as its rotors are spaced: evenly round the eccentric "
+                                            "shaft");
+            if (spec.boreMm > 0.0 || spec.strokeMm > 0.0)
+                throw std::invalid_argument("A rotary is sized by its displacement or its rotor (generating "
+                                            "radius, eccentricity, width), not a bore and a stroke");
+        }
+        const auto rotors = spec.cylinderCount;
+        const auto count = rotary ? 3U * rotors : spec.cylinderCount;
         const auto countD = static_cast<double>(count);
         Derivation derive(spec.overrides, designed.values);
         EngineConfig config;
@@ -543,23 +579,51 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
 
         // Size. Bore and stroke as given, or from the displacement and the
         // use's bore/stroke ratio.
-        const auto ratio = derive("bore_stroke_ratio", "Bore / stroke", "",
+        // A rotary's rotor instead: from its displacement (Mazda's, one face
+        // per rotor: a 13B's 1.3 L) at the 13B's proportions, R / e 7 and
+        // b / R 0.76 (105, 15 and 80 mm), each face sweeping 3 sqrt(3) R e b.
+        RotaryConfig rotor;
+        if (rotary) {
+            constexpr double eccentricityShare = 15.0 / 105.0;
+            constexpr double widthShare = 80.0 / 105.0;
+            const auto perRotorMm3 = spec.displacementLitres / static_cast<double>(rotors) * 1.0e6;
+            rotor.generatingRadiusMm = derive("generating_radius_mm", "Rotor generating radius", "mm",
+                std::cbrt(std::max(0.0, perRotorMm3) / (3.0 * std::sqrt(3.0) * eccentricityShare * widthShare)),
+                "from the displacement, at the 13B's proportions (R 105, e 15, b 80 mm)");
+            rotor.eccentricityMm = derive("eccentricity_mm", "Eccentricity", "mm",
+                eccentricityShare * rotor.generatingRadiusMm, "R / 7, the 13B's");
+            rotor.rotorWidthMm = derive("rotor_width_mm", "Rotor width", "mm", widthShare * rotor.generatingRadiusMm,
+                "0.76 x R, the 13B's");
+            rotor.rotorCount = rotors;
+            if (!(rotor.generatingRadiusMm > 0.0 && rotor.eccentricityMm > 0.0 && rotor.rotorWidthMm > 0.0))
+                throw std::invalid_argument("Give a rotary's displacement, or its rotor");
+            if (rotor.generatingRadiusMm < 4.0 * rotor.eccentricityMm)
+                throw std::invalid_argument("A rotor's generating radius is more than 4 times its eccentricity, "
+                                            "or the apexes cut the housing (Mazda's are near 7)");
+        }
+        const auto ratio = rotary ? 1.0 : derive("bore_stroke_ratio", "Bore / stroke", "",
             diesel ? 0.85 : twoStroke ? 1.18 : profile.boreStrokeRatio,
             "the use's (cars ~1.0, sport bikes 1.4, cruisers 0.9, diesels 0.85)");
         auto boreFromVolume = 0.0;
         if (spec.displacementLitres > 0.0)
             boreFromVolume = std::cbrt(spec.displacementLitres / countD * 1.0e6 * 4.0 * ratio / std::numbers::pi);
-        const auto bore = derive("bore_mm", "Bore", "mm", spec.boreMm > 0.0 ? spec.boreMm : boreFromVolume,
-            spec.boreMm > 0.0 ? "given" : "from the displacement and bore / stroke");
-        const auto stroke = derive("stroke_mm", "Stroke", "mm",
-            spec.strokeMm > 0.0 ? spec.strokeMm : bore / std::max(0.1, ratio),
-            spec.strokeMm > 0.0 ? "given" : "bore / (bore / stroke)");
+        // A face's bore and stroke are the equivalents its flames and its
+        // sweep run with (rotaryEquivalentBoreMm).
+        const auto bore = rotary ? rotaryEquivalentBoreMm(rotor)
+            : derive("bore_mm", "Bore", "mm", spec.boreMm > 0.0 ? spec.boreMm : boreFromVolume,
+                spec.boreMm > 0.0 ? "given" : "from the displacement and bore / stroke");
+        const auto stroke = rotary ? rotaryEquivalentStrokeMm(rotor)
+            : derive("stroke_mm", "Stroke", "mm",
+                spec.strokeMm > 0.0 ? spec.strokeMm : bore / std::max(0.1, ratio),
+                spec.strokeMm > 0.0 ? "given" : "bore / (bore / stroke)");
         // No size is refused for being large or small: a model engine and a
         // ship's are both engines. The bounds only keep the numbers physical.
         if (!(bore >= minimumBoreStrokeMm && bore <= maximumBoreStrokeMm
                 && stroke >= minimumBoreStrokeMm && stroke <= maximumBoreStrokeMm))
             throw std::invalid_argument("Give a bore and a stroke of 5-1,000 mm, or a displacement");
-        const auto litres = cylinderDisplacementLitres(bore, stroke) * countD;
+        // The sizing rules below take a rotary's faces' sweep in 720 deg of
+        // the shaft (breathingDisplacementLitres): a 13B's 2.6 L.
+        const auto litres = cylinderDisplacementLitres(bore, stroke) * countD * (rotary ? 720.0 / 1'080.0 : 1.0);
         // Below 10 cc the carburettor and the simulator's parts no longer
         // scale: a 2.5 cc single stays rich (lambda 0.33) and never fires.
         if (litres < 0.01 - 1.0e-9) throw std::invalid_argument("The simulator runs engines of 10 cc at least");
@@ -569,12 +633,22 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             : twoStroke ? 17.5 : profile.redlinePistonSpeedMps - (boosted ? 1.5 : 0.0);
         auto redlineDerived = pistonSpeed * 60.0 / (2.0 * stroke * 1.0e-3);
         if (diesel) redlineDerived = std::min(redlineDerived, 5'000.0);
+        // A rotary's is its apexes' speed: the 13B's 9,000 rpm (the RX-8's
+        // high-power one) or 7,500 (its standard one) at R 105 mm, 1,000 less
+        // boosted (the 13B-REW's 8,000).
+        const auto sportUse = spec.use == EngineUse::sportCar || spec.use == EngineUse::sportMotorcycle;
+        if (rotary)
+            redlineDerived = ((sportUse ? 9'000.0 : 7'500.0) - (boosted ? 1'000.0 : 0.0)) * 105.0
+                / rotor.generatingRadiusMm;
         redlineDerived = std::min(redlineDerived, 16'000.0);
         config.redlineRpm = derive("redline_rpm", "Redline", "rpm", std::round(redlineDerived / 100.0) * 100.0,
-            "mean piston speed " + format(pistonSpeed) + " m/s at the redline");
+            rotary ? std::string("the 13B's apex speed: ") + (sportUse ? "9,000" : "7,500")
+                    + " rpm at R 105 mm" + (boosted ? ", 1,000 less boosted" : "")
+                : "mean piston speed " + format(pistonSpeed) + " m/s at the redline");
         const auto peakPowerRpm = derive("peak_power_rpm", "Peak power speed", "rpm",
             (diesel ? 0.8 : 0.9) * config.redlineRpm, diesel ? "0.8 x redline" : "0.9 x redline");
-        config.idleRpm = derive("idle_rpm", "Idle", "rpm", twoStroke ? 1'300.0 : profile.idleRpm, "the use's");
+        config.idleRpm = derive("idle_rpm", "Idle", "rpm", twoStroke ? 1'300.0 : rotary ? 800.0 : profile.idleRpm,
+            rotary ? "the 13B's" : "the use's");
         config.ignition.revLimitRpm = derive("rev_limit_rpm", "Rev limiter", "rpm",
             diesel ? config.redlineRpm : config.redlineRpm * 1.03, diesel ? "the redline" : "3 % over the redline");
 
@@ -587,39 +661,46 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             : spec.use == EngineUse::aircraft ? 7.0
             : std::clamp(14.0 - 0.033 * bore + profile.compressionBonus, 8.5, 13.5) - 2.0 * (boost - 1.0);
         if (twoStroke && !diesel) compressionDerived = 11.0;
+        if (rotary) compressionDerived = 10.0 - 1.25 * (boost - 1.0);
         const auto compression = derive("compression_ratio", "Compression ratio", "",
             std::max(diesel ? 14.0 : 7.0, compressionDerived),
             diesel ? "a direct-injection diesel's" : spec.use == EngineUse::aircraft ? "an aircraft engine on avgas"
+            : rotary ? "the Renesis' 10, less 1.25 per bar of boost (the 13B-REW's 9.0)"
             : "14 - 0.033 x bore + the use's, less 2 per bar of boost");
 
         // Moving parts.
-        const auto rod = derive("connecting_rod_mm", "Connecting rod", "mm",
+        // A rotor reciprocates nothing: a face has no rod and no piston to
+        // list (applyRotaryFaceGeometry keeps the unread fields valid).
+        const auto rod = rotary ? stroke : derive("connecting_rod_mm", "Connecting rod", "mm",
             twoStroke ? std::max(2.0 * stroke, 1.7 * bore) : std::max(1.6 * stroke, 1.25 * bore),
             twoStroke ? "max(2.0 x stroke, 1.7 x bore)" : "max(1.6 x stroke, 1.25 x bore)");
         const auto density = diesel ? 0.96 : twoStroke ? 0.88
             : profile.pistonDensityGPerCm3 * (boosted ? 1.25 : 1.0);
         const auto pistonByBore = density * std::pow(bore / 10.0, 3.0);
-        const auto piston = derive("piston_mass_g", "Piston mass", "g",
+        const auto piston = rotary ? minimumPistonMassGrams : derive("piston_mass_g", "Piston mass", "g",
             std::max(pistonByBore, minimumPistonMassGrams), pistonByBore < minimumPistonMassGrams
                 ? format(density) + " g/cm3 x bore^3 gives " + format(pistonByBore) + ", raised to the simulator's floor"
                 : format(density) + " g/cm3 x bore^3");
-        const auto rodMass = derive("connecting_rod_mass_g", "Connecting rod mass", "g", 1.3 * piston,
-            "1.3 x the piston");
+        const auto rodMass = rotary ? 1.3 * piston : derive("connecting_rod_mass_g", "Connecting rod mass", "g",
+            1.3 * piston, "1.3 x the piston");
         // A two-stroke has no valves, no headers and no injector: its ports,
         // its chambers and its carburettor carry them, so those rows are not
         // listed for it and setting one is an unknown value.
-        const auto valvesPerSide = twoStroke ? 2U : static_cast<std::uint32_t>(std::lround(derive("valves_per_side",
+        const auto valvesPerSide = twoStroke || rotary ? 2U : static_cast<std::uint32_t>(std::lround(derive("valves_per_side",
             "Valves per side", "", diesel ? 2.0 : static_cast<double>(profile.valvesPerSide), "the use's")));
         // Below 0.22 L the per-litre rule falls under the simulator's 0.01
         // floor (a 125 cc sport single: 0.0056): it is raised to the floor.
-        const auto inertiaPerLitre = (diesel ? 0.135 : twoStroke ? 0.087 : profile.inertiaKgM2PerLitre) * litres;
+        const auto inertiaPerLitre = (diesel ? 0.135 : twoStroke ? 0.087 : rotary ? 0.042
+            : profile.inertiaKgM2PerLitre) * litres;
         config.rotatingInertiaKgM2 = derive("rotating_inertia_kg_m2", "Rotating inertia", "kg m2",
             std::max(minimumRotatingInertiaKgM2, inertiaPerLitre),
             inertiaPerLitre < minimumRotatingInertiaKgM2
                 ? "per litre gives " + format(inertiaPerLitre) + ", raised to the simulator's floor"
+                : rotary ? std::string("the catalogue 13B's, per litre swept in 720 deg (0.11 on 2.6 L)")
                 : std::string("per litre, the use's (cars 0.09-0.10, sport bikes 0.045, cruisers 0.11)"));
         config.frictionCoefficient = derive("friction_coefficient", "Friction coefficient", "",
-            diesel ? 0.16 : twoStroke ? 0.07 : profile.frictionCoefficient, "the use's");
+            diesel ? 0.16 : twoStroke ? 0.07 : rotary ? 0.11 : profile.frictionCoefficient,
+            rotary ? "the catalogue 13B's: apex and side seals" : "the use's");
         config.octaneRating = derive("octane_rating", "Octane", "RON", profile.octane, "the use's");
 
         // Crank: banks, rows, firing order.
@@ -668,7 +749,19 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             : !spec.crankOffsetsDegrees.empty() ? "the cylinders whose offsets put them on one pin share it"
             : spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::custom
             ? "one per cylinder: as asked" : "one per cylinder";
-        if (!spec.crankOffsetsDegrees.empty()) {
+        if (rotary) {
+            // A rotor's faces fire 360 deg of the shaft apart, and the rotors
+            // are spaced evenly round it: a 13B's two at 180 deg, a 20B's
+            // three at 120, so a face fires every 360 / rotors.
+            for (std::uint32_t index = 0; index < count; ++index)
+                tdc[index] = static_cast<double>(index / 3) * 360.0 / static_cast<double>(rotors)
+                    + static_cast<double>(index % 3) * 360.0;
+            order.resize(count);
+            std::iota(order.begin(), order.end(), 1U);
+            std::stable_sort(order.begin(), order.end(), [&tdc](auto a, auto b) { return tdc[a - 1] < tdc[b - 1]; });
+            pinRule = "a face fires every " + format(360.0 / static_cast<double>(rotors))
+                + " deg of the eccentric shaft";
+        } else if (!spec.crankOffsetsDegrees.empty()) {
             if (spec.crankOffsetsDegrees.size() != count)
                 throw std::invalid_argument("Give one crank offset per cylinder");
             tdc = spec.crankOffsetsDegrees;
@@ -735,7 +828,36 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         // Head and cams.
         const auto intakeValveDiameter = bore * (valvesPerSide > 1 ? 0.40 : 0.50);
         CamshaftConfig cams;
-        if (!twoStroke) {
+        // A rotary's ports as valves of its face's 1,080 deg cycle: a
+        // side-port Renesis-class face's (the catalogue 13B's estimate, no
+        // overlap), the rotor's flank sweeping each open over a quarter of
+        // its duration. Their sizes go with the rotor.
+        const auto portScale = rotary ? std::cbrt(rotaryFaceDisplacementLitres(rotor) / 0.6547) : 1.0;
+        if (rotary) {
+            cams.intakeDurationDegrees = derive("intake_duration_deg", "Intake port open", "deg", 332.0,
+                "a side port's, the catalogue 13B's");
+            cams.exhaustDurationDegrees = derive("exhaust_duration_deg", "Exhaust port open", "deg", 317.0,
+                "a side port's, the catalogue 13B's");
+            cams.intakeCenterlineDegrees = derive("intake_centerline_deg", "Intake port centre", "deg", 169.0,
+                "after the gas-exchange top dead centre, the catalogue 13B's");
+            cams.exhaustCenterlineDegrees = derive("exhaust_centerline_deg", "Exhaust port centre", "deg", 161.5,
+                "before the gas-exchange top dead centre, the catalogue 13B's");
+            cams.intakeLiftMm = derive("intake_lift_mm", "Intake port height", "mm", 8.0 * portScale,
+                "the 13B's 8 mm, with the rotor's size");
+            cams.exhaustLiftMm = derive("exhaust_lift_mm", "Exhaust port height", "mm", 7.5 * portScale,
+                "the 13B's 7.5 mm, with the rotor's size");
+            const auto trapezoid = [](double duration, double lift) {
+                return std::vector<ValveLiftSample> { { -0.5 * duration, 0.0 }, { -0.25 * duration, lift },
+                    { 0.25 * duration, lift }, { 0.5 * duration, 0.0 } };
+            };
+            cams.intakeLiftProfile = trapezoid(cams.intakeDurationDegrees, cams.intakeLiftMm);
+            cams.exhaustLiftProfile = trapezoid(cams.exhaustDurationDegrees, cams.exhaustLiftMm);
+            const auto lift = [](double fraction, double height) { return fraction * height; };
+            cams.intakeFlowCurve = { { 0.0, 0.0 }, { lift(0.25, cams.intakeLiftMm), 0.50 },
+                { lift(0.5, cams.intakeLiftMm), 0.68 }, { cams.intakeLiftMm, 0.75 } };
+            cams.exhaustFlowCurve = { { 0.0, 0.0 }, { lift(0.267, cams.exhaustLiftMm), 0.48 },
+                { lift(0.533, cams.exhaustLiftMm), 0.66 }, { cams.exhaustLiftMm, 0.72 } };
+        } else if (!twoStroke) {
             const auto dieselCams = diesel;
             cams.intakeDurationDegrees = derive("intake_duration_deg", "Intake duration", "deg",
                 dieselCams ? 224.0 : profile.intakeDurationDegrees, dieselCams ? "a diesel's" : "the use's");
@@ -766,8 +888,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             cylinder.crankOffsetDegrees = tdc[index];
             cylinder.bankOffsetDegrees = places[index].bankDegrees;
             cylinder.bankId = places[index].bankIndex + 1;
-            cylinder.intakeValveCount = valvesPerSide;
+            cylinder.intakeValveCount = rotary ? 3U : valvesPerSide;
             cylinder.exhaustValveCount = valvesPerSide;
+            if (rotary) {
+                // The 13B's three intake ports a face and two exhaust.
+                cylinder.intakeValveDiameterMm = 32.0 * portScale;
+                cylinder.exhaustValveDiameterMm = 30.0 * portScale;
+            }
             if (radial) {
                 cylinder.crankJournalId = 1;
                 cylinder.connectingRodType = index == 0 ? ConnectingRodType::master : ConnectingRodType::articulated;
@@ -779,7 +906,9 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             }
             config.cylinders.push_back(cylinder);
         }
-        if (radial) {
+        if (rotary) {
+            // The faces ride their rotor's eccentric: no journals to share.
+        } else if (radial) {
             config.crankJournals = { { 1, 0.0, 0.5 * stroke, 1 } };
         } else {
             // Cylinders of one row whose pins point the same way share it.
@@ -805,24 +934,34 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 for (auto& cylinder : config.cylinders) cylinder.crankJournalId = 0;
             }
         }
-        designed.values.push_back({ "crank_pins", "Crank pins", "",
-            radial ? 1.0 : static_cast<double>(config.crankJournals.empty() ? count : config.crankJournals.size()),
-            false, pinRule + "; fires " + intervalsText(analyseCrankBalance(config)), false });
+        if (rotary)
+            designed.values.push_back({ "rotors", "Rotors", "", static_cast<double>(rotors), false,
+                "three faces each; " + pinRule, false });
+        else
+            designed.values.push_back({ "crank_pins", "Crank pins", "",
+                radial ? 1.0 : static_cast<double>(config.crankJournals.empty() ? count : config.crankJournals.size()),
+                false, pinRule + "; fires " + intervalsText(analyseCrankBalance(config)), false });
 
         // Intake.
         auto& intake = config.intake;
+        // A rotary's runner feeds a rotor, its port open 332 deg of a face's
+        // cycle against a piston's ~250: tuned 4/3 as long.
         intake.runnerLengthMm = derive("intake_runner_length_mm", "Intake runner length", "mm",
-            std::clamp((twoStroke ? 1.0e6 : 1.9e6) / peakPowerRpm, 80.0, 600.0),
-            twoStroke ? "1.0e6 / peak power rpm" : "1.9e6 / peak power rpm (catalogue 1.6-2.3e6)");
+            std::clamp((twoStroke ? 1.0e6 : rotary ? 2.5e6 : 1.9e6) / peakPowerRpm, 80.0, 600.0),
+            twoStroke ? "1.0e6 / peak power rpm" : rotary ? "2.5e6 / peak power rpm: the port's longer opening"
+                : "1.9e6 / peak power rpm (catalogue 1.6-2.3e6)");
         intake.runnerDiameterMm = derive("intake_runner_diameter_mm", "Intake runner diameter", "mm",
-            (twoStroke ? 0.56 : valvesPerSide > 1 ? 0.47 : 0.44) * bore, "a share of the bore (catalogue 0.42-0.52)");
+            (twoStroke ? 0.56 : rotary ? 0.41 : valvesPerSide > 1 ? 0.47 : 0.44) * bore,
+            rotary ? "0.41 x the face's bore: the catalogue 13B's 50 mm a rotor"
+                : "a share of the bore (catalogue 0.42-0.52)");
         // A two-stroke's throttle is the carburettor bore feeding the crankcase
         // circuit, as in the catalogue's RD350: one. Four bodies there idled a
         // two-stroke four at 2,070 rpm for 1,300, misfiring (journal 2026-10-19).
         const auto perCylinderThrottles = profile.throttlePerCylinder && !diesel && !twoStroke && count <= 16;
         intake.throttleCount = static_cast<std::uint32_t>(std::lround(derive("throttle_count", "Throttle bodies", "",
-            perCylinderThrottles ? countD : 1.0,
-            perCylinderThrottles ? "one per cylinder" : twoStroke ? "one, feeding the crankcase circuit" : "one")));
+            perCylinderThrottles ? (rotary ? static_cast<double>(rotors) : countD) : 1.0,
+            perCylinderThrottles ? (rotary ? "one per rotor" : "one per cylinder")
+                : twoStroke ? "one, feeding the crankcase circuit" : "one")));
         // A two-stroke's bore feeds one cylinder, because its intake path is
         // that cylinder's crankcase, so it is sized from that cylinder and not
         // from the engine. Sized from the engine it was wrong by the cylinder
@@ -1078,11 +1217,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         }
         exhaust.primaryDiameterMm = twoStroke ? 0.45 * bore
             : derive("exhaust_primary_diameter_mm", "Exhaust primary diameter", "mm",
-                0.45 * bore, "0.45 x bore (catalogue 0.42-0.52)");
+                (rotary ? 0.41 : 0.45) * bore, rotary ? "0.41 x the face's bore: the catalogue 13B's 50 mm a rotor"
+                    : "0.45 x bore (catalogue 0.42-0.52)");
         const auto paths = twoStroke ? count
             : (spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::flat) && count >= 4 ? 2U
             : spec.layout == EngineLayout::custom ? bankCount : 1U;
-        const auto merged = std::max(1U, count / paths);
+        // A rotary's primaries are its rotors'.
+        const auto merged = std::max(1U, (rotary ? rotors : count) / paths);
         const auto collectorDiameter = exhaust.primaryDiameterMm
             * std::max(1.0, std::sqrt(0.55 * static_cast<double>(merged)));
         exhaust.collectorDiameterMm = twoStroke ? collectorDiameter
@@ -1240,7 +1381,8 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 const auto join = system == ExhaustSystem::dualHPipe ? PathJoin::hPipe
                     : system == ExhaustSystem::dualXPipe ? PathJoin::xPipe
                     : system == ExhaustSystem::dual && pathCount == 1 ? PathJoin::split : PathJoin::single;
-                pathConfig.network = designedExhaustNetwork(plan, join, pathBanks, pathConfig.acousticPositionM);
+                pathConfig.network = designedExhaustNetwork(plan, join, pathBanks, pathConfig.acousticPositionM,
+                    rotary ? 3 : 1);
             }
             config.exhaustPaths.push_back(std::move(pathConfig));
         }
@@ -1289,13 +1431,23 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             // (Zhao, Lai and Harrington 1999). The part's own window, late in
             // compression, is the stratified lean-burn one, which needs a
             // spray-guided cloud the zero-dimensional charge does not hold.
+            // A rotary's strokes are 270 deg: the same window, half as long
+            // again (the 16X's direct injection, into the intake stroke).
             config.injection = part(parts.injections, "direct_injection");
             config.injection.startAngleDegrees = derive("injection_start_deg", "Injection starts", "deg ATDC",
-                420.0, "on the intake stroke, 300 deg before firing TDC: a homogeneous charge");
+                rotary ? 630.0 : 420.0, rotary ? "on the intake stroke, 450 deg before firing TDC: a homogeneous charge"
+                    : "on the intake stroke, 300 deg before firing TDC: a homogeneous charge");
             config.injection.endAngleDegrees = derive("injection_end_deg", "Injection window ends", "deg ATDC",
-                600.0, "120 deg before firing TDC, early in compression");
+                rotary ? 900.0 : 600.0, rotary ? "180 deg before firing TDC, early in compression"
+                    : "120 deg before firing TDC, early in compression");
         } else {
             config.injection = part(parts.injections, profile.injectionPart);
+            if (rotary) {
+                // Onto the closed port ahead of its opening near 543 deg,
+                // ending before it shuts: the catalogue 13B's window.
+                config.injection.startAngleDegrees = 400.0;
+                config.injection.endAngleDegrees = 860.0;
+            }
         }
         if (twoStroke && fuelSystem == FuelSystem::directInjection) {
             // Into the cylinder once the piston has shut the exhaust port, so
@@ -1338,6 +1490,17 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         } else if (twoStroke) {
             config.ignition.timingCurve = stretchedTiming({ { 0.0, 12.0 }, { 0.2, 20.0 }, { 1.05, 20.0 } },
                 config.redlineRpm);
+        } else if (rotary) {
+            // Eccentric-shaft degrees, the catalogue 13B's curve (estimated);
+            // boosted, 10 deg less at load, the knock limit measured on the
+            // dyno holding it below that.
+            config.ignition.timingCurve = boosted
+                ? stretchedTiming({ { 0.0, 5.0 }, { 0.13, 10.0 }, { 0.33, 14.0 }, { 0.61, 18.0 }, { 0.83, 20.0 },
+                    { 1.0, 18.0 } }, config.redlineRpm)
+                : stretchedTiming({ { 0.0, 5.0 }, { 0.13, 10.0 }, { 0.33, 20.0 }, { 0.61, 28.0 }, { 0.83, 30.0 },
+                    { 1.0, 28.0 } }, config.redlineRpm);
+            // A leading and a trailing plug in each housing.
+            config.combustionCalibration.ignitionSiteCount = 2;
         } else if (spec.use == EngineUse::aircraft) {
             config.ignition.timingCurve = stretchedTiming({ { 0.0, 4.0 }, { 0.24, 9.0 }, { 0.42, 14.0 },
                 { 0.63, 18.0 }, { 0.84, 16.0 } }, config.redlineRpm);
@@ -1527,6 +1690,10 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             radial ? "a radial is air-cooled" : "liquid") > 0.5;
         if (!config.thermal.liquidCooled) config.thermal.engineDrivenFan = !radial;
 
+        if (rotary) {
+            config.rotary = rotor;
+            applyRotaryFaceGeometry(config);
+        }
         if (const auto unknown = derive.unknownOverride(); !unknown.empty())
             throw std::invalid_argument("Unknown value: " + unknown);
         normaliseEngineConfig(config);

@@ -68,9 +68,24 @@ struct CylinderReference final {
     return { crank, wrist, piston, std::atan2(wrist.y - crank.y, wrist.x - crank.x) };
 }
 
+/** A rotary's face, as the piston whose travel sweeps the face's volume
+ *  exactly: (S/2) cos(2 (a - a0) / 3), a0 the face's firing top dead centre,
+ *  so its top and bottom are 270 deg of the eccentric shaft apart. The
+ *  crankpin is the eccentric, the "wrist" the rotor's centre on it. */
+[[nodiscard]] Position rotaryFacePosition(const EngineConfig& config, const CylinderConfig& face,
+                                          double shaftAngleDegrees) noexcept {
+    const auto theta = shaftAngleDegrees * std::numbers::pi / 180.0;
+    const auto facePhase = (shaftAngleDegrees - face.crankOffsetDegrees) * std::numbers::pi / 180.0;
+    const auto e = config.rotary.eccentricityMm;
+    const Point eccentric { e * std::sin(theta), -e * std::cos(theta) };
+    return { eccentric, eccentric, face.strokeMm * 0.5 * std::cos(2.0 * facePhase / 3.0),
+             (bankAngleFor(config, face) - 90.0) * std::numbers::pi / 180.0 };
+}
+
 [[nodiscard]] Position positionFor(const EngineConfig& config, std::size_t index,
                                     double primaryAngleDegrees) noexcept {
     const auto& cylinder = config.cylinders[index];
+    if (config.cycle == EngineCycle::rotary) return rotaryFacePosition(config, cylinder, primaryAngleDegrees);
     if (cylinder.connectingRodType != ConnectingRodType::articulated)
         return conventionalPosition(config, cylinder, primaryAngleDegrees);
     const auto masterIndex = std::find_if(config.cylinders.begin(), config.cylinders.end(),
@@ -122,6 +137,9 @@ struct CylinderReference final {
                                                           std::size_t cylinderIndex) noexcept {
     if (cylinderIndex >= config.cylinders.size()) return {};
     const auto& cylinder = config.cylinders[cylinderIndex];
+    if (config.cycle == EngineCycle::rotary)
+        return { cylinder.strokeMm * 0.5, -cylinder.strokeMm * 0.5, cylinder.crankOffsetDegrees,
+                 cylinder.crankOffsetDegrees + 270.0 };
     const auto* journal = journalFor(config, cylinder);
     const auto* crankshaft = crankshaftFor(config, journal);
     const auto ratio = crankshaft == nullptr ? 1.0 : crankshaft->rotationRatio;

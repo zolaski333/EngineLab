@@ -628,6 +628,15 @@ void resizeAtIdleKeepsEveryEngineRunning() {
     for (const auto& entry : catalogue.entries) {
         auto original = entry.config;
         normaliseEngineConfig(original);
+        // A rotary's faces follow its rotor, which only the designer sizes.
+        if (original.cycle == EngineCycle::rotary) {
+            auto refused = original;
+            require(!resizeCylinders(refused, refused.cylinders.front().boreMm + 2.0,
+                        refused.cylinders.front().strokeMm + 2.0).empty()
+                    && !resizeConnectingRods(refused, refused.cylinders.front().connectingRodMm + 5.0).empty(),
+                original.name + ": a rotary's faces and rods cannot be resized as a piston engine's");
+            continue;
+        }
         // Larger, unless that takes the engine past what the configuration
         // allows: then smaller.
         auto larger = original;

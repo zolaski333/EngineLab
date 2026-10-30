@@ -14,6 +14,8 @@ std::optional<CylinderSize> cylinderSize(const EngineConfig& config) {
 }
 
 std::string resizeCylinders(EngineConfig& config, double boreMm, double strokeMm) {
+    if (config.cycle == EngineCycle::rotary)
+        return "A rotary's faces take their size from the rotor: design it again to resize it.";
     if (!cylinderSize(config)) return "The cylinders do not share one bore and stroke.";
     if (!std::isfinite(boreMm) || boreMm < 20.0 || boreMm > 200.0)
         return "The bore must be between 20 and 200 mm.";
@@ -77,6 +79,7 @@ std::optional<double> connectingRodLength(const EngineConfig& config) {
 }
 
 std::string resizeConnectingRods(EngineConfig& config, double rodMm) {
+    if (config.cycle == EngineCycle::rotary) return "A rotary has no connecting rods.";
     if (!connectingRodLength(config))
         return "The cylinders do not share one conventional connecting rod.";
     if (!std::isfinite(rodMm) || rodMm > 500.0) return "The connecting rod must be at most 500 mm.";

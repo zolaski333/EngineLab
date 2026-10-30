@@ -826,7 +826,10 @@ void checkInjectors(const EngineModel3D& model) {
     const auto& config = model.config();
     const auto& name = config.name;
     const auto direct = config.injection.mode == InjectionMode::direct;
-    for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+    // A rotor's three faces share its ports and its injector: one a rotor.
+    const auto rotary = config.cycle == EngineCycle::rotary;
+    const auto step = rotary ? std::size_t { 3 } : std::size_t { 1 };
+    for (std::size_t c = 0; c < model.cylinderCount(); c += step) {
         const auto label = name + " cylinder " + std::to_string(c + 1) + ": ";
         const auto part = model.injectorPart(c);
         require(part < model.parts().size(), label + "an injector is drawn");
@@ -842,8 +845,8 @@ void checkInjectors(const EngineModel3D& model) {
         require(std::abs(furthest - dot(tip, aim)) < 0.5F, label + "the injector's nozzle ends at its tip");
         const auto probe = model.probe(c, 0.0);
         const auto bore = static_cast<float>(config.cylinders[c].boreMm);
-        const auto& intake = model.intakePorts()[c];
-        const auto& exhaust = model.exhaustPorts()[c];
+        const auto& intake = model.intakePorts()[c / step];
+        const auto& exhaust = model.exhaustPorts()[c / step];
         require(length(tip - intake.inner) < length(tip - exhaust.inner), label + "the injector is on the intake side");
         if (direct) {
             // In the roof of the chamber, within the bore, spraying down into it.
@@ -908,7 +911,8 @@ void checkEngine(const EngineConfig& config) {
         for (const auto& instance : instances)
             require(finite(instance.transform) && std::isfinite(instance.intensity), name + ": pose transforms are finite");
 
-        for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+        // A rotor has no rod, pin or crown to check: its pose is above.
+        for (std::size_t c = 0; c < model.cylinderCount() && config.cycle != EngineCycle::rotary; ++c) {
             const auto probe = model.probe(c, angle);
             const auto label = name + " cylinder " + std::to_string(c + 1) + " at " + std::to_string(angle) + " deg";
             // The rod drawn between the two pins must keep its real length:
@@ -1454,7 +1458,10 @@ int main() {
     // 2026-10-24: its barrels 1.5 bores apart for the transfers in their
     // flanks, its ports leaving from their windows: those bellies touch at 6
     // places, and it has 2 tight bends instead of 6.
-    const std::array<std::size_t, 5> measured { 11, 4, 0, 44, 7 };
+    // 2026-10-29: the 13B-like adds 2 and 9: each rotor's port feeds its
+    // passage (a merge drawn beside the housing, not inside it) through the
+    // passage's own body, and the rear rotor's primary winds to its length.
+    const std::array<std::size_t, 5> measured { 13, 4, 0, 53, 7 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

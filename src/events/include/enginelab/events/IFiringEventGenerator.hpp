@@ -12,6 +12,9 @@ class IFiringEventGenerator {
 public:
     virtual ~IFiringEventGenerator() = default;
     [[nodiscard]] virtual double cycleDegrees() const noexcept = 0;
+    /** Takes the engine the events will be generated for: its crank angle's
+     *  domain follows its cycle. */
+    virtual void configure(const EngineConfig&) noexcept {}
     virtual void reset() noexcept {}
     [[nodiscard]] virtual std::size_t droppedEventCountLastGenerate() const noexcept { return 0; }
     virtual std::size_t generate(const EngineConfig& config,

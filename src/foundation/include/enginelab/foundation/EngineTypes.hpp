@@ -13,7 +13,7 @@ inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
 inline constexpr std::uint32_t currentEngineSchemaVersion { 9 };
 
 
-enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
+enum class EngineCycle : std::uint8_t { fourStroke, twoStroke, rotary };
 enum class FuelType : std::uint8_t { gasoline, diesel };
 enum class InjectionMode : std::uint8_t { port, direct };
 enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, custom };
@@ -1227,11 +1227,59 @@ struct TwoStrokeConfig final {
     double powerValveFullyOpenRpm { 0.0 };
 };
 
+/** A Wankel rotary's rotors. Each rotor's three faces are three chambers,
+ *  which the simulator runs as three cylinders (faces 1-3 on the first rotor,
+ *  4-6 on the second...), each crossing its own four strokes over three turns
+ *  of the eccentric shaft. A face's volume is exactly
+ *  V = Vmin + Vd/2 (1 - cos(2a/3)), a the shaft angle from the face's firing
+ *  top dead centre and Vd = 3 sqrt(3) R e b; its ports are the faces'
+ *  intake and exhaust "valves" (`camshafts`, in shaft degrees), shared by the
+ *  rotor's three faces. */
+struct RotaryConfig final {
+    /** R: the rotor's centre to an apex. */
+    double generatingRadiusMm { 105.0 };
+    /** e: the eccentric shaft's throw. */
+    double eccentricityMm { 15.0 };
+    /** b: the rotor's width between the side housings. */
+    double rotorWidthMm { 80.0 };
+    std::uint32_t rotorCount { 2 };
+};
+
 /** Crank degrees of one thermodynamic cycle: 720 for a four-stroke, 360 for
- *  a two-stroke. */
+ *  a two-stroke, 1,080 of the eccentric shaft for a rotary's face. */
 [[nodiscard]] inline double cycleDegreesOf(EngineCycle cycle) noexcept {
-    return cycle == EngineCycle::twoStroke ? 360.0 : 720.0;
+    return cycle == EngineCycle::twoStroke ? 360.0 : cycle == EngineCycle::rotary ? 1'080.0 : 720.0;
 }
+/** One stroke: a quarter of a four-stroke's or a rotary's cycle, half a
+ *  two-stroke's. */
+[[nodiscard]] inline double strokeDegreesOf(EngineCycle cycle) noexcept {
+    return cycle == EngineCycle::twoStroke ? 180.0 : cycleDegreesOf(cycle) * 0.25;
+}
+/** The crank angle's domain: the cycle, or 720 for a two-stroke (whose
+ *  cylinders run two cycles inside it). */
+[[nodiscard]] inline double crankDomainDegreesOf(EngineCycle cycle) noexcept {
+    return cycle == EngineCycle::rotary ? 1'080.0 : 720.0;
+}
+/** A rotary face's swept volume, 3 sqrt(3) R e b, litres. */
+[[nodiscard]] double rotaryFaceDisplacementLitres(const RotaryConfig&) noexcept;
+struct EngineConfig;
+/** Gives every face of a rotary its rotor's equivalent bore and stroke
+ *  (rotaryEquivalentBoreMm, rotaryEquivalentStrokeMm), the values
+ *  validateEngineConfig asks of it. */
+void applyRotaryFaceGeometry(EngineConfig& config) noexcept;
+/** The bore a face runs with: twice the path each of its two flames covers,
+ *  a third of the chamber's sqrt(3) R length (2 R / sqrt(3)). The stroke
+ *  follows from the face's displacement over that bore's area. */
+[[nodiscard]] double rotaryEquivalentBoreMm(const RotaryConfig&) noexcept;
+[[nodiscard]] double rotaryEquivalentStrokeMm(const RotaryConfig&) noexcept;
+/** The chamber's wetted surface at `volumeLitres`: the rotor's flank and the
+ *  housing's arc (each about sqrt(3) R long, b wide) and the two side
+ *  housings (V / b each): 0.031 m2 for a 13B face at top dead centre, where
+ *  a piston of its equivalent bore wets 0.023 m2. */
+[[nodiscard]] double rotaryChamberSurfaceM2(const RotaryConfig&, double volumeLitres) noexcept;
+/** The mean speed of an apex along the housing, omega R / 3: the gas speed
+ *  scale of Woschni's law in a rotary (the rotor tip speed). */
+[[nodiscard]] double rotaryApexSpeedMps(const RotaryConfig&, double shaftRadPerSecond) noexcept;
 
 struct EngineConfig final {
     std::uint32_t schemaVersion { currentEngineSchemaVersion };
@@ -1286,6 +1334,8 @@ struct EngineConfig final {
     std::string audioVoicingKey;
     /** Read only when `cycle` is EngineCycle::twoStroke. */
     TwoStrokeConfig twoStroke;
+    /** Read only when `cycle` is EngineCycle::rotary. */
+    RotaryConfig rotary;
 };
 
 struct EngineControls final {
@@ -2135,6 +2185,11 @@ struct DynoRun final {
 [[nodiscard]] EngineConfig makeDefaultRadialFive();
 [[nodiscard]] std::vector<EngineConfig> makeBaseEnginePresets();
 [[nodiscard]] double engineDisplacementLitres(const EngineConfig&) noexcept;
+/** The volume the air-sizing rules take in 720 deg of the shaft: the
+ *  displacement, and a rotary's faces' share of it, each face filling once in
+ *  1,080 deg (a 13B's six faces sweep 3.9 L, 2.6 L in 720 deg). A two-stroke
+ *  keeps its displacement, as those rules were fitted on it. */
+[[nodiscard]] double breathingDisplacementLitres(const EngineConfig&) noexcept;
 [[nodiscard]] double effectiveRotatingInertiaKgM2(const EngineConfig&) noexcept;
 /** The authored peak firing pressure limit, or a typical one for the fuel and
  * induction when none is authored. */
@@ -2158,11 +2213,15 @@ void keepBackfires(const EngineConfig& running, EngineConfig& edited) noexcept;
                                           const std::vector<ValveFlowSample>&) noexcept;
 [[nodiscard]] ValveControlSample interpolateValveControl(const ValveControlConfig&, double rpm,
                                                          double load) noexcept;
+/** `cycleDegrees`: the cylinder's cycle the angles wrap in (1,080 on a
+ *  rotary's face). */
 [[nodiscard]] double valveLiftMm(double crankAngleDegrees, double centerlineDegrees,
-                                 double durationDegrees, double maximumLiftMm) noexcept;
+                                 double durationDegrees, double maximumLiftMm,
+                                 double cycleDegrees = 720.0) noexcept;
 [[nodiscard]] double profiledValveLiftMm(double crankAngleDegrees, double centerlineDegrees,
                                          double durationDegrees, double maximumLiftMm,
-                                         const std::vector<ValveLiftSample>& samples) noexcept;
+                                         const std::vector<ValveLiftSample>& samples,
+                                         double cycleDegrees = 720.0) noexcept;
 [[nodiscard]] double combustionPulse(double cylinderPhaseDegrees, double ignitionAdvanceDegrees,
                                      double ignitionOffsetDegrees) noexcept;
 /** validateEngineConfig()'s limits that the engine designer clamps to. */

@@ -555,7 +555,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // A 1.50 ratio leaves a real 0.15-idle hysteresis, starts transport settling
     // before the governor catch, and remains below the normal DFCO entry point.
     // Pedal tip-in still resumes immediately through the throttle clause below.
-    const auto decelerationFuelResumeRpm = idleTargetRpm * 1.50;
+    // A rotary's face takes 1,080 deg of the shaft from its intake to its
+    // fire, half again a four-stroke's travel, and its light shaft coasts down
+    // twice as fast (13B: 2,600 rpm/s at 1,000 rpm, a K20 1,300): from 1.50 x
+    // idle it stalled before its first fire, from 1.75 x it dipped to 0.57 x
+    // idle after a wide-open blip. From 2.25 x it holds 0.89 x.
+    const auto rotary = config.cycle == EngineCycle::rotary;
+    const auto decelerationFuelResumeRpm = idleTargetRpm * (rotary ? 2.25 : 1.50);
+    const auto decelerationFuelCutRpm = idleTargetRpm * (rotary ? 2.50 : 1.65);
     // Deceleration fuel cut is an OVERRUN function: it presumes a running,
     // warmed engine coasting down under a shut throttle. The post-start flare
     // satisfies its speed threshold while being the exact opposite condition --
@@ -617,7 +624,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             || (afterStartPhase && !driverRevvedSinceStart)
             || state.rpm < decelerationFuelResumeRpm) {
         decelerationFuelCut = false;
-    } else if (state.throttle < 0.02 && state.rpm > idleTargetRpm * 1.65) {
+    } else if (state.throttle < 0.02 && state.rpm > decelerationFuelCutRpm) {
         // Stop metering fuel on closed-throttle overrun so port film and
         // residual chamber inventory cannot flood the charge that must catch
         // the engine at idle. Hysteresis keeps the injector command stable.

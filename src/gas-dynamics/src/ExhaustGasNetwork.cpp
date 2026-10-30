@@ -3250,6 +3250,28 @@ bool ExhaustGasNetwork::injectSpeciesAtPort(std::size_t portIndex,
     if (massKg == 0.0 && additionalHeatJ == 0.0) return true;
     const auto& endpoint = layout_.cylinderPorts()[portIndex].networkEndpoint;
     if (endpoint.type == ExhaustEndpointType::junction) return false;
+    return injectSpeciesAtDuctEnd(endpoint, species, massKg, temperatureK, additionalHeatJ);
+}
+
+bool ExhaustGasNetwork::injectSpeciesAtDuctInlet(std::size_t ductIndex,
+                                                 GasSpecies species,
+                                                 double massKg,
+                                                 double temperatureK,
+                                                 double additionalHeatJ) noexcept {
+    if (!configured_ || ductIndex >= ducts_.size()) return false;
+    if (!finite(massKg) || massKg < 0.0 || !finite(temperatureK)
+        || temperatureK <= 0.0 || !finite(additionalHeatJ))
+        return false;
+    if (massKg == 0.0 && additionalHeatJ == 0.0) return true;
+    return injectSpeciesAtDuctEnd({ ExhaustEndpointType::ductInlet, ductIndex, 0 },
+        species, massKg, temperatureK, additionalHeatJ);
+}
+
+bool ExhaustGasNetwork::injectSpeciesAtDuctEnd(const ExhaustEndpoint& endpoint,
+                                               GasSpecies species,
+                                               double massKg,
+                                               double temperatureK,
+                                               double additionalHeatJ) noexcept {
     auto& duct = ducts_[endpoint.elementIndex];
     // The source is spread over the spray-and-film footprint next to the
     // valve, not an arbitrary number of mesh cells. A port injector cone wets

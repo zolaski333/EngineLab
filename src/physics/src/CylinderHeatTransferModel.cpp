@@ -47,7 +47,9 @@ CylinderHeatTransferResult CylinderHeatTransferModel::evaluate(
         * radiusM * radiusM;
     const auto exposedLinerAreaM2 = std::numbers::pi * conditions.boreM
         * conditions.pistonTravelM;
-    result.exposedAreaM2 = crownAndHeadAreaM2 + exposedLinerAreaM2;
+    result.exposedAreaM2 = std::isfinite(conditions.exposedAreaOverrideM2)
+            && conditions.exposedAreaOverrideM2 > 0.0
+        ? conditions.exposedAreaOverrideM2 : crownAndHeadAreaM2 + exposedLinerAreaM2;
     result.conductanceWPerK = conditions.fixedConductanceWPerK
         + result.coefficientWPerM2K * result.exposedAreaM2;
 

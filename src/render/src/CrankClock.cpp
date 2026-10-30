@@ -5,9 +5,9 @@
 
 namespace enginelab::render {
 namespace {
-/** Shortest signed difference on the 720-degree cycle, in [-360, 360). */
-[[nodiscard]] double signedCycleDifference(double degrees) noexcept {
-    return wrapCycleDegrees(degrees + 360.0) - 360.0;
+/** Shortest signed difference on the cycle, in [-cycle / 2, cycle / 2). */
+[[nodiscard]] double signedCycleDifference(double degrees, double cycle) noexcept {
+    return wrapCycleDegrees(degrees + 0.5 * cycle, cycle) - 0.5 * cycle;
 }
 
 /** Time constant of the pull towards the simulator's angle. Short enough to
@@ -18,9 +18,13 @@ constexpr double lockTimeConstantSeconds = 0.08;
 constexpr double snapThresholdDegrees = 90.0;
 } // namespace
 
-double wrapCycleDegrees(double degrees) noexcept {
-    const auto wrapped = std::fmod(degrees, 720.0);
-    return wrapped < 0.0 ? wrapped + 720.0 : wrapped;
+double wrapCycleDegrees(double degrees, double cycle) noexcept {
+    const auto wrapped = std::fmod(degrees, cycle);
+    return wrapped < 0.0 ? wrapped + cycle : wrapped;
+}
+
+void CrankClock::setCycleDegrees(double degrees) noexcept {
+    cycle_ = degrees > 0.0 ? degrees : 720.0;
 }
 
 void CrankClock::observe(double wallSeconds, double crankAngleDegrees, double rpm, double rate) noexcept {
@@ -31,7 +35,7 @@ void CrankClock::observe(double wallSeconds, double crankAngleDegrees, double rp
         ? std::clamp((std::max(0.0, rpm) - rpm_) / interval, -50'000.0, 50'000.0) : 0.0;
     hasSample_ = true;
     sampleWall_ = wallSeconds;
-    sampleAngle_ = wrapCycleDegrees(crankAngleDegrees);
+    sampleAngle_ = wrapCycleDegrees(crankAngleDegrees, cycle_);
     rpm_ = std::max(0.0, rpm);
     rate_ = std::max(0.0, rate);
 }
@@ -58,7 +62,7 @@ double CrankClock::advance(double wallSeconds) noexcept {
     if (!hasDisplay_) {
         hasDisplay_ = true;
         displayWall_ = wallSeconds;
-        displayAngle_ = wrapCycleDegrees(target);
+        displayAngle_ = wrapCycleDegrees(target, cycle_);
         return displayAngle_;
     }
     // A long stall (window minimised, debugger) must not fling the crank.
@@ -69,16 +73,18 @@ double CrankClock::advance(double wallSeconds) noexcept {
     displayWall_ = wallSeconds;
     auto angle = displayAngle_ + 0.5 * (startRate + displayDegreesPerSecond()) * dt;
     if (realTime()) {
-        const auto error = signedCycleDifference(target - angle);
+        const auto error = signedCycleDifference(target - angle, cycle_);
         angle = std::abs(error) > snapThresholdDegrees
             ? target : angle + error * (1.0 - std::exp(-dt / lockTimeConstantSeconds));
     }
-    displayAngle_ = wrapCycleDegrees(angle);
+    displayAngle_ = wrapCycleDegrees(angle, cycle_);
     return displayAngle_;
 }
 
 void CrankClock::reset() noexcept {
+    const auto cycle = cycle_;
     *this = CrankClock {};
+    cycle_ = cycle;
 }
 
 } // namespace enginelab::render

@@ -15,7 +15,9 @@ using Json = nlohmann::json;
             std::string("Exhaust crossover port must be 0 or 1: ") + key);
     return static_cast<std::uint8_t>(value);
 }
-[[nodiscard]] std::string cycleName(EngineCycle value) { return value == EngineCycle::fourStroke ? "four_stroke" : "two_stroke"; }
+[[nodiscard]] std::string cycleName(EngineCycle value) {
+    return value == EngineCycle::fourStroke ? "four_stroke" : value == EngineCycle::rotary ? "rotary" : "two_stroke";
+}
 [[nodiscard]] std::string fuelName(FuelType value) { return value == FuelType::gasoline ? "gasoline" : "diesel"; }
 [[nodiscard]] std::string injectionModeName(InjectionMode value) { return value == InjectionMode::port ? "port" : "direct"; }
 [[nodiscard]] const char* afterfireStrategyName(
@@ -677,6 +679,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     if (!config.audioVoicingKey.empty())
         document["engine"]["audio_voicing"] = { {"family", config.audioVoicingFamily},
                                                 {"key", config.audioVoicingKey} };
+    // Written for a rotary only, so a piston engine's file is unchanged.
+    if (config.cycle == EngineCycle::rotary)
+        document["engine"]["rotary"] = { {"generating_radius_mm", config.rotary.generatingRadiusMm},
+            {"eccentricity_mm", config.rotary.eccentricityMm}, {"rotor_width_mm", config.rotary.rotorWidthMm},
+            {"rotor_count", config.rotary.rotorCount} };
     // Written for a two-stroke only, so a four-stroke file is unchanged.
     if (config.cycle == EngineCycle::twoStroke) {
         document["engine"]["two_stroke"] = { {"exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees}, {"transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees}, {"exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm}, {"transfer_port_width_mm", config.twoStroke.transferPortWidthMm}, {"port_discharge_coefficient", config.twoStroke.portDischargeCoefficient}, {"crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio}, {"scavenge_loop_length_ratio", config.twoStroke.scavengeLoopLengthRatio} };
@@ -719,6 +726,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         const auto cycle = engine.at("cycle").get<std::string>();
         if (cycle == "four_stroke") config.cycle = EngineCycle::fourStroke;
         else if (cycle == "two_stroke") config.cycle = EngineCycle::twoStroke;
+        else if (cycle == "rotary") config.cycle = EngineCycle::rotary;
         else return { std::nullopt, "Unknown engine cycle: " + cycle };
         const auto fuel = engine.at("fuel").get<std::string>();
         if (fuel == "gasoline") config.fuel = FuelType::gasoline;
@@ -815,6 +823,13 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilCoolingPowerKwPerC = thermal.value("oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC);
             config.thermal.liquidCooled = thermal.value("liquid_cooled", config.thermal.liquidCooled);
             config.thermal.engineDrivenFan = thermal.value("engine_driven_fan", config.thermal.engineDrivenFan);
+        }
+        if (engine.contains("rotary")) {
+            const auto& rotary = engine.at("rotary");
+            config.rotary.generatingRadiusMm = rotary.value("generating_radius_mm", config.rotary.generatingRadiusMm);
+            config.rotary.eccentricityMm = rotary.value("eccentricity_mm", config.rotary.eccentricityMm);
+            config.rotary.rotorWidthMm = rotary.value("rotor_width_mm", config.rotary.rotorWidthMm);
+            config.rotary.rotorCount = rotary.value("rotor_count", config.rotary.rotorCount);
         }
         if (engine.contains("two_stroke")) {
             const auto& ports = engine.at("two_stroke");

@@ -54,7 +54,8 @@ namespace {
  * same graph is subsequently consumed by gas dynamics, acoustics, the editor
  * and exported snapshots. */
 void compileCatalogueExhaustPath(ExhaustPathConfig& path,
-                                 std::string_view presetKey) {
+                                 std::string_view presetKey,
+                                 std::size_t facesPerPort = 1) {
     if (path.network || path.cylinderIds.empty()) return;
     const auto& geometry = path.geometry;
     ExhaustNetworkConfig network;
@@ -101,13 +102,26 @@ void compileCatalogueExhaustPath(ExhaustPathConfig& path,
 
     std::vector<std::uint32_t> primaryIds;
     primaryIds.reserve(path.cylinderIds.size());
-    for (std::size_t index = 0; index < path.cylinderIds.size(); ++index) {
-        const auto id = static_cast<std::uint32_t>(100 + index);
-        primaryIds.push_back(id);
+    for (std::size_t first = 0; first < path.cylinderIds.size(); first += facesPerPort) {
+        const auto id = static_cast<std::uint32_t>(100 + primaryIds.size());
         network.components.push_back(exhaustComponent(
             id, ExhaustComponentType::pipe,
             primaryLength, primaryDiameter));
-        network.cylinderConnections.push_back({ path.cylinderIds[index], id });
+        if (facesPerPort == 1) {
+            network.cylinderConnections.push_back({ path.cylinderIds[first], id });
+        } else {
+            // A rotor's faces open in turn onto one port: its passage, a
+            // merge of the primary's bore 2.5 bores long (as the designer's).
+            const auto passageId = static_cast<std::uint32_t>(800 + primaryIds.size());
+            auto passage = exhaustComponent(passageId, ExhaustComponentType::merge, 0.0, primaryDiameter);
+            passage.volumeLitres = std::numbers::pi * 0.25 * primaryDiameter * primaryDiameter
+                * 2.5 * primaryDiameter * 1.0e-6;
+            network.components.push_back(passage);
+            for (auto face = first; face < std::min(path.cylinderIds.size(), first + facesPerPort); ++face)
+                network.cylinderConnections.push_back({ path.cylinderIds[face], passageId });
+            addConnection(passageId, id);
+        }
+        primaryIds.push_back(id);
     }
 
     auto terminalComponent = std::uint32_t {};
@@ -853,7 +867,7 @@ void applyCrankOffsets(EngineConfig& config) {
 }
 
 [[nodiscard]] EngineSpec decodeEngineSpec(const YAML::Node& node) {
-    requireKnownKeys(node, { "name", "cycle", "fuel", "use", "layout", "cylinders", "bank_count", "bank_angle_deg",
+    requireKnownKeys(node, { "name", "cycle", "fuel", "use", "layout", "cylinders", "rotors", "bank_count", "bank_angle_deg",
         "bank_angles_deg", "bore_mm", "stroke_mm", "displacement_l", "induction", "boost_pressure_ratio", "turbochargers",
         "firing_order", "crank_offsets_deg", "crank_pins", "two_stroke_intake", "two_stroke_intake_reed",
         "exhaust_system", "exhaust_silencer", "fuel_system", "intake_style", "overrides" }, "design");
@@ -862,6 +876,7 @@ void applyCrankOffsets(EngineConfig& config) {
     const auto cycle = node["cycle"].as<std::string>("four_stroke");
     if (cycle == "four_stroke") spec.cycle = EngineCycle::fourStroke;
     else if (cycle == "two_stroke") spec.cycle = EngineCycle::twoStroke;
+    else if (cycle == "rotary") spec.cycle = EngineCycle::rotary;
     else throw std::runtime_error("Unknown engine cycle: " + cycle);
     const auto fuel = node["fuel"].as<std::string>("gasoline");
     if (fuel == "gasoline") spec.fuel = FuelType::gasoline;
@@ -872,7 +887,8 @@ void applyCrankOffsets(EngineConfig& config) {
     if (!parsedUse) throw std::runtime_error("Unknown engine use: " + use);
     spec.use = *parsedUse;
     spec.layout = parseLayout(node["layout"].as<std::string>("inline"));
-    spec.cylinderCount = node["cylinders"].as<std::uint32_t>();
+    // A rotary's count is its rotors.
+    spec.cylinderCount = node[node["rotors"] ? "rotors" : "cylinders"].as<std::uint32_t>();
     assignIfPresent(node, "bank_count", spec.bankCount);
     assignIfPresent(node, "bank_angle_deg", spec.bankAngleDegrees);
     assignIfPresent(node, "bank_angles_deg", spec.bankAnglesDegrees);
@@ -937,6 +953,7 @@ void applyCrankOffsets(EngineConfig& config) {
     const auto cycle = engine["cycle"].as<std::string>("four_stroke");
     if (cycle == "four_stroke") config.cycle = EngineCycle::fourStroke;
     else if (cycle == "two_stroke") config.cycle = EngineCycle::twoStroke;
+    else if (cycle == "rotary") config.cycle = EngineCycle::rotary;
     else throw std::runtime_error("Unknown engine cycle: " + cycle);
     const auto fuelType = engine["fuel"].as<std::string>("gasoline");
     if (fuelType == "gasoline") config.fuel = FuelType::gasoline;
@@ -1009,6 +1026,13 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(solver, "maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep);
         assignIfPresent(solver, "gas_substeps", config.solver.gasSubsteps);
     }
+    if (const auto rotary = engine["rotary"]) {
+        assignIfPresent(rotary, "generating_radius_mm", config.rotary.generatingRadiusMm);
+        assignIfPresent(rotary, "eccentricity_mm", config.rotary.eccentricityMm);
+        assignIfPresent(rotary, "rotor_width_mm", config.rotary.rotorWidthMm);
+        assignIfPresent(rotary, "rotor_count", config.rotary.rotorCount);
+    }
+    if (config.cycle == EngineCycle::rotary) applyRotaryFaceGeometry(config);
     if (!hasExplicitCylinders) applyCrankOffsets(config);
 
     const auto uses = engine["uses"];
@@ -1246,8 +1270,10 @@ void applyCrankOffsets(EngineConfig& config) {
         for (const auto& cylinder : config.cylinders) pathConfig.cylinderIds.push_back(cylinder.id);
         config.exhaustPaths.push_back(std::move(pathConfig));
     }
+    // A rotary's paths list each rotor's three faces together (validated).
     for (auto& exhaustPath : config.exhaustPaths)
-        compileCatalogueExhaustPath(exhaustPath, exhaustPresetKey);
+        compileCatalogueExhaustPath(exhaustPath, exhaustPresetKey,
+            config.cycle == EngineCycle::rotary ? 3U : 1U);
 
     normaliseEngineConfig(config);
     if (const auto error = validateEngineConfig(config)) throw std::runtime_error(*error);

@@ -774,6 +774,7 @@ private:
             if (const auto value = parseSymbol()) {
                 if (*value == "four_stroke" || *value == "fourstroke") context_.config.cycle = EngineCycle::fourStroke;
                 else if (*value == "two_stroke" || *value == "twostroke") context_.config.cycle = EngineCycle::twoStroke;
+                else if (*value == "rotary" || *value == "wankel") context_.config.cycle = EngineCycle::rotary;
                 else addDiagnostic(context_.diagnostics, "ES220", "Unknown engine cycle '" + *value + "'.", location);
             }
             return;

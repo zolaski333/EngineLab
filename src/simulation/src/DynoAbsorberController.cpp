@@ -9,8 +9,11 @@ namespace enginelab {
 
 DynoAbsorberController::DynoAbsorberController(
     const EngineConfig& config) noexcept {
+    // What the engine breathes every 720 deg: a rotary's every face sweeps
+    // 1,080, so its summed faces would scale the gains 1.5 times too high
+    // (a 13B swung 1,750-5,300 rpm about a 4,000 rpm point).
     const auto displacementM3 =
-        engineDisplacementLitres(config) * 0.001;
+        breathingDisplacementLitres(config) * 0.001;
     // Controller scaling follows a strong naturally aspirated engine, while
     // the absorber itself has four times that capacity. Equipment capacity
     // must not be confused with a prediction of engine output.

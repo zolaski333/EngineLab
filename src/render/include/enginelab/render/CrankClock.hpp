@@ -21,11 +21,14 @@ public:
         simulation speed multiplier (1 = real time, 0 when paused). */
     void observe(double wallSeconds, double crankAngleDegrees, double rpm, double rate) noexcept;
 
+    /** The crank's domain the angle wraps in: 720, a rotary's 1,080. */
+    void setCycleDegrees(double degrees) noexcept;
+
     /** 1 = real time, 0.02 = 1:50, 0 = freeze. */
     void setPlaybackFactor(double factor) noexcept;
     [[nodiscard]] double playbackFactor() const noexcept { return factor_; }
 
-    /** Advances to `wallSeconds` and returns the angle to draw, in [0, 720). */
+    /** Advances to `wallSeconds` and returns the angle to draw, in [0, cycle). */
     [[nodiscard]] double advance(double wallSeconds) noexcept;
 
     /** Angle the crank sweeps per second of display time, in degrees. */
@@ -49,9 +52,10 @@ private:
     double displayWall_ {};
     double displayAngle_ {};
     bool hasDisplay_ { false };
+    double cycle_ { 720.0 };
 };
 
-/** Wraps any angle into [0, 720). */
-[[nodiscard]] double wrapCycleDegrees(double degrees) noexcept;
+/** Wraps any angle into [0, cycle). */
+[[nodiscard]] double wrapCycleDegrees(double degrees, double cycle = 720.0) noexcept;
 
 } // namespace enginelab::render

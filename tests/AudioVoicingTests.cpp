@@ -67,7 +67,7 @@ int main() {
 
         const auto catalogue = enginelab::loadEngineCatalog(
             ENGINELAB_CATALOG_ROOT);
-        require(catalogue.errors.empty() && catalogue.entries.size() == 17,
+        require(catalogue.errors.empty() && catalogue.entries.size() == 18,
             "shipping catalogue and all authored voicing files must load");
         const auto authoredCount = std::count_if(
             catalogue.entries.begin(), catalogue.entries.end(),
@@ -100,7 +100,7 @@ int main() {
             "LS3 profile must resolve by the normalised engine filename");
 
         std::filesystem::remove_all(root);
-        std::cout << "PASS: layered strict audio voicing and 16 catalogue profiles\n";
+        std::cout << "PASS: layered strict audio voicing and 18 catalogue profiles\n";
         return 0;
     } catch (const std::exception& error) {
         std::error_code ignored;

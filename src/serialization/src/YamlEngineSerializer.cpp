@@ -299,7 +299,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
     out << YAML::BeginMap << YAML::Key << "schema_version" << YAML::Value << currentEngineSchemaVersion
         << YAML::Key << "engine" << YAML::Value << YAML::BeginMap
         << YAML::Key << "name" << YAML::Value << config.name
-        << YAML::Key << "cycle" << YAML::Value << (config.cycle == EngineCycle::fourStroke ? "four_stroke" : "two_stroke")
+        << YAML::Key << "cycle" << YAML::Value << (config.cycle == EngineCycle::fourStroke ? "four_stroke"
+            : config.cycle == EngineCycle::rotary ? "rotary" : "two_stroke")
         << YAML::Key << "fuel" << YAML::Value << (config.fuel == FuelType::gasoline ? "gasoline" : "diesel")
         << YAML::Key << "fuel_properties" << YAML::Value << YAML::BeginMap
         << YAML::Key << "name" << YAML::Value << config.fuelProperties.name
@@ -807,6 +808,14 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "exhaust_valve_diameter_mm" << YAML::Value << cylinder.exhaustValveDiameterMm
         << YAML::EndMap;
     out << YAML::EndSeq;
+    // Written for a rotary only, so a piston engine's file is unchanged.
+    if (config.cycle == EngineCycle::rotary)
+        out << YAML::Key << "rotary" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "generating_radius_mm" << YAML::Value << config.rotary.generatingRadiusMm
+            << YAML::Key << "eccentricity_mm" << YAML::Value << config.rotary.eccentricityMm
+            << YAML::Key << "rotor_width_mm" << YAML::Value << config.rotary.rotorWidthMm
+            << YAML::Key << "rotor_count" << YAML::Value << config.rotary.rotorCount
+            << YAML::EndMap;
     // Written for a two-stroke only, so a four-stroke file is unchanged.
     if (config.cycle == EngineCycle::twoStroke) {
         out << YAML::Key << "two_stroke" << YAML::Value << YAML::BeginMap
@@ -847,6 +856,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         const auto cycle = engine["cycle"].as<std::string>();
         if (cycle == "four_stroke") config.cycle = EngineCycle::fourStroke;
         else if (cycle == "two_stroke") config.cycle = EngineCycle::twoStroke;
+        else if (cycle == "rotary") config.cycle = EngineCycle::rotary;
         else return { std::nullopt, "Unknown engine cycle: " + cycle };
         const auto fuel = engine["fuel"].as<std::string>();
         if (fuel == "gasoline") config.fuel = FuelType::gasoline;
@@ -932,6 +942,12 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilCoolingPowerKwPerC = thermal["oil_cooling_power_kw_per_c"].as<double>(config.thermal.oilCoolingPowerKwPerC);
             config.thermal.liquidCooled = thermal["liquid_cooled"].as<bool>(config.thermal.liquidCooled);
             config.thermal.engineDrivenFan = thermal["engine_driven_fan"].as<bool>(config.thermal.engineDrivenFan);
+        }
+        if (const auto rotary = engine["rotary"]) {
+            config.rotary.generatingRadiusMm = rotary["generating_radius_mm"].as<double>(config.rotary.generatingRadiusMm);
+            config.rotary.eccentricityMm = rotary["eccentricity_mm"].as<double>(config.rotary.eccentricityMm);
+            config.rotary.rotorWidthMm = rotary["rotor_width_mm"].as<double>(config.rotary.rotorWidthMm);
+            config.rotary.rotorCount = rotary["rotor_count"].as<std::uint32_t>(config.rotary.rotorCount);
         }
         if (const auto ports = engine["two_stroke"]) {
             config.twoStroke.exhaustPortOpenDegrees = ports["exhaust_port_open_deg"].as<double>(config.twoStroke.exhaustPortOpenDegrees);

@@ -694,13 +694,24 @@ add_test(NAME EngineLab.CatalogRoundTrip COMMAND EngineLabCatalogRoundTripTests)
 add_executable(EngineLabEngineDesignTests EngineDesignTests.cpp)
 target_link_libraries(EngineLabEngineDesignTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
-    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Runtime)
+    EngineLab::Exhaust EngineLab::GasDynamics EngineLab::Simulation EngineLab::Catalog EngineLab::Runtime)
 target_compile_definitions(EngineLabEngineDesignTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
     target_link_options(EngineLabEngineDesignTests PRIVATE /STACK:8388608)
 endif()
 enginelab_set_warnings(EngineLabEngineDesignTests)
 add_test(NAME EngineLab.EngineDesign COMMAND EngineLabEngineDesignTests)
+
+add_executable(EngineLabRotaryTests RotaryTests.cpp)
+target_link_libraries(EngineLabRotaryTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::GasDynamics EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabRotaryTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabRotaryTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabRotaryTests)
+add_test(NAME EngineLab.Rotary COMMAND EngineLabRotaryTests)
 
 # Every TIMEOUT above is tuned on Windows, the reference platform, where a test
 # that stops printing after `Start N:` is stuck rather than slow -- a diagnosis

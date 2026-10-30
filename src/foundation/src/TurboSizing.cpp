@@ -8,7 +8,7 @@
 namespace enginelab {
 
 ForcedInductionConfig sizedTurbocharger(const EngineConfig& config) {
-    const auto litres = std::max(0.05, engineDisplacementLitres(config));
+    const auto litres = std::max(0.05, breathingDisplacementLitres(config));
     const auto redline = std::max(1'000.0, config.redlineRpm);
     double compression = 0.0;
     for (const auto& cylinder : config.cylinders) compression = std::max(compression, cylinder.compressionRatio);

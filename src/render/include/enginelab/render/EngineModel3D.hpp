@@ -285,6 +285,10 @@ private:
     [[nodiscard]] float throwRotation(const Throw&, double crankAngleDegrees) const noexcept;
     std::uint16_t addPart(Mesh, SceneMaterial, std::uint8_t layers);
     void buildCylinders();
+    /** A rotary's housings, rotors and eccentric shaft, in place of the
+        cylinders, crank and block. */
+    void buildRotary();
+    void poseRotary(const ScenePoseInput&, std::vector<SceneInstance>&) const;
     void buildCrankshaft();
     void buildStructure();
     void buildTwoStrokeStructure();
@@ -335,6 +339,15 @@ private:
     SceneBounds systemBounds_ {};
     float pitch_ {};
     bool radialLike_ {};
+    /** A rotary's: each rotor's part, its station along the shaft and its
+        eccentric's offset (shaft degrees, its first face's top dead centre). */
+    struct Rotor final {
+        std::uint16_t part {};
+        float z {};
+        double offsetDegrees {};
+    };
+    std::vector<Rotor> rotors_;
+    std::uint16_t rotaryShaftPart_ { 0xFFFFU };
 };
 
 struct PartHit final {

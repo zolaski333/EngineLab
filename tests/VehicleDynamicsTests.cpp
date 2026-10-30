@@ -155,9 +155,9 @@ int main() {
     // The exact count matters and is not redundant with `errors.empty()`: a file
     // the loader SKIPS rather than rejects produces no error, so only the count
     // catches an engine silently vanishing from the catalogue. Bump it when a
-    // catalogue entry is deliberately added -- 17 covers the 15 base engines,
+    // catalogue entry is deliberately added -- 18 covers the 16 base engines (the 13B rotary since 0.7.0),
     // the CP2 full-system variant and the explicit audio-physics lab variant.
-    require(catalog.errors.empty() && catalog.entries.size() == 17,
+    require(catalog.errors.empty() && catalog.entries.size() == 18,
         "the full schema-5 catalogue and vehicle parts must load");
     require(findEngine(catalog, "K20A").vehicle.drivenAxleLayout
                 == enginelab::DrivenAxleLayout::front

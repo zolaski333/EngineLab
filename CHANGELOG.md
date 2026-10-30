@@ -7,6 +7,28 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **Rotary (Wankel) engines.** `cycle: rotary` runs one to ten rotors, each
+  with its generating radius, eccentricity and width. A rotor's three faces
+  each run a 1,080-degree cycle of the eccentric shaft: the face's volume
+  follows the rotor, its gas pushes the eccentric, its heat leaves through
+  the long, thin chamber, and its side ports open and shut as the flank
+  sweeps them. A rotor's faces share one intake runner and one exhaust port.
+- **A 13B-class twin-rotor in the catalogue**
+  (`engines/18_mazda_13b_renesis_like.engine.yaml`), after the RX-8's
+  high-power Renesis. It makes 233 N.m at 5,500 rpm and 169 kW at 8,500,
+  against Mazda's 211 N.m and 184 kW. Its port timings and sizes are
+  estimates, not Mazda's drawings.
+- **The engine designer designs rotaries.** *Rotary (Wankel)* takes a rotor
+  count and Mazda's displacement (one face a rotor, 1.3 L for a 13B), and
+  sizes the rotor, the ports, the two plugs a face, the ignition, the
+  redline and the exhaust from it.
+- **The 3-D view draws a rotary as one**: each rotor turns at a third of the
+  shaft's speed on its eccentric, inside its epitrochoid housing, and each
+  face's flame rides its flank. Clicking a rotor shows its size and its
+  face's pressure.
+
 ## [0.6.0] — 2026-10-29
 
 ### Added
