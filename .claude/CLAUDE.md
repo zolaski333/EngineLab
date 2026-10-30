@@ -26,9 +26,11 @@ tachometer, a split turbo's spool, no size cap. Released in 0.7.0: the rotary
 Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
 0.7.2: a big designed engine's turbo reaches its boost (a 193 L six 2.96 of
 3.0 bar) and the airbox is an expansion chamber, not a point volume.
-Open, each awaiting the owner: the petrol over-efficiency (K20 209-233 g/kWh
-at WOT, real ~260-290; a fix moves every engine's sound); low EGT; the
-diesel's fixed 8 % premix. Not started: the two-stroke
+0.7.3: the diesel's premix follows its ignition delay; the dyno holds a light
+shaft. The petrol over-efficiency and low EGT are the gas's constant gamma:
+the thermally perfect gas is on `exp/thermally-perfect-gas`, not merged until
+a measured air or friction reference explains the 10-15 % torque it exposes
+(journal 2026-10-30). Not started: the two-stroke
 diesel (needs a VISION.md amendment). Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.
 
@@ -263,7 +265,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   stationary reservoir, delivered/demanded 0.47-0.77: 8 DFCO-recovery variants
   fail, 5 more trade the lean first cycle for rich or misfires); seeding the
   high-load correction cell from the idle cell (saves a start at 4 s but stalls
-  10 engines of 14 after 25 s of idle) and an asynchronous pulse on tip-in.
+  10 engines of 14 after 25 s of idle) and an asynchronous pulse on tip-in;
+  Woschni's combustion term on spark engines against the over-efficiency
+  (BSFC +2-7 %, EGT down, 13B -15 %: the cause is the gas's gamma).
 - **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
   constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
   octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363

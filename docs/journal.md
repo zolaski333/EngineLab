@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — The petrol over-efficiency and the low EGT are the gas's constant gamma
+
+- K20 BSFC 209-233 g/kWh at WOT (real ~250-290). Gross indicated efficiency 0.41 at 7,000 rpm, lambda 0.90; a fuel-air cycle at r = 11.5 gives ~0.45 and a real engine ~0.37. Phasing is not it: `CombustionPhasing` CA50 11 / 9 / 8 deg at 2,200 / 3,000 / 4,200 rpm.
+- Refuted: Woschni's combustion term on spark engines (as the diesel has it). `DynoSweepHarness` catalogue: BSFC only +2-7 %, EGT 10-50 C *lower* (the hotter wall takes it from the exhaust), torque -15 % on the 13B.
+- The cause is the gas: N2 at 5/2 R and the products at gamma 1.26 at every temperature expand a burnt charge at ~1.35. Thermally perfect species (Cv linear in T, JANAF 300-2,600 K, cylinders and 1-D ducts alike), branch `exp/thermally-perfect-gas` (d063387): K20 BSFC min 239 g/kWh, gross efficiency 0.367, EGT +40-70 C over the catalogue, gross IMEP -11 to -13 % at every speed, VE and pmep unchanged.
+- Not merged: makers' points go from torque ~+5 % / power ~0 % to torque ~-9 % / power ~-17 %; eight leave 15 % (`CatalogReference` fails). The constant gamma hid a 10-15 % shortfall of air or friction. The high-speed friction term added on 2026-08-27 is 0.1-0.24 bar, not it; the CP2's Cycle World curve falls 0.876 from 6,500 to 8,750 rpm and the simulator 0.78 (0.81 before): a high-rpm breathing or friction deficit that predates the gas.
+- To merge, one measured reference for the air (a VE or an airflow at WOT on a catalogue engine) or for the friction (a motored strip). No per-engine retune. Low EGT is the same cause: closed with this entry, not fixed separately.
+
 ## 2026-10-30 — The diesel's premixed share is the fuel mixed by autoignition
 
 - The premixed burn was a fixed 8 % (the TDI and designed diesels; 20 % by default) of the fuel at ignition, whatever the delay. Watson's correlation (beta = 1 - 0.926 phi^0.37 / tau_id^0.26) gives about half at idle and nearly none at full load.
