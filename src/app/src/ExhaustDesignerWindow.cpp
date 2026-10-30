@@ -214,11 +214,13 @@ public:
     using PathProvider = std::function<const ExhaustPathConfig*()>;
     using SelectionProvider = std::function<std::uint32_t()>;
     using SelectionCallback = std::function<void(std::uint32_t)>;
+    /** A face's rotor (from 0), or -1 for a piston engine's cylinder. */
+    using RotorOf = std::function<int(std::uint32_t)>;
 
     ExhaustGraphCanvas(PathProvider pathProvider, SelectionProvider selectionProvider,
-                       SelectionCallback selectionCallback)
+                       SelectionCallback selectionCallback, RotorOf rotorOf)
         : pathProvider_(std::move(pathProvider)), selectionProvider_(std::move(selectionProvider)),
-          selectionCallback_(std::move(selectionCallback)) {}
+          selectionCallback_(std::move(selectionCallback)), rotorOf_(std::move(rotorOf)) {}
 
     void paint(juce::Graphics& graphics) override {
         graphics.fillAll(juce::Colour(0xff101716));
@@ -236,6 +238,38 @@ public:
         }
 
         const auto& network = *path->network;
+        // The sources down the left: a cylinder each, or a rotor each. A
+        // rotor's three faces open in turn onto one port, so it is drawn as
+        // one source, and the passage only its faces feed (the merge the
+        // simulator sums them in) is its port, drawn inside it: three
+        // exhausts a rotor made no sense (owner report 2026-10-30).
+        std::vector<juce::String> sourceLabels;
+        std::unordered_map<std::uint32_t, std::size_t> sourceRow;
+        for (const auto cylinderId : path->cylinderIds) {
+            const auto rotor = rotorOf_ ? rotorOf_(cylinderId) : -1;
+            const auto label = rotor >= 0 ? "ROTOR " + juce::String(rotor + 1) : "CYL " + juce::String(cylinderId);
+            const auto found = std::find(sourceLabels.begin(), sourceLabels.end(), label);
+            sourceRow[cylinderId] = static_cast<std::size_t>(std::distance(sourceLabels.begin(), found));
+            if (found == sourceLabels.end()) sourceLabels.push_back(label);
+        }
+        std::unordered_set<std::uint32_t> passages;
+        for (const auto& component : network.components) {
+            if (component.type != ExhaustComponentType::merge) continue;
+            std::optional<std::size_t> row;
+            auto faces = 0;
+            auto oneRotor = true;
+            for (const auto& mapping : network.cylinderConnections) {
+                if (mapping.componentId != component.id) continue;
+                const auto found = sourceRow.find(mapping.cylinderId);
+                const auto rotor = rotorOf_ ? rotorOf_(mapping.cylinderId) : -1;
+                if (found == sourceRow.end() || rotor < 0 || (row && *row != found->second)) oneRotor = false;
+                else row = found->second;
+                ++faces;
+            }
+            const auto fed = std::any_of(network.connections.begin(), network.connections.end(),
+                [&component](const auto& connection) { return connection.toComponentId == component.id; });
+            if (faces > 1 && oneRotor && !fed) passages.insert(component.id);
+        }
         // A side branch (an H's balance pipe) meets its junction at right
         // angles: it stands in the junction's column, not downstream of it.
         // Counted as a step, it pushed one side's pipe two columns behind the
@@ -251,8 +285,8 @@ public:
                 const auto source = levels.find(connection.fromComponentId);
                 const auto target = levels.find(connection.toComponentId);
                 if (source == levels.end() || target == levels.end()) continue;
-                const auto candidate = std::min(static_cast<int>(network.components.size()),
-                                                source->second + (lateral(connection) ? 0 : 1));
+                const auto step = lateral(connection) || passages.contains(connection.fromComponentId) ? 0 : 1;
+                const auto candidate = std::min(static_cast<int>(network.components.size()), source->second + step);
                 if (candidate > target->second) {
                     target->second = candidate;
                     changed = true;
@@ -264,18 +298,18 @@ public:
         // cylinders and sources), so each bank's pipes keep to its side and a
         // balance pipe sits between the two it joins.
         std::unordered_map<std::uint32_t, double> rowKeys;
-        const auto cylinderCount = path->cylinderIds.size();
+        const auto sourceCount = sourceLabels.size();
         for (std::size_t index = 0; index < network.components.size(); ++index) {
             const auto id = network.components[index].id;
             double sum = 0.0;
             int count = 0;
             for (const auto& mapping : network.cylinderConnections) {
                 if (mapping.componentId != id) continue;
-                const auto row = std::find(path->cylinderIds.begin(), path->cylinderIds.end(), mapping.cylinderId);
-                sum += static_cast<double>(std::distance(path->cylinderIds.begin(), row));
+                const auto row = sourceRow.find(mapping.cylinderId);
+                sum += static_cast<double>(row != sourceRow.end() ? row->second : sourceCount);
                 ++count;
             }
-            rowKeys[id] = count > 0 ? sum / count : static_cast<double>(cylinderCount + index);
+            rowKeys[id] = count > 0 ? sum / count : static_cast<double>(sourceCount + index);
         }
         for (std::size_t pass = 0; pass < network.components.size(); ++pass) {
             bool changed = false;
@@ -310,14 +344,13 @@ public:
         }
 
         int maximumLevel = 0;
-        for (const auto& [id, level] : levels) {
-            (void)id;
-            maximumLevel = std::max(maximumLevel, level);
-        }
+        for (const auto& [id, level] : levels)
+            if (!passages.contains(id)) maximumLevel = std::max(maximumLevel, level);
         std::vector<std::vector<const ExhaustComponentConfig*>> columns(
             static_cast<std::size_t>(maximumLevel + 1));
         for (const auto& component : network.components)
-            columns[static_cast<std::size_t>(levels[component.id])].push_back(&component);
+            if (!passages.contains(component.id))
+                columns[static_cast<std::size_t>(levels[component.id])].push_back(&component);
         for (auto& column : columns)
             std::stable_sort(column.begin(), column.end(), [&rowKeys](const auto* a, const auto* b) {
                 return rowKeys[a->id] < rowKeys[b->id];
@@ -371,29 +404,36 @@ public:
             graphics.fillEllipse(end.x - 3.5F, end.y - 3.5F, 7.0F, 7.0F);
         }
 
-        const auto cylinderRows = std::max<std::size_t>(1U, path->cylinderIds.size());
-        const auto cylinderSpacing = graph.getHeight() / static_cast<float>(cylinderRows);
-        for (std::size_t index = 0; index < path->cylinderIds.size(); ++index) {
-            const auto cylinderId = path->cylinderIds[index];
-            const auto y = graph.getY() + (static_cast<float>(index) + 0.5F) * cylinderSpacing;
+        const auto sourceRows = std::max<std::size_t>(1U, sourceCount);
+        const auto sourceSpacing = graph.getHeight() / static_cast<float>(sourceRows);
+        for (std::size_t index = 0; index < sourceCount; ++index) {
+            const auto y = graph.getY() + (static_cast<float>(index) + 0.5F) * sourceSpacing;
             const juce::Rectangle<float> pill(graph.getX(), y - 11.0F, cylinderWidth, 22.0F);
             graphics.setColour(juce::Colour(0xff263532));
             graphics.fillRoundedRectangle(pill, 5.0F);
             graphics.setColour(juce::Colour(0xffa9bbb5));
             graphics.setFont(juce::FontOptions(11.0F, juce::Font::bold));
-            graphics.drawText("CYL " + juce::String(cylinderId), pill.toNearestInt(),
-                              juce::Justification::centred);
-            const auto mapping = std::find_if(network.cylinderConnections.begin(),
-                network.cylinderConnections.end(), [cylinderId](const auto& candidate) {
-                    return candidate.cylinderId == cylinderId;
-                });
-            if (mapping != network.cylinderConnections.end()) {
-                if (const auto target = nodeBounds_.find(mapping->componentId); target != nodeBounds_.end()) {
-                    graphics.setColour(juce::Colour(0xff60716c));
+            graphics.drawText(sourceLabels[index], pill.toNearestInt(), juce::Justification::centred);
+            // What this source feeds: its components, or past a rotor's port
+            // passage, what the passage feeds.
+            std::vector<std::uint32_t> targets;
+            for (const auto& mapping : network.cylinderConnections) {
+                const auto row = sourceRow.find(mapping.cylinderId);
+                if (row == sourceRow.end() || row->second != index) continue;
+                if (!passages.contains(mapping.componentId)) {
+                    targets.push_back(mapping.componentId);
+                    continue;
+                }
+                for (const auto& connection : network.connections)
+                    if (connection.fromComponentId == mapping.componentId) targets.push_back(connection.toComponentId);
+            }
+            std::sort(targets.begin(), targets.end());
+            targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+            graphics.setColour(juce::Colour(0xff60716c));
+            for (const auto id : targets)
+                if (const auto target = nodeBounds_.find(id); target != nodeBounds_.end())
                     graphics.drawLine(pill.getRight(), pill.getCentreY(),
                                       target->second.getX(), target->second.getCentreY(), 1.5F);
-                }
-            }
         }
 
         const auto selectedId = selectionProvider_ ? selectionProvider_() : 0U;
@@ -430,6 +470,7 @@ private:
     PathProvider pathProvider_;
     SelectionProvider selectionProvider_;
     SelectionCallback selectionCallback_;
+    RotorOf rotorOf_;
     std::unordered_map<std::uint32_t, juce::Rectangle<float>> nodeBounds_;
 };
 
@@ -454,7 +495,8 @@ public:
           graphCanvas_(
               [this] { return selectedPath(); },
               [this] { return selectedComponentId_; },
-              [this](std::uint32_t id) { selectComponentId(id); }) {
+              [this](std::uint32_t id) { selectComponentId(id); },
+              [this](std::uint32_t id) { return rotorOf(id); }) {
         setOpaque(true);
         configureInterface();
         setConfig(config);
@@ -866,7 +908,7 @@ private:
         if (path != nullptr) {
             for (std::size_t index = 0; index < path->cylinderIds.size(); ++index) {
                 const auto cylinderId = path->cylinderIds[index];
-                pathCylinderSelector_.addItem("Cylinder " + juce::String(cylinderId),
+                pathCylinderSelector_.addItem(cylinderName(cylinderId),
                                                static_cast<int>(index) + 1);
             }
             const auto preserve = previousCylinder
@@ -1008,7 +1050,7 @@ private:
         const auto* path = selectedPath();
         if (path == nullptr) return;
         for (std::size_t index = 0; index < path->cylinderIds.size(); ++index)
-            cylinderSelector_.addItem("Cylinder " + juce::String(path->cylinderIds[index]),
+            cylinderSelector_.addItem(cylinderName(path->cylinderIds[index]),
                                       static_cast<int>(index) + 1);
         if (!path->cylinderIds.empty())
             cylinderSelector_.setSelectedItemIndex(std::clamp(previousIndex, 0,
@@ -1136,8 +1178,26 @@ private:
         if (network == nullptr || row < 0
             || row >= static_cast<int>(network->cylinderConnections.size())) return {};
         const auto& mapping = network->cylinderConnections[static_cast<std::size_t>(row)];
-        return "Cylinder " + juce::String(mapping.cylinderId) + "  ->  #"
-            + juce::String(mapping.componentId);
+        return cylinderName(mapping.cylinderId) + "  ->  #" + juce::String(mapping.componentId);
+    }
+
+    /** A face's rotor (from 0): a rotary runs each rotor as three faces, in
+     *  order; -1 for a piston engine's cylinder. */
+    [[nodiscard]] int rotorOf(std::uint32_t cylinderId) const {
+        if (working_.cycle != EngineCycle::rotary) return -1;
+        const auto found = std::find_if(working_.cylinders.begin(), working_.cylinders.end(),
+            [cylinderId](const CylinderConfig& cylinder) { return cylinder.id == cylinderId; });
+        return found == working_.cylinders.end() ? -1
+            : static_cast<int>(std::distance(working_.cylinders.begin(), found) / 3);
+    }
+
+    [[nodiscard]] juce::String cylinderName(std::uint32_t cylinderId) const {
+        const auto rotor = rotorOf(cylinderId);
+        if (rotor < 0) return "Cylinder " + juce::String(cylinderId);
+        const auto index = std::find_if(working_.cylinders.begin(), working_.cylinders.end(),
+            [cylinderId](const CylinderConfig& cylinder) { return cylinder.id == cylinderId; })
+            - working_.cylinders.begin();
+        return "Rotor " + juce::String(rotor + 1) + ", face " + juce::String(static_cast<int>(index % 3) + 1);
     }
 
     void selectMappingRow(int row) {
