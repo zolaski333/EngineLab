@@ -386,6 +386,9 @@ struct Rig final {
 struct Held final {
     double rpm { 0.0 };
     double torqueNm { 0.0 };
+    /** Lowest and highest speed over the measured window. */
+    double minRpm { 1.0e9 };
+    double maxRpm { 0.0 };
 };
 
 // MSVC 17.4 fails with C1001 compiling this loop optimised; the simulator it
@@ -414,6 +417,8 @@ struct Held final {
         if (frame < firstMeasured) continue;
         result.rpm += state.rpm * weight;
         result.torqueNm += state.torqueNm * weight;
+        result.minRpm = std::min(result.minRpm, state.rpm);
+        result.maxRpm = std::max(result.maxRpm, state.rpm);
     }
     return result;
 }
@@ -434,9 +439,8 @@ void inlineSevenRuns() {
 
 /** The designer has no size cap: a 30 L radial (refused at 20 L before
  *  0.6.0) and a 25 cc single (refused under 50 cc) both build and pull at
- *  full throttle. The bounds are wide: the single reads 16 bar where real
- *  25 cc engines make 5-10 (the open petrol over-efficiency, journal
- *  2026-10-29), so this checks that they run, not their BMEP. */
+ *  full throttle, held by an absorber that does not swing them. The single
+ *  reads 7.7 bar where real 25 cc engines make 5-10, the radial 12.7. */
 void enginesOfAnySizeRun() {
     EngineSpec radial;
     radial.name = "Radial Nine";
@@ -454,10 +458,16 @@ void enginesOfAnySizeRun() {
         const auto config = *designed(spec).config;
         const auto litres = engineDisplacementLitres(config);
         const auto dynoRpm = 0.6 * config.redlineRpm;
-        const auto run = held(config, 1.0, dynoRpm, 2.0 * std::max(1.0, litres / 2.0));
+        // The absorber acts once a frame on the frame before's speed: stiffer
+        // than half the shaft's inertia a frame, it overshoots, and on the
+        // single's 0.01 kg m2 the 2 N.m/rpm it was given braked all or nothing
+        // (9,404-9,626 rpm about 9,600, 16.4 bar; the test failed under GCC).
+        const auto stableNmPerRpm = 0.5 * config.rotatingInertiaKgM2 / frameSeconds * 3.14159265 / 30.0;
+        const auto run = held(config, 1.0, dynoRpm, std::min(2.0 * std::max(1.0, litres / 2.0), stableNmPerRpm));
         const auto bmepBar = run.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
         std::cout << "  " << spec.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.torqueNm
-                  << " N.m, BMEP " << bmepBar << " bar\n";
+                  << " N.m, BMEP " << bmepBar << " bar, " << run.minRpm << "-" << run.maxRpm << " rpm\n";
+        require(run.maxRpm - run.minRpm < 100.0, spec.name + " is held at its speed, not swung about it");
         require(bmepBar > 4.0 && bmepBar < 20.0, spec.name + " pulls at full throttle");
     }
 }

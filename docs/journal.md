@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — CI: the 25 cc single's 16 bar was the test's absorber
+
+- GitHub CI failed `EngineLab.EngineDesign` under GCC on 0.6.0 and 0.7.0 ("Small Single pulls at full throttle"); Windows passed. A job log needs a signed-in reader: the CI now names each failed test and the lines before its FAIL in a public annotation.
+- The test's absorber, 2 N.m/rpm acting once a frame on the single's 0.01 kg m2, has a loop gain of ~8 (stable below 2): it braked all or nothing, 9,404-9,626 rpm about 9,600, and the single read 16.4 bar BMEP. Capped at half the shaft's inertia a frame: 9,599-9,643 rpm, 7.7 bar (real 25 cc engines 5-10); the radial 12.65 -> 12.70 bar. The test now also requires the speed held within 100 rpm (fails before).
+- So the 25 cc single is no evidence of the petrol over-efficiency; the K20's 209-233 g/kWh still is.
+
 ## 2026-10-29 — The rotary: a 13B against Mazda's figures
 
 - `cycle: rotary`: a face's volume is Vmin + Vd/2 (1 - cos(2a/3)) over a 1,080 deg cycle, its torque p dV/da, its heat on 2 sqrt(3) R b + 2V/b at the apex speed; a rotor's faces share one intake runner and one exhaust passage. `EngineLab.Rotary` and `EngineLab.EngineDesign` cover the geometry, the validation, the shared ports and a designed 13B.
@@ -17,7 +23,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 
 - The designer refused over 20 L and under 50 cc, and validation capped every length, volume, mass and inertia near car sizes. Ranges now scale with a 5-1,000 mm bore and stroke (x5 lengths, x125 volumes and masses, x3,125 inertia); the dyno absorber's 10 kN.m clamp is 10 MN.m; ECU limits: diesel fuel 125 g/cycle, idle 50, rev limit 150 rpm, pressure ratio 6. No catalogue engine sits near an old bound; `DynoSweepHarness` starts at 40 % of the top when the top is under 3,000 rpm (the Merlin's sweep gains rows from 1,250).
 - Designed and swept (DesignBench + DynoSweep): V12 tank diesel 30.5 L 2,923 N.m / 425 kW; 28-cylinder radial 71 L at PR 1.6 ~9,850 N.m / 2,414 kW; V16 16.7 L 1,165 kW; marine six 193 L 12,483 N.m at 568 rpm (pinned at 9,993 before the clamp); 25 cc four-stroke 2.4 kW, two-stroke 3.1 kW. `EngineDesign`: a 30 L radial (refused before) 12.6 bar BMEP at WOT.
-- Gaps, not fixed: the marine six reaches 1.17-1.42 bar of its 3.0 target (the designer's turbine law, 8 bar BMEP against ~25 real); the 25 cc single reads 16.4 bar BMEP (real 5-10, the petrol over-efficiency); 10 cc engines hunt; a 2.5 cc single runs at lambda 0.33 and never fires, hence the 10 cc floor. The 32-cylinder ceiling is architectural (fixed arrays), kept.
+- Gaps, not fixed: the marine six reaches 1.17-1.42 bar of its 3.0 target (the designer's turbine law, 8 bar BMEP against ~25 real); the 25 cc single read 16.4 bar BMEP (the test's absorber swinging it: 7.7, journal 2026-10-30); 10 cc engines hunt; a 2.5 cc single runs at lambda 0.33 and never fires, hence the 10 cc floor. The 32-cylinder ceiling is architectural (fixed arrays), kept.
 
 ## 2026-10-29 — Intake level: a multi-throttle mouth carries every bore; the designer's airbox gets a snorkel
 
