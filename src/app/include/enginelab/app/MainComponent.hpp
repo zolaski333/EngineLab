@@ -92,6 +92,8 @@ private:
     void refreshEngineChoices();
     [[nodiscard]] int presetIndexOf(const std::string& name) const noexcept;
     [[nodiscard]] std::vector<std::string> catalogueNames() const;
+    /** `wanted`, or `wanted 2`, `wanted 3`...: a name no engine has. */
+    [[nodiscard]] std::string freeEngineName(const std::string& wanted) const;
     void setBaseline(const EngineConfig&, const std::optional<calibration::CalibrationDraft>&);
     void updateModified();
     void saveEngine();
