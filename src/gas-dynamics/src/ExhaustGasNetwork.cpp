@@ -3289,11 +3289,10 @@ bool ExhaustGasNetwork::injectSpeciesAtDuctEnd(const ExhaustEndpoint& endpoint,
                 sprayAndFilmFootprintM / duct.geometry_.cellLengthM())))));
     if (spreadCells == 0) return false;
     const auto speciesIndex = static_cast<std::size_t>(species);
-    const auto specificHeatCv =
-        mixtureModel_.specificHeatCapacityCvJPerKgK_[speciesIndex];
     const auto share = 1.0 / static_cast<double>(spreadCells);
-    const auto energyShareJ =
-        (massKg * specificHeatCv * temperatureK + additionalHeatJ) * share;
+    const auto energyShareJ = (massKg
+        * mixtureModel_.speciesInternalEnergyJPerKg(speciesIndex, temperatureK)
+        + additionalHeatJ) * share;
     // All-or-nothing: every touched cell must stay admissible before any is
     // committed, so a pathological command cannot half-apply.
     std::array<ConservativeState, 3> candidates {};
