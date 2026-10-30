@@ -257,6 +257,11 @@ double engineDisplacementLitres(const EngineConfig& config) noexcept {
     return cubicMillimetres / 1'000'000.0;
 }
 
+double breathingDisplacementLitres(const EngineConfig& config) noexcept {
+    const auto litres = engineDisplacementLitres(config);
+    return config.cycle == EngineCycle::rotary ? litres * 720.0 / cycleDegreesOf(config.cycle) : litres;
+}
+
 double intakeRunnerVolumeLitres(const CylinderConfig& cylinder, const IntakeConfig& fallback) noexcept {
     const auto inletDiameterMm = cylinder.intakeRunnerDiameterMm > 0.0
         ? cylinder.intakeRunnerDiameterMm : fallback.runnerDiameterMm;
@@ -597,9 +602,47 @@ void normaliseEngineConfig(EngineConfig& config) {
     }
 }
 
+double rotaryFaceDisplacementLitres(const RotaryConfig& rotary) noexcept {
+    return 3.0 * std::sqrt(3.0) * rotary.generatingRadiusMm * rotary.eccentricityMm
+        * rotary.rotorWidthMm * 1.0e-6;
+}
+
+void applyRotaryFaceGeometry(EngineConfig& config) noexcept {
+    const auto bore = rotaryEquivalentBoreMm(config.rotary);
+    const auto stroke = rotaryEquivalentStrokeMm(config.rotary);
+    for (auto& face : config.cylinders) {
+        face.boreMm = bore;
+        face.strokeMm = stroke;
+        // No rod: the eccentric is the crank. The length only has to be one
+        // a piston could have.
+        face.connectingRodMm = std::max(face.connectingRodMm, stroke * 0.5 + 1.0);
+    }
+    // A face's journal throws half its stroke, as a piston's does.
+    for (auto& journal : config.crankJournals) journal.throwMm = stroke * 0.5;
+}
+
+double rotaryEquivalentBoreMm(const RotaryConfig& rotary) noexcept {
+    return 2.0 * rotary.generatingRadiusMm / std::sqrt(3.0);
+}
+
+double rotaryEquivalentStrokeMm(const RotaryConfig& rotary) noexcept {
+    const auto bore = rotaryEquivalentBoreMm(rotary);
+    return rotaryFaceDisplacementLitres(rotary) * 1.0e6 / (std::numbers::pi * 0.25 * bore * bore);
+}
+
+double rotaryChamberSurfaceM2(const RotaryConfig& rotary, double volumeLitres) noexcept {
+    const auto widthM = rotary.rotorWidthMm * 0.001;
+    return 2.0 * std::sqrt(3.0) * rotary.generatingRadiusMm * 0.001 * widthM
+        + 2.0 * std::max(0.0, volumeLitres) * 0.001 / std::max(1.0e-6, widthM);
+}
+
+double rotaryApexSpeedMps(const RotaryConfig& rotary, double shaftRadPerSecond) noexcept {
+    return std::abs(shaftRadPerSecond) * rotary.generatingRadiusMm * 0.001 / 3.0;
+}
+
 double valveLiftMm(double crankAngleDegrees, double centerlineDegrees,
-                   double durationDegrees, double maximumLiftMm) noexcept {
-    const auto wrapped = std::remainder(crankAngleDegrees - centerlineDegrees, 720.0);
+                   double durationDegrees, double maximumLiftMm, double cycleDegrees) noexcept {
+    const auto wrapped = std::remainder(crankAngleDegrees - centerlineDegrees, cycleDegrees);
     const auto halfDuration = std::max(1.0, durationDegrees * 0.5);
     if (std::abs(wrapped) >= halfDuration) return 0.0;
     const auto phase = (wrapped + halfDuration) / durationDegrees;
@@ -608,9 +651,10 @@ double valveLiftMm(double crankAngleDegrees, double centerlineDegrees,
 
 double profiledValveLiftMm(double crankAngleDegrees, double centerlineDegrees,
                            double durationDegrees, double maximumLiftMm,
-                           const std::vector<ValveLiftSample>& samples) noexcept {
-    if (samples.size() < 2) return valveLiftMm(crankAngleDegrees, centerlineDegrees, durationDegrees, maximumLiftMm);
-    const auto relativeAngle = std::remainder(crankAngleDegrees - centerlineDegrees, 720.0);
+                           const std::vector<ValveLiftSample>& samples, double cycleDegrees) noexcept {
+    if (samples.size() < 2)
+        return valveLiftMm(crankAngleDegrees, centerlineDegrees, durationDegrees, maximumLiftMm, cycleDegrees);
+    const auto relativeAngle = std::remainder(crankAngleDegrees - centerlineDegrees, cycleDegrees);
     const auto halfDuration = std::max(1.0, durationDegrees * 0.5);
     if (std::abs(relativeAngle) >= halfDuration) return 0.0;
     const auto firstAngle = samples.front().angleDegrees;
@@ -699,6 +743,52 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         }
         if (config.injection.startAngleDegrees >= 360.0 || config.injection.endAngleDegrees >= 360.0)
             return "A two-stroke cycle is 360 degrees: injection angles are below 360";
+    }
+    if (config.cycle == EngineCycle::rotary) {
+        const auto& rotary = config.rotary;
+        if (config.fuel != FuelType::gasoline) return "A rotary engine runs on petrol";
+        if (rotary.rotorCount < 1 || rotary.rotorCount > 10)
+            return "A rotary engine has 1-10 rotors (three faces each, 32 chambers at most)";
+        if (!inRange(rotary.generatingRadiusMm, 10.0, 2'000.0) || !inRange(rotary.rotorWidthMm, 5.0, 2'000.0)
+            || !inRange(rotary.eccentricityMm, 1.0, 500.0)
+            || !inRange(rotary.generatingRadiusMm / rotary.eccentricityMm, 4.0, 12.0))
+            return "A rotor's generating radius is 10-2,000 mm, its width 5-2,000 mm, and 4-12 times "
+                   "its eccentricity (a production Wankel runs 6-8)";
+        if (config.cylinders.size() != 3U * rotary.rotorCount)
+            return "A rotary engine runs each rotor's three faces as three cylinders";
+        const auto bore = rotaryEquivalentBoreMm(rotary);
+        const auto stroke = rotaryEquivalentStrokeMm(rotary);
+        for (const auto& face : config.cylinders)
+            if (std::abs(face.boreMm - bore) > 1.0e-6 * bore || std::abs(face.strokeMm - stroke) > 1.0e-6 * stroke)
+                return "A rotary face's bore and stroke follow its rotor (rotaryEquivalentBoreMm, "
+                       "rotaryEquivalentStrokeMm)";
+        for (std::size_t rotor = 0; rotor < rotary.rotorCount; ++rotor) {
+            const auto first = config.cylinders[3 * rotor].crankOffsetDegrees;
+            for (std::size_t face = 1; face < 3; ++face) {
+                const auto apart = std::fmod(config.cylinders[3 * rotor + face].crankOffsetDegrees - first
+                    + 2'160.0, 1'080.0);
+                if (std::abs(apart - 360.0 * static_cast<double>(face)) > 1.0e-6)
+                    return "A rotor's faces fire 360 deg of the eccentric shaft apart, in face order";
+            }
+        }
+        for (const auto& face : config.cylinders)
+            if (face.headChamberVolumeCc > 0.0 || face.pistonCrownVolumeCc > 0.0)
+                return "A rotary face's clearance comes from its compression ratio (no head chamber)";
+        // A rotor's faces share its ports, so they share its paths.
+        const auto splitsARotor = [&config](const std::vector<std::uint32_t>& ids) {
+            for (std::size_t rotor = 0; rotor < config.rotary.rotorCount; ++rotor) {
+                std::size_t inside = 0;
+                for (std::size_t face = 0; face < 3; ++face)
+                    inside += static_cast<std::size_t>(std::count(ids.begin(), ids.end(),
+                        config.cylinders[3 * rotor + face].id));
+                if (inside != 0 && inside != 3) return true;
+            }
+            return false;
+        };
+        for (const auto& path : config.intakePaths)
+            if (splitsARotor(path.cylinderIds)) return "A rotor's three faces share one intake path";
+        for (const auto& path : config.exhaustPaths)
+            if (splitsARotor(path.cylinderIds)) return "A rotor's three faces share one exhaust path";
     }
     if (config.fuel == FuelType::diesel
             && config.injection.mode != InjectionMode::direct)
@@ -925,8 +1015,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || outOfRange("intake.throttleGamma", config.intake.throttleGamma, 0.2, 5.0)
         || outOfRange("ignition.revLimitRpm", config.ignition.revLimitRpm, config.idleRpm + 100.0, 25'000.0)
         || outOfRange("ignition.limiterDurationSeconds", config.ignition.limiterDurationSeconds, 0.005, 2.0)
-        || outOfRange("injection.startAngleDegrees", config.injection.startAngleDegrees, 0.0, 720.0)
-        || outOfRange("injection.endAngleDegrees", config.injection.endAngleDegrees, 0.0, 720.0)
+        || outOfRange("injection.startAngleDegrees", config.injection.startAngleDegrees, 0.0,
+            cycleDegreesOf(config.cycle) > 720.0 ? cycleDegreesOf(config.cycle) : 720.0)
+        || outOfRange("injection.endAngleDegrees", config.injection.endAngleDegrees, 0.0,
+            cycleDegreesOf(config.cycle) > 720.0 ? cycleDegreesOf(config.cycle) : 720.0)
         || std::abs(config.injection.startAngleDegrees - config.injection.endAngleDegrees) < 1.0
         || outOfRange("injection.injectorFlowMgPerSecond", config.injection.injectorFlowMgPerSecond, 10.0, 500'000.0)
         || outOfRange("injection.fuelTemperatureC", config.injection.fuelTemperatureC, -50.0, 180.0)
@@ -1042,7 +1134,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         return "Crank journal table must contain between 1 and 64 entries";
     std::unordered_set<std::uint32_t> journalIds;
     for (const auto& journal : config.crankJournals) {
-        if (journal.id == 0 || !inRange(journal.angleDegrees, -360.0, 720.0)
+        if (journal.id == 0 || !inRange(journal.angleDegrees, -360.0, crankDomainDegreesOf(config.cycle))
             || !inRange(journal.throwMm, 1.0, 0.5 * maximumBoreStrokeMm) || !crankshaftIds.contains(journal.crankshaftId))
             return "Crank journals must have finite IDs, angles and throws";
         journalIds.insert(journal.id);
@@ -1125,7 +1217,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || outOfRange("compressionRatio", cylinder.compressionRatio, 5.0, 20.0)
             || outOfRange("ignitionOffsetDegrees", cylinder.ignitionOffsetDegrees, -30.0, 30.0)
             || outOfRange("efficiencyOffset", cylinder.efficiencyOffset, -0.5, 0.5)
-            || outOfRange("crankOffsetDegrees", cylinder.crankOffsetDegrees, -360.0, 720.0)
+            || outOfRange("crankOffsetDegrees", cylinder.crankOffsetDegrees, -360.0, crankDomainDegreesOf(config.cycle))
             || outOfRange("bankOffsetDegrees", cylinder.bankOffsetDegrees, -360.0, 360.0)
             || !(cylinder.intakeRunnerLengthMm == 0.0
                 || inRange(cylinder.intakeRunnerLengthMm, 5.0, 10'000.0))
@@ -1322,11 +1414,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                 if (static_cast<std::uint8_t>(component.type)
                         > static_cast<std::uint8_t>(ExhaustComponentType::crossover)
                     || component.id == 0 || !components.emplace(component.id, &component).second
-                    || !inRange(component.lengthMm, requiresLength ? 1.0 : 0.0, 10'000.0)
-                    || !inRange(component.diameterMm, 5.0, 500.0)
+                    || !inRange(component.lengthMm, requiresLength ? 1.0 : 0.0, 30'000.0)
+                    || !inRange(component.diameterMm, 4.0, 3'000.0)
                     || !(component.outletDiameterMm == 0.0
-                        || inRange(component.outletDiameterMm, 5.0, 500.0))
-                    || !inRange(component.volumeLitres, 0.0, 1'000.0)
+                        || inRange(component.outletDiameterMm, 4.0, 3'000.0))
+                    || !inRange(component.volumeLitres, 0.0, 25'000.0)
                     || !inRange(component.restriction, 0.0, 20.0)
                     || !inRange(component.resonanceHz, 0.0, 20'000.0)
                     || !inRange(component.acousticGain, 0.0, 8.0)

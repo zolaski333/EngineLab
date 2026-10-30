@@ -517,16 +517,25 @@ public:
      * film evaporating into the stream. The candidate state is committed only
      * if it stays physically admissible, so a pathological command degrades to
      * a refused injection instead of a poisoned solve. Ports attached to a
-     * junction are not supported (no compiled layout produces one for a runner
-     * and a junction's primitive cache is not owned by the duct).
+     * junction are not supported (a junction's primitive cache is not owned
+     * by the duct): injectSpeciesAtDuctInlet feeds the duct beyond it.
      */
     [[nodiscard]] bool injectSpeciesAtPort(std::size_t portIndex,
                                            GasSpecies species,
                                            double massKg,
                                            double temperatureK,
                                            double additionalHeatJ) noexcept;
+    /** The same source in the cells at a duct's inlet: a rotary's injector,
+     *  in its rotor's runner beyond the port passage the faces share. */
+    [[nodiscard]] bool injectSpeciesAtDuctInlet(std::size_t ductIndex,
+                                                GasSpecies species,
+                                                double massKg,
+                                                double temperatureK,
+                                                double additionalHeatJ) noexcept;
 
 private:
+    [[nodiscard]] bool injectSpeciesAtDuctEnd(const ExhaustEndpoint& endpoint, GasSpecies species,
+        double massKg, double temperatureK, double additionalHeatJ) noexcept;
     struct ConservedFlowRate final {
         std::array<double, gasSpeciesCount> speciesMassKgPerS {};
         double momentumN { 0.0 };

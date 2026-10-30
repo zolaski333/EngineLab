@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-29 — The rotary: a 13B against Mazda's figures
+
+- `cycle: rotary`: a face's volume is Vmin + Vd/2 (1 - cos(2a/3)) over a 1,080 deg cycle, its torque p dV/da, its heat on 2 sqrt(3) R b + 2V/b at the apex speed; a rotor's faces share one intake runner and one exhaust passage. `EngineLab.Rotary` and `EngineLab.EngineDesign` cover the geometry, the validation, the shared ports and a designed 13B.
+- Catalogue 13B-MSP-like (DynoSweepHarness, WOT): 233 N.m at 5,500 (Mazda 211, +10 %), 169 kW at 8,500 (184, -8 %), idle 801 rpm; flat 215-233 N.m from 2,000 to 5,500, 190 at 8,500 (real ~206: no variable intake). BSFC 245-278 g/kWh at lambda 0.9, 15-20 % above the K20's. Real time 1.20-1.23 at 95 % of redline with audio, beside a K20 at 1.22-1.25.
+- Three faults found on the way. Every phase wrapped as fmod(angle - offset + 1,440, cycle), and 1,440 is 360 modulo 1,080: each face's ports sat 360 deg off its volume, so it pumped its charge back and never ran (now 2,160 above 720 deg; piston engines keep 1,440, bit-identical). The friction polynomial and the dyno absorber took the summed faces (3.9 L): 1.5 times a piston engine's friction for the same air, and an absorber swinging 1,750-5,300 rpm about 4,000. Both take the breathed 2.6 L now (+12 N.m at 5,500, +14 at 8,500).
+- IdleStability: a blip stalled it. The 0.11 kg m2 shaft coasts down at 2,600 rpm/s near 1,000 rpm (K20 1,300 on 0.18) and a face waits 1,080 deg for its first fire, so fuel resumed at 1.50 x idle arrived after the stall; at 1.75 x a WOT blip dipped to 526 rpm. The rotary's overrun cut now runs 2.50 / 2.25 x idle: WOT blip minimum 773, early blip 712, settled 799. AbClipRenderer K20, 2JZ, RD350 idle and rev clips are bit-identical to 0.6.0's; full ctest 94/94.
+- Not measured: the ports are estimates (no Mazda drawing); a 30-40 rpm held-speed spread remains at 2,500-5,000 rpm, as on the Hayabusa (79 rpm at 4,000): the absorber against a light flywheel, not the rotary.
+
 ## 2026-10-29 — No size cap: from 10 cc to a 193 L marine six
 
 - The designer refused over 20 L and under 50 cc, and validation capped every length, volume, mass and inertia near car sizes. Ranges now scale with a 5-1,000 mm bore and stroke (x5 lengths, x125 volumes and masses, x3,125 inertia); the dyno absorber's 10 kN.m clamp is 10 MN.m; ECU limits: diesel fuel 125 g/cycle, idle 50, rev limit 150 rpm, pressure ratio 6. No catalogue engine sits near an old bound; `DynoSweepHarness` starts at 40 % of the top when the top is under 3,000 rpm (the Merlin's sweep gains rows from 1,250).

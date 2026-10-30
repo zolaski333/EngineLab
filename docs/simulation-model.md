@@ -331,6 +331,87 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   The script language sets the cycle but not the port timings,
   which take their defaults (exhaust 92 deg, transfers 118 deg).
 
+### Rotary (Wankel) engines
+
+`cycle: rotary` gives a Wankel engine of `rotary.rotor_count` rotors, each
+with its generating radius R, eccentricity e and width b. Each rotor's three
+faces are three of the engine's "cylinders" (`cylinder_count` = 3 x rotors,
+32 at most). Each face runs its own cycle of 1,080 degrees of the eccentric
+shaft, with strokes of 270. The crank angle's domain is 1,080 for a rotary
+(`crankDomainDegreesOf`): spark, injection windows, valve events, the
+trapped-charge latch, the knock calibration's bins and the 3-D crank clock
+all follow it. Four-strokes and two-strokes are bit-identical to before.
+
+- **Geometry** (`rotaryFacePosition`):
+  - A face sweeps Vd = 3 sqrt(3) R e b (a 13B: 654.7 cc).
+  - Its volume is Vmin + Vd/2 (1 - cos(2a/3)), smallest at firing top dead
+    centre and again at gas-exchange top dead centre (540).
+  - The gas torque is p dV/da, so the lever is Vd/3 sin(2a/3).
+  - A rotor's faces fire 360 degrees apart, and the rotors are spaced evenly
+    round the shaft.
+  - A face carries an equivalent bore of 2R/sqrt(3) (its two flames' path)
+    and the stroke that gives its sweep (`applyRotaryFaceGeometry`). Bore and
+    stroke cannot be set on their own.
+  - Nothing reciprocates: there is no piston or rod inertia.
+- **Heat**: the chamber's wetted surface is the flank, the housing arc and
+  the two side housings, 2 sqrt(3) R b + 2V/b. That is 0.031 m2 for a 13B
+  face at top dead centre, against 0.023 m2 for a piston of the same bore.
+  Woschni's velocity is the apex speed, omega R / 3. This long, thin chamber
+  is the rotary's known heat-loss penalty, and it comes from the geometry,
+  with no extra factor.
+- **Ports as valves**: a side port opens and shuts as the rotor's flank
+  sweeps over it. It is written as a valve of the face's cycle: a trapezoid
+  lift profile (open over a quarter of its duration) and a flow curve. The
+  centrelines are measured from gas-exchange top dead centre, as on a
+  four-stroke.
+- **Shared ports**:
+  - Intake: the simulator builds one runner per rotor. Its three faces open
+    in turn onto a passage junction (2.5 runner bores long) at the runner's
+    end. Port fuel goes into the runner's inlet.
+  - Exhaust: each rotor's faces open onto one passage, then the rotor's
+    primary, both in the catalogue builder and in the designer's network.
+  - A rotor's faces cannot be split across intake or exhaust paths.
+  - Shared ducts run the cylinder pass serially (the parallel pass needs
+    disjoint ducts).
+- **Displacement**:
+  - `engineDisplacementLitres` sums every face (a 13B: 3.9 L).
+  - The IMEP is per face.
+  - What scales with the air an engine breathes takes
+    `breathingDisplacementLitres`, the faces swept in 720 degrees (2.6 L for
+    a 13B): the turbine, compressor and charge volume, the designer's rules,
+    the bearing and accessory friction, the FMEP shown, and the dyno
+    absorber's gains. The summed faces put 1.5 times a piston engine's
+    friction on the shaft and made the absorber swing a 13B from 1,750 to
+    5,300 rpm about a 4,000 rpm point. Piston engines are bit-identical.
+  - Mazda's figure, one face per rotor (1.3 L), is what the designer takes
+    and what its status line shows.
+- **Designer** (`cycle: rotary`, `rotors:` or `cylinders:` = rotors, a
+  `displacement_l` in Mazda's sense):
+  - The rotor has the 13B's proportions (R/e = 7, b/R = 0.76), or the
+    `generating_radius_mm`, `eccentricity_mm` and `rotor_width_mm` you set.
+  - The redline follows the apex speed: 9,000 rpm (sport) or 7,500 at
+    R = 105 mm, 1,000 less when boosted.
+  - Compression is 10, less 1.25 per bar of boost.
+  - The ports are the catalogue 13B's, scaled with the rotor.
+  - Each face has two plugs. The ignition is the 13B's curve.
+  - A diesel, a bore and stroke, a non-inline layout, a firing order,
+    an H-pipe or an X-pipe (one bank), or more than 10 rotors is refused.
+- **Catalogue**: `engines/18_mazda_13b_renesis_like.engine.yaml`, a 13B-MSP
+  high-power-class twin-rotor (Mazda: 184 kW at 8,500 rpm, 211 N.m at 5,500).
+  Its port timings and sizes are estimates, not Mazda's drawings. Measured
+  (`DynoSweepHarness`, WOT): 233 N.m at 5,500 (+10 %), 169 kW at 8,500
+  (-8 %), idle 801 rpm. Its torque is flat from 2,000 to 5,500 rpm and falls
+  to 190 N.m at 8,500, where the real engine's variable intake keeps about
+  206. Its BSFC reads 245-278 g/kWh at lambda 0.9, 15-20 % above the
+  catalogue K20's: the chamber's heat loss. A real rotary at full load is
+  usually quoted above 300 (no measured map at a known speed was found):
+  the petrol over-efficiency every engine shows, with no crevice or
+  trailing-edge quench loss modelled.
+- **3-D view**: each rotor is drawn in its epitrochoid housing, turning at a
+  third of the shaft on the eccentric. Each face's flame rides its flank.
+  Clicking a rotor shows its geometry and a face's live pressure; a rotor is
+  resized by designing it again (the live bore and rod edits refuse it).
+
 ## Injection and mixture
 
 Injector flow depends on its nominal capacity and the square root of the

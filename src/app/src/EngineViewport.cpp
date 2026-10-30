@@ -1910,6 +1910,21 @@ void EngineViewport::updateInspector() {
         }
         break;
     case render::PartRole::piston:
+        // A rotor's faces take their bore and stroke from it: nothing here
+        // can be set on its own (the designer sizes a rotor).
+        if (config.cycle == EngineCycle::rotary) {
+            title = "Rotor";
+            add("Generating radius", millimetres(model_.units, config.rotary.generatingRadiusMm));
+            add("Eccentricity", millimetres(model_.units, config.rotary.eccentricityMm));
+            add("Width", millimetres(model_.units, config.rotary.rotorWidthMm));
+            add("A face sweeps",
+                juce::String(juce::roundToInt(rotaryFaceDisplacementLitres(config.rotary) * 1'000.0)) + " cc");
+            if (live != nullptr) {
+                add("Face pressure", model_.units.text(units::Quantity::pressure, live->pressureEstimateBar * 100.0));
+                add("Gas temperature", model_.units.text(units::Quantity::temperature, live->gasTemperatureC));
+            }
+            break;
+        }
         title = "Piston";
         edit = cylinderEdit();
         if (cylinder != nullptr) {
@@ -2845,6 +2860,7 @@ void EngineViewport::renderOpenGL() {
         orbitValid_ = false;
         observedSequence_ = 0;
         clock_.reset();
+        if (shared.model) clock_.setCycleDegrees(crankDomainDegreesOf(shared.model->config().cycle));
         gasFieldView_.clear();
         renderedGasField_ = 0;
     }

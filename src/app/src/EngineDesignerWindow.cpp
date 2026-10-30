@@ -76,7 +76,19 @@ public:
             nameTyped_ = name_.editor.getText().trim().isNotEmpty();
             startTimer(250);
         };
-        addChoice(cycle_, "Cycle", { "Four-stroke", "Two-stroke" });
+        addChoice(cycle_, "Cycle", { "Four-stroke", "Two-stroke", "Rotary (Wankel)" });
+        cycle_.combo.setTooltip(utf8("A rotary is counted in rotors and sized by its displacement, one face a "
+            "rotor as Mazda counts it (a 13B: 2 rotors, 1.3 L)."));
+        // A rotary is sized by its displacement: one is offered when none is
+        // given, a 13B's.
+        cycle_.combo.onChange = [this] {
+            if (rotarySelected() && displacement_.editor.getText().trim().isEmpty()) {
+                displacement_.editor.setText("1.3", false);
+                cylinders_.editor.setText("2", false);
+            }
+            showMode();
+            redesign();
+        };
         addChoice(fuel_, "Fuel", { "Petrol", "Diesel" });
         addChoice(use_, "Built for",
             { "Road car", "Sport car", "Road motorcycle", "Sport motorcycle", "Cruiser motorcycle", "Aircraft" });
@@ -342,6 +354,13 @@ private:
         const auto advanced = advanced_.getToggleState();
         const auto layout = layouts[static_cast<std::size_t>(std::max(0, layout_.combo.getSelectedItemIndex()))];
         if (!field.key.empty()) return designedKeys_.contains(field.key);
+        // A rotary's rotors stand in line and fire as they are spaced; its
+        // size is its displacement.
+        if (rotarySelected()
+            && (&field == &layout_ || &field == &bankAngle_ || &field == &bankCount_ || &field == &bore_
+                || &field == &stroke_ || &field == &firingOrder_ || &field == &crankPins_
+                || &field == &crankOffsets_ || &field == &bankAngles_))
+            return false;
         if (&field == &bankAngle_) return layout == EngineLayout::vLayout || layout == EngineLayout::custom;
         if (&field == &bankCount_) return layout == EngineLayout::custom;
         if (&field == &boost_) return induction_.combo.getSelectedItemIndex() > 0;
@@ -355,8 +374,13 @@ private:
         return true;
     }
 
+    [[nodiscard]] bool rotarySelected() const { return cycle_.combo.getSelectedItemIndex() == 2; }
+
     /** Shows the fields of the page shown that apply to this engine. */
     void applyVisibility() {
+        cylinders_.label.setText(utf8(rotarySelected() ? "Rotors" : "Cylinders"), juce::dontSendNotification);
+        displacement_.label.setText(utf8(rotarySelected() ? "Displacement (L, a face a rotor)" : "or displacement (L)"),
+            juce::dontSendNotification);
         for (auto* field : fields_) {
             const auto visible = field->page == page_ && applies(*field);
             field->label.setVisible(visible);
@@ -393,10 +417,12 @@ private:
     [[nodiscard]] std::optional<EngineSpec> spec(juce::String& error) const {
         EngineSpec spec;
         spec.name = name_.editor.getText().trim().toStdString();
-        spec.cycle = cycle_.combo.getSelectedItemIndex() == 1 ? EngineCycle::twoStroke : EngineCycle::fourStroke;
+        spec.cycle = rotarySelected() ? EngineCycle::rotary
+            : cycle_.combo.getSelectedItemIndex() == 1 ? EngineCycle::twoStroke : EngineCycle::fourStroke;
         spec.fuel = fuel_.combo.getSelectedItemIndex() == 1 ? FuelType::diesel : FuelType::gasoline;
         spec.use = uses[static_cast<std::size_t>(std::max(0, use_.combo.getSelectedItemIndex()))];
-        spec.layout = layouts[static_cast<std::size_t>(std::max(0, layout_.combo.getSelectedItemIndex()))];
+        spec.layout = rotarySelected() ? EngineLayout::inlineLayout
+            : layouts[static_cast<std::size_t>(std::max(0, layout_.combo.getSelectedItemIndex()))];
         spec.induction = static_cast<Induction>(std::max(0, induction_.combo.getSelectedItemIndex()));
         spec.turbochargerCount = static_cast<std::uint32_t>(std::max(0, turbos_.combo.getSelectedItemIndex()) + 1);
         const auto number = [this, &error](const Field& field, double& target) {
@@ -494,7 +520,12 @@ private:
         juce::String name;
         if (fuel_.combo.getSelectedItemIndex() == 1) name << "Diesel ";
         if (cycle_.combo.getSelectedItemIndex() == 1) name << "Two-stroke ";
-        if (count == 1.0) {
+        if (rotarySelected()) {
+            name << (count >= 2.0 && count <= 16.0 && count == std::round(count)
+                    ? juce::String(counts[static_cast<std::size_t>(count) - 1U]) : juce::String(juce::roundToInt(count)))
+                 << "-Rotor";
+            if (count == 1.0) name = "Single-Rotor";
+        } else if (count == 1.0) {
             name << "Single";
         } else {
             name << layoutNames[static_cast<std::size_t>(
@@ -531,15 +562,24 @@ private:
             const auto power = std::find_if(designed_.values.begin(), designed_.values.end(),
                 [](const DesignValue& value) { return value.key == "estimated_power_kw"; });
             status_.setColour(juce::Label::textColourId, ui::colours::text);
-            status_.setText(ui::fixed(engineDisplacementLitres(config), 2) + utf8(" L, ")
-                    + juce::String(config.cylinders.size()) + utf8(" cylinders, redline ")
+            const auto rotaryEngine = config.cycle == EngineCycle::rotary;
+            status_.setText((rotaryEngine
+                        ? juce::String(config.rotary.rotorCount) + utf8(" rotors of ")
+                            + juce::String(juce::roundToInt(rotaryFaceDisplacementLitres(config.rotary) * 1'000.0))
+                            + utf8(" cc a face (") + ui::fixed(breathingDisplacementLitres(config), 2)
+                            + utf8(" L swept in two turns), ")
+                        : ui::fixed(engineDisplacementLitres(config), 2) + utf8(" L, ")
+                            + juce::String(config.cylinders.size()) + utf8(" cylinders, "))
+                    + utf8("redline ")
                     + juce::String(juce::roundToInt(config.redlineRpm)) + utf8(" rpm, about ")
                     + (power != designed_.values.end() ? juce::String(juce::roundToInt(power->value)) : juce::String("?"))
                     + utf8(" kW (estimate).\nFires ") + order + utf8(even ? " evenly" : ", intervals ") + (even ? juce::String() : intervals)
-                    + utf8(". Free primary force ") + ui::fixed(balance.primaryForce, 2) + utf8(", secondary ")
-                    + ui::fixed(balance.secondaryForce, 2) + utf8("; couples ") + ui::fixed(balance.primaryCouple, 2)
-                    + utf8(" / ") + ui::fixed(balance.secondaryCouple, 2)
-                    + utf8(" (one cylinder's m r w², x pitch). The ignition is a template, not yet calibrated."),
+                    + (rotaryEngine ? utf8(". A rotor reciprocates nothing: its eccentric is balanced by counterweights.")
+                        : utf8(". Free primary force ") + ui::fixed(balance.primaryForce, 2) + utf8(", secondary ")
+                            + ui::fixed(balance.secondaryForce, 2) + utf8("; couples ")
+                            + ui::fixed(balance.primaryCouple, 2) + utf8(" / ") + ui::fixed(balance.secondaryCouple, 2)
+                            + utf8(" (one cylinder's m r w², x pitch)."))
+                    + utf8(" The ignition is a template, not yet calibrated."),
                 juce::dontSendNotification);
         } else {
             status_.setColour(juce::Label::textColourId, ui::colours::critical);

@@ -24,7 +24,8 @@ class ValveTrainModel final {
 public:
     [[nodiscard]] static ValveTrainResult evaluate(const CamshaftConfig&, bool highProfile,
                                                     ValveTrainState&, double cyclePhaseDegrees,
-                                                    double rpm, double load, double dtSeconds) noexcept;
+                                                    double rpm, double load, double dtSeconds,
+                                                    double cycleDegrees = 720.0) noexcept;
 };
 
 } // namespace enginelab

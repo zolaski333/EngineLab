@@ -68,9 +68,9 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
     elements.reserve(graph.nodes().size());
     for (const auto& node : graph.nodes()) {
         if (node.type == ExhaustNodeType::port) continue;
-        const auto diameterM = std::clamp(node.diameterMm * 0.001, 0.005, 0.5);
+        const auto diameterM = std::clamp(node.diameterMm * 0.001, 0.004, 3.0);
         const auto outletDiameterM = node.outletDiameterMm > 0.0
-            ? std::clamp(node.outletDiameterMm * 0.001, 0.005, 0.5)
+            ? std::clamp(node.outletDiameterMm * 0.001, 0.004, 3.0)
             : diameterM;
         const auto inletConnectionAreaM2 = circularArea(diameterM);
         const auto outletConnectionAreaM2 = circularArea(outletDiameterM);
@@ -358,7 +358,7 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
         const auto openingDiameterMm = node.outletDiameterMm > 0.0
             ? node.outletDiameterMm : node.diameterMm;
         auto openingAreaM2 = circularArea(
-            std::clamp(openingDiameterMm * 0.001, 0.005, 0.5));
+            std::clamp(openingDiameterMm * 0.001, 0.004, 3.0));
         if (endpoint->type != ExhaustEndpointType::junction) {
             const auto& duct = layout.ducts_[endpoint->elementIndex];
             openingAreaM2 = endpoint->type == ExhaustEndpointType::ductInlet

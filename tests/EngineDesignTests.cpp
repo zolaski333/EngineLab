@@ -9,6 +9,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
+#include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/RealtimeCapacityProbe.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
@@ -1002,6 +1003,55 @@ void realtimeIsChecked() {
 
 } // namespace
 
+/** A rotary from its displacement: a 1.3 L twin-rotor gets the 13B's rotor
+ *  (R 105, e 15, b 80 mm), six faces firing every 180 deg of the eccentric
+ *  shaft, a passage per rotor into its primary, and pulls at full throttle.
+ *  What a rotary cannot be is refused. */
+void rotaryIsDesigned() {
+    EngineSpec spec;
+    spec.name = "Twin-Rotor";
+    spec.cycle = EngineCycle::rotary;
+    spec.use = EngineUse::sportCar;
+    spec.cylinderCount = 2;
+    spec.displacementLitres = 1.3094;
+    spec.exhaustSystem = ExhaustSystem::single;
+    const auto design = designed(spec);
+    const auto& config = *design.config;
+    require(near(config.rotary.generatingRadiusMm, 105.0, 0.002) && near(config.rotary.eccentricityMm, 15.0, 0.002)
+            && near(config.rotary.rotorWidthMm, 80.0, 0.002) && config.rotary.rotorCount == 2
+            && config.cylinders.size() == 6,
+        "a 1.3 L twin-rotor is a 13B: R 105, e 15, b 80, six faces");
+    require(config.firingOrder == std::vector<std::uint32_t> { 1, 4, 2, 5, 3, 6 },
+        "its faces fire every 180 deg, a rotor's three 360 apart");
+    require(std::abs(config.redlineRpm - 9'000.0) < 1.0 && std::abs(config.cylinders[0].compressionRatio - 10.0) < 1.0e-9,
+        "a sport rotary revs to the RX-8's 9,000 on the Renesis' 10:1");
+    const auto* passage = componentOf(config, 800);
+    const auto& network = *config.exhaustPaths.front().network;
+    const auto toPassage = std::count_if(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+        [](const auto& connection) { return connection.componentId == 800; });
+    require(passage && passage->type == ExhaustComponentType::merge && toPassage == 3 && componentOf(config, 801),
+        "a rotor's three faces open onto one exhaust passage");
+    const auto graph = ExhaustGraph::makeForEngine(config);
+    require(gasdynamics::ExhaustNetworkLayout::compile(graph, gasdynamics::realtimeExhaustFeedbackDiscretisation()).valid(),
+        "and the designed rotary's exhaust compiles");
+    const auto run = held(config, 1.0, 0.6 * config.redlineRpm);
+    const auto bmepBar = run.torqueNm * 4.0 * 3.14159265 / (breathingDisplacementLitres(config) * 1.0e-3) * 1.0e-5;
+    std::cout << "  designed twin-rotor at " << run.rpm << " rpm: " << run.torqueNm << " N.m, BMEP " << bmepBar
+              << " bar on its 2.6 L swept in two turns\n";
+    require(bmepBar > 7.0 && bmepBar < 15.0, "and pulls at full throttle");
+
+    for (const auto& [change, why] : std::vector<std::pair<void (*)(EngineSpec&), const char*>> {
+             { [](EngineSpec& refused) { refused.fuel = FuelType::diesel; }, "a diesel rotary" },
+             { [](EngineSpec& refused) { refused.boreMm = 80.0; refused.strokeMm = 60.0; }, "a bore and a stroke" },
+             { [](EngineSpec& refused) { refused.layout = EngineLayout::vLayout; }, "a V of rotors" },
+             { [](EngineSpec& refused) { refused.cylinderCount = 11; }, "11 rotors (33 faces)" },
+             { [](EngineSpec& refused) { refused.exhaustSystem = ExhaustSystem::dualHPipe; }, "an H-pipe on one bank" } }) {
+        auto refused = spec;
+        change(refused);
+        require(!designEngine(refused, parts()).config, std::string("refused: ") + why);
+    }
+}
+
 int main() {
     crankBalanceMatchesTheTextbook();
     firingOrdersAreRanked();
@@ -1019,6 +1069,7 @@ int main() {
     inlineSevenRuns();
     enginesOfAnySizeRun();
     realtimeIsChecked();
+    rotaryIsDesigned();
     std::cout << "engine design tests passed\n";
     return EXIT_SUCCESS;
 }

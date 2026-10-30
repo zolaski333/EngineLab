@@ -104,10 +104,10 @@ struct ComponentResonance final {
 }
 
 [[nodiscard]] double geometricRestriction(const ExhaustComponentConfig& component) noexcept {
-    const auto diameterMm = finiteClamped(component.diameterMm, 5.0, 500.0, 42.0);
+    const auto diameterMm = finiteClamped(component.diameterMm, 4.0, 3'000.0, 42.0);
     const auto diameterRatio42 = 42.0 / diameterMm;
     const auto diameterRatio58 = 58.0 / diameterMm;
-    const auto lengthRatio = finiteClamped(component.lengthMm, 0.0, 10'000.0, 0.0) / 480.0;
+    const auto lengthRatio = finiteClamped(component.lengthMm, 0.0, 30'000.0, 0.0) / 480.0;
     double loss = 0.0;
     switch (component.type) {
     case ExhaustComponentType::pipe:
@@ -157,10 +157,10 @@ struct ComponentResonance final {
     if (component.type == ExhaustComponentType::resonator && component.volumeLitres > 0.0
         && component.lengthMm > 0.0 && std::isfinite(component.volumeLitres)
         && std::isfinite(component.lengthMm)) {
-        const auto diameterM = finiteClamped(component.diameterMm, 5.0, 500.0, 42.0) * 0.001;
+        const auto diameterM = finiteClamped(component.diameterMm, 4.0, 3'000.0, 42.0) * 0.001;
         const auto neckAreaM2 = std::numbers::pi * diameterM * diameterM * 0.25;
         const auto volumeM3 = component.volumeLitres * 0.001;
-        const auto neckLengthM = finiteClamped(component.lengthMm, 1.0, 10'000.0, 300.0)
+        const auto neckLengthM = finiteClamped(component.lengthMm, 1.0, 30'000.0, 300.0)
             * 0.001 + 0.85 * diameterM;
         return { waveSpeedMmPerSecond * 0.001 / (2.0 * std::numbers::pi)
                 * std::sqrt(neckAreaM2 / std::max(1.0e-12, volumeM3 * neckLengthM)),
@@ -170,7 +170,7 @@ struct ComponentResonance final {
             || component.type == ExhaustComponentType::muffler)
         && component.lengthMm > 0.0 && std::isfinite(component.lengthMm))
         return { waveSpeedMmPerSecond
-                / (4.0 * finiteClamped(component.lengthMm, 1.0, 10'000.0, 300.0)),
+                / (4.0 * finiteClamped(component.lengthMm, 1.0, 30'000.0, 300.0)),
             component.type == ExhaustComponentType::resonator ? 0.9 : 0.55 };
     // Plain pipe quarter-wave modes are compiled from the complete route.
     // Treating every short segment as an independent resonator biases the
@@ -179,7 +179,7 @@ struct ComponentResonance final {
 }
 
 [[nodiscard]] double componentAreaM2(const ExhaustComponentConfig& component) noexcept {
-    const auto radiusM = finiteClamped(component.diameterMm, 5.0, 500.0, 42.0) * 0.0005;
+    const auto radiusM = finiteClamped(component.diameterMm, 4.0, 3'000.0, 42.0) * 0.0005;
     return std::numbers::pi * radiusM * radiusM;
 }
 
@@ -207,7 +207,7 @@ struct ComponentResonance final {
     const auto outletDiameterMm = component.outletDiameterMm > 0.0
         ? component.outletDiameterMm : component.diameterMm;
     const auto radiusM =
-        finiteClamped(outletDiameterMm, 5.0, 500.0, 42.0) * 0.0005;
+        finiteClamped(outletDiameterMm, 4.0, 3'000.0, 42.0) * 0.0005;
     return std::numbers::pi * radiusM * radiusM;
 }
 
@@ -219,12 +219,12 @@ struct ComponentResonance final {
     const auto meanAreaM2 = (inletAreaM2
         + std::sqrt(inletAreaM2 * outletAreaM2) + outletAreaM2) / 3.0;
     return meanAreaM2
-        * finiteClamped(component.lengthMm, 0.0, 10'000.0, 0.0);
+        * finiteClamped(component.lengthMm, 0.0, 30'000.0, 0.0);
 }
 
 [[nodiscard]] double componentVolumeLitres(const ExhaustComponentConfig& component) noexcept {
     if (std::isfinite(component.volumeLitres) && component.volumeLitres > 0.0)
-        return std::clamp(component.volumeLitres, 0.001, 1'000.0);
+        return std::clamp(component.volumeLitres, 0.001, 25'000.0);
     return componentSweptVolumeLitres(component);
 }
 
@@ -376,7 +376,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             }
             if (outletConductanceM2 <= 0.0) {
                 const auto outletRadiusM = finiteClamped(path.geometry.outletDiameterMm,
-                    5.0, 500.0, 65.0) * 0.0005;
+                    4.0, 3'000.0, 65.0) * 0.0005;
                 outletConductanceM2 = std::numbers::pi * outletRadiusM * outletRadiusM
                     * finiteClamped(path.geometry.outletDischargeCoefficient, 0.02, 1.5, 0.72);
             }
@@ -394,8 +394,8 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 const auto resonance = componentResonance(
                     component, graph.waveSpeedMmPerSecond_);
                 graph.nodes_.push_back({ runtimeId, nodeType(component.type),
-                    finiteClamped(component.lengthMm, 0.0, 10'000.0, 0.0),
-                    finiteClamped(component.diameterMm, 5.0, 500.0, 42.0),
+                    finiteClamped(component.lengthMm, 0.0, 30'000.0, 0.0),
+                    finiteClamped(component.diameterMm, 4.0, 3'000.0, 42.0),
                     geometricRestriction(component), resonance.frequencyHz,
                     finiteClamped(component.acousticGain, 0.0, 8.0, 0.0),
                     runtimePathIndex, component.id, resonance.strength,
@@ -406,7 +406,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     component.acousticTermination,
                     component.outletDiameterMm > 0.0
                         ? finiteClamped(component.outletDiameterMm,
-                            5.0, 500.0, component.diameterMm)
+                            4.0, 3'000.0, component.diameterMm)
                         : 0.0,
                     finiteClamped(component.packingFlowResistivityPaSPerM2,
                         0.0, 200'000.0, 0.0),
@@ -453,11 +453,11 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                         from->second,
                         branch->id,
                         runtimePathIndex,
-                        finiteClamped(branch->lengthMm, 1.0, 10'000.0, 300.0)
+                        finiteClamped(branch->lengthMm, 1.0, 30'000.0, 300.0)
                             * 0.001,
-                        finiteClamped(branch->diameterMm, 5.0, 500.0, 30.0)
+                        finiteClamped(branch->diameterMm, 4.0, 3'000.0, 30.0)
                             * 0.001,
-                        finiteClamped(branch->volumeLitres, 0.0, 1'000.0, 0.0)
+                        finiteClamped(branch->volumeLitres, 0.0, 25'000.0, 0.0)
                             * 0.001,
                         finiteClamped(branch->resonanceHz, 0.0, 20'000.0, 0.0),
                     });
@@ -475,7 +475,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 if (component == componentNodeIds.end() || cylinder == nullptr
                     || !compiledCylinderConnections.insert(connection.cylinderId).second) continue;
                 graph.nodes_.push_back({ connection.cylinderId, ExhaustNodeType::port, 0.0,
-                    finiteClamped(path.geometry.primaryDiameterMm, 5.0, 500.0, 42.0), 0.0, 0.0,
+                    finiteClamped(path.geometry.primaryDiameterMm, 4.0, 3'000.0, 42.0), 0.0, 0.0,
                     finiteClamped(path.audioVolume, 0.0, 8.0, 0.0)
                         * finiteClamped(cylinder->soundAttenuation, 0.0, 4.0, 0.0),
                     runtimePathIndex, 0 });
@@ -491,7 +491,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                         componentOpenAreaM2(*sourceComponent),
                         finiteClamped(sourceComponent->dischargeCoefficient, 0.02, 1.5, 0.72),
                         std::max(0.001, componentGasVolumeLitres(*sourceComponent)),
-                        finiteClamped(sourceComponent->lengthMm, 0.0, 10'000.0, 0.0) });
+                        finiteClamped(sourceComponent->lengthMm, 0.0, 30'000.0, 0.0) });
                 }
             }
             continue;
@@ -504,25 +504,61 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         const auto mergeId = allocateNodeId();
         const auto mufflerId = allocateNodeId();
         const auto outletId = allocateNodeId();
-        const auto primaryDiameter = finiteClamped(geometry.primaryDiameterMm, 20.0, 500.0, 42.0);
-        const auto collectorDiameter = finiteClamped(geometry.collectorDiameterMm, 20.0, 500.0, 58.0);
-        const auto outletDiameter = finiteClamped(geometry.outletDiameterMm, 20.0, 500.0, 65.0);
+        const auto primaryDiameter = finiteClamped(geometry.primaryDiameterMm, 4.0, 1'000.0, 42.0);
+        const auto collectorDiameter = finiteClamped(geometry.collectorDiameterMm, 4.0, 1'500.0, 58.0);
+        const auto outletDiameter = finiteClamped(geometry.outletDiameterMm, 4.0, 1'500.0, 65.0);
         const auto collectorRestriction = 0.055 * std::pow(58.0 / collectorDiameter, 4.0);
         // No authored body: the trunk's own swept volume.
         const auto collectorVolumeLitres = geometry.collectorVolumeLitres > 0.0
-            ? finiteClamped(geometry.collectorVolumeLitres, 0.01, 1'000.0, 2.5)
+            ? finiteClamped(geometry.collectorVolumeLitres, 0.01, 25'000.0, 2.5)
             : std::numbers::pi * std::pow(collectorDiameter * 0.0005, 2.0)
                 * legacyCollectorTrunkLengthMm * 0.001 * 1'000.0;
         const auto outletDischargeCoefficient = finiteClamped(
             geometry.outletDischargeCoefficient, 0.02, 1.5, 0.72);
         const auto outletRestriction = 0.01 * std::pow(65.0 / outletDiameter, 4.0)
             / std::pow(outletDischargeCoefficient, 2.0);
+        // A rotor's three faces share one port in its housing: each face is
+        // a port onto that passage (a merge holding the passage's volume,
+        // two and a half primary diameters long), and the passage feeds the
+        // rotor's one primary.
+        const auto rotary = config.cycle == EngineCycle::rotary;
+        for (std::size_t rotor = 0; rotary && rotor < config.cylinders.size() / 3; ++rotor) {
+            const auto& lead = config.cylinders[3 * rotor];
+            if (std::find(path.cylinderIds.begin(), path.cylinderIds.end(), lead.id) == path.cylinderIds.end())
+                continue;
+            const auto passageId = allocateNodeId();
+            const auto primaryId = allocateNodeId();
+            for (std::size_t face = 0; face < 3; ++face) {
+                const auto& cylinder = config.cylinders[3 * rotor + face];
+                graph.nodes_.push_back({ cylinder.id, ExhaustNodeType::port, 0.0, primaryDiameter, 0.0, 0.0,
+                    finiteClamped(path.audioVolume, 0.0, 8.0, 0.0)
+                        * finiteClamped(cylinder.soundAttenuation, 0.0, 4.0, 0.0),
+                    runtimePathIndex, 0 });
+                graph.edges_.push_back({ cylinder.id, passageId });
+                roots.push_back({ cylinder.id, cylinder.id, runtimePathIndex });
+            }
+            graph.nodes_.push_back({ passageId, ExhaustNodeType::merge, 0.0, primaryDiameter, 0.0, 0.0, 1.0,
+                runtimePathIndex, 0, 0.0,
+                std::numbers::pi * std::pow(primaryDiameter * 0.0005, 2.0) * (primaryDiameter * 2.5 * 0.001) * 1'000.0,
+                1.0, 0.0 });
+            const auto configuredLength = lead.exhaustPrimaryLengthMm > 0.0
+                ? lead.exhaustPrimaryLengthMm : geometry.primaryLengthMm;
+            const auto length = finiteClamped(configuredLength, 1.0, 15'000.0, 480.0);
+            graph.nodes_.push_back({ primaryId, ExhaustNodeType::pipe, length, primaryDiameter,
+                0.04 * (length / 480.0) * std::pow(42.0 / primaryDiameter, 4.0), 0.0, 1.0,
+                runtimePathIndex, 0, 0.0,
+                std::numbers::pi * std::pow(primaryDiameter * 0.0005, 2.0) * (length * 0.001) * 1'000.0,
+                1.0, 0.0 });
+            graph.edges_.push_back({ passageId, primaryId });
+            graph.edges_.push_back({ primaryId, mergeId });
+        }
         for (const auto cylinderId : path.cylinderIds) {
+            if (rotary) break;
             const auto cylinder = findCylinder(config, cylinderId);
             if (cylinder == nullptr) continue;
             const auto configuredLength = cylinder->exhaustPrimaryLengthMm > 0.0
                 ? cylinder->exhaustPrimaryLengthMm : geometry.primaryLengthMm;
-            const auto length = finiteClamped(configuredLength, 1.0, 10'000.0, 480.0);
+            const auto length = finiteClamped(configuredLength, 1.0, 15'000.0, 480.0);
             const auto restriction = 0.04 * (length / 480.0) * std::pow(42.0 / primaryDiameter, 4.0);
             graph.nodes_.push_back({ cylinder->id, ExhaustNodeType::pipe, length, primaryDiameter,
                 restriction, 0.0,
@@ -542,7 +578,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             && geometry.mufflerChamberLengthMm > 1.0;
         const auto mufflerFlowDiameterMm = chamberConfigured
             ? finiteClamped(geometry.mufflerChamberDiameterMm,
-                collectorDiameter, 1'000.0, collectorDiameter)
+                collectorDiameter, 3'000.0, collectorDiameter)
             : collectorDiameter;
         // A body shorter than its own plane-wave resolution limit is not a
         // resonator, and meshing it as authored costs the WHOLE network.
@@ -571,7 +607,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         constexpr double planeWaveResonantLengthRatio = 0.853;
         const auto mufflerLengthMm = chamberConfigured
             ? std::max(
-                finiteClamped(geometry.mufflerChamberLengthMm, 1.0, 10'000.0, 450.0),
+                finiteClamped(geometry.mufflerChamberLengthMm, 1.0, 15'000.0, 450.0),
                 mufflerFlowDiameterMm * planeWaveResonantLengthRatio)
             : 450.0;
         const auto mufflerVolumeLitres = std::numbers::pi
@@ -607,9 +643,9 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         if (geometry.midpipeLengthMm > 0.0) {
             // Allocated last so that a path without one keeps its node ids.
             const auto midpipeId = allocateNodeId();
-            const auto length = finiteClamped(geometry.midpipeLengthMm, 1.0, 10'000.0, 1.0);
+            const auto length = finiteClamped(geometry.midpipeLengthMm, 1.0, 15'000.0, 1.0);
             const auto diameter = geometry.midpipeDiameterMm > 0.0
-                ? finiteClamped(geometry.midpipeDiameterMm, 20.0, 500.0, collectorDiameter)
+                ? finiteClamped(geometry.midpipeDiameterMm, 4.0, 1'500.0, collectorDiameter)
                 : collectorDiameter;
             graph.nodes_.push_back({ midpipeId, ExhaustNodeType::pipe, length, diameter,
                 0.04 * (length / 480.0) * std::pow(42.0 / diameter, 4.0), 0.0, 1.0,
@@ -718,7 +754,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         const auto restriction = equivalentRestriction(nodeId, 0).value;
         if (!std::isfinite(restriction) || restriction < 0.0) return 0.0;
         const auto diameterMm = finiteClamped(
-            graph.nodes_[foundNode->second].diameterMm, 5.0, 500.0, 42.0);
+            graph.nodes_[foundNode->second].diameterMm, 4.0, 3'000.0, 42.0);
         const auto areaMm2 = std::numbers::pi * diameterMm * diameterMm * 0.25;
         // Characteristic admittance is proportional to area/(rho*c). rho and
         // c are common at a junction; the equivalent K supplies a bounded

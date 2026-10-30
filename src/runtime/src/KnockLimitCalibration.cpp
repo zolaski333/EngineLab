@@ -83,10 +83,13 @@ KnockLimitCalibration measureFullLoadSpark(const EngineConfig& engine, const std
             const auto sampleSteps = static_cast<int>(sampleSeconds / frameSeconds);
             auto rpmSum = 0.0, advanceSum = 0.0, pressureSum = 0.0, retardSum = 0.0;
             // Cylinder 1's heat release and piston travel by crank degree,
-            // sampled within each frame (a frame is 60 deg at 2,400 rpm).
-            std::array<double, 720> heatRelease {};
-            std::array<double, 720> pistonTravel {};
-            std::array<int, 720> pistonSamples {};
+            // sampled within each frame (a frame is 60 deg at 2,400 rpm),
+            // over the crank's domain: 720 deg, a rotary face's 1,080.
+            const auto domain = static_cast<int>(crankDomainDegreesOf(config.cycle));
+            const auto stroke = static_cast<int>(strokeDegreesOf(config.cycle));
+            std::array<double, 1'080> heatRelease {};
+            std::array<double, 1'080> pistonTravel {};
+            std::array<int, 1'080> pistonSamples {};
             for (int step = 0; step < settleSteps + sampleSteps; ++step) {
                 if (step % 240 == 0 && cancelled()) {
                     result = {};
@@ -112,7 +115,7 @@ KnockLimitCalibration measureFullLoadSpark(const EngineConfig& engine, const std
                     const auto& cylinder = frame.state.cylinderStates[0];
                     if (!std::isfinite(cylinder.cyclePhaseDegrees)) continue;
                     const auto bin = static_cast<std::size_t>(std::clamp(
-                        std::fmod(std::fmod(cylinder.cyclePhaseDegrees, 720.0) + 720.0, 720.0), 0.0, 719.0));
+                        std::fmod(std::fmod(cylinder.cyclePhaseDegrees, domain) + domain, domain), 0.0, domain - 1.0));
                     heatRelease[bin] += std::isfinite(cylinder.combustionPulse)
                         ? std::max(0.0, cylinder.combustionPulse) : 0.0;
                     pistonTravel[bin] += cylinder.pistonTravelMm;
@@ -123,26 +126,27 @@ KnockLimitCalibration measureFullLoadSpark(const EngineConfig& engine, const std
                 pressureSum += frame.state.manifoldPressureKpa;
                 retardSum += rig->ecu.knockRetardShare() * calibration::ecuLimits::defaultKnockRetardGainDegrees;
             }
-            // Firing TDC: the least piston travel in the 180 deg before the
+            // Firing TDC: the least piston travel in the stroke before the
             // heat release's centre, as CombustionPhasingTests finds it.
             auto total = 0.0;
             for (const auto value : heatRelease) total += value;
             auto ca50 = std::numeric_limits<double>::quiet_NaN();
             if (total > 0.0) {
                 std::size_t peak = 0;
-                for (std::size_t bin = 0; bin < heatRelease.size(); ++bin)
+                for (std::size_t bin = 0; bin < static_cast<std::size_t>(domain); ++bin)
                     if (heatRelease[bin] > heatRelease[peak]) peak = bin;
                 auto tdc = peak;
                 auto leastTravel = std::numeric_limits<double>::infinity();
-                for (int offset = -180; offset <= 0; ++offset) {
-                    const auto bin = static_cast<std::size_t>((static_cast<int>(peak) + offset + 720) % 720);
+                for (int offset = -stroke; offset <= 0; ++offset) {
+                    const auto bin = static_cast<std::size_t>((static_cast<int>(peak) + offset + domain) % domain);
                     if (pistonSamples[bin] == 0) continue;
                     const auto travel = pistonTravel[bin] / pistonSamples[bin];
                     if (travel < leastTravel) { leastTravel = travel; tdc = bin; }
                 }
                 auto cumulative = 0.0;
-                for (int offset = -180; offset < 540; ++offset) {
-                    cumulative += heatRelease[(tdc + static_cast<std::size_t>(offset + 720)) % 720];
+                for (int offset = -stroke; offset < domain - stroke; ++offset) {
+                    cumulative += heatRelease[(tdc + static_cast<std::size_t>(offset + domain))
+                        % static_cast<std::size_t>(domain)];
                     if (cumulative >= 0.5 * total) { ca50 = offset; break; }
                 }
             }

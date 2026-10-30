@@ -7,7 +7,7 @@ namespace enginelab {
 
 ValveTrainResult ValveTrainModel::evaluate(const CamshaftConfig& cam, bool highProfile,
                                            ValveTrainState& state, double phase, double rpm,
-                                           double load, double dtSeconds) noexcept {
+                                           double load, double dtSeconds, double cycleDegrees) noexcept {
     const auto target = interpolateValveControl(cam.continuousControl, rpm, load);
     const auto response = 1.0 - std::exp(-std::max(0.0, dtSeconds)
         * 2.0 * std::numbers::pi * cam.continuousControl.responseFrequencyHz);
@@ -24,12 +24,15 @@ ValveTrainResult ValveTrainModel::evaluate(const CamshaftConfig& cam, bool highP
     const auto exhaustMaximumLift = highProfile ? cam.highExhaustLiftMm : cam.exhaustLiftMm;
     const auto& intakeProfile = highProfile ? cam.highIntakeLiftProfile : cam.intakeLiftProfile;
     const auto& exhaustProfile = highProfile ? cam.highExhaustLiftProfile : cam.exhaustLiftProfile;
-    const auto intakeCenter = 360.0 + cam.intakeCenterlineDegrees - state.intakeAdvanceDegrees;
-    const auto exhaustCenter = 360.0 - cam.exhaustCenterlineDegrees - state.exhaustAdvanceDegrees;
+    // Centerlines are measured from the gas-exchange top dead centre, half
+    // the cycle (360 deg, 540 on a rotary's face).
+    const auto gasExchangeTdc = cycleDegrees * 0.5;
+    const auto intakeCenter = gasExchangeTdc + cam.intakeCenterlineDegrees - state.intakeAdvanceDegrees;
+    const auto exhaustCenter = gasExchangeTdc - cam.exhaustCenterlineDegrees - state.exhaustAdvanceDegrees;
     const auto intakeLift = profiledValveLiftMm(phase, intakeCenter, intakeDuration,
-        intakeMaximumLift, intakeProfile) * state.liftMultiplier;
+        intakeMaximumLift, intakeProfile, cycleDegrees) * state.liftMultiplier;
     const auto exhaustLift = profiledValveLiftMm(phase, exhaustCenter, exhaustDuration,
-        exhaustMaximumLift, exhaustProfile) * state.liftMultiplier;
+        exhaustMaximumLift, exhaustProfile, cycleDegrees) * state.liftMultiplier;
     return { intakeLift, exhaustLift,
         valveFlowCoefficient(intakeLift, cam.intakeFlowCoefficient, cam.intakeFlowCurve),
         valveFlowCoefficient(exhaustLift, cam.exhaustFlowCoefficient, cam.exhaustFlowCurve),

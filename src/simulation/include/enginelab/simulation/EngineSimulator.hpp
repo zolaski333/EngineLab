@@ -268,6 +268,7 @@ public:
         std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> runners;
         std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> manifolds;
         std::array<std::size_t, 32> runnerDuctIndex {};
+        std::array<std::size_t, 32> runnerPortIndex {};
     };
     /** Whether `edited`'s intake can replace `running`'s in a running engine
      * (replaceIntake): the same cylinders on the same intake paths, the same
@@ -386,9 +387,17 @@ private:
         const EngineConfig& config, std::size_t cylinderIndex) const;
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeManifoldNetwork(
         const EngineConfig& config, std::size_t pathIndex,
-        std::array<std::size_t, 32>& runnerDuctIndex) const;
+        std::array<std::size_t, 32>& runnerDuctIndex,
+        std::array<std::size_t, 32>& runnerPortIndex) const;
+    /** A rotary's three faces share their rotor's runner, so it always runs
+     *  the joint manifold. */
     [[nodiscard]] bool jointIntakeManifold() const noexcept {
-        return options_.intakeJointManifold.value_or(true);
+        return config_.cycle == EngineCycle::rotary || options_.intakeJointManifold.value_or(true);
+    }
+    /** Whether cylinder `index` is the first on its intake runner duct (every
+     *  cylinder but a rotary's second and third faces). */
+    [[nodiscard]] bool ownsIntakeRunner(std::size_t index) const noexcept {
+        return config_.cycle != EngineCycle::rotary || index % 3 == 0;
     }
     [[nodiscard]] gasdynamics::ExhaustGasNetwork& intakeNetworkForCylinder(std::size_t index) noexcept;
     [[nodiscard]] const gasdynamics::ExhaustGasNetwork& intakeNetworkForCylinder(std::size_t index) const noexcept;
@@ -590,6 +599,9 @@ private:
      * duct and cylinder-port order match, and both are indexed by this map. */
     std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeManifoldNetworks_;
     std::array<std::size_t, 32> intakeRunnerDuctIndex_ {};
+    /** The cylinder's port in its joint network: its runner duct's index,
+     *  except on a rotary, whose faces are three ports on one runner. */
+    std::array<std::size_t, 32> intakeRunnerPortIndex_ {};
     GasFieldSnapshot gasField_;
     double gasFieldTargetDegrees_ { 0.0 };
     double gasFieldLastDegrees_ { 0.0 };

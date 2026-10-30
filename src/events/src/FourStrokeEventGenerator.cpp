@@ -17,7 +17,7 @@ std::size_t FourStrokeEventGenerator::generate(
 
     std::size_t written = 0;
     // Events are placed on the cylinder's own cycle (360 degrees for a
-    // two-stroke) inside the crank angle's 720-degree domain.
+    // two-stroke, 1,080 for a rotary face) inside the crank angle's domain.
     const auto domain = cycleDegrees();
     const auto cycle = cycleDegreesOf(config.cycle);
     const auto twoStroke = config.cycle == EngineCycle::twoStroke;
@@ -94,7 +94,7 @@ std::size_t FourStrokeEventGenerator::generate(
             const auto exhaustDuration = highProfile
                 ? bankCam->highExhaustDurationDegrees : bankCam->exhaustDurationDegrees;
             const auto exhaustOpenCylinderPhase = twoStroke ? config.twoStroke.exhaustPortOpenDegrees
-                : std::fmod(360.0 - bankCam->exhaustCenterlineDegrees - exhaustDuration * 0.5 + cycle, cycle);
+                : std::fmod(cycle * 0.5 - bankCam->exhaustCenterlineDegrees - exhaustDuration * 0.5 + cycle, cycle);
             const auto exhaustOpenGlobalAngle = std::fmod(cylinder->crankOffsetDegrees
                 + exhaustOpenCylinderPhase + cycle, cycle);
             const auto crankDegreesToExhaustOpen = std::fmod(exhaustOpenGlobalAngle - target + cycle, cycle);

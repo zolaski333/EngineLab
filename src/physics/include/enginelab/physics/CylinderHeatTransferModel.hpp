@@ -18,6 +18,10 @@ struct CylinderHeatTransferConditions final {
      *  m/s, added to the gas velocity. The caller supplies it (zero: the
      *  motored law alone). */
     double combustionGasVelocityMps { 0.0 };
+    /** The chamber's wetted area when positive (a rotary's face: flank,
+     *  housing and side plates), in place of a piston's crown, head and
+     *  exposed liner. */
+    double exposedAreaOverrideM2 { 0.0 };
 };
 
 struct CylinderHeatTransferResult final {

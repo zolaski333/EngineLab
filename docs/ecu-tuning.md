@@ -120,7 +120,10 @@ no governor and no such entry: its idle stop screw sets its idle
 ### Idle and fuel-cut strategies (not tunable)
 
 - **Fuel cut on overrun**: below 2 % throttle and above 1.65 × the idle
-  target; fuel resumes below 1.5 × idle, ramped in at 3/s.
+  target; fuel resumes below 1.5 × idle, ramped in at 3/s. A rotary cuts
+  above 2.5 × idle and resumes below 2.25 ×: its face waits 1,080° of the
+  shaft for its first fire and its light shaft coasts down twice as fast.
+  A two-stroke keeps its fuel on overrun.
 - **After-start phase**: right after a start the fuel cut is inhibited while
   the start air opening decays. Opening the throttle past 20 % lifts that
   inhibit until the next start (lambda learning keeps its start state): a blip

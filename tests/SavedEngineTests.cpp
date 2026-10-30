@@ -103,11 +103,16 @@ struct Run final {
     return store;
 }
 
-/** An engine edited the way the app edits one: smaller bores, longer
-    runners. */
+/** An engine edited the way the app edits one: smaller bores (a narrower
+    rotor, whose faces follow it), longer runners. */
 [[nodiscard]] EngineConfig edited(const EngineConfig& original) {
     auto config = original;
-    for (auto& cylinder : config.cylinders) cylinder.boreMm -= 1.0;
+    if (config.cycle == EngineCycle::rotary) {
+        config.rotary.rotorWidthMm -= 1.0;
+        applyRotaryFaceGeometry(config);
+    } else {
+        for (auto& cylinder : config.cylinders) cylinder.boreMm -= 1.0;
+    }
     for (auto& path : config.intakePaths) path.geometry.runnerLengthMm += 40.0;
     config.intake.runnerLengthMm += 40.0;
     return canonical(config);

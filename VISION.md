@@ -6,7 +6,7 @@ it.
 
 ## What EngineLab must be
 
-A four-stroke and two-stroke engine simulator **whose sound is as close to
+A four-stroke, two-stroke and rotary engine simulator **whose sound is as close to
 reality as possible**, for any engine the user builds.
 
 *Amended 2026-10-15 by the owner's decision: two-stroke engines are in scope
@@ -17,6 +17,11 @@ recording.*
 *Amended 2026-10-26 by the owner's decision: there is no pilot engine any
 more (the CP2 milestone is withdrawn), and EngineLab is open source, built for
 many users and many computers, not for one.*
+
+*Amended 2026-10-29 by the owner's decision (the owner's request of that day
+for a rotary engine): Wankel rotary engines are in scope, with the same rules
+as a piston engine: plausible figures against the maker's, real time, no
+per-engine recording.*
 
 1. **Sound first.** Someone who knows the real engine should recognise it by
    ear: not just "a parallel twin", but that engine. The method is open: physics,

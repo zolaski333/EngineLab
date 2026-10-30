@@ -23,8 +23,9 @@ the designer, the H-pipe, the fuel system on either cycle, Roots and
 centrifugal superchargers, compressor surge (off by default), intake trumpets
 and pod filters with the multi-throttle mouth, the tachometer's redline from
 the ECU, a split turbocharger's spool, no size cap (journal 2026-10-29).
-Still in the mandate: the rotary engine, which the owner asked for (VISION.md
-amended with it). Open, each awaiting the owner: the petrol engines'
+Released in 0.7.0: the rotary (VISION.md amended with it; a 13B at +10 %
+torque, -8 % power, ports estimated; journal 2026-10-29). Open, each
+awaiting the owner: the petrol engines'
 over-efficiency (K20 209-233 g/kWh at WOT, real ~260-290; a 25 cc single
 reads 16 bar BMEP; a fix moves every engine's sound); low EGT; the diesel's
 fixed 8 % premixed share; the designer's turbine law on very big engines (a
@@ -117,7 +118,7 @@ and `ctest` wraps the GUI test in Xvfb itself (no `xvfb-run` prefix needed).
   running binary by its CPU delta, never by a file's mtime (stdio to a file
   flushes in 4 KB blocks, so a CSV lags the work by minutes). A very short time
   can be a failure (`EngineLab.Core` passes in ~43 s on 14.44, aborts in ~8).
-  The whole suite is 93 tests in ~44 min. **Never run it beside a harness or
+  The whole suite is 94 tests in ~51 min. **Never run it beside a harness or
   sweep** (a WSL suite included: shared CPUs): `CoreTests` waits on wall-clock
   deadlines nothing scales by load, so a loaded host invents failures.
 - **Release**: bump `project(EngineLab VERSION ...)`, date the `[Unreleased]`
@@ -190,7 +191,8 @@ whether an exhaust change moved the timbre (`shape`) or only the level
   engine. Do not revert the optimisation: fix what makes the idle so sensitive.
 - **Wrapping phases**: a crank event is a remaining distance, not an absolute
   angle. An accumulator must not receive `forwardPhaseDegrees` without a guard
-  (at most 180° per sub-step).
+  (at most 180° per sub-step). A bias added before `fmod` must be whole
+  cycles: 1,440 is 360 modulo a rotary's 1,080 (its ports ran 360° off).
 - **Conservation is not acoustic passivity.** A flow bias must be a state,
   never a derivative of the flow it drives. Check a closed perturbation and a
   finite plenum; refine mesh, FV time step and reservoir refresh independently.

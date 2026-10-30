@@ -75,10 +75,11 @@ factor is shown in the diagnostics.
   cuts most sparks with the fuel kept, and the next fired cycle's exhaust
   lights the unburnt charge waiting in the pipe. It pops about as loud as a
   recorded bike's overrun; high revs still pop rarely.
-- **Petrol and diesel, four-stroke and two-stroke**: port injection, direct
-  injection or a carburettor on either cycle, a common-rail diesel whose burn
-  follows its rail pressure, and piston-ported two-strokes pumped by their
-  crankcase.
+- **Petrol and diesel, four-stroke and two-stroke, and the rotary**: port
+  injection, direct injection or a carburettor on either cycle, a common-rail
+  diesel whose burn follows its rail pressure, piston-ported two-strokes
+  pumped by their crankcase, and Wankel rotaries whose three faces a rotor
+  share its ports.
 - **Forced induction**: one to four turbochargers on a compressor map, each
   driven by the exhaust paths that feed it, an optional intercooler, an ECU
   boost table, compressor surge (off by default) and a blow-off valve; or a
@@ -127,10 +128,10 @@ factor is shown in the diagnostics.
   volumes (4-2-1, X-pipe, twin mufflers…), runners, plenum, throttle bores,
   airbox and inlet duct — and an *Exhaust* view frames the whole system. A
   2-D cutaway remains for machines without OpenGL 3.2.
-- **A catalogue of 17 engines** — naturally aspirated and turbocharged I4s, a
+- **A catalogue of 18 engines** — naturally aspirated and turbocharged I4s, a
   V8, a flat-six, a supercharged V12, motorcycle twins and triples, an inline
-  five, a TDI diesel, a five-cylinder radial, a two-stroke twin — all in
-  readable, editable YAML.
+  five, a TDI diesel, a five-cylinder radial, a two-stroke twin, a twin-rotor
+  13B — all in readable, editable YAML.
 - **Exhaust designer**, a validated graph editor for exhaust systems: it rejects
   cycles, incomplete branches and inconsistent cardinalities, and reports the
   solver cost of an unusual geometry before applying it.
@@ -138,8 +139,9 @@ factor is shown in the diagnostics.
   runs — exhaust sizes, bore, stroke and rods, cams, flywheel, injectors,
   turbo, gearbox, the air. An **A/B** button keeps two versions of the engine
   to switch between by ear.
-- **New engine…** designs an engine from nothing: four- or two-stroke, petrol
-  or diesel, inline, V, flat, W or radial, up to 32 cylinders of any size from
+- **New engine…** designs an engine from nothing: four- or two-stroke or
+  rotary, petrol or diesel, inline, V, flat, W or radial, up to 32 cylinders
+  or 10 rotors of any size from
   10 cc up, a bore and stroke or a displacement, natural, turbocharged or
   supercharged, injected or carburetted, through an airbox, a pod filter or
   open trumpets. Its Exhaust page sets the system (single, dual, H-pipe,
@@ -325,6 +327,10 @@ holds the working rules, build notes and verified traps of this repository.
   but still fall short of their maker's torque (the RD350LC-like twin makes
   29-33 N.m at 8,000 rpm against 37-40, though 34 kW at 9,000 rpm against
   the maker's 34.5);
+- a rotary's ports are estimated, not drawn from a maker's housing, and it
+  has no variable intake: the 13B makes 10 % more than Mazda's torque at
+  5,500 rpm and 8 % less power at 8,500. A rotary is petrol-only and the 2-D
+  cutaway draws its faces as pistons;
 - 0-D cylinder chambers and low-band quasi-1-D networks — this is not 3-D CFD;
 - audible propagation is linear and plane: transverse modes, 3-D bends and the
   mean-flow correction of radiation are not resolved;

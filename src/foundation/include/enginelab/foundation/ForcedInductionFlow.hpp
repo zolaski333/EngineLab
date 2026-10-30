@@ -184,7 +184,7 @@ inline constexpr double compressorInducerDesignVelocityMps = 100.0;
     const auto ratio = std::max(1.0, turbo.wastegatePressureRatio);
     const auto chargeTemperatureRatio = 1.0 + (std::pow(ratio, turboIsentropicExponent) - 1.0)
         / std::clamp(turbo.compressorEfficiency, 0.35, 0.90);
-    const auto flow = referenceDensityKgPerM3 * engineDisplacementLitres(config) * 0.001
+    const auto flow = referenceDensityKgPerM3 * breathingDisplacementLitres(config) * 0.001
         * 0.7 * config.redlineRpm / 120.0 * 0.9 * ratio / chargeTemperatureRatio;
     return std::max(0.005, flow / static_cast<double>(std::max(1U, turbo.turbochargerCount)));
 }
@@ -207,7 +207,7 @@ inline constexpr double compressorInducerDesignVelocityMps = 100.0;
  *  volume, else 1.5 x the displacement (a car's pipes and intercooler). */
 [[nodiscard]] inline double chargeVolumeM3(const EngineConfig& config) noexcept {
     return (config.forcedInduction.chargeVolumeLitres > 0.0 ? config.forcedInduction.chargeVolumeLitres
-        : 1.5 * engineDisplacementLitres(config)) * 0.001;
+        : 1.5 * breathingDisplacementLitres(config)) * 0.001;
 }
 
 /** A centrifugal supercharger's wheel at the centre of its map: the authored
