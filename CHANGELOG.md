@@ -7,6 +7,21 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.4] — 2026-10-30
+
+### Changed
+
+- **The intake can be turned up further.** Its level in the side panel, the
+  Audio workshop and a voicing file now goes to 4 (about +13 dB over the
+  default), where it stopped at 2: a stock airbox sits well under the
+  exhaust, and listeners who want the induction roar can now hear it. The
+  default mix is unchanged.
+
+### Fixed
+
+- **Starting the dyno could cancel the run at once.** About one start in
+  a thousand ended immediately with no point, as if it had been stopped.
+
 ## [0.7.3] — 2026-10-30
 
 ### Changed

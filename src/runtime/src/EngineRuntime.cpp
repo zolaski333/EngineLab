@@ -975,6 +975,7 @@ void EngineRuntime::startDyno(DynoSessionConfig config) {
     if (!dynoSessionActive_.compare_exchange_strong(
             expected, true, std::memory_order_acq_rel))
         return;
+    dynoStartPublished_.store(false, std::memory_order_release);
     // The calibration this run will measure: its rev limit sets the sweep.
     auto acceptedCalibration = ecu_.calibrationStore()->snapshot();
     const auto revLimitRpm = activeRevLimitRpm(config_, *acceptedCalibration);
@@ -1016,6 +1017,7 @@ void EngineRuntime::startDyno(DynoSessionConfig config) {
     dynoRunStatus_.store(DynoRunStatus::running,
                          std::memory_order_release);
     dynoRequestedRunning_.store(true, std::memory_order_release);
+    dynoStartPublished_.store(true, std::memory_order_release);
 }
 
 void EngineRuntime::stopDyno() {
@@ -1203,7 +1205,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 hasValidHoldPoint ? DynoStopReason::operatorFinished
                                   : DynoStopReason::operatorCancelled);
         } else if (!dynoDesired
-                   && dynoSessionActive_.load(std::memory_order_acquire)) {
+                   && dynoSessionActive_.load(std::memory_order_acquire)
+                   && dynoStartPublished_.load(std::memory_order_acquire)) {
             // startDyno()/stopDyno() may both be called between two simulation
             // ticks. No session ever began, so there is no fabricated empty run
             // to archive, but the public state must still leave `running`.

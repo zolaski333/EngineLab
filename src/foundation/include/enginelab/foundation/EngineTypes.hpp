@@ -1137,6 +1137,12 @@ enum class AudioMonitorMode : std::uint8_t {
     captureVoiced,
 };
 
+/** The intake layer's ceiling, above the other layers' 2: a stock airbox sits
+ * 3-16 dB under the exhaust at part load (journal 2026-10-30), so a listener
+ * who wants the induction roar needs up to ~13 dB over the default 0.85.
+ */
+inline constexpr double maximumIntakeGain = 4.0;
+
 /** Non-physical monitor voicing, kept separate from engine and exhaust physics.
  *
  * These values shape only the listening chain. Defaults exactly match the

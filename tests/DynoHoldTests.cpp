@@ -7,22 +7,29 @@
 // Hayabusa and the 13B scattered 53 and 45 rpm, and a CP2 the runtime dyno caught at
 // 1,800 rpm fell into a stall-recovery loop (journal 2026-10-30). A held point
 // must scatter by a few rpm, as every other catalogue engine does.
+//
+// A run the user starts must begin. startDyno() claimed the session before it
+// published the request, and a physics tick in between cancelled it as if it
+// had been stopped: UserDynoRampLS3Complete once ended in 0.2 s with no point.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace {
 using namespace enginelab;
@@ -98,6 +105,38 @@ int main() {
         require(deviation < 15.0,
             config.name + ": a held point scatters by a few rpm, not a brake limit cycle");
     }
-    std::cout << "PASS: the dyno absorber holds light shafts\n";
+
+    // Start and stop the runtime's dyno many times on a free-running physics
+    // thread: no start may be cancelled before its session begins.
+    {
+        auto runtime = std::make_unique<EngineRuntime>(findEngine(catalog, "Yamaha CP2"));
+        runtime->setRealtimeThrottleEnabled(false);
+        runtime->setRealtimeLoadProtectionEnabled(false);
+        runtime->start();
+        constexpr int starts = 3'000;
+        int cancelledBeforeBegin = 0;
+        for (int index = 0; index < starts; ++index) {
+            // A start right after the last stop lands at the same place in a
+            // tick every time: spread the starts over a tick's duration.
+            const auto spin = std::chrono::steady_clock::now()
+                + std::chrono::microseconds((index * 7'919) % 4'000);
+            while (std::chrono::steady_clock::now() < spin) {}
+            runtime->startDyno();
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (runtime->dynoRunning() && !runtime->snapshot().dynoActive
+                   && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::yield();
+            if (!runtime->dynoRunning()) ++cancelledBeforeBegin;
+            runtime->stopDyno();
+            while (runtime->dynoRunning() && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::yield();
+            require(!runtime->dynoRunning(), "a stopped dyno session ends");
+        }
+        runtime->stop();
+        std::cout << "dyno starts cancelled before their session began: "
+                  << cancelledBeforeBegin << " of " << starts << '\n';
+        require(cancelledBeforeBegin == 0, "every dyno start begins its session");
+    }
+    std::cout << "PASS: the dyno absorber holds light shafts and every start begins\n";
     return EXIT_SUCCESS;
 }

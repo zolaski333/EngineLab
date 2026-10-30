@@ -239,7 +239,11 @@ struct Result final {
     runtime.stop();
 
     if (!result.observedPreparation)
-        result.failure = "progressive preparation phase was not observed";
+        result.failure = "progressive preparation phase was not observed; status="
+            + std::to_string(static_cast<int>(result.runStatus))
+            + " stop=" + std::to_string(static_cast<int>(result.stopReason))
+            + " points=" + std::to_string(result.totalPointCount)
+            + " final_rpm=" + std::to_string(result.finalRpm);
     else if (result.stalled)
         result.failure = "engine crossed the running threshold during preparation";
     else if (result.pointCount < 3)

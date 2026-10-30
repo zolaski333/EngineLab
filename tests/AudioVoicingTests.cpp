@@ -55,6 +55,14 @@ int main() {
         require(std::abs(layered.voicing.intakeGain - 0.85) < 1.0e-12,
             "unspecified fields must retain the shipping default");
 
+        // A stock airbox sits 3-16 dB under the exhaust: the intake layer
+        // goes to 4 (about +13 dB over its default) where the others stop at 2.
+        write(root / "voicing" / "engines" / "roar.yaml",
+            "schema_version: 1\nvoicing:\n  intake_gain: 3.5\n");
+        const auto roar = enginelab::loadAudioVoicing(root, "motorcycle", "roar");
+        require(static_cast<bool>(roar) && std::abs(roar.voicing.intakeGain - 3.5) < 1.0e-12,
+            "an intake gain of 3.5 must load: " + roar.error);
+
         write(root / "voicing" / "engines" / "broken.yaml",
             "schema_version: 1\nvoicing:\n  mystery_gain: 4\n");
         const auto invalid = enginelab::loadAudioVoicing(
