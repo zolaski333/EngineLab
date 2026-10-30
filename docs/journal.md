@@ -9,6 +9,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 
 - Full `ctest`: `UserDynoRampLS3Complete` failed in 0.20 s, the engine at 2,467 rpm, no session ever seen active; alone it passed 35/35. `EngineRuntime::startDyno()` claimed `dynoSessionActive_` before it published `dynoRequestedRunning_`; a physics tick between the two read "active, not desired", the path meant for a start and a stop inside one tick, and cancelled the run.
 - The cancel now also needs `dynoStartPublished_`, set after the request. `DynoHold` starts and stops the runtime's dyno 3,000 times on a free-running thread, the starts spread over 4 ms: 4 of 3,000 cancelled before the fix (0 when they follow the last stop at once), 0 of 9,000 after. A user pressing D could hit it too.
+- 0.7.4's Linux CI still cancelled 1 of 3,000: the flag was cleared only by the next start, so a tick could read it stale, or read "not desired" before a start that then published in full. It is now consumed when the session begins or is cancelled and cleared when one ends, and the request is read again before a cancel. Windows 0 of 9,000; Linux not run locally (no distribution under WSL), CI only.
 
 ## 2026-10-30 — The torque the thermally perfect gas exposes is air, not friction
 

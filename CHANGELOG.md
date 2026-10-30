@@ -7,6 +7,11 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dyno start could still cancel itself on Linux.** 0.7.4 closed the
+  race on Windows; one start in a few thousand still ended at once on Linux.
+
 ## [0.7.4] — 2026-10-30
 
 ### Changed

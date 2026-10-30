@@ -634,9 +634,12 @@ private:
     // session fields below and reconciles this mailbox once per tick.
     std::atomic<bool> dynoRequestedRunning_ { false };
     std::atomic<bool> dynoSessionActive_ { false };
-    // Set once startDyno() has published its request. Between its claim of
-    // dynoSessionActive_ and that request a tick saw "active, not desired"
-    // and cancelled the run as if it had been stopped (journal 2026-10-30).
+    // Set once startDyno() has published its request, cleared when the
+    // simulation thread consumes it (session begun or cancelled) and when a
+    // session ends. Between the claim of dynoSessionActive_ and the request a
+    // tick saw "active, not desired" and cancelled the run as if it had been
+    // stopped; a stale flag from the last start did the same on Linux
+    // (journal 2026-10-30).
     std::atomic<bool> dynoStartPublished_ { false };
     std::atomic<DynoRunStatus> dynoRunStatus_ { DynoRunStatus::idle };
     bool dynoActive_ { false };
