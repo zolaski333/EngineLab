@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — A dyno start could cancel itself
+
+- Full `ctest`: `UserDynoRampLS3Complete` failed in 0.20 s, the engine at 2,467 rpm, no session ever seen active; alone it passed 35/35. `EngineRuntime::startDyno()` claimed `dynoSessionActive_` before it published `dynoRequestedRunning_`; a physics tick between the two read "active, not desired", the path meant for a start and a stop inside one tick, and cancelled the run.
+- The cancel now also needs `dynoStartPublished_`, set after the request. `DynoHold` starts and stops the runtime's dyno 3,000 times on a free-running thread, the starts spread over 4 ms: 4 of 3,000 cancelled before the fix (0 when they follow the last stop at once), 0 of 9,000 after. A user pressing D could hit it too.
+
+## 2026-10-30 — The torque the thermally perfect gas exposes is air, not friction
+
+- Blair's whole-engine fmep for plain-bearing four-strokes over 500 cc, 1.0 bar + 0.105 bar per m/s of mean piston speed (Design and Simulation of Four-Stroke Engines, 1999, p. 536; his two-stroke row, 3,150 Pa per m/s, is the one the RD350 already takes): K20 at 7,000 rpm (20.1 m/s) 3.1 bar, CP2 at 9,000 (20.6 m/s) 3.2 bar. The simulator's, imep - bmep from `DynoSweepHarness`: 2.2 and 2.6 bar. Its friction is under the literature, so not the excess.
+- Makers' power at a WOT BSFC of 270-290 g/kWh and lambda 0.88 implies a VE of 1.07-1.13 (K20 at 7,000 rpm), ~1.05 (CP2 at 6,500), ~1.03 (LS3 at 4,600); the simulator reads 1.00, 0.99, 0.95. Not measured: a real airflow on any of them, which is what merging `exp/thermally-perfect-gas` needs.
+- The intake layer's gain now goes to 4 (+13 dB over its 0.85 default; the other layers stop at 2), in the side panel's wheel, the Audio workshop and a voicing file. The default is unchanged. `AudioVoicingTests` loads 3.5 (fails on the old [0, 2]).
+
 ## 2026-10-30 — The petrol over-efficiency and the low EGT are the gas's constant gamma
 
 - K20 BSFC 209-233 g/kWh at WOT (real ~250-290). Gross indicated efficiency 0.41 at 7,000 rpm, lambda 0.90; a fuel-air cycle at r = 11.5 gives ~0.45 and a real engine ~0.37. Phasing is not it: `CombustionPhasing` CA50 11 / 9 / 8 deg at 2,200 / 3,000 / 4,200 rpm.

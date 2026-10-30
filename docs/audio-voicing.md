@@ -42,7 +42,7 @@ voicing:
   high_frequency_noise: 0.35  # 0..1.5
   combustion_gain: 1.0        # 0..2
   exhaust_gain: 1.0           # 0..2
-  intake_gain: 0.85           # 0..2
+  intake_gain: 0.85           # 0..4 (the other layers 0..2)
   mechanical_gain: 0.0        # 0..2; off: see below
   stereo_width: 1.0           # 0 mono, 1 neutral, 2 wide
   outlet_jet_gain: 1.0        # 0..2, physical jet noise only

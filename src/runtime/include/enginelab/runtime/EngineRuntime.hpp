@@ -241,7 +241,7 @@ public:
     void setHighFrequencyNoise(double value) noexcept { audioState_.highFrequencyNoise.store(static_cast<float>(std::clamp(value, 0.0, 1.5))); }
     void setCombustionGain(double value) noexcept { audioState_.combustionGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setExhaustGain(double value) noexcept { audioState_.exhaustGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
-    void setIntakeGain(double value) noexcept { audioState_.intakeGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setIntakeGain(double value) noexcept { audioState_.intakeGain.store(static_cast<float>(std::clamp(value, 0.0, maximumIntakeGain))); }
     void setMechanicalGain(double value) noexcept { audioState_.mechanicalGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setStereoWidth(double value) noexcept { audioState_.stereoWidth.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setOutletJetGain(double value) noexcept { audioState_.outletJetGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
@@ -634,6 +634,10 @@ private:
     // session fields below and reconciles this mailbox once per tick.
     std::atomic<bool> dynoRequestedRunning_ { false };
     std::atomic<bool> dynoSessionActive_ { false };
+    // Set once startDyno() has published its request. Between its claim of
+    // dynoSessionActive_ and that request a tick saw "active, not desired"
+    // and cancelled the run as if it had been stopped (journal 2026-10-30).
+    std::atomic<bool> dynoStartPublished_ { false };
     std::atomic<DynoRunStatus> dynoRunStatus_ { DynoRunStatus::idle };
     bool dynoActive_ { false };
     mutable std::mutex dynoMutex_;

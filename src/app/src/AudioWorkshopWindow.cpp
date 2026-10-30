@@ -279,7 +279,7 @@ public:
         configureSlider(combustionSlider_, 0.0, 2.0, 0.01);
         configureSlider(exhaustSlider_, 0.0, 2.0, 0.01);
         exhaustSlider_.setComponentID("mix-exhaust");
-        configureSlider(intakeSlider_, 0.0, 2.0, 0.01);
+        configureSlider(intakeSlider_, 0.0, maximumIntakeGain, 0.01);
         configureSlider(mechanicalSlider_, 0.0, 2.0, 0.01);
 
         for (std::size_t index = 0;

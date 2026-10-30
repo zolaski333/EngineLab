@@ -340,7 +340,7 @@ void applyVoicingFile(const std::filesystem::path& file,
         voicing.combustionGain);
     assignVoicingNumber(node, "exhaust_gain", 0.0, 2.0,
         voicing.exhaustGain);
-    assignVoicingNumber(node, "intake_gain", 0.0, 2.0,
+    assignVoicingNumber(node, "intake_gain", 0.0, maximumIntakeGain,
         voicing.intakeGain);
     assignVoicingNumber(node, "mechanical_gain", 0.0, 2.0,
         voicing.mechanicalGain);

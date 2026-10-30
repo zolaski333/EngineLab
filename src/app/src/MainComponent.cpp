@@ -1596,7 +1596,7 @@ void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
         audioMixChanged = true;
         authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelIntake)) {
-        intakeGain_ = std::clamp(intakeGain_ + wheelDelta * step, 0.0, 2.0);
+        intakeGain_ = std::clamp(intakeGain_ + wheelDelta * step, 0.0, maximumIntakeGain);
         runtime_->setIntakeGain(intakeGain_);
         audioMixChanged = true;
         authoredVoicingChanged = true;

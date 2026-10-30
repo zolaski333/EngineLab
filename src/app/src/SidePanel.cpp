@@ -292,7 +292,7 @@ void AudioPanel::paint(juce::Graphics& g) {
         { "Direct combustion", mix.combustionGain / 2.0, mix.combustionGain, !audio.physicalExhaustTopology },
         { "Exhaust", mix.exhaustGain / 2.0, mix.exhaustGain, true },
         { audio.forcedInductionAcousticsActive ? "Intake + turbo" : "Intake",
-          mix.intakeGain / 2.0, mix.intakeGain, true },
+          mix.intakeGain / maximumIntakeGain, mix.intakeGain, true },
         { audio.structuralRadiationActive ? "Structure" : "Mechanical",
           mix.mechanicalGain / 2.0, mix.mechanicalGain, true },
     }};
