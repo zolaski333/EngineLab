@@ -2624,7 +2624,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto previousAppliedHigh = cams.highProfile;
                 cams.highProfile = valveProfileActuators_[cylinderIndex].finish(*cams.config,
                     valveTrainStates_[cylinderIndex], cyclePhase,
-                    valveProfileShaftCycle_.lastTravelDegrees(), 1);
+                    valveProfileShaftCycle_.lastTravelDegrees(), 1, valveCycleDegrees);
                 if (cams.highProfile != previousAppliedHigh)
                     valveTrainResults_[cylinderIndex] = ValveTrainModel::evaluate(*cams.config, cams.highProfile,
                         valveTrainStates_[cylinderIndex], cyclePhase, state_.rpm, state_.load, 0.0,
@@ -5536,10 +5536,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                  indicatedTorque, brakeTorque, frame);
         state_.crankAngleDegrees = std::fmod(subPreviousAngle + subTravelled, eventGenerator_.cycleDegrees());
         if (hasVariableValveProfiles_) {
-            if (eventGenerator_.cycleDegrees() == 720.0)
+            // A four-stroke's 720 deg or a rotary face's 1,080: a rotary's
+            // staged intake ports switch as a cam profile does.
+            if (eventGenerator_.cycleDegrees() == 720.0
+                || eventGenerator_.cycleDegrees() == 1'080.0) {
+                valveProfileShaftCycle_.setPeriod(eventGenerator_.cycleDegrees());
                 (void)valveProfileShaftCycle_.advance(subPreviousAngle, state_.crankAngleDegrees,
                     subTravelled, subDt, subPreviousRpm, state_.rpm);
-            else
+            } else
                 valveProfileShaftCycle_.reset(); // Unsupported clocks leave demand unavailable.
         }
         state_.simulationTimeSeconds += subDt;

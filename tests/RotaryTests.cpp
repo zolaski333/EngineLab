@@ -118,6 +118,7 @@ struct Held final {
     double rpm { 0.0 };
     double torqueNm { 0.0 };
     double intakeRunnerSpreadKpa { 0.0 };
+    bool highProfile { false };
 };
 
 #if defined(_MSC_VER)
@@ -150,6 +151,9 @@ struct Held final {
             std::abs(faces[0].intakeRunnerChargePressureKpa - faces[1].intakeRunnerChargePressureKpa),
             std::abs(faces[0].intakeRunnerChargePressureKpa - faces[2].intakeRunnerChargePressureKpa) });
     }
+    result.highProfile = true;
+    for (std::size_t face = 0; face < config.cylinders.size(); ++face)
+        result.highProfile = result.highProfile && rig->simulator->appliedHighValveProfile(face);
     return result;
 }
 #if defined(_MSC_VER)
@@ -170,6 +174,32 @@ void thirteenBMakesItsMakersFigures(const EngineConfig& config) {
     std::cout << "13B WOT " << power.rpm << " rpm " << power.torqueNm << " N.m " << kw << " kW\n";
     require(kw > 0.85 * 184.0 && kw < 1.15 * 184.0, "184 kW at 8,500 rpm, within 15 %");
 }
+
+/** A Renesis opens its auxiliary intake ports near 6,300 rpm (closing 80 deg
+ *  ABDC against the primary's 65): a rotary's staged ports are a cam profile
+ *  switched with speed, on the face's 1,080 deg cycle. */
+void stagedPortsSwitchWithSpeed(EngineConfig config) {
+    auto& cams = config.camshafts;
+    cams.variableProfileEnabled = true;
+    cams.switchRpm = 6'300.0;
+    cams.switchThrottle = 0.0;
+    cams.highIntakeDurationDegrees = 362.0;
+    cams.highIntakeLiftMm = cams.intakeLiftMm;
+    cams.highIntakeLiftProfile = { { -166.0, 0.0 }, { -83.0, cams.intakeLiftMm },
+        { 98.0, cams.intakeLiftMm }, { 181.0, 0.0 } };
+    cams.highExhaustDurationDegrees = cams.exhaustDurationDegrees;
+    cams.highExhaustLiftMm = cams.exhaustLiftMm;
+    cams.highExhaustLiftProfile = cams.exhaustLiftProfile;
+    // A rotor's bank carries its own copy, which the simulator prefers.
+    for (auto& bank : config.banks) bank.camshafts = cams;
+    require(!validateEngineConfig(config).has_value(), "a staged-port 13B validates");
+    const auto low = held(config, 1.0, 5'000.0);
+    const auto high = held(config, 1.0, 8'500.0);
+    std::cout << "staged 13B: high profile at " << low.rpm << " rpm " << low.highProfile
+              << ", at " << high.rpm << " rpm " << high.highProfile << '\n';
+    require(!low.highProfile, "the auxiliary ports stay shut at 5,000 rpm");
+    require(high.highProfile, "the auxiliary ports open at 8,500 rpm");
+}
 } // namespace
 
 int main() {
@@ -178,6 +208,7 @@ int main() {
     validationKeepsARotorWhole(config);
     aRotorsFacesShareItsExhaustPort(config);
     thirteenBMakesItsMakersFigures(config);
+    stagedPortsSwitchWithSpeed(config);
     std::cout << "rotary tests passed\n";
     return EXIT_SUCCESS;
 }

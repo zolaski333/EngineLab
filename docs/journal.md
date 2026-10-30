@@ -5,6 +5,11 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — A rotary's staged ports: the switched profile on 1,080 deg
+
+- The 13B's -8 % at 8,500 rpm was put on its unstaged ports. A Renesis opens auxiliary ports near 6,300 rpm (closing 80 deg ABDC, service manual; the speed from a parts guide). A switched profile held nothing on a rotary: `ValveProfileActuator` measured and gated on 720 deg only, so `DynoSweepHarness` was bit-identical with the profile on. It now takes the cycle's period (720 x 0.5 and 720 / 6 keep a piston engine's arithmetic); `EngineLab.Rotary` asserts low at 5,000 and high at 8,500 (fails without the change).
+- Measured, one factor (the 80 deg closing above 6,300, same lift): 8,500 rpm 169.4 -> 172.3 kW (+1.7 %), 6,500 152.9 -> 150.5 (-1.6 %), 7,000 -1.5 %, below 6,300 within 0.1 %. The timing alone does not close the gap; the port's added area is the rest and is not published, so the catalogue 13B keeps one port (figures unchanged: 234.6 N.m, 170.1 kW in the test).
+
 ## 2026-10-30 — The 13B's port timing is Mazda's
 
 - The catalogue 13B was written with "estimated" ports. Mazda's RX-8 service manual (high power) gives intake primary 3 deg ATDC to 65 deg ABDC, secondary close 36, auxiliary 38/80, exhaust 50 deg BBDC to 3 deg BTDC; Mazda Technical Review 21 (2003, side-exhaust RE) gives EO 50 BBDC (72 on the peripheral port), EC 3 BTDC, IO 3 ATDC. The catalogue's cams (intake 332 deg about 169, exhaust 317 about 161.5) give exactly the primary's four events: no change to the engine.
