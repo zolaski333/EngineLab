@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — The intake's airbox was a point compliance above its first mode
+
+- New `IntakeTransferHarness`: one runner driven sinusoidally, the mouth's level as authored, with the element alone (pod, no box) and bare. K20-like (4.5 L box, 250 x 70 mm snorkel): the box's insertion loss at 1.6 / 2.2 / 3.2 / 4.5 kHz was 16.0 / 22.7 / 29.5 / 35.4 dB, rising 6 dB an octave like a shunt compliance. A 4.5 L box on a 70 mm duct has a plane-wave bound of ~12 dB (area ratio 14) and modes from ~800 Hz.
+- The plenum and the airbox are now distributed: each keeps its volume but becomes a duct of length cbrt(e^2 V) (e = 3 plenum, 1.5 airbox; the airbox's two ends are the throttle and the snorkel, the plenum's a closed branch), used only when it spans 2 samples. Same IL: 0.4 / 4.7 / 0.9 / 9.3 dB; the authored mouth gains 30-50 dB above 1.5 kHz, nothing below 500 Hz.
+- `AudioRenderHarness --stems K20` (72 % at ~4,700 rpm), intake stem under the exhaust per octave 125 Hz-8 kHz: before 4.9 / 10.7 / 27.9 / 46.6 / 59.2 / 48.9 / 26.6 dB, after 3.3 / 16.3 / 30.3 / 37.6 / 31.1 / 23.3 / 12.4. Stem rms +0.5 dB. Both networks radiate to 1 m of their own mouth: no mix gain was touched.
+- AbClipRenderer, 12 engines, idle and rev (`listening-test/2026-10-30/`): every idle and most revs move under 0.2 dB in any band; I5 rev +0.7-0.9 dB above 1 kHz, TDI +0.6-1.5 dB at 4-8 kHz. An airboxed intake stays discreet in the master because its firing orders are 3-16 dB under the exhaust at part load, a plausible range for a stock car; trumpets and pods are what make it heard.
+- `RealtimeRegression` requires the box's IL under 15 dB at 1.6, 2.2 and 3.2 kHz (14.6 / 22.3 dB before: fails). Not measured: the box against a real airbox's measured transmission loss; its elongation is a geometric guess, not a part.
+
 ## 2026-10-30 — The 193 L marine six reaches its 3.0 bar: five faults, none in the turbine
 
 - Designed marine six (320 x 400 mm, 3.0 bar, 750 rpm), `TurboDownstreamAuthorityHarness --spool` (now prints the wheel's speed ratio, flow coefficient, lambda, fuel and limits) and `DynoSweepHarness --settle 10`. Each fault was measured alone.

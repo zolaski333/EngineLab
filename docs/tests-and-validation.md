@@ -195,6 +195,7 @@ file's header says which question it answers and lists its options.
 | `ExhaustNetworkCostBench` | does the same geometry cost more solver time when authored as a designer network? |
 | `GeometrySensitivityHarness` | does an exhaust change alter the timbre (`shape`) or only the level? |
 | `IntakeDuctBench` | bit-exact checksum of the duct solver: unchanged means the physics is untouched |
+| `IntakeTransferHarness` | `[--engine <name>] [--amplitude kg/s]`: the acoustic intake network's transfer from one runner to the mouth, 30 Hz to 4.5 kHz, as authored, with the filter element alone (no airbox) and bare; the differences are the airbox's and the element's insertion losses, to be read against a plane-wave model of the same geometry |
 | `LoadedAccelerationHarness` | a wide-open-throttle pull held in one gear, without shifts, to attribute a torque collapse |
 | `OfflineAudioExporter` | high-quality WAV render with stems ([offline rendering](offline-hq-rendering.md)) |
 | `PhysicsPerfHarness` | gas-exchange trace at crank-degree resolution; `--freerev 0..1 --settle 0` traces the start itself (the starter turns the engine until it holds 85 % of its idle), and its CSV ends with the metered fuel and the cylinders' air in g/s (`fuel_gps`, `air_gps`; the air is the trapped oxygen's, so a lean residual counts); `--trace 1 --idle` is a real idle; `--trace rpm --settle S` holds S seconds before the dump (default 4: a turbo diesel's boost is still rising); `--idle-firing S [--settle S]` idles every engine (or `--filter`, under `--catalog-root`) and prints the share of sparks that lit, the longest misfire run, the diluent at the spark and the firing pattern |
@@ -204,7 +205,7 @@ file's header says which question it answers and lists its options.
 | `SceneExport` | the 3-D scene of the catalogue (or `--catalog-root` another, e.g. designs) as JSON, with the route check issues per engine; `--two-stroke-intake crankcase_reed\|cylinder_port` draws every two-stroke with that intake |
 | `ShiftTransientHarness` | the exhaust mass-flow step (the "crack") of a clutchless full-throttle upshift, and with `--audio-output` its sound |
 | `ThermalHarness` | coolant and oil temperatures over repeated dyno passes, tied to the power lost from pass to pass |
-| `TurboDownstreamAuthorityHarness` | does the exhaust after the turbine change a turbocharged engine's power? |
+| `TurboDownstreamAuthorityHarness` | does the exhaust after the turbine change a turbocharged engine's power? `--spool <rpm>` instead steps the throttle at one held speed and prints the spool second by second: boost, shaft speed against design (`N/Nd`), flow coefficient against design, compressor efficiency and power, lambda, the cylinder's air and fuel, and the active limits |
 | `UserDynoHarness` | the dyno started as a user does, from an engine already running above the first point: a preparation phase, no stall, points from the low end |
 
 `WasapiLoopbackRecorder.cpp` is not part of the build: a standalone recorder of

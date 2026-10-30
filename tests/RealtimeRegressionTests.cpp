@@ -1457,6 +1457,50 @@ void intakeMouthCarriesEveryBoreRegression() {
     require(oneWide - oneNarrow > 3.0, "a quarter of the mouth radiates less");
 }
 
+/** An airbox above its first mode is an expansion chamber, not a point
+ *  compliance: its insertion loss (against the same path with the filter
+ *  element and no box) stays near the plane-wave bound of its area ratio,
+ *  10 log(1 + (m - 1/m)^2 / 4), about 12 dB for a 4.5 L box on a 70 mm
+ *  snorkel. As a compliance it shunted 16, 23 and 30 dB at 1.6, 2.2 and
+ *  3.2 kHz. */
+void intakeAirboxIsAnExpansionChamberRegression() {
+    const auto radiated = [](bool airbox, double frequencyHz) {
+        auto config = enginelab::makeDefaultInlineFour();
+        config.intake.airboxVolumeLitres = airbox ? 4.5 : 0.0;
+        config.intake.podFilter = !airbox;
+        config.intake.inletDuctLengthMm = 250.0;
+        config.intake.inletDuctDiameterMm = 70.0;
+        config.intake.bellmouthDiameterMm = 82.0;
+        for (auto& path : config.intakePaths) path.geometry = config.intake;
+        enginelab::normaliseEngineConfig(config);
+        enginelab::AcousticIntakeNetwork intake(config);
+        require(intake.valid() && intake.prepare(48'000.0), "the airbox fixture must prepare");
+        const std::array<enginelab::AcousticIntakeNetwork::PathBoundary, 1> paths {{
+            { 0.0032F, 1.15F, 350.0F } }};
+        intake.beginBlock(paths, 1.0);
+        std::array<enginelab::AcousticIntakeNetwork::CylinderBoundary, 4> cylinders {};
+        for (auto& cylinder : cylinders) {
+            cylinder.conductanceAreaM2 = 0.00045F;
+            cylinder.densityKgPerM3 = 1.15F;
+            cylinder.soundSpeedMps = 350.0F;
+            cylinder.physical = true;
+        }
+        auto energy = 0.0;
+        for (std::size_t sample = 0; sample < 24'000; ++sample) {
+            cylinders[0].massFlowKgPerSecond = 0.040F + 0.010F * static_cast<float>(std::sin(
+                2.0 * std::numbers::pi * frequencyHz * static_cast<double>(sample) / 48'000.0));
+            const auto pressure = intake.process(cylinders, 1.0F)[0].leftPa;
+            if (sample >= 12'000) energy += static_cast<double>(pressure) * pressure;
+        }
+        return 10.0 * std::log10(energy + 1.0e-30);
+    };
+    for (const auto frequency : { 1'600.0, 2'200.0, 3'200.0 }) {
+        const auto loss = radiated(false, frequency) - radiated(true, frequency);
+        std::cout << "  airbox insertion loss at " << frequency << " Hz: " << loss << " dB\n";
+        require(loss < 15.0, "an airbox above its first mode loses what an expansion chamber does");
+    }
+}
+
 void acousticIntakeNetworkRegression() {
     auto config = enginelab::makeDefaultInlineFour();
     config.intake.airboxVolumeLitres = 4.0;
@@ -3561,6 +3605,7 @@ int main(int argc, char** argv) {
         structuralModalRadiatorRegression();
         acousticIntakeNetworkRegression();
         intakeMouthCarriesEveryBoreRegression();
+        intakeAirboxIsAnExpansionChamberRegression();
         forcedInductionAcousticsRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();

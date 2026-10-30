@@ -159,6 +159,12 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabCyclicVariabilityHarness)
 
+add_executable(EngineLabIntakeTransferHarness IntakeTransferHarness.cpp)
+target_link_libraries(EngineLabIntakeTransferHarness PRIVATE
+    EngineLab::Audio EngineLab::Foundation EngineLab::Catalog)
+target_compile_definitions(EngineLabIntakeTransferHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabIntakeTransferHarness)
+
 add_executable(EngineLabAudioRenderHarness AudioRenderHarness.cpp)
 target_link_libraries(EngineLabAudioRenderHarness PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

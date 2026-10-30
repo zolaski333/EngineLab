@@ -53,6 +53,20 @@ namespace {
         * std::sqrt(static_cast<double>(std::max(1U, geometry.throttleCount)));
 }
 
+/** The length of a square-section volume `elongation` times as long as it is
+ *  wide, m. As point compliances, the K20's 2.6 L plenum and 4.5 L airbox each
+ *  shunted the intake above 92-202 Hz at 6 dB an octave: its stem sat 47-59 dB
+ *  under the exhaust's at 1-2 kHz against 5-11 dB at 125-250 Hz (journal
+ *  2026-10-30). A real volume is a cavity with modes: as plane-wave ducts
+ *  of the same volume they stay compliances below their first mode. The
+ *  shapes are estimates: a log plenum three times as long as it is wide
+ *  along its runners, an airbox one and a half times along its flow. */
+[[nodiscard]] double distributedVolumeLengthM(double volumeM3, double elongation) noexcept {
+    return std::cbrt(elongation * elongation * std::max(0.0, volumeM3));
+}
+inline constexpr double plenumElongation = 3.0;
+inline constexpr double airboxElongation = 1.5;
+
 } // namespace
 
 struct AcousticIntakeNetwork::Impl final {
@@ -100,6 +114,22 @@ struct AcousticIntakeNetwork::Impl final {
         std::vector<std::size_t> runners;
         Compliance plenum;
         Compliance airbox;
+        // A volume long against the wavelength is no point compliance: the
+        // plenum is a closed side branch of its volume at the runners' node,
+        // the airbox a wide duct between the throttle and the inlet (see
+        // distributedVolumeLengthM). Each stays a compliance when it is
+        // shorter than two samples of travel.
+        bool plenumBranched { false };
+        Duct plenumBranch;
+        float plenumBranchIncidentAtNode {};
+        float plenumBranchIncidentAtEnd {};
+        float plenumBranchOutgoingAtNode {};
+        bool airboxDucted { false };
+        Duct airboxDuct;
+        float airboxIncidentAtThrottle {};
+        float airboxIncidentAtInlet {};
+        float airboxOutgoingAtThrottle {};
+        float airboxOutgoingAtInlet {};
         float throttleIncidentAtPlenum {};
         float throttleIncidentAtAirbox {};
         float throttleAdmittanceM3PerPaSecond {};
@@ -196,6 +226,15 @@ struct AcousticIntakeNetwork::Impl final {
                 compiled.geometry.plenumVolumeLitres * 0.001);
             compiled.airbox.volumeM3 = std::max(0.0,
                 compiled.geometry.airboxVolumeLitres * 0.001);
+            const auto distribute = [](Duct& duct, double volumeM3, double elongation) {
+                duct.lengthM = distributedVolumeLengthM(volumeM3, elongation);
+                duct.areaM2 = volumeM3 / std::max(1.0e-9, duct.lengthM);
+                duct.inletAreaM2 = duct.areaM2;
+                duct.outletAreaM2 = duct.areaM2;
+                duct.radiusM = std::sqrt(duct.areaM2 / std::numbers::pi);
+            };
+            distribute(compiled.plenumBranch, compiled.plenum.volumeM3, plenumElongation);
+            distribute(compiled.airboxDuct, compiled.airbox.volumeM3, airboxElongation);
             const auto inletDiameterMm = compiled.geometry.inletDuctDiameterMm > 1.0
                 ? compiled.geometry.inletDuctDiameterMm
                 : boresMouthDiameterMm(compiled.geometry);
@@ -302,6 +341,14 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
     for (auto& runner : impl_->runners) impl_->prepareDuct(runner.duct);
     for (auto& path : impl_->paths) {
         if (path.hasInletDuct) impl_->prepareDuct(path.inletDuct);
+        constexpr double referenceSoundSpeedMps = 343.0;
+        const auto spansTwoSamples = [&](const Impl::Duct& duct) {
+            return duct.lengthM / referenceSoundSpeedMps * sampleRateHz >= 2.0;
+        };
+        path.plenumBranched = spansTwoSamples(path.plenumBranch);
+        path.airboxDucted = path.airbox.volumeM3 > 0.0 && spansTwoSamples(path.airboxDuct);
+        if (path.plenumBranched) impl_->prepareDuct(path.plenumBranch);
+        if (path.airboxDucted) impl_->prepareDuct(path.airboxDuct);
         const auto inletDiameterMm = path.geometry.bellmouthDiameterMm > 1.0
             ? path.geometry.bellmouthDiameterMm
             : path.geometry.inletDuctDiameterMm > 1.0
@@ -383,6 +430,15 @@ void AcousticIntakeNetwork::reset() noexcept {
     }
     for (auto& path : impl_->paths) {
         if (path.hasInletDuct) resetDuct(path.inletDuct);
+        if (path.plenumBranched) resetDuct(path.plenumBranch);
+        if (path.airboxDucted) resetDuct(path.airboxDuct);
+        path.plenumBranchIncidentAtNode = 0.0F;
+        path.plenumBranchIncidentAtEnd = 0.0F;
+        path.plenumBranchOutgoingAtNode = 0.0F;
+        path.airboxIncidentAtThrottle = 0.0F;
+        path.airboxIncidentAtInlet = 0.0F;
+        path.airboxOutgoingAtThrottle = 0.0F;
+        path.airboxOutgoingAtInlet = 0.0F;
         path.plenum.incident = 0.0F;
         path.airbox.incident = 0.0F;
         path.throttleIncidentAtPlenum = 0.0F;
@@ -420,6 +476,8 @@ void AcousticIntakeNetwork::beginBlock(
         for (const auto runnerIndex : path.runners)
             fitDuct(impl_->runners[runnerIndex].duct);
         if (path.hasInletDuct) fitDuct(path.inletDuct);
+        if (path.plenumBranched) fitDuct(path.plenumBranch);
+        if (path.airboxDucted) fitDuct(path.airboxDuct);
     }
     if (!impl_->mediaInitialised) {
         for (auto& path : impl_->paths) {
@@ -436,6 +494,14 @@ void AcousticIntakeNetwork::beginBlock(
                 duct.delayControlSamples = duct.delayTargetSamples;
                 duct.delaySamples = duct.delayTargetSamples;
             }
+            const auto snap = [](Impl::Duct& duct) {
+                duct.wallLoss = duct.wallLossTarget;
+                duct.wallLossControl = duct.wallLossTarget;
+                duct.delayControlSamples = duct.delayTargetSamples;
+                duct.delaySamples = duct.delayTargetSamples;
+            };
+            if (path.plenumBranched) snap(path.plenumBranch);
+            if (path.airboxDucted) snap(path.airboxDuct);
             if (path.hasInletDuct) {
                 path.inletDuct.wallLoss = path.inletDuct.wallLossTarget;
                 path.inletDuct.wallLossControl =
@@ -481,6 +547,8 @@ void AcousticIntakeNetwork::updateBoundaryTargets(
         for (const auto runnerIndex : path.runners)
             updateDelayTarget(impl_->runners[runnerIndex].duct);
         if (path.hasInletDuct) updateDelayTarget(path.inletDuct);
+        if (path.plenumBranched) updateDelayTarget(path.plenumBranch);
+        if (path.airboxDucted) updateDelayTarget(path.airboxDuct);
     }
 }
 
@@ -587,17 +655,57 @@ AcousticIntakeNetwork::process(
             DuctWallLoss::process(duct.wallLoss, duct.forwardLoss,
                 impl_->readDelayed(duct, duct.forward)));
     }
+    const auto rampDuct = [&](Impl::Duct& duct) {
+        duct.delayControlSamples += stageRamp
+            * (duct.delayTargetSamples - duct.delayControlSamples);
+        duct.delaySamples += stageRamp
+            * (duct.delayControlSamples - duct.delaySamples);
+        duct.wallLossControl.pole += stageRamp
+            * (duct.wallLossTarget.pole - duct.wallLossControl.pole);
+        duct.wallLossControl.zero += stageRamp
+            * (duct.wallLossTarget.zero - duct.wallLossControl.zero);
+        duct.wallLossControl.renormalise();
+        duct.wallLoss.pole += stageRamp
+            * (duct.wallLossControl.pole - duct.wallLoss.pole);
+        duct.wallLoss.zero += stageRamp
+            * (duct.wallLossControl.zero - duct.wallLoss.zero);
+        duct.wallLoss.renormalise();
+    };
+    for (auto& path : impl_->paths) {
+        // Forward runs from the node (or the throttle) to the far end.
+        if (path.plenumBranched) {
+            auto& duct = path.plenumBranch;
+            rampDuct(duct);
+            path.plenumBranchIncidentAtNode = DuctWallLoss::process(
+                duct.wallLoss, duct.reverseLoss, impl_->readDelayed(duct, duct.reverse));
+            path.plenumBranchIncidentAtEnd = DuctWallLoss::process(
+                duct.wallLoss, duct.forwardLoss, impl_->readDelayed(duct, duct.forward));
+        }
+        if (path.airboxDucted) {
+            auto& duct = path.airboxDuct;
+            rampDuct(duct);
+            path.airboxIncidentAtThrottle = DuctWallLoss::process(
+                duct.wallLoss, duct.reverseLoss, impl_->readDelayed(duct, duct.reverse));
+            path.airboxIncidentAtInlet = DuctWallLoss::process(
+                duct.wallLoss, duct.forwardLoss, impl_->readDelayed(duct, duct.forward));
+        }
+    }
 
     for (std::size_t pathIndex = 0; pathIndex < impl_->paths.size(); ++pathIndex) {
         auto& path = impl_->paths[pathIndex];
         const auto rho = path.medium.densityKgPerM3;
         const auto c = path.medium.soundSpeedMps;
+        const auto plenumBranchAdmittance = path.plenumBranched
+            ? path.plenumBranch.areaM2 / (static_cast<double>(rho) * c) : 0.0;
         auto weighted = static_cast<double>(path.throttleAdmittanceM3PerPaSecond)
             * path.throttleIncidentAtPlenum
-            + static_cast<double>(path.plenum.admittanceM3PerPaSecond)
-                * path.plenum.incident;
+            + (path.plenumBranched
+                ? plenumBranchAdmittance * path.plenumBranchIncidentAtNode
+                : static_cast<double>(path.plenum.admittanceM3PerPaSecond)
+                    * path.plenum.incident);
         auto admittance = static_cast<double>(path.throttleAdmittanceM3PerPaSecond)
-            + path.plenum.admittanceM3PerPaSecond;
+            + (path.plenumBranched ? plenumBranchAdmittance
+                : static_cast<double>(path.plenum.admittanceM3PerPaSecond));
         for (const auto runnerIndex : path.runners) {
             const auto& runner = impl_->runners[runnerIndex];
             const auto runnerAdmittance = static_cast<float>(
@@ -615,7 +723,10 @@ AcousticIntakeNetwork::process(
         }
         const auto throttleOutgoingFromPlenum = plenumPressure
             - path.throttleIncidentAtPlenum;
-        path.plenum.incident = plenumPressure - path.plenum.incident;
+        if (path.plenumBranched)
+            path.plenumBranchOutgoingAtNode = plenumPressure - path.plenumBranchIncidentAtNode;
+        else
+            path.plenum.incident = plenumPressure - path.plenum.incident;
 
         const auto inletAreaM2 = path.hasInletDuct
             ? path.inletDuct.areaM2
@@ -625,19 +736,40 @@ AcousticIntakeNetwork::process(
         const auto inletAdmittance = static_cast<float>(inletAreaM2 / (rho * c));
         const auto inletIncident = path.hasInletDuct
             ? path.inletIncidentAtAirbox : path.radiationIncidentAtAirbox;
-        weighted = static_cast<double>(path.throttleAdmittanceM3PerPaSecond)
-                * path.throttleIncidentAtAirbox
-            + static_cast<double>(inletAdmittance) * inletIncident
-            + static_cast<double>(path.airbox.admittanceM3PerPaSecond)
-                * path.airbox.incident;
-        admittance = path.throttleAdmittanceM3PerPaSecond + inletAdmittance
-            + path.airbox.admittanceM3PerPaSecond;
-        const auto airboxPressure = admittance > 1.0e-15
-            ? static_cast<float>(2.0 * weighted / admittance) : 0.0F;
+        auto airboxPressure = 0.0F;
+        auto throttleOutgoingFromAirbox = 0.0F;
+        if (path.airboxDucted) {
+            // The throttle's end of the box, then its inlet's end, where the
+            // rest of the path meets it as it met the point airbox.
+            const auto boxAdmittance = path.airboxDuct.areaM2 / (static_cast<double>(rho) * c);
+            weighted = static_cast<double>(path.throttleAdmittanceM3PerPaSecond)
+                    * path.throttleIncidentAtAirbox
+                + boxAdmittance * path.airboxIncidentAtThrottle;
+            admittance = path.throttleAdmittanceM3PerPaSecond + boxAdmittance;
+            const auto throttleEndPressure = admittance > 1.0e-15
+                ? static_cast<float>(2.0 * weighted / admittance) : 0.0F;
+            throttleOutgoingFromAirbox = throttleEndPressure - path.throttleIncidentAtAirbox;
+            path.airboxOutgoingAtThrottle = throttleEndPressure - path.airboxIncidentAtThrottle;
+            weighted = boxAdmittance * path.airboxIncidentAtInlet
+                + static_cast<double>(inletAdmittance) * inletIncident;
+            admittance = boxAdmittance + inletAdmittance;
+            airboxPressure = admittance > 1.0e-15
+                ? static_cast<float>(2.0 * weighted / admittance) : 0.0F;
+            path.airboxOutgoingAtInlet = airboxPressure - path.airboxIncidentAtInlet;
+        } else {
+            weighted = static_cast<double>(path.throttleAdmittanceM3PerPaSecond)
+                    * path.throttleIncidentAtAirbox
+                + static_cast<double>(inletAdmittance) * inletIncident
+                + static_cast<double>(path.airbox.admittanceM3PerPaSecond)
+                    * path.airbox.incident;
+            admittance = path.throttleAdmittanceM3PerPaSecond + inletAdmittance
+                + path.airbox.admittanceM3PerPaSecond;
+            airboxPressure = admittance > 1.0e-15
+                ? static_cast<float>(2.0 * weighted / admittance) : 0.0F;
+            throttleOutgoingFromAirbox = airboxPressure - path.throttleIncidentAtAirbox;
+        }
         impl_->diagnostics.airboxPressurePa = std::max(
             impl_->diagnostics.airboxPressurePa, std::abs(airboxPressure));
-        const auto throttleOutgoingFromAirbox = airboxPressure
-            - path.throttleIncidentAtAirbox;
         if (path.hasInletDuct)
             // Crossing the filter element on the way out toward the mouth.
             path.inletOutgoingAtAirbox = impl_->applyAirFilter(
@@ -662,7 +794,7 @@ AcousticIntakeNetwork::process(
             result[pathIndex].leftPa += observed.leftPa;
             result[pathIndex].rightPa += observed.rightPa;
         }
-        if (path.airbox.admittanceM3PerPaSecond > 0.0F)
+        if (path.airbox.admittanceM3PerPaSecond > 0.0F && !path.airboxDucted)
             path.airbox.incident = airboxPressure - path.airbox.incident;
         else
             path.airbox.incident = 0.0F;
@@ -744,6 +876,23 @@ AcousticIntakeNetwork::process(
                 ? path.inletOutgoingAtMouth : 0.0F;
             duct.reverse[duct.write] = std::isfinite(path.inletOutgoingAtAirbox)
                 ? path.inletOutgoingAtAirbox : 0.0F;
+            duct.write = (duct.write + 1U) & duct.mask;
+        }
+        if (path.plenumBranched) {
+            // A closed end returns the wave unchanged.
+            auto& duct = path.plenumBranch;
+            duct.forward[duct.write] = std::isfinite(path.plenumBranchOutgoingAtNode)
+                ? path.plenumBranchOutgoingAtNode : 0.0F;
+            duct.reverse[duct.write] = std::isfinite(path.plenumBranchIncidentAtEnd)
+                ? path.plenumBranchIncidentAtEnd : 0.0F;
+            duct.write = (duct.write + 1U) & duct.mask;
+        }
+        if (path.airboxDucted) {
+            auto& duct = path.airboxDuct;
+            duct.forward[duct.write] = std::isfinite(path.airboxOutgoingAtThrottle)
+                ? path.airboxOutgoingAtThrottle : 0.0F;
+            duct.reverse[duct.write] = std::isfinite(path.airboxOutgoingAtInlet)
+                ? path.airboxOutgoingAtInlet : 0.0F;
             duct.write = (duct.write + 1U) & duct.mask;
         }
     }

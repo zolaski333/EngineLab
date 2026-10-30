@@ -1027,11 +1027,22 @@ Relevant contracts are [joint intake coupling](../tests/JointIntakeManifoldTests
 [owned valve-profile transitions](../tests/ValveProfileTransitionTests.cpp).
 
 `AcousticIntakeNetwork` compiles each intake path into individual bidirectional
-runners, a WDF plenum compliance, a variable-admittance throttle restriction, an
-optional airbox compliance, an inlet duct with thermo-viscous losses, then a
-horn/mouth radiation load and the delay to the observer. Volumes, lengths,
-diameters and areas come exclusively from `EngineConfig`. A zero value for the
-airbox or the duct means the part is absent; it triggers no invented geometry.
+runners, a plenum, a variable-admittance throttle restriction, an optional
+airbox, an inlet duct with thermo-viscous losses, then a horn/mouth radiation
+load and the delay to the observer. Volumes, lengths, diameters and areas come
+from `EngineConfig`. A zero value for the airbox or the duct means the part is
+absent; it triggers no invented geometry.
+
+The plenum and the airbox are plane-wave ducts of their volume, not point
+compliances: the plenum a closed side branch at the runners' node, three times
+as long as it is wide; the airbox a wide duct between the throttle and the
+inlet, one and a half times as long as it is wide (both shapes estimated). Below
+their first mode they are the compliances they were; above it a point
+compliance shunted the intake at 6 dB an octave from 92-202 Hz on a K20, and
+its stem sat 47-59 dB under the exhaust's at 1-2 kHz. As a duct the airbox
+loses 0-9 dB there, inside the plane-wave bound of an expansion chamber of its
+area ratio (about 12 dB). A volume shorter than two samples of travel stays a
+compliance.
 With neither a duct nor a bellmouth the path radiates through its throttle
 bores as one mouth of their combined area (`throttle_count` bores of
 `throttle_diameter_mm`): the bores are what carries the air, and one bore's
