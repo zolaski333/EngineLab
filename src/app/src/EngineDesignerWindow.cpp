@@ -78,7 +78,7 @@ public:
         };
         addChoice(cycle_, "Cycle", { "Four-stroke", "Two-stroke", "Rotary (Wankel)" });
         cycle_.combo.setTooltip(utf8("A rotary is counted in rotors and sized by its displacement, one face a "
-            "rotor as Mazda counts it (a 13B: 2 rotors, 1.3 L)."));
+            "rotor as Mazda counts it (a 13B: 2 rotors, 1.3 L), or by its rotor's radius, eccentricity and width."));
         // A rotary is sized by its displacement: one is offered when none is
         // given, a 13B's.
         cycle_.combo.onChange = [this] {
@@ -99,6 +99,29 @@ public:
         addField(bore_, "Bore (mm)", "84");
         addField(stroke_, "Stroke (mm)", "72");
         addField(displacement_, "or displacement (L)", "");
+        // A rotary is sized by its displacement or by its rotor, as a piston
+        // engine by its displacement or its bore and stroke: the rotor's
+        // three measures are the design's own values, shown once it has one.
+        addKeyed(rotorRadius_, "or rotor radius R (mm)", "generating_radius_mm", enginePage);
+        addKeyed(eccentricity_, "Eccentricity e (mm)", "eccentricity_mm", enginePage);
+        addKeyed(rotorWidth_, "Rotor width b (mm)", "rotor_width_mm", enginePage);
+        rotorRadius_.editor.setTooltip(utf8("The rotor's generating radius, centre to apex: the 13B's is 105 mm. "
+            "Empty: from the displacement. Typing it clears the displacement."));
+        eccentricity_.editor.setTooltip(utf8("The eccentric shaft's throw: the 13B's is 15 mm. Empty: R / 7."));
+        rotorWidth_.editor.setTooltip(utf8("The rotor's width along the shaft: the 13B's is 80 mm. Empty: 0.76 R."));
+        // One or the other: a measure typed clears the displacement, and a
+        // displacement typed clears the measures.
+        for (auto* measure : { &rotorRadius_, &eccentricity_, &rotorWidth_ }) {
+            measure->editor.onTextChange = [this, measure] {
+                if (measure->editor.getText().trim().isNotEmpty()) displacement_.editor.setText("", false);
+                startTimer(250);
+            };
+        }
+        displacement_.editor.onTextChange = [this] {
+            if (rotarySelected() && displacement_.editor.getText().trim().isNotEmpty())
+                for (auto* measure : { &rotorRadius_, &eccentricity_, &rotorWidth_ }) measure->editor.setText("", false);
+            startTimer(250);
+        };
         addChoice(induction_, "Induction", { "Natural", "Turbocharged", "Supercharged", "Centrifugal supercharger" });
         twoStrokeIntake_.combo.setTooltip(utf8("Where the carburettor delivers. A reed on the crankcase lets the "
             "charge in whenever the crankcase draws. A port in the cylinder wall is uncovered by the piston skirt "
@@ -379,8 +402,12 @@ private:
     /** Shows the fields of the page shown that apply to this engine. */
     void applyVisibility() {
         cylinders_.label.setText(utf8(rotarySelected() ? "Rotors" : "Cylinders"), juce::dontSendNotification);
-        displacement_.label.setText(utf8(rotarySelected() ? "Displacement (L, a face a rotor)" : "or displacement (L)"),
+        displacement_.label.setText(utf8(rotarySelected() ? "Displacement (L, Mazda's)" : "or displacement (L)"),
             juce::dontSendNotification);
+        displacement_.editor.setTooltip(rotarySelected()
+            ? utf8("The whole engine's, as Mazda counts it: one face a rotor. A 13B (2 rotors) is 1.3 L; it sweeps "
+                   "2.6 L in two turns, as a 2.6 L four-stroke breathes. 8 L on 4 rotors makes rotors of 2 L.")
+            : juce::String());
         for (auto* field : fields_) {
             const auto visible = field->page == page_ && applies(*field);
             field->label.setVisible(visible);
@@ -781,7 +808,7 @@ private:
     int page_ { enginePage };
     std::array<juce::TextButton, 3> pageButtons_;
     Field name_, cycle_, fuel_, use_, layout_, cylinders_, bankAngle_, bankCount_, bore_, stroke_, displacement_,
-        induction_, boost_, turbos_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
+        rotorRadius_, eccentricity_, rotorWidth_, induction_, boost_, turbos_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
     Field redline_, revLimit_, idle_, compression_;
     Field fuelSystem_, intakeStyle_, twoStrokeIntake_, throttleCount_, throttleDiameter_, runnerLength_,
         runnerDiameter_, plenum_, airbox_, snorkelLength_, snorkelBore_, bellmouth_, injectionStart_, injectionEnd_, mainJet_, pilotJet_,
