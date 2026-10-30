@@ -1386,6 +1386,12 @@ struct EngineControls final {
     /** A dual clutch's upshift torque intervention: spark retard, degrees,
      * taken off the mapped advance (within the ECU's advance limits). */
     double shiftSparkRetardDegrees { 0.0 };
+    /** The gear the driveline has engaged (-1: none, as on the dyno) and the
+     * road speed, m/s, as the ECU's wheel-speed and gear inputs: its launch
+     * control reads them. The simulator's own state had neither, so launch
+     * control never armed in the application (owner report 2026-10-30). */
+    int engagedGear { -1 };
+    double vehicleSpeedMps { 0.0 };
 };
 
 struct CylinderState final {

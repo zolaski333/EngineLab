@@ -48,6 +48,8 @@ void applyVehicleStep(EngineControls& controls, const VehicleStep& step) noexcep
     controls.coolingAirSpeedMps = std::abs(step.drive.vehicleSpeedMps);
     controls.shiftIgnitionCut = step.shiftIgnitionCut;
     controls.shiftSparkRetardDegrees = step.shiftSparkRetardDegrees;
+    controls.engagedGear = step.drive.engagedGear;
+    controls.vehicleSpeedMps = std::abs(step.drive.vehicleSpeedMps);
 }
 
 } // namespace enginelab
