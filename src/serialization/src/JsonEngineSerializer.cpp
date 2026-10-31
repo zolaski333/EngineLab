@@ -10,9 +10,11 @@ using Json = nlohmann::json;
     const Json& object, const char* key) {
     if (!object.contains(key)) return unspecifiedExhaustComponentPort;
     const auto value = object.at(key).get<unsigned>();
-    if (value > 1U)
+    // 0 and 1 are a crossover's ports, 2 a merge's or a splitter's side
+    // branch (an H-pipe's balance pipe); validation says which fits where.
+    if (value > exhaustSideBranchPort)
         throw std::invalid_argument(
-            std::string("Exhaust crossover port must be 0 or 1: ") + key);
+            std::string("Exhaust port must be 0, 1 or 2 (a side branch): ") + key);
     return static_cast<std::uint8_t>(value);
 }
 [[nodiscard]] std::string cycleName(EngineCycle value) {

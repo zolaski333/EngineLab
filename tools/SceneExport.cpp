@@ -180,6 +180,7 @@ int main(int argc, char** argv) {
     const auto catalogue = loadEngineCatalog(catalogRoot);
     if (!catalogue.errors.empty()) {
         std::cerr << "catalogue errors\n";
+        for (const auto& error : catalogue.errors) std::cerr << "  " << error << '\n';
         return 1;
     }
     std::filesystem::create_directories(outDirectory);

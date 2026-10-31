@@ -202,7 +202,22 @@ void stagedPortsSwitchWithSpeed(EngineConfig config) {
 }
 } // namespace
 
+/** A face's four strokes are 270 deg each over its 1,080: the cycle panel
+ *  read them in 180s, reached a sixth stroke past its four names and crashed
+ *  the application on a rotary (owner report 2026-10-30). */
+void aFacesStrokesAreQuartersOfItsCycle() {
+    for (double phase = 0.0; phase < 1'080.0; phase += 0.5)
+        require(strokeIndexOf(EngineCycle::rotary, phase) < 4U, "a face's phase names one of four strokes");
+    require(strokeIndexOf(EngineCycle::rotary, 269.0) == 0U && strokeIndexOf(EngineCycle::rotary, 271.0) == 1U
+            && strokeIndexOf(EngineCycle::rotary, 541.0) == 2U && strokeIndexOf(EngineCycle::rotary, 1'079.9) == 3U,
+        "power, exhaust, intake and compression take 270 deg each");
+    require(strokeIndexOf(EngineCycle::fourStroke, 719.9) == 3U && strokeIndexOf(EngineCycle::fourStroke, 181.0) == 1U
+            && strokeIndexOf(EngineCycle::twoStroke, 90.0) == 0U && strokeIndexOf(EngineCycle::twoStroke, 300.0) == 3U,
+        "a four-stroke's strokes are 180 deg, a two-stroke has power then compression");
+}
+
 int main() {
+    aFacesStrokesAreQuartersOfItsCycle();
     const auto config = thirteenB();
     faceFollowsTheWankelGeometry(config);
     validationKeepsARotorWhole(config);

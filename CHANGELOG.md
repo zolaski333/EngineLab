@@ -7,6 +7,30 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rotary no longer crashes the application.** The cycle panel of the 3-D
+  view counted a face's 1,080 deg in 180 deg strokes and read past its four
+  stroke names; a face's strokes are now 270 deg each.
+- **Launch control works.** The ECU was never told the gear or the road
+  speed, so it never armed. Set `limits.launch_rpm` in the ECU, stand in gear
+  and open the throttle past half: the engine holds that speed until the car
+  passes 5 km/h.
+- **Saving no longer writes over another engine.** After *Save engine as*, an
+  edit from the 3-D view, the exhaust designer or the A/B switch gave the
+  engine its old name back, and the next *Save* replaced the engine it was
+  saved from. Edits no longer rename the engine (the JSON editor included:
+  *Save engine as* names it). An imported file named like an engine of the
+  menu now runs as "<name> (imported)".
+- **An engine with an H-pipe loads again.** A saved or catalogue engine whose
+  exhaust has a balance pipe was refused on load ("crossover port must be 0 or
+  1") and dropped from *My engines*. Changing a merge or splitter's type in the
+  exhaust designer keeps its balance pipe.
+- **The H-pipe is drawn as an H.** In the exhaust designer the balance pipe
+  stands between the two pipes it joins instead of pushing one side two
+  columns back; in the 3-D view it leaves and meets each pipe across its
+  flank, and the pipes keep their lanes (the right one ran down the middle).
+
 ## [0.7.6] — 2026-10-30
 
 ### Added

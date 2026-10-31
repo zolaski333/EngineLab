@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <variant>
 
 namespace {
@@ -244,6 +245,49 @@ void checkSimulator(const enginelab::EngineCatalogLoadResult& catalog) {
                                   : "injectors well inside their capacity do not report saturation");
     }
 }
+/** Launch control on the simulator, not the ECU alone: standing in first at
+ * full throttle the engine holds the launch speed; out of gear, or rolling,
+ * it revs on. The simulator's state never carried the gear, so the ECU saw
+ * none and launch control never armed (owner report 2026-10-30). */
+void checkLaunchControl(const enginelab::EngineConfig& cp2) {
+    const auto launchRpm = 4'000.0;
+    require(cp2.ignition.revLimitRpm > launchRpm + 2'000.0, "the CP2's limiter is well above the launch speed");
+    const auto peakRpm = [&](int gear, double speedMps) {
+        auto engine = std::make_unique<Engine>(cp2);
+        engine->ecu.initialiseCalibration(cp2);
+        auto draft = enginelab::calibration::makeDraft(*engine->ecu.calibrationStore()->snapshot());
+        auto launch = *draft.find(enginelab::calibration::keys::launchLimit);
+        std::get<enginelab::calibration::ScalarCalibration>(launch).value = launchRpm;
+        draft.set(std::move(launch));
+        require(engine->ecu.calibrationStore()->publish(draft).published, "a launch speed must publish");
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        for (int index = 0; index < static_cast<int>(3.0 / stepSeconds); ++index) {
+            controls.starterEngaged = engine->simulator.state().rpm < cp2.idleRpm * 0.85 && index * stepSeconds < 2.0;
+            (void)engine->simulator.step(stepSeconds, controls);
+        }
+        controls.starterEngaged = false;
+        controls.throttle = 1.0;
+        controls.engagedGear = gear;
+        controls.vehicleSpeedMps = speedMps;
+        double peak = 0.0;
+        std::uint32_t seen = 0U;
+        for (int index = 0; index < static_cast<int>(3.0 / stepSeconds); ++index) {
+            const auto frame = engine->simulator.step(stepSeconds, controls);
+            peak = std::max(peak, frame.state.rpm);
+            seen |= frame.state.activeLimits;
+        }
+        std::printf("  gear %d at %.1f m/s, launch %.0f rpm: peak %.0f rpm, launch bit %s\n", gear, speedMps,
+            launchRpm, peak, hasActiveLimit(seen, ActiveLimit::launchControl) ? "yes" : "no");
+        return std::pair { peak, hasActiveLimit(seen, ActiveLimit::launchControl) };
+    };
+    const auto [standing, standingBit] = peakRpm(1, 0.0);
+    require(standing < launchRpm + 400.0 && standingBit,
+        "standing in first at full throttle, launch control holds the launch speed");
+    require(peakRpm(-1, 0.0).first > launchRpm + 1'000.0, "out of gear (the dyno) it does not arm");
+    require(peakRpm(1, 3.0).first > launchRpm + 1'000.0, "rolling past 5 km/h it lets go");
+}
+
 /** Damage from over-revving a CP2 motored at `targetRpm` for 3 s: the
  * engine is driven, as by a missed downshift. */
 double motoredDamage(const enginelab::EngineConfig& config, double revLimitRpm, double targetRpm) {
@@ -330,6 +374,8 @@ int main() {
         require(catalog.errors.empty(), "the catalogue must load");
         checkSimulator(catalog);
         const auto& cp2 = findEngine(catalog, "CP2 MT-07");
+        std::printf("launch control on the running engine\n");
+        checkLaunchControl(cp2);
         std::printf("over-rev damage against the active limiter\n");
         checkOverrevDamage(cp2);
         std::printf("dyno ceiling from the active limiter\n");

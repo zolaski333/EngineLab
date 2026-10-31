@@ -371,9 +371,9 @@ const std::array<juce::Colour, 4> strokeBands { juce::Colour(0x55ef6f3c), juce::
                                                 juce::Colour(0x4441b6d7), juce::Colour(0x446a7a75) };
 } // namespace
 
-void CyclePanel::setCylinders(std::vector<juce::String> labels, double cycleDegrees) {
+void CyclePanel::setCylinders(std::vector<juce::String> labels, EngineCycle cycle) {
     labels_ = std::move(labels);
-    cycleDegrees_ = cycleDegrees;
+    cycle_ = cycle;
     repaint();
 }
 
@@ -395,10 +395,10 @@ void CyclePanel::paint(juce::Graphics& g) {
         auto row = area.removeFromTop(cycleRowHeight).toFloat();
         // A two-stroke has two strokes: power (with exhaust and transfer), then
         // compression.
-        const auto twoStroke = cycleDegrees_ < 719.0;
-        const auto phase = std::clamp(phaseOf(i), 0.0, cycleDegrees_ - 0.001);
-        const auto halfStroke = static_cast<std::size_t>(phase / 180.0);
-        const auto stroke = twoStroke ? (halfStroke == 0 ? 0U : 3U) : halfStroke;
+        const auto twoStroke = cycle_ == EngineCycle::twoStroke;
+        const auto cycleDegrees = cycleDegreesOf(cycle_);
+        const auto phase = std::clamp(phaseOf(i), 0.0, cycleDegrees - 0.001);
+        const auto stroke = strokeIndexOf(cycle_, phase);
         g.setFont(monoFont(11.0F));
         g.setColour(colours::muted);
         g.drawText(labels_[i], row.removeFromLeft(28.0F), juce::Justification::centredLeft, false);
@@ -418,7 +418,7 @@ void CyclePanel::paint(juce::Graphics& g) {
         }
         g.restoreState();
         g.setColour(juce::Colours::white);
-        g.fillRect(juce::Rectangle<float>(track.getX() + track.getWidth() * static_cast<float>(phase / cycleDegrees_) - 1.0F,
+        g.fillRect(juce::Rectangle<float>(track.getX() + track.getWidth() * static_cast<float>(phase / cycleDegrees) - 1.0F,
                                           track.getY() - 2.0F, 2.0F, 10.0F));
     }
     if (labels_.size() > cycleMaximumRows) {
@@ -1294,7 +1294,7 @@ void EngineViewport::setEngine(const EngineConfig& config) {
     microphoneSpacingM_ = std::isfinite(spacing) && spacing > 0.01 && spacing < 2.0 ? spacing : 0.36;
     std::vector<juce::String> labels;
     for (const auto& cylinder : config.cylinders) labels.push_back("C" + juce::String(cylinder.id));
-    cycle_.setCylinders(std::move(labels), cycleDegreesOf(config.cycle));
+    cycle_.setCylinders(std::move(labels), config.cycle);
     {
         const std::lock_guard lock(sharedMutex_);
         shared_.model = scene_;

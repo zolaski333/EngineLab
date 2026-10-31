@@ -253,6 +253,13 @@ int MainComponent::presetIndexOf(const std::string& name) const noexcept {
     return preset != presets_.end() ? static_cast<int>(std::distance(presets_.begin(), preset)) : -1;
 }
 
+std::string MainComponent::freeEngineName(const std::string& wanted) const {
+    auto name = wanted;
+    for (int suffix = 2; presetIndexOf(name) >= 0 || name == config_.name; ++suffix)
+        name = wanted + " " + std::to_string(suffix);
+    return name;
+}
+
 std::vector<std::string> MainComponent::catalogueNames() const {
     std::vector<std::string> names;
     for (const auto& preset : presets_)
@@ -442,6 +449,10 @@ bool MainComponent::applyEngineEdit(const EngineConfig& requested, double rampSe
     // the Audio workshop's last change: none of them switches backfires.
     auto edited = requested;
     keepBackfires(config_, edited);
+    // Nor do they rename it: a copy made before "Save as" carried the old
+    // name back, the engine became the one it was saved from, and the next
+    // Save wrote over that one (owner report 2026-10-30).
+    edited.name = config_.name;
     constexpr double seaLevelPressureKpa = 101.325;
     const auto boostStepKpa = (edited.forcedInduction.wastegatePressureRatio
         - config_.forcedInduction.wastegatePressureRatio) * seaLevelPressureKpa;
@@ -1143,6 +1154,12 @@ void MainComponent::importEngine() {
                     else safe->showError(utf8("Import failed"), utf8(read.error));
                 }
                 if (engine) {
+                    // A file named like an engine of the menu is not that engine
+                    // (unless it is that saved engine's own file): running under
+                    // its name, Save would write over it.
+                    if (const auto index = safe->presetIndexOf(engine->config.name);
+                        index >= 0 && safe->presets_[static_cast<std::size_t>(index)].file != engine->file)
+                        engine->config.name = safe->freeEngineName(engine->config.name + " (imported)");
                     if (const auto error = restoreAudioVoicing(engine->config, safe->catalogRoot_))
                         safe->showError(utf8("Voicing not found"), utf8(*error));
                     auto store = safe->storeFor(Preset { engine->config, engine->calibration, engine->file });

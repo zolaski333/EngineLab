@@ -76,15 +76,16 @@ struct ViewSettings final {
 /** Phase of every cylinder over the four strokes, bottom left of the view. */
 class CyclePanel final : public juce::Component {
 public:
-    /** A cylinder's phase over its cycle (720 degrees, 360 on a two-stroke). */
+    /** A cylinder's phase over its cycle (720 degrees, 360 on a two-stroke,
+        1,080 on a rotary's face). */
     std::function<double(std::size_t cylinder)> phaseOf;
-    void setCylinders(std::vector<juce::String> labels, double cycleDegrees = 720.0);
+    void setCylinders(std::vector<juce::String> labels, EngineCycle cycle = EngineCycle::fourStroke);
     [[nodiscard]] int idealHeight() const;
     void paint(juce::Graphics&) override;
 
 private:
     std::vector<juce::String> labels_;
-    double cycleDegrees_ { 720.0 };
+    EngineCycle cycle_ { EngineCycle::fourStroke };
 };
 
 /** Colour scale of the pressure waves, bottom centre of the view. */

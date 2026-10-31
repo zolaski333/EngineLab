@@ -72,9 +72,12 @@ void checkControls() {
     step.drive.reflectedRotatingInertiaKgM2 = 0.42;
     step.drive.vehicleSpeedMps = -3.0;
     step.drive.brakePressure = 0.7;
+    step.drive.engagedGear = 1;
     enginelab::EngineControls controls;
     controls.ignitionEnabled = true;
     enginelab::applyVehicleStep(controls, step);
+    require(controls.engagedGear == 1 && controls.vehicleSpeedMps == 3.0,
+        "the ECU is told the engaged gear and the road speed (launch control reads them)");
     require(controls.throttle == 0.4 && controls.shiftIgnitionCut && controls.brake == 0.7,
         "the controls carry the arbitrated throttle, the ignition cut and the brake");
     require(controls.externalTorqueNm == -37.5 && controls.externalRotatingInertiaKgM2 == 0.42,

@@ -3,6 +3,7 @@
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -10,6 +11,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
+#include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
@@ -349,7 +351,44 @@ void checkNamesAndFolder(const EngineConfig& source) {
 }
 } // namespace
 
+/** An engine with an H-pipe reads back, as a saved engine (JSON) and as YAML:
+ *  its balance pipe meets each side on port 2, which both readers refused as
+ *  "not a crossover port", so a designed H-pipe engine vanished from My
+ *  engines at the next start (owner report 2026-10-30). */
+void checkHPipeSaved() {
+    EngineSpec spec;
+    spec.name = "Saved H-pipe V8";
+    spec.use = EngineUse::sportCar;
+    spec.layout = EngineLayout::vLayout;
+    spec.cylinderCount = 8;
+    spec.displacementLitres = 5.0;
+    spec.exhaustSystem = ExhaustSystem::dualHPipe;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "an H-pipe V8 designs: " + designed.error);
+    const auto sideBranches = [](const EngineConfig& config) {
+        std::size_t count = 0;
+        for (const auto& path : config.exhaustPaths)
+            if (path.network)
+                for (const auto& connection : path.network->connections)
+                    count += (connection.fromPort == exhaustSideBranchPort ? 1U : 0U)
+                        + (connection.toPort == exhaustSideBranchPort ? 1U : 0U);
+        return count;
+    };
+    require(sideBranches(*designed.config) == 2U, "the balance pipe meets each side as a side branch");
+    Folder folder;
+    const auto file = savedEngineFile(folder.path, spec.name);
+    require(!saveEngine(file, *designed.config, nullptr).has_value(), "the H-pipe engine saves");
+    const auto read = readSavedEngine(file);
+    require(read.engine.has_value(), "the saved H-pipe engine reads back: " + read.error);
+    require(sideBranches(read.engine->config) == 2U, "and keeps its balance pipe's side branches");
+    const YamlEngineSerializer yaml;
+    const auto decoded = yaml.decode(yaml.encode(*designed.config));
+    require(static_cast<bool>(decoded), "the H-pipe engine reads back from YAML: " + decoded.error);
+    require(sideBranches(*decoded.config) == 2U, "and keeps its side branches there too");
+}
+
 int main() {
+    checkHPipeSaved();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     const auto cp2 = std::find_if(catalogue.entries.begin(), catalogue.entries.end(),

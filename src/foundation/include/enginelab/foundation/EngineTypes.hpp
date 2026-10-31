@@ -1268,6 +1268,16 @@ struct RotaryConfig final {
 [[nodiscard]] inline double strokeDegreesOf(EngineCycle cycle) noexcept {
     return cycle == EngineCycle::twoStroke ? 180.0 : cycleDegreesOf(cycle) * 0.25;
 }
+/** The stroke a phase over the cycle (from firing top dead centre) falls in:
+ *  0 power, 1 exhaust, 2 intake, 3 compression; a two-stroke has power, then
+ *  compression. A rotary's face takes 270 deg a stroke: counted in 180s, its
+ *  1,080 deg ran to a sixth stroke and the cycle panel read past its names. */
+[[nodiscard]] inline std::size_t strokeIndexOf(EngineCycle cycle, double phaseDegrees) noexcept {
+    const auto stroke = phaseDegrees > 0.0
+        ? static_cast<std::size_t>(std::fmin(phaseDegrees / strokeDegreesOf(cycle), 3.0)) : std::size_t { 0 };
+    if (cycle == EngineCycle::twoStroke) return stroke == 0U ? 0U : 3U;
+    return stroke;
+}
 /** The crank angle's domain: the cycle, or 720 for a two-stroke (whose
  *  cylinders run two cycles inside it). */
 [[nodiscard]] inline double crankDomainDegreesOf(EngineCycle cycle) noexcept {
@@ -1376,6 +1386,12 @@ struct EngineControls final {
     /** A dual clutch's upshift torque intervention: spark retard, degrees,
      * taken off the mapped advance (within the ECU's advance limits). */
     double shiftSparkRetardDegrees { 0.0 };
+    /** The gear the driveline has engaged (-1: none, as on the dyno) and the
+     * road speed, m/s, as the ECU's wheel-speed and gear inputs: its launch
+     * control reads them. The simulator's own state had neither, so launch
+     * control never armed in the application (owner report 2026-10-30). */
+    int engagedGear { -1 };
+    double vehicleSpeedMps { 0.0 };
 };
 
 struct CylinderState final {

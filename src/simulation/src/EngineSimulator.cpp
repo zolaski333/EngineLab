@@ -1577,6 +1577,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         : 0.0;
     safeControls.dynamometerTorqueNm = std::isfinite(controls.dynamometerTorqueNm)
         ? std::clamp(controls.dynamometerTorqueNm, 0.0, 1.0e7) : 0.0;
+    // The ECU reads the gear and the road speed from the state it is given.
+    state_.gear = controls.engagedGear;
+    state_.vehicleSpeedMps = std::isfinite(controls.vehicleSpeedMps) ? std::abs(controls.vehicleSpeedMps) : 0.0;
     // Gas pressure and crank loading need much finer resolution than UI/runtime
     // updates. Resolution increases with crank speed and remains bounded by the
     // engine definition so slow machines fail observably instead of diverging.

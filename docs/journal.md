@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — Owner reports: rotary crash, launch control, saving, H-pipe
+
+- Rotary crash (minidump): the 3-D view's cycle panel split a face's 1,080 deg into 180 deg strokes, reaching index 5 of 4 names. `strokeIndexOf` takes 270 deg on a rotary; `EngineLab.Rotary` checks it (not rebuilt without the fix: the header recompiles everything; the old arithmetic gives 5 by construction).
+- Launch control never armed: `EngineSimulator` gave the ECU a gear of -1 and 0 m/s. `EngineControls` now carries both from the driveline. CP2, launch 4,000 rpm, WOT in 1st standing: peak 4,172 rpm with the launch bit; in neutral or at 3 m/s: 10,422 rpm (`ActiveLimits` fails without the fix).
+- Saving over another engine: an edit took the preset's name back (`applyConfig` reselects by name). Edits keep the current name; an import named like a preset is renamed. Not covered by a test (GUI only).
+- H-pipe: the decoders refused the side-branch port 2 on load (`SavedEngine` fails without the fix). The 3-D layout put both front pipes 317 mm apart with 19-33 mm steps on the rear pipes; now 626 mm, 0/0 mm (`EngineModel3D` fails without it). The balance pipe is authored 250 mm but drawn ~563 mm across the lanes: not changed.
+- Not checked in the running application (access declined); full `ctest` not run, only the seven suites touched.
+
 ## 2026-10-30 — A rotary's staged ports: the switched profile on 1,080 deg
 
 - The 13B's -8 % at 8,500 rpm was put on its unstaged ports. A Renesis opens auxiliary ports near 6,300 rpm (closing 80 deg ABDC, service manual; the speed from a parts guide). A switched profile held nothing on a rotary: `ValveProfileActuator` measured and gated on 720 deg only, so `DynoSweepHarness` was bit-identical with the profile on. It now takes the cycle's period (720 x 0.5 and 720 / 6 keep a piston engine's arithmetic); `EngineLab.Rotary` asserts low at 5,000 and high at 8,500 (fails without the change).
