@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.7] — 2026-10-31
+
 ### Added
 
 - **A rotary can be sized by its rotor.** The engine designer shows the
