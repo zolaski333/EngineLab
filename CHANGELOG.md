@@ -7,6 +7,20 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Launch control arms in first gear.** It armed from second gear only: the
+  ECU counted first as neutral. Standing in first at full throttle the engine
+  now holds `limits.launch_rpm`.
+- **A rotary's exhaust designer opens.** Clicking *Exhaust* on a rotary
+  closed the application: the designer tried to draw a rotor's port passage,
+  which it shows inside its rotor, as a node of its own.
+
+### Changed
+
+- A release no longer reruns the tests when CI already passed on the tagged
+  commit (about an hour saved a release).
+
 ## [0.7.7] — 2026-10-31
 
 ### Added
