@@ -383,7 +383,8 @@ endif()
 
 add_executable(EngineLabAudioWorkshopTests
     AudioWorkshopTests.cpp
-    "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp")
+    "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/ExhaustDesignerWindow.cpp")
 target_include_directories(EngineLabAudioWorkshopTests PRIVATE
     "${CMAKE_SOURCE_DIR}/src/app/include")
 target_link_libraries(EngineLabAudioWorkshopTests PRIVATE
