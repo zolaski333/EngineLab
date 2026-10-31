@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-30 — A designed rotary: one exhaust a rotor, its cost per rotor
+
+- A designed rotary with the automatic exhaust had a primary per face (a 3-rotor: 9 primaries), in the physics too: `compileLegacyExhaustPath` dropped the catalogue's faces-per-port. Now one passage and primary a rotor (`EngineDesign` asserts it; the old design had 9). The 3-D view folds the passage into the rotor's port (catalogue route check: clashes 13 -> 11, bends 53 -> 51, the 13B at 0 and 7).
+- The designer's real-time check at 5,000 rpm (`RealtimeBudgetHarness --designer-probe`, `DesignBench` now designs rotaries): 2 rotors 1.62, 3 1.35, 4 1.05, 5 0.86, 6 0.73 (margin 1.14). Interleaved 4 runs, best: 4 rotors 1.099 -> 1.049, 5 0.943 -> 0.885 against a primary per face, since each passage junction sets the exhaust step (2V/sum A 62 mm against 67). A 4-rotor 8 L (R 152) costs as a 2.6 L one: the cost is per face.
+- Refuted: a rotary's crank step at 3 deg (its face's 2 deg of 720). 13B against 1.5 deg: 3 deg +1.45 % torque mean, +4.6 % at 4,000 rpm; 2 deg +0.34 %, scatter within 1.6 %.
+- The rotor count stays at 10: the simulator holds 32 cylinders in fixed arrays (30 faces). Not checked in the running application: the exhaust designer's one source a rotor, the designer's rotor fields.
+
 ## 2026-10-30 — Owner reports: rotary crash, launch control, saving, H-pipe
 
 - Rotary crash (minidump): the 3-D view's cycle panel split a face's 1,080 deg into 180 deg strokes, reaching index 5 of 4 names. `strokeIndexOf` takes 270 deg on a rotary; `EngineLab.Rotary` checks it (not rebuilt without the fix: the header recompiles everything; the old arithmetic gives 5 by construction).

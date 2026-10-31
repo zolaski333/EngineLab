@@ -15,7 +15,7 @@
  *     key=rd_like; cycle=2t; use=sport_motorcycle; cylinders=2; displacement=0.347
  *     key=small_single; cycle=2t; use=road_motorcycle; cylinders=1; bore=54; stroke=54
  *
- * Keys: key, name, cycle (2t/4t), fuel (gasoline/diesel), use, layout,
+ * Keys: key, name, cycle (2t/4t/rotary; a rotary's `cylinders` are its rotors), fuel (gasoline/diesel), use, layout,
  * cylinders, bank_count, bank_angle, bore, stroke, displacement, induction
  * (natural/turbo/super), boost, turbo_count, intake (crankcase_reed/cylinder_port),
  * intake_reed (yes/no), exhaust_system, exhaust_silencer, fuel_system,
@@ -95,7 +95,8 @@ struct SpecLine final {
         if (name == "cycle") {
             if (value == "2t" || value == "two_stroke") spec.cycle = enginelab::EngineCycle::twoStroke;
             else if (value == "4t" || value == "four_stroke") spec.cycle = enginelab::EngineCycle::fourStroke;
-            else result.error = "the cycle is 2t or 4t";
+            else if (value == "rotary") spec.cycle = enginelab::EngineCycle::rotary;
+            else result.error = "the cycle is 2t, 4t or rotary";
             continue;
         }
         if (name == "fuel") {

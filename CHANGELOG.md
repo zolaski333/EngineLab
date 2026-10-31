@@ -7,8 +7,24 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **A rotary can be sized by its rotor.** The engine designer shows the
+  rotor's radius, eccentricity and width beside the displacement, as bore and
+  stroke beside a piston engine's: give either. The displacement is the whole
+  engine's as Mazda counts it (a 13B is 1.3 L), so 8 L on 4 rotors makes four
+  rotors of 2 L.
+
 ### Fixed
 
+- **A designed rotary has one exhaust per rotor.** With the automatic exhaust
+  (the designer's default) each face had its own primary, three exhausts a
+  rotor, in the simulation as well as on screen. A rotor's faces now open onto
+  its one port, as on the catalogue's 13B. Designed rotaries saved before keep
+  the exhaust they were saved with.
+- **A rotary's exhaust is drawn from its ports.** The exhaust designer shows
+  one source a rotor; in the 3-D view each rotor's pipe leaves from its port,
+  where it ran through a junction beside the engine and looped back.
 - **A rotary no longer crashes the application.** The cycle panel of the 3-D
   view counted a face's 1,080 deg in 180 deg strokes and read past its four
   stroke names; a face's strokes are now 270 deg each.

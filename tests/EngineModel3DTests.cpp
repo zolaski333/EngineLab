@@ -1261,6 +1261,41 @@ void checkTwoStrokeDrawing(EngineConfig config) {
  *  junction, and the balance pipe crosses between them. Its side branch was
  *  laid out as a fork and a collector: the left pipe stepped aside and the
  *  right one ran down the middle (owner report 2026-10-30). */
+/** A rotor's faces open onto one port: its pipe leaves from that port, with
+    no junction out in the air holding a feeder (owner report 2026-10-30). */
+void checkRotaryExhaust(const EngineConfig& config) {
+    const EngineModel3D model(config);
+    const auto& name = config.name;
+    checkDucts(model);
+    for (const auto& duct : model.ducts())
+        require(duct.kind != DuctKind::exhaustFeeder, name + ": no rotor port is fed into a junction");
+    for (std::size_t rotor = 0; rotor < config.cylinders.size() / 3U; ++rotor) {
+        const auto face = config.cylinders[3U * rotor].id;
+        const auto port = std::find_if(model.exhaustPorts().begin(), model.exhaustPorts().end(),
+            [face](const PortAnchor& anchor) { return anchor.cylinderId == face; });
+        require(port != model.exhaustPorts().end(), name + ": each rotor has an exhaust port");
+        const auto leaves = std::any_of(model.ducts().begin(), model.ducts().end(), [&](const SceneDuct& duct) {
+            return duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::pipe
+                && !duct.centreline.empty() && length(duct.centreline.front() - port->position) < port->diameterMm;
+        });
+        require(leaves, name + ": rotor " + std::to_string(rotor + 1) + "'s pipe leaves from its port");
+    }
+}
+
+void checkRotaryExhausts(const EngineCatalogLoadResult& catalogue) {
+    for (const auto& entry : catalogue.entries)
+        if (entry.config.cycle == EngineCycle::rotary) checkRotaryExhaust(entry.config);
+    EngineSpec spec;
+    spec.name = "Designed three-rotor";
+    spec.cycle = EngineCycle::rotary;
+    spec.use = EngineUse::sportCar;
+    spec.cylinderCount = 3;
+    spec.displacementLitres = 1.962;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "a three-rotor designs: " + designed.error);
+    checkRotaryExhaust(*designed.config);
+}
+
 void checkHPipeDrawing() {
     EngineSpec spec;
     spec.name = "Designed H-pipe V8";
@@ -1305,6 +1340,7 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    checkRotaryExhausts(catalogue);
     for (const auto& entry : catalogue.entries)
         if (entry.config.cycle == EngineCycle::twoStroke) checkTwoStrokeDrawing(entry.config);
     // Both kinds of injection are checked, on a direct-injection copy of the first engine if the catalogue has none.
@@ -1503,7 +1539,9 @@ int main() {
     // 2026-10-29: the 13B-like adds 2 and 9: each rotor's port feeds its
     // passage (a merge drawn beside the housing, not inside it) through the
     // passage's own body, and the rear rotor's primary winds to its length.
-    const std::array<std::size_t, 5> measured { 13, 4, 0, 53, 7 };
+    // 2026-10-30: the passage is the port inside the housing and the
+    // collector stands back: the 13B-like at 0 clashes and 7 tight bends.
+    const std::array<std::size_t, 5> measured { 11, 4, 0, 51, 7 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

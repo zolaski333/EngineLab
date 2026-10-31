@@ -158,11 +158,19 @@ struct Node final {
     float exitZ {};
 };
 
+/** A rotor's port passage, taken out of the laid-out graph: drawn as the
+    port through the housing, its first face's anchor. */
+struct RotorPassage final {
+    ExhaustComponentConfig component;
+    std::uint32_t face {};
+};
+
 struct PathLayout final {
     const ExhaustPathConfig* path {};
     ExhaustNetworkConfig network;
     std::vector<Node> nodes;
     std::vector<std::size_t> order;
+    std::vector<RotorPassage> passages;
 };
 
 struct Base final {
@@ -201,6 +209,52 @@ struct Base final {
     base.spread = { -out.y, out.x, 0.0F };
     base.z = centre.z;
     return base;
+}
+
+/** A rotor's three faces open in turn onto one port in its housing, and the
+    simulator sums them in a passage, a merge only they feed. The passage is
+    inside the housing: drawn, it was a three-slot junction out in the air
+    with one face's feeder in it, and the pipe after it looped back past the
+    housing (owner report 2026-10-30). The pipe now starts at the rotor's
+    port, which only its first face carries; the passage is the port. */
+std::vector<RotorPassage> foldRotorPassages(ExhaustNetworkConfig& network, const std::vector<PortAnchor>& ports) {
+    struct Fold final {
+        std::uint32_t passage;
+        std::uint32_t face;
+        std::uint32_t next;
+    };
+    std::vector<Fold> folds;
+    std::vector<RotorPassage> passages;
+    for (const auto& component : network.components) {
+        if (component.type != ExhaustComponentType::merge) continue;
+        const auto id = component.id;
+        if (std::any_of(network.connections.begin(), network.connections.end(),
+                [id](const auto& connection) { return connection.toComponentId == id; }))
+            continue;
+        const auto outs = std::count_if(network.connections.begin(), network.connections.end(),
+            [id](const auto& connection) { return connection.fromComponentId == id; });
+        if (outs != 1) continue;
+        std::vector<std::uint32_t> anchored;
+        for (const auto& mapping : network.cylinderConnections)
+            if (mapping.componentId == id && portOf(ports, mapping.cylinderId) != nullptr)
+                anchored.push_back(mapping.cylinderId);
+        if (anchored.size() != 1U) continue;
+        const auto next = std::find_if(network.connections.begin(), network.connections.end(),
+            [id](const auto& connection) { return connection.fromComponentId == id; });
+        folds.push_back({ id, anchored.front(), next->toComponentId });
+        passages.push_back({ component, anchored.front() });
+    }
+    for (const auto& fold : folds) {
+        std::erase_if(network.cylinderConnections, [&fold](const auto& mapping) {
+            return mapping.componentId == fold.passage;
+        });
+        network.cylinderConnections.push_back({ fold.face, fold.next });
+        std::erase_if(network.connections, [&fold](const auto& connection) {
+            return connection.fromComponentId == fold.passage;
+        });
+        std::erase_if(network.components, [&fold](const auto& component) { return component.id == fold.passage; });
+    }
+    return passages;
 }
 
 void buildNodes(PathLayout& layout) {
@@ -547,9 +601,12 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
     the last port when every primary still reaches it with room to bend (long
     tubes), else no further back than the shortest allows, and never ahead of
     `centre`, the middle of its ports. Primaries enter along the trunk, so one
-    whose port lies behind the mouth has to turn back to reach it. */
+    whose port lies behind the mouth has to turn back to reach it. With
+    `farthest`, as far back as every primary still reaches: a rotary's few
+    ports stand close together, and its primaries coiled to spend their
+    length beside them. */
 [[nodiscard]] float collectorZ(const std::vector<Node>& nodes, const Node& node, const std::vector<PortAnchor>& ports,
-                               float centre) {
+                               float centre, bool farthest = false) {
     float last = centre;
     for (const auto in : node.ins)
         for (const auto cylinder : nodes[in].cylinders)
@@ -570,6 +627,14 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
     };
     const auto back = last + node.diameter;
     constexpr int steps = 24;
+    if (farthest && reaches(back)) {
+        float longest = 0.0F;
+        for (const auto in : node.ins) longest = std::max(longest, nodes[in].drawLength);
+        for (int k = 0; k < steps; ++k) {
+            const auto z = back + longest * static_cast<float>(steps - k) / static_cast<float>(steps);
+            if (reaches(z)) return z;
+        }
+    }
     for (int k = 0; k <= steps; ++k) {
         const auto z = back + (centre - back) * static_cast<float>(k) / static_cast<float>(steps);
         if (reaches(z)) return z;
@@ -690,6 +755,7 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         auto& layout = layouts[p];
         layout.path = &config.exhaustPaths[p];
         layout.network = layout.path->network ? *layout.path->network : makeEditableExhaustNetwork(*layout.path);
+        if (config.cycle == EngineCycle::rotary) layout.passages = foldRotorPassages(layout.network, ports);
         buildNodes(layout);
         sizeSlots(layout, ports, routing.gapMm);
     }
@@ -724,7 +790,8 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             node.lane = base.lane;
             node.spread = base.spread;
             node.zIn = base.z;
-            if (node.cylinders.empty()) node.zIn = collectorZ(nodes, node, ports, base.z);
+            if (node.cylinders.empty())
+                node.zIn = collectorZ(nodes, node, ports, base.z, config.cycle == EngineCycle::rotary);
             junctions.push_back({ p, i });
         }
     }
@@ -953,6 +1020,24 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         auto& item = pending[r];
         shapeComponent(item.piece, layouts[item.layout].nodes[item.node], std::move(routes[r].points));
         pieces.push_back(std::move(item.piece));
+    }
+    // A rotor's passage: its port through the housing, from the face to the
+    // mouth the pipe leaves from (after the routing, which starts there).
+    // Inside the housing by construction, so drawn as a body with no
+    // centreline, as a plenum is: not a pipe to route round the engine.
+    for (const auto& layout : layouts) {
+        for (const auto& passage : layout.passages) {
+            const auto* port = portOf(ports, passage.face);
+            if (port == nullptr) continue;
+            DuctPiece piece;
+            piece.pathId = layout.path->id;
+            piece.elementId = passage.component.id;
+            piece.componentType = passage.component.type;
+            const auto radius = 0.5F * port->diameterMm;
+            appendTube(piece.mesh, { port->inner, port->position }, { radius, radius }, segmentsFor(port->diameterMm));
+            piece.nearEngine = true;
+            pieces.push_back(std::move(piece));
+        }
     }
     return pieces;
 }

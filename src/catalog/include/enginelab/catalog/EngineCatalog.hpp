@@ -27,9 +27,11 @@ struct PartsLibrary final {
  * Gives a path with no graph the one its scalar geometry describes: one
  * primary per cylinder, a collector, the mid pipe and silencer, an outlet
  * (independent stacks for `aircraft_manifold`). `presetKey` is the exhaust
- * part the geometry came from, or empty.
+ * part the geometry came from, or empty. A rotary's faces open onto their
+ * rotor's one port: `facesPerPort` 3 gives each rotor one passage and one
+ * primary, as the catalogue's rotary.
  */
-void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey);
+void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey, std::size_t facesPerPort = 1);
 
 struct EngineCatalogEntry final {
     EngineConfig config;
