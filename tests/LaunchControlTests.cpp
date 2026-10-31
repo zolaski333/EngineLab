@@ -45,7 +45,7 @@ int main() {
     EngineState state;
     state.coolantTemperatureC = 90.0;
     state.manifoldPressureKpa = config.ambientPressureKpa;
-    state.gear = 1;
+    state.gear = 0; // first: the driveline counts its gears from 0, -1 is neutral
     state.vehicleSpeedMps = 0.0;
     EngineControls controls;
     controls.ignitionEnabled = true;
@@ -85,7 +85,7 @@ int main() {
     require(partThrottle.sparkEnabled && partThrottle.fuelEnabled, "at part throttle it does not hold");
 
     controls.throttle = 1.0;
-    state.gear = 0;
+    state.gear = -1;
     const auto neutral = at(4'100.0);
     require(neutral.sparkEnabled && neutral.fuelEnabled, "in neutral (or on the dyno) it does not hold");
 
