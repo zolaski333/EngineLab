@@ -93,7 +93,7 @@ a per-engine recording.
 ```
 . scripts/vsenv.ps1                                                # EVERY call
 cmake --build out/build/windows-vs2022 --config Release            # whole project
-ctest  --test-dir out/build/windows-vs2022 -C Release              # all tests (~44 min)
+ctest  --test-dir out/build/windows-vs2022 -C Release -j 4         # all tests (~18 min)
 cmake --build out/build/windows-vs2022 --config Release --target package   # release zip
 ```
 
@@ -123,9 +123,12 @@ and `ctest` wraps the GUI test in Xvfb itself (no `xvfb-run` prefix needed).
   running binary by its CPU delta, never by a file's mtime (stdio to a file
   flushes in 4 KB blocks, so a CSV lags the work by minutes). A very short time
   can be a failure (`EngineLab.Core` passes in ~43 s on 14.44, aborts in ~8).
-  The whole suite is 94 tests in ~51 min. **Never run it beside a harness or
-  sweep** (a WSL suite included: shared CPUs): `CoreTests` waits on wall-clock
-  deadlines nothing scales by load, so a loaded host invents failures.
+  The whole suite is 95 tests in ~53 min serial, ~18 min at `-j 4` (the
+  wall-clock dyno tests are `RUN_SERIAL`; `IdleStabilityRegression`, 10-14
+  min, is the floor). **Never run it beside a harness or sweep** (a WSL suite
+  included: shared CPUs): `CoreTests` waits on wall-clock deadlines nothing
+  scales by load, so a loaded host invents failures. A failure seen only at
+  `-j 4` is rerun alone before it is believed.
 - **Release**: bump `project(EngineLab VERSION ...)`, date the `[Unreleased]`
   section of `CHANGELOG.md`, then push the tag `v<version>`: `release.yml`
   refuses a tag that does not match the CMake version.

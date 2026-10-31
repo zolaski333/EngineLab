@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-31 — Test and release time
+
+- Full ctest, VS tree, c178077: serial 95/95 in 3,171 s (53 min; 32 min for 91 tests on 2026-10-23, 43-44 min since). `IdleStabilityRegression` 628 s, then `LiveCylinderResize`, `IntakeTuning`, `LiveTuning` ~185-195 s each. One engine was added since 10-23 (the 13B); the rest of the growth is not measured.
+- Same tree at `-j 4`, nothing else running: 95/95 in 17 min 54 s (one run). `IdleStabilityRegression` 838 s under that load sets the floor; the three wall-clock dyno tests stay `RUN_SERIAL` and passed, `CoreTests` too. `.claude/CLAUDE.md` now gives `-j 4`. Not shown: that no load-induced failure ever appears (one run).
+- CI on c178077: Windows build 1,291 s + test 1,351 s, Linux build 404 s + test 1,909 s (`--parallel 2`). The v0.7.7 release then rebuilt and retested the same commit for another hour. `release.yml` now skips its tests when a CI run passed on that SHA (the API query returns 1 for c178077, 0 for the failed 6b80ce0); it has not run on a tag yet.
+- Not done: splitting `IdleStabilityRegression` (the floor at more jobs) and Ninja for the Windows CI build (MSBuild compiles the JUCE project's units in series).
+
 ## 2026-10-30 — A designed rotary: one exhaust a rotor, its cost per rotor
 
 - A designed rotary with the automatic exhaust had a primary per face (a 3-rotor: 9 primaries), in the physics too: `compileLegacyExhaustPath` dropped the catalogue's faces-per-port. Now one passage and primary a rotor (`EngineDesign` asserts it; the old design had 9). The 3-D view folds the passage into the rotor's port (catalogue route check: clashes 13 -> 11, bends 53 -> 51, the 13B at 0 and 7).

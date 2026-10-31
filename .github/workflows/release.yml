@@ -2,17 +2,42 @@ name: Release
 
 # Pushing a tag such as v0.2.0 builds, tests and packages that exact commit on
 # Windows and Linux, then publishes one GitHub Release with both archives and
-# their checksums. Nothing is published unless both platforms pass.
+# their checksums. Nothing is published unless both platforms pass. The tests
+# are skipped when CI already passed on that exact commit: ci.yml runs the same
+# build and ctest on the same runners, and repeating them cost an hour a release.
 on:
   push:
     tags: ['v*']
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  ci-check:
+    name: Did CI pass on this commit?
+    runs-on: ubuntu-24.04
+    outputs:
+      passed: ${{ steps.check.outputs.passed }}
+    steps:
+      # A tag pushed with its commit finds CI still running: the tests then run
+      # here, as before.
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&status=success" --jq '.total_count')
+          if [ "${count:-0}" -gt 0 ]; then
+            echo "CI passed on ${{ github.sha }}: the release skips its tests."
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No passed CI run on ${{ github.sha }}: the release runs its tests."
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   windows:
     name: Build and package (Windows x64)
+    needs: ci-check
     runs-on: windows-2022
     timeout-minutes: 180
     steps:
@@ -50,6 +75,7 @@ jobs:
           }
 
       - name: Test
+        if: needs.ci-check.outputs.passed != 'true'
         run: ctest --preset windows-release --parallel 2 --output-on-failure
 
       # A job's log can only be read signed in; an annotation can be read by
@@ -88,6 +114,7 @@ jobs:
 
   linux:
     name: Build and package (Linux x64)
+    needs: ci-check
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -122,6 +149,7 @@ jobs:
         run: cmake --build --preset linux-gcc-release -- -k 0
 
       - name: Test
+        if: needs.ci-check.outputs.passed != 'true'
         run: ctest --preset linux-gcc-release --parallel 2 --output-on-failure
 
       # A job's log can only be read signed in; an annotation can be read by
