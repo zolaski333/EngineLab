@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-01 — A designed diesel's fuel limit follows its peak power, not its redline
+
+- The designer stretched the common-rail part's full-load limit (the EA288's, 54 mg at 2,500-3,000 rpm, 30 at 5,000, rated at 4,000) by redline / 5,000. A marine six given its 750 rpm as a redline was fuelled as a car near its limit: 4.6 g a stroke at 450-525 rpm, 2.6 at 750; `DynoSweepHarness --settle 10` 38.7 kN.m at 600, 35.0 at 650. A MAN 32/40 (same bore and stroke) is rated ~500 kW a cylinder at 720-750 rpm, ~4 g a stroke at ~180 g/kWh.
+- Its redline is also its limiter (fuel cut from ~0.91 x): a real one is rated below its governor's limit. With redline 825, peak power 750 (both designer fields), held at 750: 20.0 bar BMEP before, 24.0 bar / 36.9 kN.m (2.92 MW, 487 kW a cylinder) with the limit's speeds x peak power / 4,000.
+- The default peak power (0.8 x redline) keeps redline / 5,000 to the bit: `DesignBench`, seven designs (three diesels) byte-identical. `EngineLab.EngineDesign` holds the rated six at 750 rpm above 22 bar (fails before: 19.98).
+- Not measured: the EGT and smoke at the rated point; a real medium-speed engine's fuel against speed (only its rated point).
+
 ## 2026-10-31 — Owner reports: launch control in first, a rotary's exhaust designer
 
 - Launch control still did not arm in 0.7.7: the ECU required `gear >= 1`, but the driveline counts first as 0 (-1 neutral, the dashboard shows gear + 1). Both tests had the same off-by-one (`LaunchControlTests` called 0 neutral; `ActiveLimits` passed 1 as first). With first as 0 both fail before the fix (CP2, launch 4,000 rpm: peak 10,422 rpm, no launch bit) and pass after (4,172 rpm, bit set).

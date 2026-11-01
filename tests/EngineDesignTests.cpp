@@ -498,6 +498,19 @@ void enginesOfAnySizeRun() {
     // Still spooling 4-6 s after the throttle opened from idle: 2.69 of 2.96.
     require(run.boost > 0.85 * config.forcedInduction.wastegatePressureRatio, "the marine six reaches its boost");
     require(bmepBar > 20.0 && bmepBar < 30.0, "and pulls like a turbocharged medium-speed diesel");
+
+    // Rated at 750 rpm, as a MAN 32/40 is (about 500 kW a cylinder, ~25 bar),
+    // its governor's limit 10 % above: the car diesel's fuel limit, stretched
+    // to the redline, held it to 20.0 bar there (24.0 now).
+    auto rated = marine;
+    rated.name = "Marine Six rated at 750 rpm";
+    rated.overrides = { { "redline_rpm", 825.0 }, { "idle_rpm", 350.0 }, { "peak_power_rpm", 750.0 } };
+    const auto ratedConfig = *designed(rated).config;
+    const auto ratedRun = held(ratedConfig, 1.0, 750.0, stableNmPerRpm);
+    const auto ratedBmepBar = ratedRun.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
+    std::cout << "  " << rated.name << " at " << ratedRun.rpm << " rpm: " << ratedRun.torqueNm
+              << " N.m, BMEP " << ratedBmepBar << " bar\n";
+    require(ratedBmepBar > 22.0 && ratedBmepBar < 30.0, "the rated marine six keeps its fuel at its rated speed");
 }
 
 /** A catalogue file may hold a design instead of a whole engine. */

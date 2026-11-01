@@ -7,6 +7,14 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A designed diesel keeps its fuel up to its peak power speed.** The
+  designer stretched a car diesel's full-load fuel limit to the redline, so
+  a slow engine rated near its top speed (a marine six at 750 rpm) lost a
+  sixth of its torque there. The limit now follows *Peak power speed*; an
+  engine whose peak power is left at its default is unchanged.
+
 ## [0.7.8] — 2026-11-01
 
 ### Fixed
