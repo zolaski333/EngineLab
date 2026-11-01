@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.7.8] — 2026-11-01
+
 ### Fixed
 
 - **Launch control arms in first gear.** It armed from second gear only: the
