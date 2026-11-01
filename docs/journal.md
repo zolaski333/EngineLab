@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-01 — The idle's exhaust air is the outlet's oxygen; a finer mesh costs real time
+
+- Diagnostic (built, run, reverted): the exhaust outlet's ambient set inert, production mesh, `PhysicsPerfHarness --trace 1 --idle --settle 8`. Idle (inert / 50 mm): Hayabusa 1,223 / 1,256, CP4 1,296 / 1,304, CP3 1,307 / 1,309, Aircooled 760 / 741, Merlin 787 / 795. The outlet's oxygen is the whole catalogue mesh effect. The sport 125 keeps a second coarse-mesh effect (inert 1,791, 50 mm 1,318).
+- Idle at 150 / 100 mm is converged within 1-2 % (sport 125 1,373 / 1,359, Hayabusa 1,261, CP4 1,326 / 1,324). The Aircooled at 50 mm (741, for 780) suggests its bypass was set on the artefact.
+- Four-strokes at 150 mm, whole catalogue `DynoSweepHarness --step 500`: makers' points move 1-4 % (CP4 torque +3.5 -> 0.0 %, CP3 power -4.8 -> -8.7 %), the count outside 15 % stays 1, BSFC unchanged.
+- Real time (`RealtimeBudgetHarness --free-run --with-audio --relative-rpm 0.95`, alternated, 4 kept rounds, minimum), production -> 150 mm: LS3 1.287 -> 1.039, 13B 1.116 -> 0.996, Hayabusa 1.141 -> 0.967, CP4 1.122 -> 0.983, K20 1.231 -> 1.037, 2JZ 1.127 -> 0.981, Radial 2.48 -> 2.10, Merlin 1.53 -> 1.72. A global finer mesh is refused (real time). Still open: an outlet that holds its own plume, or a finer cell on the tailpipe end only. Sound not measured.
+- B4, CP2 at 8,750 rpm (trace, exhaust stroke): cylinder 2.485 bar mean against 1.747 at the runner's port end (6,500: 1.843 / 1.48). The excess pumping is about half valve and half runner wave. The Full System's 42 mm primaries still pump 0.82 bar (torque ratio 0.85 against 0.837). Derived valves 32 / 27.2 mm against Web Cam's standard 31.5 / 26.5 (a vendor, not Yamaha). No stock lift or timing found. Not changed.
+
 ## 2026-11-01 — A small engine's high idle is the exhaust mesh; the high-rpm deficit is not numerical
 
 - The sport 125's extra air comes in through its exhaust. `PhysicsPerfHarness --trace 1 --idle --settle 8`: delivered through the intake 3.9 mg a cycle (2,074 rpm x 3.9 mg = the 0.33 mm2 closed-throttle leak's ~0.057 g/s), trapped 21.3. Oxygen from the outlet reaches the valve through the production 360 mm cells (its 347 mm primary is one cell). `--exhaust-cell-mm`: 200 -> 1,802 rpm, 50 -> 1,328 (16.7 mg delivered), 25 -> 1,325, for 1,300. Road 125 1,369 -> 1,343.
