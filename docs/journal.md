@@ -5,6 +5,19 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-01 — The flame-speed ratios under 1 are torque anchors; the high-rpm deficit is every engine's
+
+- WOT burn phasing (`PhysicsPerfHarness --trace`, CA50 from the burned fraction): K20 7-12 deg ATDC, LS3 15, Radial 5; CP2 20-26, CP3 25-33, CP4 22-27, Hayabusa 20-23, Big Twin 35-42, Aircooled 43-48 (CA10-90 43-58 deg). A non-knocking NA engine runs CA50 ~8-10 (Heywood). The Big Twin's 0.42, the Aircooled's 0.55 and the CP2/CP3 0.80 were fitted to makers' torque (their comments, commits 97b49a3, 2465157, d8e0ec9).
+- One factor, those ratios at 1.0, `DynoSweepHarness --step 250`, current gas: Big Twin CA50 7.4, torque +13.6 -> +38.8 %, Aircooled +11 -> +45 %, CP2 +4 -> +10 %, CP3 +4 -> +11 %; BSFC down 10-55 g/kWh. Shape against Cycle World improves (CP2 7.5 -> 6.2 %, CP3 6.8 -> 5.1, Big Twin 7.1 -> 4.5 % RMS).
+- `exp/thermally-perfect-gas` rebased on 0.7.8 (local `exp/tpg-rebased`), whole catalogue at `--step 500`, makers' points outside 15 %: main 1, gas 7, gas + ratios 1.0 still 7. K20 BSFC 206 -> 236, LS3 221 -> 255. With the gas, engines already at MBT (K20, LS3, Hayabusa, CP4) lose 7-15 % torque and 12-25 % power; the Big Twin and Aircooled with ratio 1.0 end +21 to +30 %. Each anchor hid a different, engine's own error.
+- CP2 8,750 / 6,500 rpm torque 0.810 (Cycle World 0.876): spark +12 deg 0.796 at 9,000 / 6,000 (0.770 at 0), ratio 1.0 0.836, gas 0.781. Not the burn. Breakdown 6,500 -> 8,750: gross IMEP per VE -4.5 %, VE -3 %, pmep 0.62 -> 1.25 bar (exhaust stroke 0.48 -> 0.98), fmep 1.88 -> 2.55 (Blair 2.56 -> 3.10). At makers' power points every NA engine pumps 0.9-1.6 bar, 0.6-1.4 of it on the exhaust stroke against 12-42 kPa of mean back-pressure; LS3 VE 0.83 at 6,000.
+- Nothing changed. What would decide it: a measured WOT pmep, exhaust-port pressure or airflow on any catalogue engine. Valve areas are Heywood's (exhaust plateau 0.50-0.55 of head area); not shown wrong.
+
+## 2026-11-01 — Small sport idle and the 13B's port areas: leads, not fixes
+
+- Designed (DesignBench, `--idle-firing 20 --settle 8`): sport 125 single 2,016 rpm for 1,300, sport 250 twin 1,752, sport 600 four 1,411, road 125 1,353 for 1,350. At 2,016 the governor's bypass is shut (error -55 %), manifold 31 kPa (road: 21 at 1,353); the sport cams' overlap pumps less. Trace: oxygen trapped at the spark 21.4 mg against 4.7 mg delivered through the intake that cycle (road 19.6 against 12.3); whether that is overlap backflow bookkeeping or a real oxygen source is not settled.
+- 13B ports: Mazda Technical Review 2003 (no. 2) and a secondary table give intake areas, primary / secondary / auxiliary, 10.11 / 7.81 / 6.64 cm2 (high power), 9.29 / 8.99 (standard), 13B-REW 6.09 / 9.29; the column mapping is unread in the original PDF. Not applied.
+
 ## 2026-11-01 — A designed diesel's fuel limit follows its peak power, not its redline
 
 - The designer stretched the common-rail part's full-load limit (the EA288's, 54 mg at 2,500-3,000 rpm, 30 at 5,000, rated at 4,000) by redline / 5,000. A marine six given its 750 rpm as a redline was fuelled as a car near its limit: 4.6 g a stroke at 450-525 rpm, 2.6 at 750; `DynoSweepHarness --settle 10` 38.7 kN.m at 600, 35.0 at 650. A MAN 32/40 (same bore and stroke) is rated ~500 kW a cylinder at 720-750 rpm, ~4 g a stroke at ~180 g/kWh.
