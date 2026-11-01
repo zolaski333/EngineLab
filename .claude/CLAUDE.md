@@ -258,7 +258,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or
   trajectory-resolved forward delivery; individual throttles as a small 0-D cell
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
-  belongs inside the 1-D runner).
+  belongs inside the 1-D runner); Mazda's published 13B port areas as its
+  high-rpm gap (+0.4 % at 8,500).
 - **Backfire** (journal 2026-10-24/25): "1-D cannot carry a front" (it rises in
   0.2-0.8 ms); "the heat is too slow to become a wave"; the EVO timing as
   what silences a pop (the 100 kPa source bound did clip it: now 1 MPa); slugs collecting in the muffler (phi

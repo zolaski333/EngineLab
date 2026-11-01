@@ -5,6 +5,20 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-01 — A small engine's high idle is the exhaust mesh; the high-rpm deficit is not numerical
+
+- The sport 125's extra air comes in through its exhaust. `PhysicsPerfHarness --trace 1 --idle --settle 8`: delivered through the intake 3.9 mg a cycle (2,074 rpm x 3.9 mg = the 0.33 mm2 closed-throttle leak's ~0.057 g/s), trapped 21.3. Oxygen from the outlet reaches the valve through the production 360 mm cells (its 347 mm primary is one cell). `--exhaust-cell-mm`: 200 -> 1,802 rpm, 50 -> 1,328 (16.7 mg delivered), 25 -> 1,325, for 1,300. Road 125 1,369 -> 1,343.
+- Catalogue at 50 mm: CP2 1,407/1,406, K20 953/954, LS3 718/718 (converged); Hayabusa 1,314 -> 1,256 (idle 1,250; delivered 21.5 -> 35.0 mg). Small cylinders with sport overlap. Not fixed: the cure is the production mesh, which moves every engine's sound and real-time budget.
+- High-rpm deficit, resolution (`DynoSweepHarness`): CP2 25 mm cells within 1-3 %, `--crank-degrees 1.0` -1.5 to -2.5 % at every speed, `--coupling-us 40` within 0.8 %; 13B the same within 1 %. The shape does not move: it is the model's physics.
+- `DynoSweepHarness --crank-degrees` below ~1.6 deg aborted (0xC0000409) on any engine revving past ~9,000 rpm: the finer step asked more than the solver's 60 kHz ceiling and the refused config threw. The ceiling now follows the step (capped at validation's 100 kHz); without the flag the sweep is byte-identical.
+- With the gas (`exp/tpg-rebased`), delivered VE at makers' torque points is a real engine's: K20 1.00, CP2 0.99, LS3 0.97, Hayabusa 1.06, CP4 1.10; at power points it falls (LS3 0.81) while BSFC rises 9-22 % at equal lambda. Still no public WOT airflow, pmep or motored friction to split it (searched: LS3/K20Z3 MAF logs, Patton-Heywood pumping terms, motorcycle motored fmep).
+
+## 2026-11-01 — The 13B's ports are Mazda's published ones; they are not its -8 %
+
+- Mazda Technical Review 21 (2003) "New Rotary Engine RENESIS Mounted on RX-8", Table 1, columns 13B-REW / high power / standard: intake areas 10.11 / 7.81 / 6.64 cm2 (primary / secondary / auxiliary, high power); timings primary 3 ATDC-65 ABDC, secondary 45-36, auxiliary 38-50 (the service manual's 80 ABDC for the auxiliary disagrees); S-DAIS: SSV 3,750, VFAD 5,500, APV 6,000, VDI 7,250 rpm (Fig. 14).
+- One factor, the three ports as summed trapezoids at the catalogue's Cd 0.75, primary + secondary below 6,000 and all three above (switched profile): 8,500 rpm 190.2 -> 190.9 N.m (+0.4 %), 5,500 233.0 -> 235.4, 2,000 +2.9 %. Auxiliary closing at 80: 194.5 at 8,500 (+2.3 %). Not kept: the gap is not port area.
+- Single factors at 8,500 / 5,500 (Mazda 207 / 216 N.m, ratio 0.957; catalogue 0.816): runner 50 -> 60 mm 204 / 242 (0.844), exhaust "valves" 30 -> 36 mm +2.6 %, runner length 200-800 mm none above 193 at 8,500, muffler restriction and `friction_coefficient` < 0.5 %. The runner, exhaust port and exhaust are estimated; Mazda's VDI (a shorter effective runner above 7,250) is not modelled. Not changed.
+
 ## 2026-11-01 — The flame-speed ratios under 1 are torque anchors; the high-rpm deficit is every engine's
 
 - WOT burn phasing (`PhysicsPerfHarness --trace`, CA50 from the burned fraction): K20 7-12 deg ATDC, LS3 15, Radial 5; CP2 20-26, CP3 25-33, CP4 22-27, Hayabusa 20-23, Big Twin 35-42, Aircooled 43-48 (CA10-90 43-58 deg). A non-knocking NA engine runs CA50 ~8-10 (Heywood). The Big Twin's 0.42, the Aircooled's 0.55 and the CP2/CP3 0.80 were fitted to makers' torque (their comments, commits 97b49a3, 2465157, d8e0ec9).

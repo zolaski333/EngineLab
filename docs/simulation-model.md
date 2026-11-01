@@ -405,8 +405,8 @@ all follow it. Four-strokes and two-strokes are bit-identical to before.
   equivalent port, not staged with speed. A rotary's cams take the switched
   profile (`variable_profile_enabled`, `switch_rpm`, `high_*`) on the face's
   1,080 deg cycle, so a designed rotary can stage its ports; the catalogue's
-  does not, since the auxiliary port's area is not published (journal
-  2026-10-30). Measured
+  does not: Mazda's published port areas, staged, move 8,500 rpm by 0.4 %
+  (journal 2026-11-01). Measured
   (`DynoSweepHarness`, WOT): 233 N.m at 5,500 (+10 %), 169 kW at 8,500
   (-8 %), idle 801 rpm. Its torque is flat from 2,000 to 5,500 rpm and falls
   to 190 N.m at 8,500, where the real engine's variable intake keeps about

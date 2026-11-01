@@ -475,8 +475,15 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     // where it locks the network sees the same part of every blowdown. A real
     // resonance moves with pipe length and engine speed; an alias moves when
     // either of these changes and the gas dynamics do not.
-    if (crankDegreesPerStep > 0.0)
+    // A finer step needs the solver's frequency ceiling raised with it: at
+    // 1 deg a 10,000 rpm limiter asks 60 kHz, and the refused config aborted
+    // the harness.
+    if (crankDegreesPerStep > 0.0) {
         config.solver.maximumCrankDegreesPerStep = crankDegreesPerStep;
+        config.solver.maximumMechanicalFrequencyHz = std::clamp(
+            std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0 / crankDegreesPerStep * 1.01,
+            config.solver.maximumMechanicalFrequencyHz, 100'000.0);
+    }
     if (couplingMicroseconds > 0.0)
         simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
             couplingMicroseconds * 1.0e-6;
