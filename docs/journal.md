@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-31 — Owner reports: launch control in first, a rotary's exhaust designer
+
+- Launch control still did not arm in 0.7.7: the ECU required `gear >= 1`, but the driveline counts first as 0 (-1 neutral, the dashboard shows gear + 1). Both tests had the same off-by-one (`LaunchControlTests` called 0 neutral; `ActiveLimits` passed 1 as first). With first as 0 both fail before the fix (CP2, launch 4,000 rpm: peak 10,422 rpm, no launch bit) and pass after (4,172 rpm, bit set).
+- Clicking *Exhaust* on a rotary aborted the app (0xC0000409): the canvas skips a rotor's port passage when placing nodes, then `nodeBounds_.at()` on it threw out of `paint()`. `EngineLab.AudioWorkshop` (the GUI test) now also builds and paints the exhaust designer on the 13B: aborts before, passes after.
+- Not checked in the running application: both by tests only.
+
 ## 2026-10-31 — Test and release time
 
 - Full ctest, VS tree, c178077: serial 95/95 in 3,171 s (53 min; 32 min for 91 tests on 2026-10-23, 43-44 min since). `IdleStabilityRegression` 628 s, then `LiveCylinderResize`, `IntakeTuning`, `LiveTuning` ~185-195 s each. One engine was added since 10-23 (the 13B); the rest of the growth is not measured.

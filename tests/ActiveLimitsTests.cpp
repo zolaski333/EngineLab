@@ -281,11 +281,11 @@ void checkLaunchControl(const enginelab::EngineConfig& cp2) {
             launchRpm, peak, hasActiveLimit(seen, ActiveLimit::launchControl) ? "yes" : "no");
         return std::pair { peak, hasActiveLimit(seen, ActiveLimit::launchControl) };
     };
-    const auto [standing, standingBit] = peakRpm(1, 0.0);
+    const auto [standing, standingBit] = peakRpm(0, 0.0);
     require(standing < launchRpm + 400.0 && standingBit,
         "standing in first at full throttle, launch control holds the launch speed");
     require(peakRpm(-1, 0.0).first > launchRpm + 1'000.0, "out of gear (the dyno) it does not arm");
-    require(peakRpm(1, 3.0).first > launchRpm + 1'000.0, "rolling past 5 km/h it lets go");
+    require(peakRpm(0, 3.0).first > launchRpm + 1'000.0, "rolling past 5 km/h it lets go");
 }
 
 /** Damage from over-revving a CP2 motored at `targetRpm` for 3 s: the

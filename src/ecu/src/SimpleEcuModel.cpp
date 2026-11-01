@@ -175,9 +175,11 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto revLimit = activeRevLimitRpm(config, *calibrationSnapshot);
     // Launch control (two-step): standing in gear with the throttle past half,
     // the limiter cuts at the launch speed instead, so the clutch takes up
-    // from there; it lets go once the vehicle rolls.
+    // from there; it lets go once the vehicle rolls. The driveline counts its
+    // gears from 0 (first) and -1 is neutral: `gear >= 1` armed it from
+    // second only (owner report 2026-10-31).
     const auto launchRpm = launchControlRpm(*calibrationSnapshot);
-    const auto launchActive = launchRpm > 0.0 && state.gear >= 1
+    const auto launchActive = launchRpm > 0.0 && state.gear >= 0
         && state.vehicleSpeedMps < launchControlReleaseSpeedMps && controls.throttle > 0.5;
     const auto cutRpm = launchActive ? std::min(revLimit, launchRpm) : revLimit;
     // The limiter's bands are a car's 220 and 180 rpm, the radial's 9 % and

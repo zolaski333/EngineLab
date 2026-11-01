@@ -1,4 +1,5 @@
 #include <enginelab/app/AudioWorkshopWindow.hpp>
+#include <enginelab/app/ExhaustDesignerWindow.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -398,6 +399,24 @@ int main() {
             && near(callbackEffective.combustionGain,
                     base.combustionGain),
         "compatibility topology re-enables its real controls");
+
+    // The exhaust designer draws a rotor's port passage inside its source,
+    // so the passage has no node: painting it as one threw out of paint()
+    // and closed the app on a rotary's Exhaust button (owner report
+    // 2026-10-31).
+    const auto rotary = std::find_if(
+        catalog.entries.begin(), catalog.entries.end(), [](const auto& entry) {
+            return entry.config.cycle == enginelab::EngineCycle::rotary;
+        });
+    require(rotary != catalog.entries.end(), "catalog has a rotary");
+    enginelab::ExhaustDesignerWindow exhaustDesigner(
+        rotary->config, [](const enginelab::EngineConfig&) { return true; });
+    auto* designerContent = exhaustDesigner.getContentComponent();
+    require(designerContent != nullptr && !designerContent->getBounds().isEmpty(),
+            "exhaust designer lays out");
+    const auto snapshot = designerContent->createComponentSnapshot(
+        designerContent->getLocalBounds());
+    require(snapshot.isValid(), "exhaust designer paints a rotary");
 
     std::cout
         << "Audio workshop: layout, truthful availability, physical A/B, "

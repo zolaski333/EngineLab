@@ -438,7 +438,10 @@ public:
 
         const auto selectedId = selectionProvider_ ? selectionProvider_() : 0U;
         for (const auto& component : network.components) {
-            auto bounds = nodeBounds_.at(component.id);
+            // A rotor's passage has no node: it is drawn inside its source.
+            const auto placed = nodeBounds_.find(component.id);
+            if (placed == nodeBounds_.end()) continue;
+            auto bounds = placed->second;
             const auto selected = selectedId == component.id;
             const auto colour = componentTypeColour(component.type);
             graphics.setColour(colour.withAlpha(selected ? 0.92F : 0.62F));
