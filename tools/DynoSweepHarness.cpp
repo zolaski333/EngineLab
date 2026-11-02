@@ -50,6 +50,9 @@ std::optional<bool> partitionExhaustNetworkOverride;
 // moves with the speed of sound in it, so this says how hot the gas is where a
 // tuned length is read.
 bool pipeTemperatureReport = false;
+// --exhaust-port-plateau: the exhaust port's effective area as a fraction of
+// the valve head area (production 0.51), to read a measured flow bench against.
+std::optional<double> exhaustPortPlateauOverride;
 constexpr std::array<std::string_view, 37> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
@@ -460,6 +463,7 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     simulatorOptions.evolveExhaustJunctionAxialMomentum =
         !useWellMixedExhaustJunctions;
     simulatorOptions.partitionExhaustNetwork = partitionExhaustNetworkOverride;
+    simulatorOptions.exhaustMaximumHeadAreaFraction = exhaustPortPlateauOverride;
     // A convergence knob, not a setting: an expansion chamber's cones are two
     // or three cells at the production two-stroke mesh, and the shortest
     // element sets the whole network's time step, so a finer mesh costs both
@@ -720,6 +724,8 @@ int main(int argc, char** argv) {
             partitionExhaustNetworkOverride = false;
         else if (argument == "--pipe-temperature")
             pipeTemperatureReport = true;
+        else if (argument == "--exhaust-port-plateau" && index + 1 < argc)
+            exhaustPortPlateauOverride = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
@@ -729,7 +735,8 @@ int main(int argc, char** argv) {
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
-                         " [--exhaust-whole] [--pipe-temperature]\n";
+                         " [--exhaust-whole] [--pipe-temperature]"
+                         " [--exhaust-port-plateau fraction]\n";
             return EXIT_FAILURE;
         }
     }
