@@ -30,7 +30,9 @@ Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
 shaft. The petrol over-efficiency and low EGT are the gas's constant gamma:
 the thermally perfect gas is on `exp/thermally-perfect-gas`, not merged until
 a measured WOT airflow explains the 10-15 % torque it exposes (the friction
-is under Blair's, journal 2026-10-30). 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux;
+is under Blair's, journal 2026-10-30). With the LS3's measured head and GM cam
+it meets GM within 1 %: the catalogue's exhaust port (0.51 plateau) under-flows
+(journal 2026-11-02); merging it needs every engine's valve data redone. 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux;
 0.7.6 lets a rotary stage its intake ports (a switched profile on 1,080 deg);
 0.7.7: owner reports (rotary crash, launch control, saving, H-pipe) and a
 designed rotary's exhaust (one a rotor) and sizing (litres or rotor);

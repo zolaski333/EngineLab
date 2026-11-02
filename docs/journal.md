@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-02 — With the LS3's measured head and cam, the thermally perfect gas meets GM within 1 %
+
+- References: GM 321 kW at 5,900, 575 N.m at 4,600; GM cam (Summit/LSXMag) 14.0/13.3 mm, 254/260 deg at 0.006", 117/117 deg; L92/LS3 rectangle-port flow bench (Lingenfelter, EngineLabs, Edelbrock; may be an L92 head) converted at 28" H2O (mm2 = cfm x 4.378); forum WOT MAF logs 280-338 g/s near 6,000 (anecdotal, snippets only).
+- Catalogue LS3 (one factor each, main gas): GM lift +7.3 % torque at 6,000; GM centrelines -4 to -6 %; exhaust plateau 0.51 -> 0.65 (the bench's) +0.3 % at 2,000, +11.7 % at 6,000, exhaust-stroke mep 1.38 -> 0.99 bar: the shape of the common high-rpm deficit.
+- Bench Cd curves + GM cam + plateau 0.65 (`DynoSweepHarness --exhaust-port-plateau`), main gas / gas branch: 4,500 rpm 662 / 569 N.m, 5,500 373 / 317 kW, 6,000 381 / 320 kW; BSFC on the branch 262-294 g/kWh, airflow 349 g/s at 5,900. Branch: -1 % torque, -0.3 % power, ratio 5,900/4,600 0.91 (GM 0.90). Main gas: +15-18 %.
+- Read: the constant gamma's over-efficiency was hidden by the catalogue's under-flowing exhaust port (0.51) and low-lift Cd, not by airflow. Only the LS3 has bench data; nothing changed on main (any change moves every engine's power and sound).
+
 ## 2026-11-02 — The small engine's idle is the mesh within 0.3 m of the outlet; the cure moves the sound
 
 - One factor (branch `exp/outlet-mesh`): only the ducts within a reach of each outlet are refined, never below the network's own CFL length (the time step is unchanged by construction). The 44 mm tailpipe stub alone: no effect. Reach 0.3 m: idle sport 125 2,074 -> 1,325 (target 1,300), sport 250 1,808 -> 1,322, sport 600 1,420 -> 1,292, road 125 1,369 -> 1,347, Hayabusa 1,314 -> 1,260, CP4 1,379 -> 1,323, CP3 1,334 -> 1,306; K20, LS3, CP2, Merlin, 13B, 2JZ, Big Twin within 1 %. A floor of 50 mm leaves the sport 125 at 1,508, 100 mm at 1,406: it is the cell size at the outlet end.
