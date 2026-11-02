@@ -12,6 +12,7 @@
 // settle time can be shorter than a cold measurePoint. Absolutes still come
 // from here, not from the --trace instrument, which changes substep structure.
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -665,6 +666,10 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
     std::filesystem::path referenceFile;
+    // An engine the user saved (`<name>.json`), swept instead of the
+    // catalogue; its saved ECU tables are not read (the sweep's ECU follows
+    // the configuration, as for a catalogue engine).
+    std::filesystem::path savedEngineFile;
     std::string filter;
     auto stepRpm = 500.0;
     auto schemaOnly = false;
@@ -695,6 +700,7 @@ int main(int argc, char** argv) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
+        else if (argument == "--saved-engine" && index + 1 < argc) savedEngineFile = argv[++index];
         else if (argument == "--step" && index + 1 < argc) stepRpm = std::stod(argv[++index]);
         else if (argument == "--reference-file" && index + 1 < argc)
             referenceFile = argv[++index];
@@ -728,7 +734,7 @@ int main(int argc, char** argv) {
             exhaustPortPlateauOverride = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--step rpm]"
+                         " [--filter name-fragment] [--saved-engine file.json] [--step rpm]"
                          " [--reference-file csv] [--schema-only]"
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
@@ -763,15 +769,27 @@ int main(int argc, char** argv) {
             ? EXIT_SUCCESS : EXIT_FAILURE;
     writeHeader(std::cout);
 
-    const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
-    for (const auto& error : catalog.errors)
-        std::cerr << "catalog error: " << error << '\n';
-    if (catalog.entries.empty()) {
-        std::cerr << "no engines loaded\n";
-        return EXIT_FAILURE;
-    }
     std::vector<enginelab::EngineConfig> engines;
-    if (filter.empty()) {
+    const auto catalog = savedEngineFile.empty()
+        ? enginelab::loadEngineCatalog(catalogRoot) : enginelab::EngineCatalogLoadResult {};
+    if (!savedEngineFile.empty()) {
+        auto saved = enginelab::readSavedEngine(savedEngineFile);
+        if (!saved.engine) {
+            std::cerr << "saved engine: " << saved.error << '\n';
+            return EXIT_FAILURE;
+        }
+        engines.push_back(std::move(saved.engine->config));
+    } else {
+        for (const auto& error : catalog.errors)
+            std::cerr << "catalog error: " << error << '\n';
+        if (catalog.entries.empty()) {
+            std::cerr << "no engines loaded\n";
+            return EXIT_FAILURE;
+        }
+    }
+    if (!savedEngineFile.empty()) {
+        // The saved engine is the whole selection.
+    } else if (filter.empty()) {
         engines.reserve(catalog.entries.size());
         for (const auto& entry : catalog.entries)
             engines.push_back(entry.config);

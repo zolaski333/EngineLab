@@ -1,4 +1,5 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -650,6 +651,9 @@ void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
     std::string filter;
+    // An engine the user saved (`<name>.json`), traced instead of the
+    // catalogue's; its saved ECU tables are not read.
+    std::filesystem::path savedEngineFile;
     auto runs = 3;
     auto traceRpm = 0.0;
     auto traceExhaustCellMm = 0.0;
@@ -667,6 +671,7 @@ int main(int argc, char** argv) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
+        else if (argument == "--saved-engine" && index + 1 < argc) savedEngineFile = argv[++index];
         else if (argument == "--trace" && index + 1 < argc) traceRpm = std::stod(argv[++index]);
         else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
             traceExhaustCellMm = std::stod(argv[++index]);
@@ -689,7 +694,7 @@ int main(int argc, char** argv) {
             settleGiven = true;
         } else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--runs count] [--trace rpm [--exhaust-cell-mm mm] [--settle S]]"
+                         " [--filter name-fragment] [--saved-engine file.json] [--runs count] [--trace rpm [--exhaust-cell-mm mm] [--settle S]]"
                          " [--throttle 0..1] [--idle] [--overrun seconds]"
                          " [--freerev 0..1 [--seconds S] [--release S]]"
                          " [--idle-firing S [--settle S]]\n";
@@ -717,7 +722,14 @@ int main(int argc, char** argv) {
                 || containsCaseInsensitive(entry.config.name, "Merlin")
                 || (!filter.empty() && containsCaseInsensitive(entry.config.name, filter)))
             engines.push_back(entry.config);
-    if (!filter.empty())
+    if (!savedEngineFile.empty()) {
+        auto saved = enginelab::readSavedEngine(savedEngineFile);
+        if (!saved.engine) {
+            std::cerr << "saved engine: " << saved.error << '\n';
+            return EXIT_FAILURE;
+        }
+        engines = {std::move(saved.engine->config)};
+    } else if (!filter.empty())
         std::erase_if(engines, [&filter](const auto& config) {
             return !containsCaseInsensitive(config.name, filter);
         });
