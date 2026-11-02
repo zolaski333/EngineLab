@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-02 — The small engine's idle is the mesh within 0.3 m of the outlet; the cure moves the sound
+
+- One factor (branch `exp/outlet-mesh`): only the ducts within a reach of each outlet are refined, never below the network's own CFL length (the time step is unchanged by construction). The 44 mm tailpipe stub alone: no effect. Reach 0.3 m: idle sport 125 2,074 -> 1,325 (target 1,300), sport 250 1,808 -> 1,322, sport 600 1,420 -> 1,292, road 125 1,369 -> 1,347, Hayabusa 1,314 -> 1,260, CP4 1,379 -> 1,323, CP3 1,334 -> 1,306; K20, LS3, CP2, Merlin, 13B, 2JZ, Big Twin within 1 %. A floor of 50 mm leaves the sport 125 at 1,508, 100 mm at 1,406: it is the cell size at the outlet end.
+- WOT, whole catalogue `--step 500`: the same as a 150 mm mesh everywhere (CP4 torque +3.5 -> -0.3 %, CP3 power -4.8 -> -8.3 %), BSFC within 1 g/kWh, one point outside 15 % before and after. Off (`EXP_REACH_M=0`) is byte-identical to main.
+- Real time (alternated, 4 kept, minimum): Hayabusa 1.071 -> 1.023, CP4 1.107 -> 1.027, 13B 1.112 -> 1.097, 2JZ 1.212 -> 1.203, Big Twin 2.30 -> 1.66 (cells 14 -> 26).
+- Sound (`GeometrySensitivityHarness --output-stage-ab --wav-out`, then `--wav-reference`; a repeat render is 0.00 dB): shape Hayabusa 3.8 dB at 3,000 (-11 dB at 800 Hz), 0.9 at 8,000; CP4 3.6 at 3,000; Aircooled 2.6; K20 0.6 / 1.9 at 3,000 / 7,000; 2JZ 1.9; Big Twin 1.4; CP2, 13B 0.9; LS3 0.3. A default-sound change: not merged.
+- An outlet plume (composition only) was not built: the inert outlet left the sport 125 at 1,791, and it would mask a numerical diffusion with two unsourced constants. `EngineLabAudioAbHarness` aborts (0xC0000409) at its first engine on main.
+- 13B's VDI: at 8,500 rpm a switched runner is one fixed length, and 200-800 mm never passed 193 N.m (journal 2026-11-01): at most +1.6 % of the 9 % gap. Not built.
+
 ## 2026-11-01 — The idle's exhaust air is the outlet's oxygen; a finer mesh costs real time
 
 - Diagnostic (built, run, reverted): the exhaust outlet's ambient set inert, production mesh, `PhysicsPerfHarness --trace 1 --idle --settle 8`. Idle (inert / 50 mm): Hayabusa 1,223 / 1,256, CP4 1,296 / 1,304, CP3 1,307 / 1,309, Aircooled 760 / 741, Merlin 787 / 795. The outlet's oxygen is the whole catalogue mesh effect. The sport 125 keeps a second coarse-mesh effect (inert 1,791, 50 mm 1,318).

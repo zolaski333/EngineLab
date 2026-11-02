@@ -215,7 +215,9 @@ whether an exhaust change moved the timbre (`shape`) or only the level
   request is bit-identical. The two-stroke mesh converges near 12 mm and
   production (100 mm) is 18 % below converged -- a real-time budget limit, not
   a physics one. Do not read a delivery hump off `max(delivered_ve)`: it picks
-  the lugged through-flow.
+  the lugged through-flow. A four-stroke's idle rides on the 360 mm cells within
+  0.3 m of the outlet: ambient oxygen diffuses to the valve (sport 125 2,074 rpm
+  for 1,300; refined there, 1,325, but the sound moves: `exp/outlet-mesh`).
 
 ## Refuted — do not propose again without new evidence
 
@@ -260,7 +262,7 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   trajectory-resolved forward delivery; individual throttles as a small 0-D cell
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
   belongs inside the 1-D runner); Mazda's published 13B port areas as its
-  high-rpm gap (+0.4 % at 8,500).
+  high-rpm gap (+0.4 % at 8,500), or its VDI (no fixed runner passes +1.6 %).
 - **Backfire** (journal 2026-10-24/25): "1-D cannot carry a front" (it rises in
   0.2-0.8 ms); "the heat is too slow to become a wave"; the EVO timing as
   what silences a pop (the 100 kPa source bound did clip it: now 1 MPa); slugs collecting in the muffler (phi
