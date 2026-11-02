@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-02 — A designed Fireblade: the flame burns in bore/stroke, the losses peak the torque at 9,000
+
+- Owner's designed CBR1000RR-R (81 x 48.5, CR 12.1, saved JSON; `DynoSweepHarness --saved-engine`): 103.8 N.m at 7,500, 114 kW at 12,500 (Honda: 113 N.m at 12,500, 160 kW at 14,500; inlet/exhaust valves 32.5/28.5, CR 13.0, 52 mm bodies, 4-2-1). Delivered VE 1.15 at 11,500: not short of air.
+- Trace: CA50 34 deg ATDC at 7,500, 42 at 13,500 (spark 28 BTDC, the build's knock limit). The flame front's speed follows the mean piston speed and crosses half the bore, so burn angle goes as bore/stroke: 1.67 here. The CP4's 1.25 turbulence (its comment: 60 deg burns) is this, patched per engine; a designed four-stroke gets 1.0.
+- One factor: turbulence 1.67 (= bore/stroke): 126 N.m at 9,000, 148 kW at 13,000, gross IMEP/VE flat at 16.1-16.5 bar. Then CR 13 +2.6 % power, lift 11/10 mm +2.6 %, advance +5 deg +2 %, exhaust plateau 0.65 +0.6 %; runner 100-220 mm, primaries 600 mm, 52 mm bodies, durations +18 deg: the torque peak never leaves 9,000-9,500.
+- Between 9,000 and 14,500: fmep 2.19 -> 3.74 bar (the bearing polynomial is in rpm, with an rpm^2 term fitted on car engines under ~8,000), pmep 0.42 -> 1.46 (exhaust stroke 1.17), VE 1.12 -> 1.07. Honda's 14,500 / 12,500 torque ratio is 0.93; the model's 0.85.
+- Catalogue makers' points with turbulence x bore/stroke (`exp/flame-bore-scale`, `EXP_FLAME_BS=1`): square engines unchanged; Hayabusa +6/+8 %, CP4 +9/+12 %, CP3 +7/+11 %, CP2 +4/+6 %, Aircooled out (+25/+27 %: its 0.55 anchor). The constant-gamma over-efficiency (gross IMEP/VE 16+) still hides what each anchor fixed. Nothing merged.
+
 ## 2026-11-02 — With the LS3's measured head and cam, the thermally perfect gas meets GM within 1 %
 
 - References: GM 321 kW at 5,900, 575 N.m at 4,600; GM cam (Summit/LSXMag) 14.0/13.3 mm, 254/260 deg at 0.006", 117/117 deg; L92/LS3 rectangle-port flow bench (Lingenfelter, EngineLabs, Edelbrock; may be an L92 head) converted at 28" H2O (mm2 = cfm x 4.378); forum WOT MAF logs 280-338 g/s near 6,000 (anecdotal, snippets only).
