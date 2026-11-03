@@ -63,8 +63,6 @@ engine:
       - { rpm: 6500, advance_deg: 34 }
       - { rpm: 8750, advance_deg: 33 }
       - { rpm: 10500, advance_deg: 30 }
-  combustion_calibration:
-    chamber_turbulence_intensity_ratio: 0.80
   uses:
     injection: high_flow_port
     # The only functional difference from engine 11.

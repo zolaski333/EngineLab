@@ -614,6 +614,25 @@ struct ParallelSubstepState final {
     return std::clamp(lambda * fuel.stoichiometricAirFuelRatio, 0.0, 100.0);
 }
 
+/** A multi-valve pent-roof head's charge tumbles: the intake jet rolls it
+ *  into a vortex across the bore whose angular speed is a fixed ratio of the
+ *  crank's (the tumble ratio), and compression breaks it into the turbulence
+ *  the flame burns in, so u' goes as the crank speed times the bore. The
+ *  flame model's u' goes as the mean piston speed, crank speed times the
+ *  stroke: this is the ratio between the two, 1 on a square engine. Without
+ *  it a short-stroke engine burnt over more crank degrees the more
+ *  oversquare it was (CA50 41 deg ATDC on a designed CBR1000RR-R; journal
+ *  2026-11-02/03). A two-valve head has no tumble to speak of and keeps u'
+ *  in piston speed; a two-stroke, a rotary and a diesel are not on this
+ *  flame. */
+[[nodiscard]] double tumbleTurbulenceScale(const EngineConfig& config,
+                                           const CylinderConfig& cylinder) noexcept {
+    if (config.cycle != EngineCycle::fourStroke || config.fuel == FuelType::diesel
+        || cylinder.intakeValveCount < 2 || !(cylinder.strokeMm > 0.0))
+        return 1.0;
+    return std::clamp(cylinder.boreMm / cylinder.strokeMm, 0.5, 2.5);
+}
+
 [[nodiscard]] double stribeckFrictionForce(const CylinderConfig& cylinder,
                                             double pistonSpeedMps,
                                             double cylinderWallForceN) noexcept {
@@ -3534,6 +3553,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
                     state_.load, config_.combustionCalibration.residualDilutionSensitivity,
                     config_.combustionCalibration.chamberTurbulenceIntensityRatio
+                        * tumbleTurbulenceScale(config_, cylinder)
                         * combustionCycleMultiplier_[cylinderIndex],
                     config_.combustionCalibration.ignitionSiteCount };
                 ignitionPending_[cylinderIndex] = !cylinderMisfires_[cylinderIndex];
@@ -3583,6 +3603,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
                 state_.load, config_.combustionCalibration.residualDilutionSensitivity,
                 config_.combustionCalibration.chamberTurbulenceIntensityRatio
+                    * tumbleTurbulenceScale(config_, cylinder)
                     * combustionCycleMultiplier_[cylinderIndex],
                 config_.combustionCalibration.ignitionSiteCount };
             if (compressionIgnitionEngine) {

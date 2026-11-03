@@ -39,7 +39,6 @@ engine:
       - { rpm: 8750, advance_deg: 33 }
       - { rpm: 10500, advance_deg: 30 }
   combustion_calibration:
-    chamber_turbulence_intensity_ratio: 0.80
     cycle_variation_cov: 0.06
     cycle_variation_correlation: 0.55
   exhaust_afterfire:
