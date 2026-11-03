@@ -666,6 +666,9 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
     std::filesystem::path referenceFile;
+    // Prints the reference comparison and succeeds whatever it finds: a gate
+    // the physics does not meet yet still reports its score.
+    auto referenceReportOnly = false;
     // An engine the user saved (`<name>.json`), swept instead of the
     // catalogue; its saved ECU tables are not read (the sweep's ECU follows
     // the configuration, as for a catalogue engine).
@@ -704,6 +707,7 @@ int main(int argc, char** argv) {
         else if (argument == "--step" && index + 1 < argc) stepRpm = std::stod(argv[++index]);
         else if (argument == "--reference-file" && index + 1 < argc)
             referenceFile = argv[++index];
+        else if (argument == "--report-only") referenceReportOnly = true;
         else if (argument == "--schema-only") schemaOnly = true;
         else if (argument == "--well-mixed-junctions")
             useWellMixedExhaustJunctions = true;
@@ -735,7 +739,7 @@ int main(int argc, char** argv) {
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--saved-engine file.json] [--step rpm]"
-                         " [--reference-file csv] [--schema-only]"
+                         " [--reference-file csv] [--report-only] [--schema-only]"
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
@@ -766,6 +770,7 @@ int main(int argc, char** argv) {
     if (!referenceFile.empty())
         return validateReferencePoints(
             catalogRoot, referenceFile, filter, useWellMixedExhaustJunctions)
+                || referenceReportOnly
             ? EXIT_SUCCESS : EXIT_FAILURE;
     writeHeader(std::cout);
 

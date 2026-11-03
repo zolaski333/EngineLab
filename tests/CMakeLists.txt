@@ -458,6 +458,25 @@ if(TARGET EngineLabDynoSweepHarness)
             --catalog-root "${CMAKE_SOURCE_DIR}"
             --step 1000 --boost-hold-margin 0.05)
     set_tests_properties(EngineLab.CatalogBoostHold PROPERTIES TIMEOUT 600)
+    # Engines the designer builds from their makers' data sheets alone, with
+    # none of the catalogue's per-engine values, against the makers' rated
+    # points. A report until the physics reaches the 15% envelope.
+    if(TARGET EngineLabDesignBench)
+        add_test(NAME EngineLab.DesignedEnginesBuild
+            COMMAND EngineLabDesignBench --quiet --knock-limit
+                --catalog-root "${CMAKE_SOURCE_DIR}"
+                --spec "${CMAKE_SOURCE_DIR}/tests/reference-data/designed-engines.spec"
+                --output "${CMAKE_BINARY_DIR}/designed-engines")
+        set_tests_properties(EngineLab.DesignedEnginesBuild PROPERTIES
+            TIMEOUT 900 FIXTURES_SETUP DesignedEngines)
+        add_test(NAME EngineLab.DesignedReference
+            COMMAND EngineLabDynoSweepHarness --report-only
+                --catalog-root "${CMAKE_BINARY_DIR}/designed-engines"
+                --reference-file
+                    "${CMAKE_SOURCE_DIR}/tests/reference-data/designed-manufacturer-points.csv")
+        set_tests_properties(EngineLab.DesignedReference PROPERTIES
+            TIMEOUT 900 FIXTURES_REQUIRED DesignedEngines)
+    endif()
 endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)

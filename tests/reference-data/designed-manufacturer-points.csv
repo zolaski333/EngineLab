@@ -1,0 +1,23 @@
+engine_filter,metric,target_rpm,expected,tolerance,source
+D-CBR1000RR-R,torque_nm,12500,113.0,0.15,Honda CBR1000RR-R Fireblade SP 2020 press kit
+D-CBR1000RR-R,power_kw,14500,160.0,0.15,Honda CBR1000RR-R Fireblade SP 2020 press kit
+D-CP4,torque_nm,9000,111.0,0.15,Yamaha MT-10 rated specification
+D-CP4,power_kw,11500,118.0,0.15,Yamaha MT-10 rated specification
+D-Hayabusa,torque_nm,7000,138.2,0.15,Suzuki 1999 GSX1300R rated specification
+D-Hayabusa,power_kw,9800,128.7,0.15,Suzuki 1999 GSX1300R rated specification
+D-CP2,torque_nm,6500,68.0,0.15,Yamaha MT-07 EU rated specification
+D-CP2,power_kw,8750,54.0,0.15,Yamaha MT-07 EU rated specification
+D-CP3,torque_nm,7000,93.0,0.15,Yamaha MT-09 890 rated specification
+D-CP3,power_kw,10000,87.5,0.15,Yamaha MT-09 890 rated specification
+D-K20A,torque_nm,7000,206.0,0.15,Honda K20A Accord Euro-R rated specification
+D-K20A,power_kw,8000,162.0,0.15,Honda K20A Accord Euro-R rated specification
+D-LS3,torque_nm,4600,575.0,0.15,GM LS3 rated specification
+D-LS3,power_kw,5900,321.0,0.15,GM LS3 rated specification
+D-M8 117,torque_nm,2500,162.7,0.15,Harley-Davidson Milwaukee-Eight 117 J1349 specification
+D-M8 117,power_kw,4600,73.0,0.15,Harley-Davidson Milwaukee-Eight 117 J1349 specification
+D-LS7,torque_nm,4800,637.0,0.15,GM Powertrain LS7 Corvette Z06 SAE certified (control)
+D-LS7,power_kw,6300,377.0,0.15,GM Powertrain LS7 Corvette Z06 SAE certified (control)
+D-Panigale 1299,torque_nm,8750,144.6,0.15,Ducati 1299 Panigale 2015 rated specification (control)
+D-Panigale 1299,power_kw,10500,151.0,0.15,Ducati 1299 Panigale 2015 rated specification (control)
+D-SC59,torque_nm,8500,112.0,0.15,Honda CBR1000RR 2008 rated specification (control)
+D-SC59,power_kw,12000,131.0,0.15,Honda CBR1000RR 2008 rated specification (control)

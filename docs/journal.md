@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-03 — Engines designed from their data sheets: the error follows bore/stroke (r = -0.89)
+
+- New gate `EngineLab.DesignedReference` (report only): 11 engines the designer builds from a data sheet alone (`designed-engines.spec`: bore, stroke, CR, layout, use, rated-power speed / 0.9 as redline; knock limit measured as the window does), against 22 makers' points; 8 tuning, 3 control (LS7, Panigale 1299, SC59) never used to decide. Sources: `designed-manufacturer-sources.md`.
+- Baseline (main physics): tuning median |error| 11.1 %, signed +8.4 %, stdev 18.6 %, 6/16 outside 15 %; control 19.2 %, 3/6 outside. Fireblade -28 / -38 % (81.8 N.m at 12,500, 99.4 kW at 14,500), Panigale -24 / -34 %; LS3 +28 / +27 %, LS7 +30 / +11 %, M8 +36 / +15 %, K20A +13 / +9 %. Every hold PASS.
+- Error against bore/stroke (0.91-1.91): correlation -0.89. CA50 6-14 deg ATDC on square and long-stroke engines, 25-29 on the SC59, 32-35 CP4, 41-42 Fireblade, 45-47 Panigale (10-90 % 53-61 deg).
+- Gross IMEP / delivered VE 15.6-16.5 bar wherever CA50 is under 20 deg (the constant gamma's over-efficiency: the 2-valve V8s, the M8, the K20A land 13-36 % high), 12.6-13.4 on the two slowest burners.
+- fmep at ~20 m/s piston speed: K20A 2.06, CP2 2.49, Hayabusa 2.59, Fireblade 3.05 bar (the rpm polynomial charges a short stroke for its rpm). Cycle World shape RMS (each curve over its own peak): CP2 6.2, CP3 7.1, CP4 13.0 (peak 7,000 vs 9,250), M8 5.7 %.
+- Not covered: crank offsets, VTEC, 4-2-1 exhausts (the designer has none). Nothing in the physics changed.
+
 ## 2026-11-02 — A designed Fireblade: the flame burns in bore/stroke, the losses peak the torque at 9,000
 
 - Owner's designed CBR1000RR-R (81 x 48.5, CR 12.1, saved JSON; `DynoSweepHarness --saved-engine`): 103.8 N.m at 7,500, 114 kW at 12,500 (Honda: 113 N.m at 12,500, 160 kW at 14,500; inlet/exhaust valves 32.5/28.5, CR 13.0, 52 mm bodies, 4-2-1). Delivered VE 1.15 at 11,500: not short of air.
