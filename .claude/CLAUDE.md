@@ -287,7 +287,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
 - **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
   constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
   octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363
-  N.m); the I5 at 2.1 bar. A weaker Douaud-Eyzat pressure exponent has no
+  N.m); the I5 at 2.1 bar; Douaud-Eyzat's prefactor at x1.5 under the
+  thermally perfect gas (NA maps reach their limit, 2JZ/EJ25 makers' points
+  -4 %; journal 2026-11-03). A weaker Douaud-Eyzat pressure exponent has no
   source (pressure matters more in the NTC band).
 - **The other simulator's ingredients, one at a time** (journal 2026-10-13/14):
   output stage, pressure-release outlet, valve-area noise, mild room IR -- none

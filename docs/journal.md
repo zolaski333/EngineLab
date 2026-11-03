@@ -5,6 +5,27 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-03 — Knock under the thermally perfect gas: no Douaud-Eyzat prefactor fits both NA and boosted engines
+
+- `KnockControl` and `LiveTuning` fail on the branch: the 2JZ map +8 deg peaks at knock 0.029 and 0 (need > 0.1). The 2026-10-23 doubling (35.4 ms) was set under constant gamma by "a production map sits 0-3 deg from its limit"; redone here the same way (`DynoSweepHarness --step 500`, retard = map at RON 130 minus commanded, at the map and `--advance-offset 5`/`10`).
+- x1 (17.68): retard behind the map K20 7.8 deg, LS3 4.3, 2JZ 11.4, EJ25 12 (stop), I5 6.1 -- as under the old gas. x1.25: NA 2 deg, 2JZ 8, EJ25 12. x1.5: K20 0 / 2.9 at +5, LS3 1.0 / 1.5, I5 1.0; 2JZ 7.4 below 3,000, EJ25 9.9. x2: K20 and LS3 clean even 10 deg over their maps (under the old gas +5 knocked); 2JZ 7.3 below 3,000, EJ25 4.2.
+- x1.5 meets the criterion on the NA engines and passes both tests (on: peak 0.12, mean 0.096; off: 0.41), but the makers' points move 2JZ torque -12.3 -> -16.1 %, EJ25 power -15.5 -> -19.5 % (designed set unchanged: its knock limit is measured at build). Not kept: it trades one error for another. x2 kept; the two tests stay failing until the owner decides.
+- The NA/boosted split is Douaud-Eyzat over-predicting knock as intake pressure rises (Energy & Fuels, doi 10.1021/acs.energyfuels.4c04775, a snippet). A pressure exponent without a source stays refuted.
+
+## 2026-11-03 — The LS3 and the 2JZ on measured heads; the gates left on the branch
+
+- Real heads replace authored curves (Cd 0.36-0.42 at 3 mm where benches read 0.70-0.81). LS3: GM's cam card (254/260 deg, 14.0/13.3 mm), its head's benches (Lingenfelter, EngineLabs, Edelbrock), exhaust plateau 0.65 (new `exhaust_port_head_area_fraction` on a camshaft; 0 keeps 0.51). 2JZ: Toyota's 233 deg 8.25 mm cams, 33.5/29.0 mm valves, the median of five benches (Supramania thread), plateaus 0.56/0.50 as the defaults.
+- Makers' points: LS3 -5.7/-24.2 -> -0.0/+0.2 %; 2JZ -14.8/-10.4 -> -12.3/-11.9 %. Every other engine and the designed set unchanged (points and sweep maxima to 0.1 %). `CatalogReference` 3 of 24 out: EJ25 power -15.5 (no head data found), Big Twin -26.5 (0.42 anchor; without it delivered VE 0.99 at 2,500 where H-D implies ~0.86: cam and intake authored, no M8 bench found), EA288 -19.4 (lambda 1.27, 47 mg/stroke at 4,000 where 110 kW at ~245 g/kWh needs ~56: boost and fuel limit authored).
+- `EngineDesign`'s 25 cc single was a transient in the window (opened at 2 s, at 9,600 rpm only at 6.2 s; the last 2 s of 8 read 9,255-9,637): 12 s, 9,598-9,638 rpm, 7.67 bar. The test then reaches the marine six: 21.5 bar rated (gate 22-30; 24.0 under constant gamma), BSFC 197 g/kWh at lambda 1.19 against ~180 for a real one: the diesel reads 3-8 % inefficient under the gas, open.
+- Rotary: 145.6 kW at 8,500 (Mazda 184, gate 156.4); the gas alone, tumble does not apply. Not investigated.
+- `ShiftStyle` fails with the 2JZ's head (alone too): a dual-clutch upshift's 20 deg retard shortens the push 435.5 -> 426.8 ms, at the test's 2 % edge. ctest 91/97: that, CatalogReference, Rotary, KnockControl, LiveTuning, EngineDesign (marine six).
+
+## 2026-11-03 — High-speed friction: the two sources bracket the simulator; not changed
+
+- Sources: Sandoval's revision of Patton-Nitschke-Heywood (MIT thesis 2002, App. A-2, = SAE 2003-01-0725; motored 5.4 L V8 and 3.0 L V6, 90 C) and Blair (1999, p. 536, 1.0 bar + 0.105 bar per m/s).
+- Sandoval's terms on a CBR1000RR-R (81 x 48.5, 5 mains 33 x 18 mm, rods 34 x 17, DOHC flat followers, the paper's DOHC constants estimated): 1.92 bar at 9,000 rpm, 2.39 at 12,500, 2.53 at 13,500 (piston 0.79, valvetrain 0.57, crank 0.47, auxiliaries 0.44). Blair: 2.53, 3.12, 3.29. The simulator on the owner's design (imep - bmep): 2.18, 3.13, 3.43. K20A at 7,000: Sandoval 1.87, Blair 3.1, simulator 2.2.
+- The two disagree by 0.8-1.2 bar at 20 m/s and the simulator sits within 4 % of Blair at the power point: no source asks for less. Friction is not the Fireblade's missing power; its pumping (pmep 1.2-1.4 bar at 12,500-13,500) and air are what is left.
+
 ## 2026-11-03 — A tumbling head's turbulence in rpm x bore: designed engines 11 -> 7 %, control 19 -> 12 %
 
 - Branch `physics/designed-engines` (not merged): the thermally perfect gas (b55ce40), then the flame's turbulence x bore/stroke on a multi-valve four-stroke spark engine (a tumble turns at a ratio of the crank speed across the bore; a two-valve head keeps u' in piston speed). Each measured alone on the whole set (`EngineLab.DesignedReference`, catalogue points, `--step 500` sweeps).
