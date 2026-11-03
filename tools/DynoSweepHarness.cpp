@@ -585,6 +585,7 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
         enginelab::EngineSimulatorOptions simulatorOptions;
         simulatorOptions.evolveExhaustJunctionAxialMomentum =
             !useWellMixedExhaustJunctions;
+        simulatorOptions.exhaustMaximumHeadAreaFraction = exhaustPortPlateauOverride;
         enginelab::EngineSimulator simulator(
             config, ecu, physics, events, exhaust, simulatorOptions);
         const double dt = frameSeconds;
