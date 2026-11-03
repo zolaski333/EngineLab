@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-03 — A tumbling head's turbulence in rpm x bore: designed engines 11 -> 7 %, control 19 -> 12 %
+
+- Branch `physics/designed-engines` (not merged): the thermally perfect gas (b55ce40), then the flame's turbulence x bore/stroke on a multi-valve four-stroke spark engine (a tumble turns at a ratio of the crank speed across the bore; a two-valve head keeps u' in piston speed). Each measured alone on the whole set (`EngineLab.DesignedReference`, catalogue points, `--step 500` sweeps).
+- Gas alone: every engine -12 to -17 % (RD350 -19, EA288 -8/-12); BSFC minimum K20 206 -> 236, LS3 221 -> 255 g/kWh, EGT +40-80 C; designed tuning median 11.1 -> 10.4 %, control 19.2 -> 23.8 %; catalogue 0 -> 6 points out of 15 % (power points).
+- Exhaust plateau 0.51 -> 0.65 on top (`--exhaust-port-plateau`, now also in reference mode): four-valve engines 0 to +2 %, the two-valve LS3 +8 % power. One bench (an LS3/L92 head) is the only source: not kept.
+- Tumble on the gas: CA50 41 -> 18 deg ATDC on the designed CBR1000RR-R, 46 -> 15 on the Panigale, all designed engines 6-21; gross IMEP / delivered VE 14.0-14.7 bar on every one (was 11-14.5). Designed tuning median 6.9 %, 4/16 out; control 11.5 %, 2/6 out. CP4 torque peak 7,000 -> 9,000 rpm (Cycle World 9,250). Square and two-valve engines unchanged by construction.
+- Anchors, each removed alone: CP2 0.80 -> none -3/-8 %, CP3 0.80 -> 0/-5, CP4 1.25 -> -5/-5: removed (and the two CP2 variants'). EJ25 and I5 1.50 -> -16/-22, -18/-23: kept. Big Twin 0.42 -> +21/+11 (kept, -9/-27). Aircooled: its 964 has two valves (the catalogue gives four); with two, 0.55 -> -11/-24, none -> +20/+11: kept as authored. Their common pattern: low-speed torque high, high-speed power low.
+- Branch catalogue: 4 of 24 points out (LS3 power -24, EJ25 -16, Big Twin -27, EA288 -19: the diesel has no spark flame, so it is the gas): `EngineLab.CatalogReference` fails, the branch is not mergeable as it is. Owner's Fireblade: 114 -> 124 kW, torque peak 7,500 -> 9,000.
+- Friction (step 4) not touched: the Sandoval-Heywood thesis was unreachable (HTTP 429), no other readable source gives a high-speed fmep. At ~20 m/s the rpm polynomial charges the Fireblade 3.0-3.8 bar, the K20A 2.1.
+- Guards: four-stroke idles on target, 100 % fired; RD350 1,533 rpm sd 216, 18.6 % fired (was 1,471, 138, 24.2 %). Real time -5 to -9 % capacity, lowest I5 1.45, EJ25 1.63, 13B 1.64. Sound `shape` 0.4-3.4 dB (K20A worst), level within 1 dB: a default-sound change for the owner's ear. ctest 92/97: CatalogReference, Rotary (184 kW at 8,500), KnockControl and LiveTuning (the 2JZ no longer reaches its knock limit) and EngineDesign's 25 cc single, which swings 9,255-9,637 on the test's soft absorber while `DynoSweepHarness` holds it (sd 1.9 rpm, -13 % torque like the others).
+
 ## 2026-11-03 — Engines designed from their data sheets: the error follows bore/stroke (r = -0.89)
 
 - New gate `EngineLab.DesignedReference` (report only): 11 engines the designer builds from a data sheet alone (`designed-engines.spec`: bore, stroke, CR, layout, use, rated-power speed / 0.9 as redline; knock limit measured as the window does), against 22 makers' points; 8 tuning, 3 control (LS7, Panigale 1299, SC59) never used to decide. Sources: `designed-manufacturer-sources.md`.
