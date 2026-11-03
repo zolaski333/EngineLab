@@ -398,12 +398,13 @@ struct Held final {
 #pragma optimize("", off)
 #endif
 /** Cranked, then `throttle` held (against a dyno at `dynoRpm` if not zero);
- *  means over the last 2 s of 8. */
-[[nodiscard]] Held held(const EngineConfig& config, double throttle, double dynoRpm, double dynoNmPerRpm = 2.0) {
+ *  means over the last 2 s of `seconds`. */
+[[nodiscard]] Held held(const EngineConfig& config, double throttle, double dynoRpm, double dynoNmPerRpm = 2.0,
+                        double seconds = 8.0) {
     auto rig = std::make_unique<Rig>(config);
-    constexpr int frames = 8 * 240;
-    constexpr int firstMeasured = frames - 2 * 240;
-    constexpr double weight = 1.0 / static_cast<double>(frames - firstMeasured);
+    const int frames = static_cast<int>(seconds * 240.0);
+    const int firstMeasured = frames - 2 * 240;
+    const double weight = 1.0 / static_cast<double>(frames - firstMeasured);
     Held result;
     auto speed = 0.0;
     for (auto frame = 0; frame < frames; ++frame) {
@@ -465,7 +466,9 @@ void enginesOfAnySizeRun() {
         // single's 0.01 kg m2 the 2 N.m/rpm it was given braked all or nothing
         // (9,404-9,626 rpm about 9,600, 16.4 bar; the test failed under GCC).
         const auto stableNmPerRpm = 0.5 * config.rotatingInertiaKgM2 / frameSeconds * 3.14159265 / 30.0;
-        const auto run = held(config, 1.0, dynoRpm, std::min(2.0 * std::max(1.0, litres / 2.0), stableNmPerRpm));
+        // 12 s: the single, opened at 2 s, reaches its 9,600 rpm at 6.2 s;
+        // the last 2 s of 8 caught it still climbing (9,255-9,637 rpm).
+        const auto run = held(config, 1.0, dynoRpm, std::min(2.0 * std::max(1.0, litres / 2.0), stableNmPerRpm), 12.0);
         const auto bmepBar = run.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
         std::cout << "  " << spec.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.torqueNm
                   << " N.m, BMEP " << bmepBar << " bar, " << run.minRpm << "-" << run.maxRpm << " rpm\n";
