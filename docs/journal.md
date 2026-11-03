@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-04 — The designed sport engines' gap at their power points, term by term (nothing changed)
+
+- Branch state (x2 knock), `DynoSweepHarness --step 500` on the designed set; bmep = delivered VE x (gross imep / delivered VE) - pmep - fmep at each maker's point (interpolated). The warm-started sweep carries history: the CBR's 14,500 rpm point moves 1.2 % with a knock-limit change at 1,950 rpm.
+- Combustion is not it: gross imep / delivered VE 14.0-14.7 bar and gross indicated efficiency on the fuel 0.365-0.385 (lambda 0.88-0.90) on every engine, hits and misses alike.
+- Power points that miss (CBR1000RR-R -29.5 %, Panigale -19, SC59 -19, CP3 -16) deliver 0.98-1.06 where those that hit (CP4 -5, Hayabusa -5) deliver 1.09; pmep 1.3-1.5 bar (exhaust stroke 1.0-1.2 of it) against 1.0-1.1. A 25 mm exhaust mesh moves them -1 to -3 %.
+- CBR at 14,500, one factor each: no muffler +0.4 %, collector and outlet x1.3 +4.4 %, exhaust plateau 0.65 +3.9 %.
+- Friction at equal piston speed: CBR 14,500 (23.4 m/s) 3.74 bar, K20A 8,000 (22.9) 2.50. Sandoval 2.67 / 2.08, Blair 3.46 / 3.40. The two sources disagree on the level but both charge the CBR 0.06-0.59 bar more than the K20A where the simulator charges 1.24: its rpm polynomial grows with rpm, not piston speed. Following either source's CBR/K20A step: +0.65-1.18 bar, +7-13 % CBR power.
+- Left after that: 1.7-2.9 bar on the CBR, a delivered VE of 1.14-1.22 at 14,500 if pumping were right. No measured superbike airflow was found (web searches: none), so that term cannot be judged.
+
 ## 2026-11-03 — Knock under the thermally perfect gas: no Douaud-Eyzat prefactor fits both NA and boosted engines
 
 - `KnockControl` and `LiveTuning` fail on the branch: the 2JZ map +8 deg peaks at knock 0.029 and 0 (need > 0.1). The 2026-10-23 doubling (35.4 ms) was set under constant gamma by "a production map sits 0-3 deg from its limit"; redone here the same way (`DynoSweepHarness --step 500`, retard = map at RON 130 minus commanded, at the map and `--advance-offset 5`/`10`).
