@@ -68,7 +68,7 @@ engine:
       - { rpm: 7000, advance_deg: 16 }
   uses:
     injection: sequential_port
-    camshafts: turbo_street
+    camshafts: toyota_2jz_gte
     exhaust: turbo_downpipe
     transmission: jdm_6_speed
     vehicle: jdm_gt
@@ -78,3 +78,7 @@ engine:
     connecting_rod_mm: 142.0
     piston_mass_g: 430
     compression_ratio: 8.7
+    # Toyota's valve heads, 33.5 / 29.0 mm (the bench curves on its
+    # camshaft are referred to them).
+    intake_valve_diameter_mm: 33.5
+    exhaust_valve_diameter_mm: 29.0

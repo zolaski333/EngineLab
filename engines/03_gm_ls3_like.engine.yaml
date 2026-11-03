@@ -40,7 +40,7 @@ engine:
       - { rpm: 6700, advance_deg: 30 }
   uses:
     injection: sequential_port
-    camshafts: big_v8_street
+    camshafts: gm_ls3
     exhaust: crossplane_dual
     transmission: muscle_6_speed
     vehicle: muscle_car
