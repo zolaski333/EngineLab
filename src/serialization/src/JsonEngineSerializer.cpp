@@ -287,7 +287,7 @@ void readCarburettor(const Json& intake, CarburettorConfig& carburettor) {
         continuousSamples.push_back({ { "rpm", sample.rpm }, { "load", sample.load },
             { "intake_advance_deg", sample.intakeAdvanceDegrees },
             { "exhaust_advance_deg", sample.exhaustAdvanceDegrees }, { "lift_multiplier", sample.liftMultiplier } });
-    return { {"intake_duration_deg", cams.intakeDurationDegrees}, {"exhaust_duration_deg", cams.exhaustDurationDegrees},
+    Json json = { {"intake_duration_deg", cams.intakeDurationDegrees}, {"exhaust_duration_deg", cams.exhaustDurationDegrees},
         {"intake_lift_mm", cams.intakeLiftMm}, {"exhaust_lift_mm", cams.exhaustLiftMm},
         {"intake_centerline_deg", cams.intakeCenterlineDegrees}, {"exhaust_centerline_deg", cams.exhaustCenterlineDegrees},
         {"intake_flow_coefficient", cams.intakeFlowCoefficient}, {"exhaust_flow_coefficient", cams.exhaustFlowCoefficient},
@@ -302,6 +302,9 @@ void readCarburettor(const Json& intake, CarburettorConfig& carburettor) {
         {"intake_flow_curve", intakeFlowCurve}, {"exhaust_flow_curve", exhaustFlowCurve},
         {"continuous_control", {{"enabled", cams.continuousControl.enabled},
             {"response_frequency_hz", cams.continuousControl.responseFrequencyHz}, {"samples", continuousSamples}}} };
+    if (cams.exhaustPortHeadAreaFraction > 0.0)
+        json["exhaust_port_head_area_fraction"] = cams.exhaustPortHeadAreaFraction;
+    return json;
 }
 
 [[nodiscard]] CamshaftConfig decodeCamshaft(const Json& cams) {
@@ -314,6 +317,7 @@ void readCarburettor(const Json& intake, CarburettorConfig& carburettor) {
     value.exhaustCenterlineDegrees = cams.value("exhaust_centerline_deg", value.exhaustCenterlineDegrees);
     value.intakeFlowCoefficient = cams.value("intake_flow_coefficient", value.intakeFlowCoefficient);
     value.exhaustFlowCoefficient = cams.value("exhaust_flow_coefficient", value.exhaustFlowCoefficient);
+    value.exhaustPortHeadAreaFraction = cams.value("exhaust_port_head_area_fraction", 0.0);
     value.variableProfileEnabled = cams.value("variable_profile_enabled", false);
     value.switchRpm = cams.value("switch_rpm", value.switchRpm);
     value.switchThrottle = cams.value("switch_throttle", value.switchThrottle);

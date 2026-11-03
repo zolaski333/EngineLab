@@ -94,6 +94,18 @@ int main() {
         checkStable(json, "JSON", entry.config);
         checkStable(yaml, "YAML", entry.config);
     }
+    // A field both writer and reader drop re-encodes stably to its default:
+    // the LS3's bench-measured exhaust plateau must come back as written.
+    for (const auto& entry : catalogue.entries) {
+        if (!(entry.config.camshafts.exhaustPortHeadAreaFraction > 0.0)) continue;
+        for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                        static_cast<const IEngineSerializer*>(&yaml) }) {
+            const auto decoded = serializer->decode(serializer->encode(entry.config));
+            require(decoded && decoded.config->camshafts.exhaustPortHeadAreaFraction
+                        == entry.config.camshafts.exhaustPortHeadAreaFraction,
+                    entry.config.name + " keeps its exhaust port plateau through a save");
+        }
+    }
     // On an engine with one intake path the global intake and the path mirror
     // each other (normaliseEngineConfig), so they cannot carry two different
     // carburettors and the global reader is never on its own. Two or more paths

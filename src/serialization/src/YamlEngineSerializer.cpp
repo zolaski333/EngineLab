@@ -270,6 +270,8 @@ void emitValveControl(YAML::Emitter& out, const ValveControlConfig& control) {
 }
 
 void decodeExtendedCamshaft(CamshaftConfig& cam, const YAML::Node& node) {
+    if (const auto fraction = node["exhaust_port_head_area_fraction"])
+        cam.exhaustPortHeadAreaFraction = fraction.as<double>();
     if (const auto curve = node["intake_flow_curve"])
         for (const auto& sample : curve) cam.intakeFlowCurve.push_back({ sample["lift_mm"].as<double>(),
             sample["discharge_coefficient"].as<double>() });
@@ -440,6 +442,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
     emitLiftProfile(out, "high_exhaust_lift_profile", config.camshafts.highExhaustLiftProfile);
     emitFlowCurve(out, "intake_flow_curve", config.camshafts.intakeFlowCurve);
     emitFlowCurve(out, "exhaust_flow_curve", config.camshafts.exhaustFlowCurve);
+    if (config.camshafts.exhaustPortHeadAreaFraction > 0.0)
+        out << YAML::Key << "exhaust_port_head_area_fraction" << YAML::Value << config.camshafts.exhaustPortHeadAreaFraction;
     emitValveControl(out, config.camshafts.continuousControl);
     out << YAML::EndMap
         << YAML::Key << "crankshafts" << YAML::Value << YAML::BeginSeq;
@@ -668,6 +672,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         emitLiftProfile(out, "high_exhaust_lift_profile", bank.camshafts.highExhaustLiftProfile);
         emitFlowCurve(out, "intake_flow_curve", bank.camshafts.intakeFlowCurve);
         emitFlowCurve(out, "exhaust_flow_curve", bank.camshafts.exhaustFlowCurve);
+        if (bank.camshafts.exhaustPortHeadAreaFraction > 0.0)
+            out << YAML::Key << "exhaust_port_head_area_fraction" << YAML::Value << bank.camshafts.exhaustPortHeadAreaFraction;
         emitValveControl(out, bank.camshafts.continuousControl);
         out << YAML::EndMap << YAML::EndMap;
     }

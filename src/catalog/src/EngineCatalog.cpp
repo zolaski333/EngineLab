@@ -393,6 +393,7 @@ template <typename T>
     assignIfPresent(node, "exhaust_centerline_deg", value.exhaustCenterlineDegrees);
     assignIfPresent(node, "intake_flow_coefficient", value.intakeFlowCoefficient);
     assignIfPresent(node, "exhaust_flow_coefficient", value.exhaustFlowCoefficient);
+    assignIfPresent(node, "exhaust_port_head_area_fraction", value.exhaustPortHeadAreaFraction);
     assignIfPresent(node, "variable_profile_enabled", value.variableProfileEnabled);
     assignIfPresent(node, "switch_rpm", value.switchRpm);
     assignIfPresent(node, "switch_throttle", value.switchThrottle);

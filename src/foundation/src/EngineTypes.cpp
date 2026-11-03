@@ -1165,7 +1165,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         if (!inRange(cam.continuousControl.responseFrequencyHz, 0.1, 100.0)
             || (cam.continuousControl.enabled && cam.continuousControl.samples.empty())
             || cam.continuousControl.samples.size() > 128
-            || !validateFlowCurve(cam.intakeFlowCurve) || !validateFlowCurve(cam.exhaustFlowCurve)) return false;
+            || !validateFlowCurve(cam.intakeFlowCurve) || !validateFlowCurve(cam.exhaustFlowCurve)
+            || !(cam.exhaustPortHeadAreaFraction == 0.0 || inRange(cam.exhaustPortHeadAreaFraction, 0.2, 1.2)))
+            return false;
         for (std::size_t index = 0; index < cam.continuousControl.samples.size(); ++index) {
             const auto& sample = cam.continuousControl.samples[index];
             if (!inRange(sample.rpm, 0.0, 30'000.0) || !inRange(sample.load, 0.0, 1.5)

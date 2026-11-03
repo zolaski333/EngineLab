@@ -1442,6 +1442,7 @@ bool EngineSimulator::beginCamshaftChange(EngineConfig& target, double rampSecon
         std::swap(running.intakeFlowCurve, wanted.intakeFlowCurve);
         std::swap(running.exhaustFlowCurve, wanted.exhaustFlowCurve);
         std::swap(running.continuousControl, wanted.continuousControl);
+        running.exhaustPortHeadAreaFraction = wanted.exhaustPortHeadAreaFraction;
     }
     camshaftChange_ = std::move(change);
     advanceCamshaftChange();
@@ -3778,8 +3779,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             chamberPressureBar_[cylinderIndex] = chamberKpa / 100.0;
             // Port plateaus: 0.58 and 0.51 of valve head area are the middle of
             // the production band in the literature cited on the helper. They
-            // are deliberately not race-port figures -- a catalogue engine that
-            // wants more says so through its camshaft flow curve.
+            // are deliberately not race-port figures -- an engine whose head
+            // was flowed on a bench gives its exhaust plateau on its camshaft.
             // A two-stroke has ports instead: the piston uncovers them, the
             // transfer ports standing in for the intake valves (their duct is
             // the intake runner, the crankcase its plenum).
@@ -3797,7 +3798,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 : effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
                     cylinder.exhaustValveCount, cylinder.exhaustValveDiameterMm,
                     valveTrain.exhaustDischargeCoefficient, 0.34, 0.41,
-                    std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(0.51),
+                    std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(
+                        cams.config->exhaustPortHeadAreaFraction > 0.0
+                            ? cams.config->exhaustPortHeadAreaFraction : 0.51),
                         0.05, 1.5));
             // The scavenging window as a state, opened and closed by the
             // transfer ports themselves and advanced by the sub-step. What it

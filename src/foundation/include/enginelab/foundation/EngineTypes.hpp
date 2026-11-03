@@ -181,6 +181,10 @@ struct CamshaftConfig final {
     std::vector<ValveFlowSample> intakeFlowCurve {};
     std::vector<ValveFlowSample> exhaustFlowCurve {};
     ValveControlConfig continuousControl {};
+    /** The fraction of exhaust valve head area the port's effective area
+     *  saturates at, read off a flow bench; 0 keeps the literature's
+     *  production figure (0.51). */
+    double exhaustPortHeadAreaFraction { 0.0 };
 };
 
 /** Length of the common trunk the scalar exhaust geometry gives its
