@@ -5453,14 +5453,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // the friction-MEP sweep in CoreTests.
         // The base linear term is retained through the low/mid-speed range:
         // increasing it globally made the large, low-revving Merlin marginal
-        // on idle catch. Above 4,000 rpm, windage/valvetrain/accessory losses add
-        // a common speed term. A small constant-power accessory/windage term is
-        // faded in over 3,500-4,500 rpm as well: unlike another RPM coefficient,
-        // its torque falls with speed and therefore cannot drive FMEP beyond the
-        // high-rpm literature envelope. Together they contribute about 0.08 bar
-        // at 6,000 rpm and 0.14 bar at 10,000 rpm, correcting the shared bias
-        // while leaving every catalogue idle/blip below the threshold untouched.
-        const auto highSpeedFrictionRpm = std::max(0.0, state_.rpm - 4'000.0);
+        // on idle catch. A small constant-power accessory/windage term is
+        // faded in over 3,500-4,500 rpm: its torque falls with speed.
+        // Linear in rpm, with the Stribeck piston below the sum follows
+        // Sandoval's revision of Patton-Nitschke-Heywood (MIT 2002, SAE
+        // 2003-01-0725) within 0.1-0.3 bar on a K20A to 8,000 rpm and a
+        // CBR1000RR-R to 14,500. A 3.5e-8 rpm^2 term and a 1.5e-4 per rpm above
+        // 4,000 (added for "underestimated high-rpm losses" under the
+        // constant-gamma gas) charged them 0.36 and 1.12 bar over it at their
+        // power points: removed (journal 2026-11-04).
         const auto accessoryRampLinear = std::clamp(
             (state_.rpm - 3'500.0) / 1'000.0, 0.0, 1.0);
         const auto accessoryRamp = accessoryRampLinear * accessoryRampLinear
@@ -5472,9 +5473,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             : 0.0;
         const auto bearingFriction = state_.rpm > 1.0
             ? breathedLitres * (1.4 + config_.frictionCoefficient * 10.0
-                              + state_.rpm * 0.00055
-                              + highSpeedFrictionRpm * 0.00015
-                              + state_.rpm * state_.rpm * 0.000000035)
+                              + state_.rpm * 0.00055)
                 + highSpeedAccessoryTorque
             : 0.0;
         const auto pistonFriction = state_.angularVelocityRadPerSecond > 1.0
