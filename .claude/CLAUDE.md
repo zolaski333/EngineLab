@@ -160,7 +160,7 @@ masks everything); `EngineLabPhysicsPerfHarness` needs `--idle` beside
 `EngineLabDynoSweepHarness` `--crank-degrees`, `--coupling-us` and
 `--frame-hz` resize the mechanical substep, the exhaust flush clock and the
 240 Hz outer frame, and a gas-dynamic feature stays where it is when any one
-changes; `EngineLabGeometrySensitivityHarness` says
+changes (sweep mode only: `--reference-file` ignores all but `--frame-hz`); `EngineLabGeometrySensitivityHarness` says
 whether an exhaust change moved the timbre (`shape`) or only the level
 (`level`).
 

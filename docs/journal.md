@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-04 — The designed CBR's last 20 %: no single factor, all bounds stacked leave -12 % (nothing changed)
+
+- Same CBR, `DynoSweepHarness --step 500` (reference mode ignores `--crank-degrees`, `--coupling-us`, `--exhaust-cell-mm`, `--settle`, `--advance-offset`: bit-identical). Base 126.3 kW at 14,500, pmep 1.51, exhaust stroke 1.22 bar.
+- Resolution: the coupling sits at its 125 us cap (10.9 deg at 14,500); converged by 35 us: +2.5 % power, pumping -0.21 bar. Crank 1 deg: -2.4 %. Both: 127.1 kW (+0.6 %). 0.5 deg wrote no output. `--frame-hz 480`, 25 mm cells, a 6 s settle: within 1.4 %. Not an artefact.
+- Combustion (`PhysicsPerfHarness --trace 14500`): CA50 21.1 deg ATDC, 10-90 % 34.6 deg. The designer's knock limit (27.7 deg) does not bind there (removed: +0.4 %). Map +6 / +12 deg: CA50 16.2 / 13.2, power +2.9 / +4.6 %.
+- Cams: valves 32.4 / 27.5 mm against Honda's 32.5 / 28.5; no SC82 lift or timing found; the designer's L/D 0.30 / 0.33 equals the SC59's published 8.9 / 8.4 mm on 29 / 24 mm. Unsourced bounds: its own disabled high profile (12.5 / 11.8 mm, 282 / 276 deg) +6.4 %, exhaust +20 deg +2.0 %, intake +20 deg +1.3 % (torque -1.5 %).
+- Stacked (high cams, +6 deg without the knock limit, crank 1 deg, coupling 25 us): 141.2 kW at 14,500 (-11.8 %), 107.8 N.m at 10,000 (-4.6 %), delivered VE 1.10 at 12,500, no knock.
+- Measured reference: Cycle World, US-spec SP on a Dynojet 250i, 165.4 hp (123.4 kW) at the wheel at 12,000, 74.6 lb-ft at 10,580 (Honda claims 186 hp US, 214 hp EU). No measured EU curve found.
+
 ## 2026-11-04 — The exhaust valve's flow is not the designed CBR's missing power (nothing changed)
 
 - Designed CBR1000RR-R (`EngineLab.DesignedReference` set, 39cc47e, `DynoSweepHarness --reference-file`): exhaust valve 27.5 mm derived, curtain Cd 0.62, 9.14 mm lift (L/D 0.33), so the 0.51 plateau caps its high lift.
