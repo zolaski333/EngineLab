@@ -231,7 +231,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
 - **Exhaust**: the "unified duct" rewrite (the 300 mm mesh carries the audible
   geometry, 12-14 dB); CFL 0.9; MUSCL-Hancock; third-order faces; one-sided open
   ends; deepening the muffler's single chamber (16 dB notch on the EJ25
-  fundamental).
+  fundamental); the exhaust valve's flow as a four-valve superbike's missing
+  power (Cd 0.90 and plateau 1.5 give the designed CBR +3 %).
 - **Performance**: fork-join per cylinder with woken threads (the resident pool
   runs the pass since 2026-10-20); AVX/AVX2 (dependent-division latency); a
   telemetry cache for listening; state-variable valve-flow reconstruction

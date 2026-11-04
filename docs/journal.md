@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-04 — The exhaust valve's flow is not the designed CBR's missing power (nothing changed)
+
+- Designed CBR1000RR-R (`EngineLab.DesignedReference` set, 39cc47e, `DynoSweepHarness --reference-file`): exhaust valve 27.5 mm derived, curtain Cd 0.62, 9.14 mm lift (L/D 0.33), so the 0.51 plateau caps its high lift.
+- Plateau alone (`--exhaust-port-plateau`): 0.51 / 0.65 / 1.0 give 96.9 / 97.6 / 97.5 N.m at 12,500 (Honda 113) and 127.7 / 129.4 / 130.1 kW at 14,500 (Honda 160): -20.2 -> -18.7 % at twice the plateau.
+- Bound, Cd 0.90 and plateau 1.5 (about three times a real port's area at full lift): 98.9 N.m, 132.0 kW, -17.5 %. The control SC59 moves alike (-12.3 -> -11.2 % at plateau 1.0).
+- Sources agree with 0.51 for a four-valve head: the 2JZ's five benches read 0.50 (journal 2026-11-03); only the two-valve LS3 reads 0.65.
+- The area-step boundary is set aside on local branch `exp/area-step`, with its measurements in that branch's journal.
+- Not measured: where the 1.22 bar of exhaust-stroke pumping at 14,500 comes from, if not the valve.
+
 ## 2026-11-04 — The designed CBR's high-rpm breathing, one factor each; an area step between two ducts over-dissipates (nothing changed)
 
 - Designed CBR1000RR-R, `DynoSweepHarness --step 500`, torque at 12,500 / 14,500 against the design: plenum 1.3 -> 5.2 L +2.1 / +1.8 %; airbox 3 -> 10 L bit-identical; runner 38 -> 44 mm -3.6 / -0.2; runner 131 -> 170 / 95 mm +0.3 / -4.2, -3.4 / +1.1; primaries 345 -> 250 / 450 / 600 mm +0.3 / +0.2, +1.3 / +2.7, +1.5 / +2.3; primaries 40 mm -0.3 / -0.2; Honda's 32.5 / 28.5 mm valves (designer 32.4 / 27.5) +0.8 / +0.1; exhaust plateau 0.65 / 1.0 +0.6 / +1.2, +0.6 / +0.7 (the valve is worth ~0.2 bar of pumping). Merge diameters are not read (bit-identical).
