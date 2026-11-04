@@ -182,6 +182,8 @@ whether an exhaust change moved the timbre (`shape`) or only the level
 - **A test's absorber acts once a frame on the frame before's speed**: stiffer
   than half the shaft's inertia a frame (N.m per rad/s) it brakes all or
   nothing, and the mean torque is the swing's (a 25 cc single read 16 bar).
+  `state.torqueNm` read once a frame aliases a single's firing (80 Hz at
+  9,600 rpm): average the absorber's torque.
 - **An assertion on a quantity forced to zero below a threshold proves nothing**
   until you have checked that the threshold is reached.
 - **Misleading fields**: `exhaustPressureKpa` is a peak, the back-pressure is

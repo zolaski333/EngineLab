@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-04 — Friction: the rpm^2 and above-4,000 terms removed; designed engines 6.9 -> 3.4 %, control 2/6 -> 0/6 out
+
+- One factor: the lumped polynomial's 3.5e-8 rpm^2 and 1.5e-4 (rpm - 4,000)+ terms (the latter added 2026-08-27 for "underestimated high-rpm losses", under constant gamma). Without them the simulator's fmep follows Sandoval's Patton-Nitschke-Heywood within 0.1-0.3 bar (K20A 7,000/8,000: 1.91/2.14 vs 1.87/2.08; CBR 12,500/14,500: 2.28/2.62 vs 2.39/2.67); with them it ran 0.27-1.12 bar over. At 4,000-6,000 the two already agreed (K20A 1.29 vs 1.30, CBR 1.47 vs 1.54), untuned.
+- Designed set: tuning median |error| 6.9 -> 3.4 %, 4/16 -> 2/16 out (CBR1000RR-R -20.2 power, -14.3 torque, was -29.5 / -20.2); control 11.5 -> 10.3 %, 2/6 -> 0/6 out. Cycle World shape RMS CP2 7.1 -> 6.3, CP3 7.7 -> 6.4 (peak 7,000 as measured), CP4 12.6 -> 11.7, M8 7.1 -> 6.8 %. LS3 / LS7 torque +10.8 / +11.7 (were +9.9 / +10.6).
+- Catalogue: 3 -> 2 points out (Big Twin -25.5, EA288 -19.0; EJ25 -14.9 back in); motorcycles -4.4 to +2.3 %; Aircooled +8.2 power. 13B 145.6 -> 153.1 kW (gate 156.4). Owner's Fireblade 124 -> 133 kW at 13,000, torque peak 110.9 N.m at 10,000. BSFC 1-4 g/kWh lower. Diesels and two-strokes unchanged.
+- Guards: four-stroke idles on target, 100 % fired; RD350 as before. ctest 91/97: `IdleStabilityRegression` now fails, Merlin and Aircooled dipping to 589 / 592 rpm after a WOT blip (gate 624 / 608) on a 0.045 bar change at the Merlin's 3,200 rpm limit: the idle catch's sensitivity, not investigated. `ShiftStyle` passes again. Not measured: the sound, real time.
+- `EngineDesign`'s single read -0.08 N.m at 9,616 rpm: the state's torque once a 240 Hz frame samples an 80 Hz single at fixed phases (7.7 bar before by luck). The absorber's mean gives 10.1 bar, as `DynoSweepHarness` (1.97 N.m at 10,000).
+
 ## 2026-11-04 — The designed sport engines' gap at their power points, term by term (nothing changed)
 
 - Branch state (x2 knock), `DynoSweepHarness --step 500` on the designed set; bmep = delivered VE x (gross imep / delivered VE) - pmep - fmep at each maker's point (interpolated). The warm-started sweep carries history: the CBR's 14,500 rpm point moves 1.2 % with a knock-limit change at 1,950 rpm.
