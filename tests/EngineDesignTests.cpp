@@ -390,6 +390,10 @@ struct Held final {
     double minRpm { 1.0e9 };
     double maxRpm { 0.0 };
     double boost { 0.0 };
+    /** The absorber's torque, window mean: at a held speed, the brake torque.
+     *  `torqueNm` is the state's last-substep value once a frame, which a
+     *  single firing at a sub-multiple of 240 Hz samples at fixed phases. */
+    double absorbedNm { 0.0 };
 };
 
 // MSVC 17.4 fails with C1001 compiling this loop optimised; the simulator it
@@ -420,6 +424,7 @@ struct Held final {
         result.rpm += state.rpm * weight;
         result.torqueNm += state.torqueNm * weight;
         result.boost += state.boostPressureRatio * weight;
+        result.absorbedNm += controls.dynamometerTorqueNm * weight;
         result.minRpm = std::min(result.minRpm, state.rpm);
         result.maxRpm = std::max(result.maxRpm, state.rpm);
     }
@@ -443,7 +448,7 @@ void inlineSevenRuns() {
 /** The designer has no size cap: a 30 L radial (refused at 20 L before
  *  0.6.0) and a 25 cc single (refused under 50 cc) both build and pull at
  *  full throttle, held by an absorber that does not swing them. The single
- *  reads 7.7 bar where real 25 cc engines make 5-10, the radial 12.7. */
+ *  reads 10.1 bar where real 25 cc engines make 5-10, the radial 10.6. */
 void enginesOfAnySizeRun() {
     EngineSpec radial;
     radial.name = "Radial Nine";
@@ -469,9 +474,13 @@ void enginesOfAnySizeRun() {
         // 12 s: the single, opened at 2 s, reaches its 9,600 rpm at 6.2 s;
         // the last 2 s of 8 caught it still climbing (9,255-9,637 rpm).
         const auto run = held(config, 1.0, dynoRpm, std::min(2.0 * std::max(1.0, litres / 2.0), stableNmPerRpm), 12.0);
-        const auto bmepBar = run.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
-        std::cout << "  " << spec.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.torqueNm
-                  << " N.m, BMEP " << bmepBar << " bar, " << run.minRpm << "-" << run.maxRpm << " rpm\n";
+        // The absorber's mean: the single fires at 80 Hz at 9,600 rpm, and
+        // the state's torque read once a 240 Hz frame gave 7.7 bar or -0.4
+        // with the same engine (journal 2026-11-04).
+        const auto bmepBar = run.absorbedNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
+        std::cout << "  " << spec.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.absorbedNm
+                  << " N.m absorbed (state " << run.torqueNm << "), BMEP " << bmepBar << " bar, " << run.minRpm
+                  << "-" << run.maxRpm << " rpm\n";
         require(run.maxRpm - run.minRpm < 100.0, spec.name + " is held at its speed, not swung about it");
         require(bmepBar > 4.0 && bmepBar < 20.0, spec.name + " pulls at full throttle");
     }
