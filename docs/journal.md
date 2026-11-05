@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-05 — 0.8.0 closing: an earlier fuel resume, the ECU in lambda, two catalogue refits under the thermally perfect gas
+
+- Idle: the post-blip dip is lean misfires at the fuel-cut resume on an empty port film. A resume led by the deceleration (rpm + 0.45 s of its rate, at most 1.55 x the idle) restores the WOT-blip gates. The early blip's minimum is chaotic in its start: `IdleStability --early-scan`, 12 starts 7 steps apart, Aircooled base 664-700, now 589-698 (1 of 12 under its 608 gate, the canonical start 635); Merlin base 639-702, now 637-702.
+- ECU map in petrol AFR (lambda x 14.7), scaled by the fuel's stoichiometry: E85 on the K20A holds lambda 0.90, fuel x 1.49, torque within 2 %, EGT +10 C. Fuel presets (`parts/fuels.yaml`, Heywood D.4) carry octane and latent heat; an octane edit re-measures the knock limit.
+- Big Twin flame ratio 0.42 -> 0.58: -8.6 / -25.5 % -> +6.9 / -5.7 %. EA288 smoke limit 47 -> 52 mg at 4,000 (44 at 4,500; 110 kW at 235 g/kWh is 54 mg): lambda 1.29 89 kW -> 96.6 kW (-12.2 %).
+- Reference gate 24/24 (EJ25 power -14.9 %, marginal). 13B 153 kW at 8,500 is a named exception (-16.8 %; port areas and VDI refuted). Marine six gate at 0.85 of MAN's 24.9 bar (21.5 measured). Knock tests run the over-advanced 2JZ on 91 RON.
+- Not measured: the sound of the refits, real time, the early-blip tail's cause.
+
 ## 2026-11-04 — The designed CBR's last 20 %: no single factor, all bounds stacked leave -12 % (nothing changed)
 
 - Same CBR, `DynoSweepHarness --step 500` (reference mode ignores `--crank-degrees`, `--coupling-us`, `--exhaust-cell-mm`, `--settle`, `--advance-offset`: bit-identical). Base 126.3 kW at 14,500, pmep 1.51, exhaust stroke 1.22 bar.
