@@ -72,6 +72,9 @@ common_rail_diesel:
   direct_spray_entrainment_time_constant_s: 0.00018
   # Per cylinder. This is the ECU's smoke/torque limiter, not an injector
   # capacity shortcut: injector_capacity remains 1.0 when hardware can meter it.
+  # At rated power the smoke limit (lambda 1.16) binds, not this curve: the
+  # EA288's 110 kW at 4,000 rpm at a typical 235 g/kWh is 54 mg a cycle. At 47
+  # mg the curve held it at lambda 1.29 and 89 kW (journal 2026-11-05).
   full_load_fuel_limit:
     - { rpm: 800, mg_per_cycle: 42 }
     - { rpm: 1750, mg_per_cycle: 52.5 }
@@ -79,6 +82,6 @@ common_rail_diesel:
     - { rpm: 2500, mg_per_cycle: 54 }
     - { rpm: 3000, mg_per_cycle: 54 }
     - { rpm: 3500, mg_per_cycle: 50 }
-    - { rpm: 4000, mg_per_cycle: 47 }
-    - { rpm: 4500, mg_per_cycle: 39 }
+    - { rpm: 4000, mg_per_cycle: 52 }
+    - { rpm: 4500, mg_per_cycle: 44 }
     - { rpm: 5000, mg_per_cycle: 30 }

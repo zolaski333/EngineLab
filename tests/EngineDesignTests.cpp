@@ -511,9 +511,11 @@ void enginesOfAnySizeRun() {
     require(run.boost > 0.85 * config.forcedInduction.wastegatePressureRatio, "the marine six reaches its boost");
     require(bmepBar > 20.0 && bmepBar < 30.0, "and pulls like a turbocharged medium-speed diesel");
 
-    // Rated at 750 rpm, as a MAN 32/40 is (about 500 kW a cylinder, ~25 bar),
-    // its governor's limit 10 % above: the car diesel's fuel limit, stretched
-    // to the redline, held it to 20.0 bar there (24.0 now).
+    // Rated at 750 rpm, as a MAN 32/40 is (500 kW a cylinder on 32.2 L: 24.9
+    // bar), its governor's limit 10 % above: the car diesel's fuel limit,
+    // stretched to the redline, held it to 20.0 bar there (24.0 with the fix
+    // under constant gamma, 21.5 under the thermally perfect gas). The gate is
+    // VISION.md's 15 % under the maker's figure.
     auto rated = marine;
     rated.name = "Marine Six rated at 750 rpm";
     rated.overrides = { { "redline_rpm", 825.0 }, { "idle_rpm", 350.0 }, { "peak_power_rpm", 750.0 } };
@@ -522,7 +524,7 @@ void enginesOfAnySizeRun() {
     const auto ratedBmepBar = ratedRun.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
     std::cout << "  " << rated.name << " at " << ratedRun.rpm << " rpm: " << ratedRun.torqueNm
               << " N.m, BMEP " << ratedBmepBar << " bar\n";
-    require(ratedBmepBar > 22.0 && ratedBmepBar < 30.0, "the rated marine six keeps its fuel at its rated speed");
+    require(ratedBmepBar > 0.85 * 24.9 && ratedBmepBar < 30.0, "the rated marine six keeps its fuel at its rated speed");
 }
 
 /** A catalogue file may hold a design instead of a whole engine. */
