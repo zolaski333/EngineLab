@@ -153,7 +153,7 @@ public:
         bool restarts {};
         /** A switch the engine takes at once (the block's regulated
             temperatures, the gearbox's shift style), in the ramp choice's
-            place. A click steps to the next option; the button shows the
+            place. A click opens the list of options; the button shows the
             current one. */
         struct Choice final {
             std::vector<juce::String> options;

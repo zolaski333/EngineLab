@@ -532,14 +532,41 @@ PartInspector::Field& PartInspector::Edit::value(juce::String label, double valu
     return field;
 }
 
+namespace {
+
+/** The current option, marked as a list that opens. */
+[[nodiscard]] juce::String choiceText(const PartInspector::Edit::Choice& choice) {
+    return choice.options[static_cast<std::size_t>(choice.index)] + juce::String::fromUTF8(" \xe2\x96\xbe");
+}
+
+} // namespace
+
 PartInspector::PartInspector() {
     for (auto* button : { &resetEdit_, &rampEdit_, &choiceEdit_ }) addChildComponent(button);
+    // A click opens the list of options (it used to step to the next one, so
+    // reaching the fourth gearbox meant three restyles of the running box).
     choiceEdit_.onClick = [this] {
         if (!edit_ || !edit_->choice || edit_->choice->options.empty()) return;
-        auto& choice = *edit_->choice;
-        choice.index = (choice.index + 1) % static_cast<int>(choice.options.size());
-        choiceEdit_.setButtonText(choice.options[static_cast<std::size_t>(choice.index)]);
-        if (onChoice) onChoice(choice.index);
+        const auto& choice = *edit_->choice;
+        juce::PopupMenu menu;
+        for (std::size_t option = 0; option < choice.options.size(); ++option)
+            menu.addItem(static_cast<int>(option) + 1, choice.options[option], true,
+                         static_cast<int>(option) == choice.index);
+        const auto key = edit_->key;
+        menu.showMenuAsync(juce::PopupMenu::Options {}
+                               .withTargetComponent(&choiceEdit_)
+                               .withMinimumWidth(choiceEdit_.getWidth()),
+            [safe = juce::Component::SafePointer<PartInspector>(this), key](int result) {
+                if (safe == nullptr || result <= 0) return;
+                // The part may have changed while the menu was open.
+                if (!safe->edit_ || safe->edit_->key != key || !safe->edit_->choice) return;
+                auto& current = *safe->edit_->choice;
+                const auto picked = result - 1;
+                if (picked >= static_cast<int>(current.options.size()) || picked == current.index) return;
+                current.index = picked;
+                safe->choiceEdit_.setButtonText(choiceText(current));
+                if (safe->onChoice) safe->onChoice(picked);
+            });
     };
     rampEdit_.setTooltip("When the engine takes the change: at the next cycle, or gradually over "
                          + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s");
@@ -646,7 +673,7 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
     if (edit_ && edit_->choice && !edit_->choice->options.empty()) {
         auto& choice = *edit_->choice;
         choice.index = std::clamp(choice.index, 0, static_cast<int>(choice.options.size()) - 1);
-        choiceEdit_.setButtonText(choice.options[static_cast<std::size_t>(choice.index)]);
+        choiceEdit_.setButtonText(choiceText(choice));
         choiceEdit_.setTooltip(choice.tooltip);
     }
     updateEditButtons();
@@ -730,7 +757,7 @@ void PartInspector::resized() {
     resetEdit_.setBounds(buttons.removeFromRight(64));
     buttons.removeFromRight(6);
     rampEdit_.setBounds(buttons.removeFromRight(92));
-    choiceEdit_.setBounds(rampEdit_.getBounds());
+    choiceEdit_.setBounds(rampEdit_.getBounds().withLeft(rampEdit_.getRight() - 128));
 }
 
 void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) const {
