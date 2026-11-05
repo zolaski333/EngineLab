@@ -6,7 +6,9 @@
 
 #include <enginelab/runtime/CruiseControl.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string_view>
@@ -128,6 +130,7 @@ void checkDriverOvertakes() {
         car.step(dt, cruise.apply(dt, car.speedMps, released, true).throttle);
         lowest = std::min(lowest, car.speedMps);
     }
+    std::cout << "let go at 60 %: lowest " << lowest * 3.6 << " km/h, after 40 s " << car.speedMps * 3.6 << " km/h\n";
     require(std::abs(car.speedMps - 100.0 / 3.6) < 0.3 / 3.6, "returns to the set speed");
     require(lowest > 98.0 / 3.6, "the integral did not wind up while overtaken");
 }
@@ -148,9 +151,56 @@ void checkEngagedWhileAccelerating() {
     require(highest < 104.0 / 3.6, "set while accelerating, it stays within 4 km/h of the set speed");
     require(std::abs(car.speedMps - 100.0 / 3.6) < 0.3 / 3.6, "and settles at the set speed");
 }
+/** The engine's speed reaching the controller carries the firing ripple, and
+    its torque lags the throttle. The cruise control used to answer that
+    ripple with a fixed-rate throttle correction and swung 0-20 % every
+    2.5 s, a K20A +-0.9 km/h at 100 km/h (owner report 2026-11-05). */
+void checkHoldsThroughRipple() {
+    CruiseControl cruise;
+    ToyCar car;
+    car.speedMps = 100.0 / 3.6;
+    const auto steady = (150.0 + 0.4 * car.speedMps * car.speedMps) / 4'000.0;
+    require(cruise.engage(car.speedMps, steady), "engages");
+    constexpr double rippleMps = 0.03;
+    constexpr double rippleHz = 80.0;
+    constexpr double torqueLagSeconds = 0.25;
+    // Each combustion cycle's torque varies by up to +-15 % (a fixed
+    // pseudo-random sequence, so the test is repeatable).
+    constexpr double cycleSeconds = 1.0 / 40.0;
+    constexpr double cycleVariation = 0.15;
+    std::uint32_t seed = 12'345U;
+    double cycleFactor = 1.0;
+    double nextCycle = 0.0;
+    double delivered = steady;
+    double lowestThrottle = 1.0;
+    double highestThrottle = 0.0;
+    double worstErrorMps = 0.0;
+    for (int index = 0; index < static_cast<int>(40.0 / dt); ++index) {
+        const auto time = index * dt;
+        if (time >= nextCycle) {
+            seed = seed * 1'664'525U + 1'013'904'223U;
+            cycleFactor = 1.0 + cycleVariation * (2.0 * (seed >> 8U) / 16'777'216.0 - 1.0);
+            nextCycle += cycleSeconds;
+        }
+        const auto measured = car.speedMps + rippleMps * std::sin(2.0 * 3.14159265358979 * rippleHz * time);
+        const auto throttle = cruise.apply(dt, measured, released, true).throttle;
+        delivered += (throttle - delivered) * dt / torqueLagSeconds;
+        car.step(dt, delivered * cycleFactor);
+        if (time > 20.0) {
+            lowestThrottle = std::min(lowestThrottle, throttle);
+            highestThrottle = std::max(highestThrottle, throttle);
+            worstErrorMps = std::max(worstErrorMps, std::abs(car.speedMps - 100.0 / 3.6));
+        }
+    }
+    std::cout << "held through a firing ripple: throttle " << lowestThrottle << "-" << highestThrottle
+              << ", worst error " << worstErrorMps * 3.6 << " km/h\n";
+    require(highestThrottle - lowestThrottle < 0.03, "the firing ripple does not swing the throttle");
+    require(worstErrorMps < 0.2 / 3.6, "holds 100 km/h within 0.2 km/h through the ripple");
+}
 } // namespace
 
 int main() {
+    checkHoldsThroughRipple();
     checkEngagedWhileAccelerating();
     checkHoldsSpeed();
     checkBumpless();

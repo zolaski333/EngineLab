@@ -33,6 +33,12 @@ private:
     double setSpeedMps_ { 0.0 };
     double integral_ { 0.0 };
     double previousSpeedMps_ { 0.0 };
+    double filteredAccelerationMps2_ { 0.0 };
+    /** From the engagement until the vehicle stops gaining (or losing). */
+    bool settling_ { false };
+    double settlingSeconds_ { 0.0 };
+    /** The sign of the acceleration the settling counters; 0 before it is known. */
+    double settlingSign_ { 0.0 };
 };
 
 } // namespace enginelab

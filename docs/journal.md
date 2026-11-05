@@ -5,6 +5,23 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-05 — 0.8.0's CI: IdleStabilityRegression fails on Linux, the flat-6's early blip
+
+- CI (Linux GCC 13, CI and Release jobs): "Aircooled-like 3.6 Flat-6: dips toward stall after a WOT blip 6 s after the start (588 rpm)", gate 608 (0.78 x 780). Reproduced in an Ubuntu 24.04 container; Windows reads 635 on the same start. Both Windows jobs passed.
+- Not a Linux defect: `--early-scan Aircooled 12` on Windows reads 635 589 640 688-698, so GCC lands on the bad start that Windows reaches one step later (known since the resume change above).
+- `--trace --early --extra-steps 7`: the dip comes 4 s after the lift-off, not at the resume. After it, port vapour runs the charge rich (phi 1.25-1.7) for ~3 s. The 2 s post-resume learning hold ends inside that, so the trim falls from 0.68 to 0.61. Then the idle valve opens as the speed sags (air 547 -> 673 mg), the fuel lags, phi drops to 0.90, misfire hits 16 % and the speed 666 rpm.
+- Refuted: the hold at 3 s. The flat-6's 12 starts read 715-722, but the LS3 falls to 495-569 (gate 562), the Big Twin to 366-674 (593) and the 13B to 439-710 (624). The other engines are unchanged.
+- Kept, on the owner's choice: the flat-6 is a named exception of the early-blip gate (`knownEarlyBlipDipAllow`), held to 0.70 x idle (546) instead of 0.78. Open: fuel lags air while the idle valve opens after the resume.
+
+## 2026-11-05 — the cruise control hunted on most engines (owner report)
+
+- `DriveScenarioHarness --builtin cruise` (set at 100 km/h during a 60 % pull) and a gentle set after lifting to 15 %, 7 engines. Old controller, throttle swing once settled (>15 s): K20A 0-20 %, LS3 0-22 %, Big Twin 1-27 %, and after a gentle set CP2 0-19 %, Hayabusa 3-18 %, LS3 0-22 %, RD350 0-18 % (+-0.9-1.5 km/h, period ~2.5 s).
+- Cause: a fixed 0.5/s throttle correction whenever the speed was 0.3 km/h off and the raw frame-to-frame acceleration pointed away; the combustion-to-combustion speed ripple crosses that all the time. Without it the PI alone holds every engine (swing <= 0.12 %).
+- Kept: that correction only from the set until the vehicle stops gaining (filtered acceleration, 0.3 s), ended by a pedal overtake; the integral holds while the speed returns faster than 0.1 m/s2. Kp 0.15 refuted: the Hayabusa hunts at small openings.
+- Cost: a set during a hard pull now peaks 2.9-3.6 km/h over (K20A, LS3, Big Twin) before settling in ~10 s; `--automatic 1` (why the correction was added, 2026-10-15) K20A, LS3, CP2, Big Twin 1.4-3.6 km/h, swing <= 0.12 %. New ctest `CruiseControlHold` (K20A, swing < 2 %) fails on the old controller (20 %).
+- The toy car of `CruiseControlTests` does not hunt with the old controller, even with an 80 Hz ripple, a 0.25 s torque lag and +-15 % cycle-to-cycle torque: only the real engine shows it. Not checked in the app by hand.
+- Seen in passing, not investigated: the 2JZ never moves off in either drive scenario (top speed 1 km/h), before and after.
+
 ## 2026-11-05 — 0.8.0's sound against 0.7.8, each catalogue engine at one steady point
 
 - `AudioRenderHarness --catalogue-filter <engine>` on 0.8.0 and on 0.7.8 (+10 commits, catalogue identical): its governed dyno at 72 % throttle, 4 s, default voicing.

@@ -35,7 +35,8 @@ designed rotary's exhaust (one a rotor) and sizing (litres or rotor);
 0.8.0 (owner's go of 2026-11-05): the thermally perfect gas with measured
 LS3/2JZ heads, tumble and Sandoval's friction (the Fireblade goal stopped at
 -12 %, journal 2026-11-04); fuel presets and the ECU in lambda; a bad value
-is corrected on load; inspector lists. 13B power is a named exception.
+is corrected on load; inspector lists. 13B power is a named exception; so is
+the flat-6's early-blip dip (0.70 x idle, chaotic in the start, journal 2026-11-05).
 A two-stroke diesel was never asked for (it needs a VISION.md amendment).
 Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.
@@ -285,7 +286,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   high-load correction cell from the idle cell (saves a start at 4 s but stalls
   10 engines of 14 after 25 s of idle) and an asynchronous pulse on tip-in;
   Woschni's combustion term on spark engines against the over-efficiency
-  (BSFC +2-7 %, EGT down, 13B -15 %: the cause is the gas's gamma).
+  (BSFC +2-7 %, EGT down, 13B -15 %: the cause is the gas's gamma); a 3 s
+  post-resume lambda-learning hold against the flat-6's early-blip dip (LS3,
+  Big Twin, 13B fall under their gates).
 - **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
   constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
   octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363

@@ -891,9 +891,14 @@ bypasses it: the bench, not a driver, holds the engine.
 The cruise control (`CruiseControl`) is a driver-side device: a PI on road
 speed (0.08 per m/s, integral 0.03) whose throttle joins the driver's pedal,
 the higher one winning, before the arbiter. It engages from 30 km/h at the
-throttle in use (no surge); past the set speed and still gaining, or under it
-and still losing, that throttle moves at 0.5/s, so a set pressed while
-accelerating hard overshoots by a few km/h only. The brake, the clutch,
+throttle in use (no surge). Set while accelerating (or slowing), the integral
+then moves against the acceleration (0.6 per m/s2, filtered over 0.3 s) until
+the vehicle stops gaining or the driver's pedal overtakes: a set pressed
+during a hard pull peaks about 3 km/h over. Afterwards the integral holds
+while the speed is already returning faster than 0.1 m/s2, so a release of
+the pedal does not carry it past the set speed. (It once corrected at a fixed
+0.5/s whenever 0.3 km/h off: the firing ripple made it hunt, journal
+2026-11-05.) The brake, the clutch,
 neutral or falling under 0.6 × the set speed cancel it. The runtime merges it once per frame, so
 the driveline and the arbiter see the same inputs.
 

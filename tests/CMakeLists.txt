@@ -639,6 +639,15 @@ add_executable(EngineLabCruiseControlTests CruiseControlTests.cpp)
 target_link_libraries(EngineLabCruiseControlTests PRIVATE EngineLab::Runtime)
 enginelab_set_warnings(EngineLabCruiseControlTests)
 add_test(NAME EngineLab.CruiseControl COMMAND EngineLabCruiseControlTests)
+# The real engine and driveline: the toy car of CruiseControlTests has no
+# combustion-to-combustion torque, and the hunting the owner reported
+# (2026-11-05: throttle 0-20 % every 2.5 s, a K20A at 100 km/h) only showed
+# on it.
+if(TARGET EngineLabDriveScenarioHarness)
+    add_test(NAME EngineLab.CruiseControlHold
+        COMMAND EngineLabDriveScenarioHarness --builtin cruise --engine K20A
+            --max-cruise-throttle-swing 0.02)
+endif()
 
 add_executable(EngineLabShiftScheduleTests ShiftScheduleTests.cpp)
 target_link_libraries(EngineLabShiftScheduleTests PRIVATE

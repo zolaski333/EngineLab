@@ -14,6 +14,8 @@
 //   options: --shift-style manual|sequential|dual_clutch --quickshifter 0|1
 //            --blipper 0|1 --automatic 0|1 --duration <s> --list
 //            --catalog-root <dir> (a folder holding engines/ and parts/)
+//            --max-cruise-throttle-swing <0-1> fails the run when the cruise
+//              control's throttle swings more than this once settled (15 s)
 //
 // Scenario file (every event key optional except "t"):
 //   { "engine": "CP2 MT-07", "duration_s": 30,
@@ -99,6 +101,7 @@ struct Options final {
     std::optional<bool> automatic;
     std::optional<double> dualClutchRetardDegrees;
     std::optional<double> durationSeconds;
+    std::optional<double> maxCruiseThrottleSwing;
     bool list { false };
 };
 
@@ -132,6 +135,7 @@ Options parseOptions(int argc, char** argv) {
         else if (argument == "--automatic") options.automatic = parseFlag(next());
         else if (argument == "--dct-retard") options.dualClutchRetardDegrees = std::stod(next());
         else if (argument == "--duration") options.durationSeconds = std::stod(next());
+        else if (argument == "--max-cruise-throttle-swing") options.maxCruiseThrottleSwing = std::stod(next());
         else if (argument == "--list") options.list = true;
         else fail("unknown argument '" + argument + "'");
     }
@@ -368,6 +372,8 @@ int run(const Options& options) {
     double cruiseErrorSum = 0.0;
     double cruiseErrorMaximum = 0.0;
     std::size_t cruiseErrorSamples = 0;
+    double cruiseThrottleLowest = 1.0;
+    double cruiseThrottleHighest = 0.0;
 
     std::vector<GearRatioSample> gearSamples(static_cast<std::size_t>(std::max(gearCount, 0)));
     std::array<std::size_t, 3> authorityTicks {};
@@ -434,6 +440,11 @@ int run(const Options& options) {
             cruiseErrorSum += std::abs(error);
             cruiseErrorMaximum = std::max(cruiseErrorMaximum, std::abs(error));
             ++cruiseErrorSamples;
+        }
+        // A hunting controller swings the throttle long after it settled.
+        if (cruise.engaged() && now - cruiseEngagedAt > 15.0) {
+            cruiseThrottleLowest = std::min(cruiseThrottleLowest, inputs.throttle);
+            cruiseThrottleHighest = std::max(cruiseThrottleHighest, inputs.throttle);
         }
         const auto step = enginelab::advanceVehicle(vehicle->driveline, stepSeconds, previous, 0.0, inputs);
         enginelab::EngineControls controls;
@@ -546,6 +557,22 @@ int run(const Options& options) {
                 cruiseErrorSum / static_cast<double>(cruiseErrorSamples) * 3.6, cruiseErrorMaximum * 3.6);
         if (cruiseCancelledAt >= 0.0) std::printf("cancelled at %.2f s\n", cruiseCancelledAt);
         else std::printf("still engaged\n");
+    }
+    const auto cruiseHeld = cruiseThrottleHighest >= cruiseThrottleLowest;
+    const auto cruiseSwing = cruiseThrottleHighest - cruiseThrottleLowest;
+    if (cruiseHeld)
+        std::printf("cruise throttle after 15 s: %.4f-%.4f (swing %.4f)\n", cruiseThrottleLowest,
+            cruiseThrottleHighest, cruiseSwing);
+    if (options.maxCruiseThrottleSwing) {
+        if (!cruiseHeld) {
+            std::printf("FAIL: the cruise control did not hold 15 s\n");
+            return EXIT_FAILURE;
+        }
+        if (cruiseSwing > *options.maxCruiseThrottleSwing) {
+            std::printf("FAIL: the cruise control's throttle swings %.4f, more than %.4f\n", cruiseSwing,
+                *options.maxCruiseThrottleSwing);
+            return EXIT_FAILURE;
+        }
     }
     std::printf("active-limit seconds:");
     for (std::size_t bit = 0; bit < activeLimitNames.size(); ++bit)

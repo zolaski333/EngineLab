@@ -7,6 +7,14 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The cruise control no longer hunts.** On most engines it swung the
+  throttle between 0 and 20 % every couple of seconds, the engine speed
+  rising and falling around the set speed. It now settles and holds; set
+  during a hard pull, it runs up to about 3 km/h past the set speed before
+  settling.
+
 ## [0.8.0] — 2026-11-05
 
 ### Added
