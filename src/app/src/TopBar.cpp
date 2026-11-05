@@ -93,9 +93,11 @@ TopBar::TopBar() {
     exhaustButton.setIcon(svgIcon("M3 12h4l3-7 4 14 3-7h4"));
     ecuButton.setIcon(svgIcon("M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"
                               "M4 10h16M10 4v16"));
+    fuelButton.setIcon(svgIcon("M12 3c-3 4-6 7.5-6 11a6 6 0 0 0 12 0c0-3.5-3-7-6-11z"));
     audioButton.setIcon(svgIcon("M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"));
     moreButton.setIcon(moreIcon());
     exhaustButton.setTooltip(utf8("EXHAUST PRO: design the exhaust graph"));
+    fuelButton.setTooltip(utf8("Fuel: the fuel in the tank, its octane (or cetane), heating value, mixture and flame"));
     ecuButton.setTooltip(utf8("ECU tuner: fuel, ignition and boost tables"));
     audioButton.setTooltip(utf8("AUDIO HQ: mix, voicing and physical calibration"));
     moreButton.setTooltip(utf8("Import, export, JSON editor, dyno CSV, key bindings"));
@@ -103,7 +105,7 @@ TopBar::TopBar() {
                               "active limits to a CSV file in Documents/EngineLab logs (key 9)"));
     abButton.setTooltip(utf8("A/B: two versions of this engine. Switch to B, change it, then switch back and "
                              "forth to hear the difference; each keeps its own edits (key 7)"));
-    for (auto* button : { &abButton, &logButton, &exhaustButton, &ecuButton, &audioButton, &moreButton })
+    for (auto* button : { &abButton, &logButton, &exhaustButton, &fuelButton, &ecuButton, &audioButton, &moreButton })
         addAndMakeVisible(*button);
 }
 
@@ -211,7 +213,7 @@ void TopBar::resized() {
 
     auto tools = area;
     moreButton.setBounds(tools.removeFromRight(36).withSizeKeepingCentre(36, 34));
-    for (auto* button : { &audioButton, &ecuButton, &exhaustButton, &logButton, &abButton }) {
+    for (auto* button : { &audioButton, &ecuButton, &fuelButton, &exhaustButton, &logButton, &abButton }) {
         tools.removeFromRight(6);
         const auto width = button->idealWidth();
         button->setBounds(tools.removeFromRight(width).withSizeKeepingCentre(width, 34));

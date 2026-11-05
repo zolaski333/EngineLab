@@ -5,6 +5,7 @@
 #include <enginelab/app/ControlPanel.hpp>
 #include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/EcuTunerWindow.hpp>
+#include <enginelab/app/FuelWindow.hpp>
 #include <enginelab/app/EngineViewport.hpp>
 #include <enginelab/app/EngineDesignerWindow.hpp>
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
@@ -157,6 +158,9 @@ private:
     void showAudioWorkshop();
     void showEcuTuner();
     void showExhaustDesigner();
+    void showFuelWindow();
+    /** A line in the 3-D view's inspector and in the Fuel window. */
+    void setEditStatus(const juce::String&);
     void showMoreMenu();
     /** Repaints every panel after the display units changed. */
     void unitsChanged();
@@ -283,6 +287,8 @@ private:
     std::unique_ptr<EngineDesignerWindow> engineDesignerWindow_;
     std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
+    std::unique_ptr<FuelWindow> fuelWindow_;
+    std::vector<FuelPreset> fuelPresets_;
     std::unique_ptr<AudioWorkshopWindow> audioWorkshopWindow_;
     std::unique_ptr<scripting::EngineScriptHotReloader> scriptReloader_;
     std::uint64_t scriptRevision_ {};

@@ -154,8 +154,8 @@ TelemetryPanel::TelemetryPanel(const DashboardModel& model) : model_(model) {
         if (onShowInjectors) onShowInjectors();
     };
     addAndMakeVisible(showInjectors_);
-    showFuel_.setTooltip("Selects cylinder 1's combustion chamber in the 3-D view: the fuel, its octane and "
-                         "its properties, listed or edited.");
+    showFuel_.setTooltip("Opens the Fuel window: the fuel in the tank, its octane and its properties, listed "
+                         "or edited.");
     showFuel_.onClick = [this] {
         if (onShowFuel) onShowFuel();
     };

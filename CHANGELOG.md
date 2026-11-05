@@ -11,8 +11,9 @@ file formats, always with an in-memory migration).
 
 ### Added
 
-- **Fuels.** Click the combustion chamber (or *Fuel* in the Telemetry tab's
-  fuel-injection section): pick a fuel from the list (95 and 98 RON, E10,
+- **Fuels.** The top bar's *Fuel* button (beside *Exhaust* and *ECU*)
+  opens the Fuel window; the combustion chamber in the 3-D view edits the
+  same fuel. Pick a fuel from the list (95 and 98 RON, E10,
   E85, E100, methanol, avgas 100LL; EN 590 for a diesel) or edit its octane
   (cetane on a diesel), heating value, stoichiometric ratio, latent heat and
   laminar flame speed. The engine restarts on the new fuel. An engine whose

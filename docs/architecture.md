@@ -710,8 +710,11 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   octane, latent heat) and the octane (cetane on a diesel), heating value,
   stoichiometric ratio (the oxygen a mole needs follows it), latent heat
   and laminar flame speed; a restart, and an edited fuel is named
-  "(edited)". The section's *Fuel* button selects cylinder 1's chamber
-  (`EngineViewport::showFuel`). A new octane on an engine with a knock-limit
+  "(edited)". The same fields (`app/FuelEditing.hpp`, shared) are in the
+  *Fuel* window (`FuelWindow`), opened by the top bar's *Fuel* button and
+  by the Telemetry section's: its edits wait for *Apply*, a field not
+  edited keeps the fuel's exact value, and it shows the knock re-measure's
+  status. A new octane on an engine with a knock-limit
   curve has `MainComponent` run `calibrateKnockLimit` on a thread, the engine
   paused, then take the new curve live;
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its

@@ -1,4 +1,5 @@
 #include <enginelab/app/EngineViewport.hpp>
+#include <enginelab/app/FuelEditing.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
@@ -1761,21 +1762,17 @@ void EngineViewport::updateInspector() {
         PartInspector::Edit result;
         result.key = std::uint64_t { 13 } << 60U;
         result.heading = "FUEL";
-        if (diesel)
-            result.value("Cetane number", fuel.cetaneNumber, "", 0, 1.0, 0.5, 30.0, 80.0);
-        else
-            result.value("Octane (RON)", config.octaneRating, "", 1, 1.0, 0.5, 70.0, 130.0);
-        result.value("Heating value", fuel.lowerHeatingValueMjPerKg, " MJ/kg", 1, 0.5, 0.1, 10.0, 60.0);
-        result.value("Stoichiometric AFR", fuel.stoichiometricAirFuelRatio, "", 2, 0.1, 0.01, 5.0, 25.0);
-        result.value("Latent heat", config.injection.latentHeatKjPerKg, " kJ/kg", 0, 10.0, 1.0, 10.0, 1'200.0);
-        if (!diesel)
-            result.value("Laminar flame speed", fuel.laminarFlameSpeedMps, " m/s", 3, 0.01, 0.002, 0.05, 2.0);
+        const auto current = fuel_editing::values(config);
+        const auto fields = fuel_editing::fields(diesel);
+        for (std::size_t index = 0; index < fields.size(); ++index) {
+            const auto& field = fields[index];
+            result.value(field.label, current[index], field.unit, field.decimals, field.step, field.fineStep,
+                         field.minimum, field.maximum);
+        }
         result.restarts = true;
         // The listed fuels of this engine's kind; the engine's own is added
         // when it is none of them.
-        std::vector<FuelPreset> offered;
-        for (const auto& preset : fuelPresets_)
-            if (preset.diesel() == diesel) offered.push_back(preset);
+        auto offered = fuel_editing::presetsFor(fuelPresets_, diesel);
         PartInspector::Edit::Choice choice;
         choice.tooltip = "The fuel in the tank: its octane, heating value, mixture and flame. The engine restarts.";
         choice.index = -1;
@@ -1789,47 +1786,14 @@ void EngineViewport::updateInspector() {
         }
         if (!offered.empty()) {
             result.choice = std::move(choice);
-            partChoice_ = [offered = std::move(offered), diesel](EngineConfig& edited, int index) {
+            partChoice_ = [offered = std::move(offered)](EngineConfig& edited, int index) {
                 if (index < 0 || static_cast<std::size_t>(index) >= offered.size()) return;
-                const auto& preset = offered[static_cast<std::size_t>(index)];
-                edited.fuelProperties = preset.properties;
-                if (!diesel && preset.octaneRating > 0.0) edited.octaneRating = preset.octaneRating;
-                if (preset.latentHeatKjPerKg > 0.0) edited.injection.latentHeatKjPerKg = preset.latentHeatKjPerKg;
+                fuel_editing::applyPreset(edited, offered[static_cast<std::size_t>(index)]);
             };
         }
-        result.note = diesel
-            ? "A higher cetane number lights sooner after injection, a softer premixed burn. The ECU's smoke limit "
-              "follows the stoichiometric ratio. The engine restarts to take them."
-            : "The knock model reads the octane: lower knocks sooner, and the knock control pulls the spark back. "
-              "The ECU's mixture map is in lambda, so another stoichiometric ratio (E85, methanol) is metered "
-              "right; the oxygen the fuel needs follows it. The engine restarts to take them.";
-        partEditor_ = [diesel](EngineConfig& edited, const std::vector<double>& values) {
-            const auto count = diesel ? 4U : 5U;
-            if (values.size() < count) return std::string("The fuel changed meanwhile.");
-            auto& fuel = edited.fuelProperties;
-            const auto before = fuel;
-            const auto octaneBefore = edited.octaneRating;
-            const auto latentBefore = edited.injection.latentHeatKjPerKg;
-            if (diesel) fuel.cetaneNumber = values[0];
-            else edited.octaneRating = values[0];
-            fuel.lowerHeatingValueMjPerKg = values[1];
-            // The oxygen a mole of fuel needs is what sets its stoichiometric
-            // ratio: they move together, or the engine refuses the fuel.
-            if (values[2] != fuel.stoichiometricAirFuelRatio && fuel.stoichiometricAirFuelRatio > 0.0)
-                fuel.oxygenMolesPerFuelMole *= values[2] / fuel.stoichiometricAirFuelRatio;
-            fuel.stoichiometricAirFuelRatio = values[2];
-            edited.injection.latentHeatKjPerKg = values[3];
-            if (!diesel) fuel.laminarFlameSpeedMps = values[4];
-            const auto changed = fuel.cetaneNumber != before.cetaneNumber
-                || fuel.lowerHeatingValueMjPerKg != before.lowerHeatingValueMjPerKg
-                || fuel.stoichiometricAirFuelRatio != before.stoichiometricAirFuelRatio
-                || fuel.laminarFlameSpeedMps != before.laminarFlameSpeedMps
-                || edited.octaneRating != octaneBefore || edited.injection.latentHeatKjPerKg != latentBefore;
-            // A listed fuel edited is no longer that fuel.
-            constexpr std::string_view editedSuffix { " (edited)" };
-            if (changed && !fuel.name.ends_with(editedSuffix) && fuel.name.size() + editedSuffix.size() <= 128U)
-                fuel.name += editedSuffix;
-            return std::string();
+        result.note = fuel_editing::note(diesel);
+        partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+            return fuel_editing::apply(edited, values);
         };
         return result;
     };

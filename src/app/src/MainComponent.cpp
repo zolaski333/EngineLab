@@ -106,6 +106,7 @@ MainComponent::MainComponent() {
     topBar_.abButton.onClick = [this] { switchAbVersion(); };
     topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
+    topBar_.fuelButton.onClick = [this] { showFuelWindow(); };
     topBar_.audioButton.onClick = [this] { showAudioWorkshop(); };
     topBar_.moreButton.onClick = [this] { showMoreMenu(); };
     topBar_.logButton.onClick = [this] { toggleDatalog(); };
@@ -175,12 +176,13 @@ MainComponent::MainComponent() {
     dyno.onExportCsv = [this] { exportDynoCsv(); };
     side_.audio.onExhaustPreset = [this](int presetIndex) { applyExhaustPreset(presetIndex); };
     side_.onShowInjectors = [this] { (void)viewport_.showInjectors(); };
-    side_.onShowFuel = [this] { (void)viewport_.showFuel(); };
+    side_.onShowFuel = [this] { showFuelWindow(); };
     try {
-        viewport_.setFuelPresets(loadFuelPresets(catalogRoot_));
+        fuelPresets_ = loadFuelPresets(catalogRoot_);
     } catch (const std::exception&) {
-        // A malformed parts/fuels.yaml: the inspector edits the engine's own fuel only.
+        // A malformed parts/fuels.yaml: the engine's own fuel is edited only.
     }
+    viewport_.setFuelPresets(fuelPresets_);
     viewport_.setWheelModifierCheck([this] { return wheelModifierDown(); });
     viewport_.setGasFieldSource([this](double crankAngleDegrees, GasFieldSnapshot& field) {
         if (!runtime_) return false;
@@ -226,6 +228,7 @@ MainComponent::~MainComponent() {
     stopEngineScriptWatcher();
     audioWorkshopWindow_.reset();
     exhaustDesignerWindow_.reset();
+    fuelWindow_.reset();
     ecuTunerWindow_.reset();
     shutdownAudio();
     if (runtime_) runtime_->stop();
@@ -517,7 +520,7 @@ void MainComponent::remeasureKnockLimit(const EngineConfig& config) {
     // The sweep is a dyno run of its own: it does not share the computer
     // with the running engine.
     runtime_->setPaused(true);
-    viewport_.setEditStatus(utf8("Finding the knock-limited spark on ") + juce::String(config.octaneRating, 1)
+    setEditStatus(utf8("Finding the knock-limited spark on ") + juce::String(config.octaneRating, 1)
                             + utf8(" RON on the dyno; the engine is paused meanwhile (some seconds)..."));
     cancelKnockProbe_.store(false);
     auto safe = juce::Component::SafePointer<MainComponent>(this);
@@ -540,7 +543,7 @@ void MainComponent::knockLimitMeasured(double octaneRating, std::string engineNa
     // Another engine or another octane since: this curve is not theirs.
     if (config_.name != engineName || config_.octaneRating != octaneRating) return;
     if (!measured.error.empty()) {
-        viewport_.setEditStatus(utf8("The knock limit could not be measured again (") + utf8(measured.error.c_str())
+        setEditStatus(utf8("The knock limit could not be measured again (") + utf8(measured.error.c_str())
                                 + utf8("): the knock control alone holds the spark."));
         auto unlimited = config_;
         unlimited.ignition.knockLimitCurve.clear();
@@ -549,7 +552,7 @@ void MainComponent::knockLimitMeasured(double octaneRating, std::string engineNa
     }
     auto limited = config_;
     limited.ignition.knockLimitCurve = std::move(measured.curve);
-    if (applyEngineEdit(limited, 0.0)) viewport_.setEditStatus({});
+    if (applyEngineEdit(limited, 0.0)) setEditStatus({});
 }
 
 bool MainComponent::applyEngineEditGroups(const EngineConfig& edited, double rampSeconds) {
@@ -1069,6 +1072,25 @@ void MainComponent::showAudioWorkshop() {
     }
     audioWorkshopWindow_->setVisible(true);
     audioWorkshopWindow_->toFront(true);
+}
+
+void MainComponent::showFuelWindow() {
+    if (!runtime_) return;
+    if (!fuelWindow_) {
+        auto safe = juce::Component::SafePointer<MainComponent>(this);
+        fuelWindow_ = std::make_unique<FuelWindow>(config_, fuelPresets_, [safe](const EngineConfig& edited) {
+            return safe && safe->applyEngineEdit(edited);
+        });
+    }
+    fuelWindow_->setConfig(config_);
+    fuelWindow_->setLocked(runtime_->dynoRunning());
+    fuelWindow_->setVisible(true);
+    fuelWindow_->toFront(true);
+}
+
+void MainComponent::setEditStatus(const juce::String& status) {
+    viewport_.setEditStatus(status);
+    if (fuelWindow_) fuelWindow_->setStatus(status);
 }
 
 void MainComponent::showExhaustDesigner() {
@@ -1897,6 +1919,10 @@ void MainComponent::timerCallback() {
     if (ecuTunerWindow_) ecuTunerWindow_->setSessionLocked(running);
     topBar_.ecuButton.setEnabled(!running);
     topBar_.exhaustButton.setEnabled(!running);
+    if (fuelWindow_ && fuelWindow_->isVisible()) {
+        fuelWindow_->setLocked(running);
+        fuelWindow_->setConfig(config_);
+    }
     updateModified();
 
     // Each panel repaints only its own area; the static chrome does not

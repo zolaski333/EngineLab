@@ -384,12 +384,16 @@ endif()
 add_executable(EngineLabAudioWorkshopTests
     AudioWorkshopTests.cpp
     "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp"
-    "${CMAKE_SOURCE_DIR}/src/app/src/ExhaustDesignerWindow.cpp")
+    "${CMAKE_SOURCE_DIR}/src/app/src/ExhaustDesignerWindow.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/FuelEditing.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/FuelWindow.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/Theme.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/Widgets.cpp")
 target_include_directories(EngineLabAudioWorkshopTests PRIVATE
     "${CMAKE_SOURCE_DIR}/src/app/include")
 target_link_libraries(EngineLabAudioWorkshopTests PRIVATE
     EngineLab::Audio EngineLab::Catalog
-    EngineLabJuce
+    EngineLabJuce EngineLabFonts
     juce::juce_recommended_config_flags)
 target_compile_definitions(EngineLabAudioWorkshopTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}"

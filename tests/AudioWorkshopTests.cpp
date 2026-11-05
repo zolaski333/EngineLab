@@ -1,5 +1,6 @@
 #include <enginelab/app/AudioWorkshopWindow.hpp>
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
+#include <enginelab/app/FuelWindow.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -7,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <iostream>
 #include <string_view>
 #include <vector>
@@ -417,6 +419,78 @@ int main() {
     const auto snapshot = designerContent->createComponentSnapshot(
         designerContent->getLocalBounds());
     require(snapshot.isValid(), "exhaust designer paints a rotary");
+
+    // The Fuel window (top bar): a listed fuel goes in the tank as listed,
+    // an edited value renames it, and a diesel shows a cetane number.
+    {
+        const auto presets = enginelab::loadFuelPresets(ENGINELAB_CATALOG_ROOT);
+        const auto petrol = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [](const auto& entry) { return entry.config.fuel == enginelab::FuelType::gasoline; });
+        require(petrol != catalog.entries.end(), "catalog has a petrol engine");
+        std::optional<enginelab::EngineConfig> applied;
+        enginelab::FuelWindow fuelWindow(petrol->config, presets, [&applied](const enginelab::EngineConfig& edited) {
+            applied = edited;
+            return true;
+        });
+        auto* fuelContent = fuelWindow.getContentComponent();
+        require(fuelContent != nullptr && !fuelContent->getBounds().isEmpty(), "fuel window lays out");
+        juce::ComboBox* fuelBox = nullptr;
+        juce::Button* applyButton = nullptr;
+        std::vector<juce::Slider*> fuelFields;
+        for (auto* child : fuelContent->getChildren()) {
+            if (auto* box = dynamic_cast<juce::ComboBox*>(child)) fuelBox = box;
+            if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == "Apply")
+                applyButton = button;
+            if (auto* slider = dynamic_cast<juce::Slider*>(child)) fuelFields.push_back(slider);
+        }
+        require(fuelBox != nullptr && applyButton != nullptr && fuelFields.size() == 5U,
+                "fuel window shows a fuel list, five petrol fields and Apply");
+        require(!applyButton->isEnabled(), "nothing to apply before an edit");
+        const auto snapshotFile = juce::SystemStats::getEnvironmentVariable("ENGINELAB_FUEL_SNAPSHOT", {});
+        if (snapshotFile.isNotEmpty()) {
+            juce::FileOutputStream stream { juce::File(snapshotFile) };
+            stream.setPosition(0);
+            stream.truncate();
+            juce::PNGImageFormat().writeImageToStream(
+                fuelContent->createComponentSnapshot(fuelContent->getLocalBounds()), stream);
+        }
+        // Another listed petrol fuel than the engine's.
+        auto other = presets.end();
+        for (auto preset = presets.begin(); preset != presets.end(); ++preset)
+            if (!preset->diesel() && preset->properties.name != petrol->config.fuelProperties.name
+                && preset->octaneRating > 0.0 && preset->octaneRating != petrol->config.octaneRating) {
+                other = preset;
+                break;
+            }
+        require(other != presets.end(), "fuels.yaml lists another petrol fuel");
+        auto otherId = 0;
+        for (int index = 0; index < fuelBox->getNumItems(); ++index)
+            if (fuelBox->getItemText(index) == juce::String::fromUTF8(other->properties.name.c_str()))
+                otherId = fuelBox->getItemId(index);
+        require(otherId != 0, "the fuel list offers it");
+        fuelBox->setSelectedId(otherId, juce::sendNotificationSync);
+        require(applyButton->isEnabled(), "a chosen fuel can be applied");
+        require(near(fuelFields.front()->getValue(), other->octaneRating), "the fields show the chosen fuel");
+        applyButton->onClick();
+        require(applied.has_value() && near(applied->octaneRating, other->octaneRating)
+                    && applied->fuelProperties.name == other->properties.name,
+                "Apply puts the listed fuel in the tank, unrenamed");
+        fuelWindow.setConfig(*applied);
+        fuelFields.front()->setValue(other->octaneRating + 2.0, juce::sendNotificationSync);
+        applyButton->onClick();
+        require(near(applied->octaneRating, other->octaneRating + 2.0)
+                    && applied->fuelProperties.name == other->properties.name + " (edited)",
+                "an edited value is applied and renames the fuel");
+
+        const auto diesel = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [](const auto& entry) { return entry.config.fuel == enginelab::FuelType::diesel; });
+        require(diesel != catalog.entries.end(), "catalog has a diesel");
+        fuelWindow.setConfig(diesel->config);
+        auto dieselFields = 0;
+        for (auto* child : fuelContent->getChildren())
+            if (dynamic_cast<juce::Slider*>(child) != nullptr) ++dieselFields;
+        require(dieselFields == 4, "a diesel's fuel has four fields, a cetane number first");
+    }
 
     std::cout
         << "Audio workshop: layout, truthful availability, physical A/B, "
