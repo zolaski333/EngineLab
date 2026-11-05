@@ -721,6 +721,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
 }
 
 EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noexcept {
+    return decode(text, nullptr);
+}
+
+EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
+                                                std::vector<std::string>* repairs) const noexcept {
     try {
         const auto document = Json::parse(text);
         const auto& engine = document.at("engine");
@@ -1306,6 +1311,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.audioVoicingKey = voicing->value("key", std::string {});
         }
         normaliseEngineConfig(config);
+        if (repairs != nullptr) *repairs = repairEngineConfigRanges(config);
         if (const auto error = validateEngineConfig(config)) return { std::nullopt, *error };
         return { std::move(config), {} };
     } catch (const std::exception& error) { return { std::nullopt, error.what() }; }

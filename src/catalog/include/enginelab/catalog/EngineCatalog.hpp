@@ -41,7 +41,11 @@ struct EngineCatalogEntry final {
 
 struct EngineCatalogLoadResult final {
     std::vector<EngineCatalogEntry> entries;
+    /** One line per file that could not be read: that engine is missing. */
     std::vector<std::string> errors;
+    /** One line per value clamped into its range ("file: what"); the
+     *  shipped catalogue has none. */
+    std::vector<std::string> warnings;
 };
 
 enum class EngineCatalogSelectionStatus {

@@ -109,6 +109,8 @@ TopBar::TopBar() {
 
 void TopBar::setEngineChoices(std::vector<EngineChoice> choices) { choices_ = std::move(choices); }
 
+void TopBar::setUnloadedEngines(std::vector<UnloadedEngine> unloaded) { unloaded_ = std::move(unloaded); }
+
 void TopBar::setEngine(const EngineConfig& config, int presetIndex) {
     presetIndex_ = presetIndex;
     picker_.setEngine(juce::String::fromUTF8(config.name.c_str()), engineSpecLine(config));
@@ -131,13 +133,28 @@ void TopBar::showEngineMenu() {
         if (index < 12) item.shortcutKeyDescription = "F" + juce::String(index + 1);
         menu.addItem(item);
     }
+    // Ids above the presets': the files that did not load, picked to see why.
+    const auto unloadedBase = static_cast<int>(choices_.size()) + 1;
+    if (!unloaded_.empty()) menu.addSectionHeader(utf8("Not loaded (pick one to see why)"));
+    for (int index = 0; index < static_cast<int>(unloaded_.size()); ++index) {
+        juce::PopupMenu::Item item(unloaded_[static_cast<std::size_t>(index)].file);
+        item.itemID = unloadedBase + index;
+        item.colour = colours::warn;
+        menu.addItem(item);
+    }
     auto safe = juce::Component::SafePointer<TopBar>(this);
     menu.showMenuAsync(juce::PopupMenu::Options {}
                            .withTargetComponent(&picker_)
                            .withMinimumWidth(picker_.getWidth()),
-                       [safe](int result) {
-                           if (safe && result > 0 && safe->onEngineSelected)
-                               safe->onEngineSelected(result - 1);
+                       [safe, unloadedBase](int result) {
+                           if (!safe || result <= 0) return;
+                           if (result < unloadedBase) {
+                               if (safe->onEngineSelected) safe->onEngineSelected(result - 1);
+                               return;
+                           }
+                           const auto index = static_cast<std::size_t>(result - unloadedBase);
+                           if (index < safe->unloaded_.size() && safe->onUnloadedEngineSelected)
+                               safe->onUnloadedEngineSelected(safe->unloaded_[index]);
                        });
 }
 

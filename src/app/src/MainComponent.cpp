@@ -98,6 +98,11 @@ MainComponent::MainComponent() {
 
     refreshEngineChoices();
     topBar_.onEngineSelected = [this](int presetIndex) { selectEngine(presetIndex); };
+    topBar_.onUnloadedEngineSelected = [this](const ui::TopBar::UnloadedEngine& engine) {
+        showError(engine.file + utf8(" is not loaded"),
+                  engine.reason + utf8("\n\nCorrect the file, then choose Reload engine (Return) to read the "
+                                       "engine files again."));
+    };
     topBar_.abButton.onClick = [this] { switchAbVersion(); };
     topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
@@ -204,7 +209,7 @@ MainComponent::MainComponent() {
 
     selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
     if (!savedEngineErrors.isEmpty())
-        showError(utf8("Saved engines skipped"), savedEngineErrors.joinIntoString("\n"));
+        showError(utf8("Engine files"), savedEngineErrors.joinIntoString("\n"));
     startTimerHz(30);
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this)] { if (safe) safe->grabKeyboardFocus(); });
 }
@@ -220,22 +225,46 @@ MainComponent::~MainComponent() {
 }
 
 juce::StringArray MainComponent::loadPresets() {
-    juce::StringArray errors;
+    juce::StringArray lines;
+    std::vector<ui::TopBar::UnloadedEngine> unloaded;
+    // "file: reason" -> listed in the engine menu, and a line of the report.
+    const auto notLoaded = [&lines, &unloaded](const std::string& error) {
+        const auto text = utf8(error);
+        const auto split = text.indexOf(": ");
+        unloaded.push_back({ split > 0 ? text.substring(0, split) : text,
+                             split > 0 ? text.substring(split + 2) : text });
+        lines.add(utf8("Not loaded: ") + text);
+    };
     presets_.clear();
-    for (auto& config : makeCatalogOrBasePresets(catalogRoot_))
-        presets_.push_back({ std::move(config), std::nullopt, {} });
+    auto catalogue = loadEngineCatalog(catalogRoot_);
+    if (catalogue.entries.empty()) {
+        // No catalogue beside the program: the built-in engines, as before.
+        for (auto& config : makeBaseEnginePresets()) presets_.push_back({ std::move(config), std::nullopt, {} });
+    } else {
+        for (auto& entry : catalogue.entries)
+            presets_.push_back({ std::move(entry.config), std::nullopt, {} });
+        // A catalogue file that fails used to vanish from the menu silently.
+        for (const auto& error : catalogue.errors)
+            if (error.find(" voicing: ") == std::string::npos) notLoaded(error);
+            else lines.add(utf8(error));
+    }
+    for (const auto& warning : catalogue.warnings) lines.add(utf8("Corrected: ") + utf8(warning));
     auto saved = loadSavedEngines(pathOf(savedEnginesFolder()), catalogRoot_);
-    for (const auto& error : saved.errors) errors.add(utf8(error));
+    for (const auto& error : saved.errors)
+        if (error.find(" voicing: ") == std::string::npos) notLoaded(error);
+        else lines.add(utf8(error));
+    for (const auto& warning : saved.warnings) lines.add(utf8("Corrected: ") + utf8(warning));
     for (auto& engine : saved.engines) {
         // The menu tells engines apart by name.
         if (presetIndexOf(engine.config.name) >= 0) {
-            errors.add(fileOf(engine.file).getFileName() + utf8(": another engine is already named \"")
-                       + utf8(engine.config.name) + "\"");
+            notLoaded(fileOf(engine.file).getFileName().toStdString() + ": another engine is already named \""
+                      + engine.config.name + "\"; rename it in the file");
             continue;
         }
         presets_.push_back({ std::move(engine.config), std::move(engine.calibration), std::move(engine.file) });
     }
-    return errors;
+    topBar_.setUnloadedEngines(std::move(unloaded));
+    return lines;
 }
 
 void MainComponent::refreshEngineChoices() {
@@ -1284,7 +1313,7 @@ void MainComponent::reloadEngine() {
         const auto previousIndex = selectedPresetIndex_;
         const auto errors = loadPresets();
         sessionEdits_.erase(name);
-        if (!errors.isEmpty()) showError(utf8("Saved engines skipped"), errors.joinIntoString("\n"));
+        if (!errors.isEmpty()) showError(utf8("Engine files"), errors.joinIntoString("\n"));
         auto index = presetIndexOf(name);
         if (index < 0) index = std::clamp(previousIndex, 0, static_cast<int>(presets_.size()) - 1);
         // Not an edit to keep: the selection forgets the running engine first.

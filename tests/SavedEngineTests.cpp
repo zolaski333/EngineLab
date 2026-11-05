@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -349,6 +350,46 @@ void checkNamesAndFolder(const EngineConfig& source) {
             "the folder lists both engines, by file name, and not their calibration files");
     require(loaded.errors.size() == 1, "a broken file is reported, not loaded");
 }
+
+/** A hand-edited value outside its range (an octane of 150) loads clamped,
+ *  with a warning naming it, instead of dropping the engine from the menu;
+ *  a value of a list (a bore) is still refused, as is anything non-finite. */
+void checkOutOfRangeEdits(const EngineConfig& source) {
+    Folder folder;
+    auto config = canonical(source);
+    config.name = "Hand edited";
+    const auto file = savedEngineFile(folder.path, config.name);
+    require(!saveEngine(file, config, nullptr), "an engine saves");
+    std::string text;
+    {
+        std::ifstream in(file);
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    const auto replaceValue = [](std::string document, const std::string& key, const std::string& value) {
+        const auto at = document.find("\"" + key + "\": ");
+        require(at != std::string::npos, key + " is written");
+        const auto start = at + key.size() + 4;
+        const auto end = document.find_first_of(",\n}", start);
+        return document.replace(start, end - start, value);
+    };
+    std::ofstream(file) << replaceValue(text, "octane_rating", "150.0");
+    const auto read = readSavedEngine(file);
+    require(read.engine.has_value(), "an octane of 150 loads: " + read.error);
+    require(read.engine->config.octaneRating == 130.0, "clamped into its range (130)");
+    require(read.warnings.size() == 1 && read.warnings.front().find("octaneRating = 150") != std::string::npos,
+            "and says so");
+    const auto loaded = loadSavedEngines(folder.path, ENGINELAB_CATALOG_ROOT);
+    require(loaded.engines.size() == 1 && loaded.errors.empty() && loaded.warnings.size() == 1,
+            "the folder lists it, with its warning");
+
+    std::ofstream(file) << replaceValue(text, "bore_mm", "-1.0");
+    require(!readSavedEngine(file).engine.has_value(), "a negative bore is still refused");
+
+    // The strict reader keeps refusing what the lenient one corrects.
+    auto strict = config;
+    strict.octaneRating = 150.0;
+    require(validateEngineConfig(strict).has_value(), "validation still refuses an octane of 150");
+}
 } // namespace
 
 /** An engine with an H-pipe reads back, as a saved engine (JSON) and as YAML:
@@ -391,10 +432,12 @@ int main() {
     checkHPipeSaved();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
+    require(catalogue.warnings.empty(), "with no value corrected into its range");
     const auto cp2 = std::find_if(catalogue.entries.begin(), catalogue.entries.end(),
                                   [](const EngineCatalogEntry& entry) { return entry.config.name.find("CP2") != std::string::npos; });
     require(cp2 != catalogue.entries.end(), "the CP2 is in the catalogue");
     checkNamesAndFolder(cp2->config);
+    checkOutOfRangeEdits(cp2->config);
     checkCalibrationSaved(cp2->config);
     checkRunningEngineRenamed(cp2->config);
     checkSavedSound(catalogue);

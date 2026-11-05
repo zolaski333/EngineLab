@@ -7,6 +7,19 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Changed
+
+- **An inspector choice opens a list.** The gearbox's shift style (and every
+  other choice in a part's inspector) stepped to the next option on each
+  click; the button now opens the list of options, the current one ticked.
+- **A hand-edited engine file no longer vanishes from the menu.** A value
+  outside its range (an octane of 150, say) is brought into it when a saved
+  or catalogue engine is read, and the start-up report says what was
+  changed. A file that still cannot be read is listed at the bottom of the
+  engine menu, under *Not loaded*: picking it says why. A catalogue file
+  that failed used to disappear without a word. *Reload engine* (Return)
+  reads every engine file again.
+
 ### Fixed
 
 - **A designed diesel keeps its fuel up to its peak power speed.** The

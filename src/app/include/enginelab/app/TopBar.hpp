@@ -19,8 +19,16 @@ public:
         bool edited { false };
     };
 
+    /** An engine file that did not load: listed at the bottom of the menu,
+        so a hand-edited engine never just disappears. */
+    struct UnloadedEngine final {
+        juce::String file;
+        juce::String reason;
+    };
+
     TopBar();
     void setEngineChoices(std::vector<EngineChoice>);
+    void setUnloadedEngines(std::vector<UnloadedEngine>);
     /** `presetIndex` is -1 for an engine that is not one of the presets. */
     void setEngine(const EngineConfig&, int presetIndex);
     /** The running engine differs from the one loaded: a dot on the picker. */
@@ -28,6 +36,8 @@ public:
     void refresh(const DashboardModel&);
 
     std::function<void(int presetIndex)> onEngineSelected;
+    /** An unloaded engine was picked: say why it did not load. */
+    std::function<void(const UnloadedEngine&)> onUnloadedEngineSelected;
     /** Switches between two versions of the running engine. */
     ActionButton abButton { "A", ActionButton::Style::tool };
     ActionButton exhaustButton { "Exhaust", ActionButton::Style::tool };
@@ -57,6 +67,7 @@ private:
     void showEngineMenu();
     EnginePicker picker_;
     std::vector<EngineChoice> choices_;
+    std::vector<UnloadedEngine> unloaded_;
     int presetIndex_ { -1 };
     juce::String stateText_;
     juce::Colour stateColour_;

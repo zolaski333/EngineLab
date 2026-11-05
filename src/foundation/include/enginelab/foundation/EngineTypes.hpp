@@ -2273,6 +2273,13 @@ inline constexpr double maximumBoreStrokeMm { 1'000.0 };
  *  125 cc bike runs about 10 (primary ~3 x chain ~3.3), a scooter 9.4. */
 inline constexpr double maximumFinalDriveRatio { 15.0 };
 [[nodiscard]] std::optional<std::string> validateEngineConfig(const EngineConfig&);
+/** Clamps every finite engine or part scalar that validateEngineConfig()
+ *  would refuse for its range into that range, and says what it changed
+ *  ("octaneRating = 150, outside 70 to 130: loaded as 130"). A hand-edited
+ *  file then loads with a warning instead of vanishing from the engine menu.
+ *  Values in lists (cylinders, curves) and refusals of another kind are left
+ *  to validateEngineConfig(). */
+[[nodiscard]] std::vector<std::string> repairEngineConfigRanges(EngineConfig&);
 
 } // namespace enginelab
 
