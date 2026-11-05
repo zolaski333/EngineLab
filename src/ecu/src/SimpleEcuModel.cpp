@@ -211,6 +211,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     auto idleAirOpening = 0.0;
     const auto idleTargetRpm = activeIdleTargetRpm(config, *calibrationSnapshot);
     const auto* const carburettor = idleCarburettor(config);
+    // The filtered speed's rate (rpm/s), for the fuel-cut resume below.
+    double idleRpmRatePerSecond = 0.0;
     if (controls.ignitionEnabled || controls.starterEngaged) {
         const auto targetRpm = idleTargetRpm;
         const auto normalizedError = (targetRpm - state.rpm) / targetRpm;
@@ -238,6 +240,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             // existing dashpot own that coordinated relight first.
             && decelerationFuelResume_.load(std::memory_order_relaxed) > 0.95;
         idleFilteredRpm_.store(filteredRpm, std::memory_order_relaxed);
+        idleRpmRatePerSecond = normalizedRpmRate * targetRpm;
         // Cross-fade against the physical (smoothed) throttle plate, not the
         // driver's instantaneous request. Otherwise the bypass snaps shut one
         // integration step before the plate has opened and creates a real air
@@ -567,7 +570,18 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // idle it stalled before its first fire, from 1.75 x it dipped to 0.57 x
     // idle after a wide-open blip. From 2.25 x it holds 0.89 x.
     const auto rotary = config.cycle == EngineCycle::rotary;
-    const auto decelerationFuelResumeRpm = idleTargetRpm * (rotary ? 2.25 : 1.50);
+    // A production ECU resumes on the deceleration too, not on the speed
+    // alone: a heavy engine falling fast resumes earlier, so its film refills
+    // before it reaches idle. Without it the thermally perfect gas's Merlin
+    // fell to 1,150 rpm/s, resumed at 1.50 x idle with an empty port film,
+    // misfired lean (AFR 24) and dipped to 589 rpm after a WOT blip (the
+    // flat-6 to 591). 0.45 s of the fall ahead of idle, at most 1.55 x idle,
+    // below the 1.65 x entry (journal 2026-11-05).
+    constexpr double resumeLeadSeconds = 0.45;
+    constexpr double latestResumeRatio = 1.55;
+    const auto decelerationFuelResumeRpm = std::max(idleTargetRpm * (rotary ? 2.25 : 1.50),
+        std::min(idleTargetRpm * latestResumeRatio,
+                 idleTargetRpm + std::max(0.0, -idleRpmRatePerSecond) * resumeLeadSeconds));
     const auto decelerationFuelCutRpm = idleTargetRpm * (rotary ? 2.50 : 1.65);
     // Deceleration fuel cut is an OVERRUN function: it presumes a running,
     // warmed engine coasting down under a shut throttle. The post-start flare
@@ -755,6 +769,12 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && (controls.starterEngaged || afterStartPhase
             || accelerationFuelEnrichment < 0.03)
         && !overrunAfterfireActive;
+    // A spark engine's mixture map is in petrol AFR (lambda x 14.7), as a
+    // flex-fuel ECU works in lambda: another fuel is metered at the same
+    // lambda, its own stoichiometric ratio. Exactly 1 on a 14.7 petrol.
+    if (config.fuel != FuelType::diesel)
+        mappedAfr *= config.fuelProperties.stoichiometricAirFuelRatio
+            / calibration::ecuLimits::petrolStoichiometricAirFuelRatio;
     EcuCommand command { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
              fuelCorrection, dieselFuelQuantityLimit,

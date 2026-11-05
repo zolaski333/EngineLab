@@ -58,5 +58,8 @@ inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;
 inline constexpr double maximumAirFuelRatioTrim = 15.0;
 inline constexpr double referenceAirFuelRatio = 14.2;
+// A spark engine's AFR map and limits are petrol AFR: lambda x this. The ECU
+// meters another fuel at the same lambda (its stoichiometric ratio / this).
+inline constexpr double petrolStoichiometricAirFuelRatio = 14.7;
 
 } // namespace enginelab::calibration::ecuLimits

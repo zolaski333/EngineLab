@@ -111,7 +111,8 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
                  diesel ? "AFR smoke limit" : "Target AFR",
                  diesel
                     ? "Minimum allowed AFR. Raising it leans the mixture and reduces smoke; normal running may be leaner."
-                    : "Commanded mixture by engine speed and load.",
+                    : "Commanded mixture by engine speed and load, in petrol AFR (lambda x 14.7): "
+                      "another fuel is metered at the same lambda.",
                  CalibrationUnit::airFuelRatio, minimumAfr, maximumAfr),
         speed, load, std::move(afrValues)
     });

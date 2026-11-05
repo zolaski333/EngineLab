@@ -240,7 +240,7 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
  * used to coast down fuelled (no fuel cut through the start phase): the LS3,
  * the Merlin and the Radial stalled, the Aircooled fell to 299 rpm. */
 double measureEarlyBlip(const enginelab::EngineConfig& config,
-                        std::optional<double> exhaustTargetCellLengthM = {}) {
+                        std::optional<double> exhaustTargetCellLengthM = {}, int extraIdleSteps = 0) {
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
@@ -249,7 +249,7 @@ double measureEarlyBlip(const enginelab::EngineConfig& config,
     simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
     enginelab::EngineSimulator simulator(
         config, ecu, physics, events, exhaust, simulatorOptions);
-    for (int step = 0; step < static_cast<int>(6.0 / stepSeconds); ++step) {
+    for (int step = 0; step < static_cast<int>(6.0 / stepSeconds) + extraIdleSteps; ++step) {
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = simulator.state().rpm < config.idleRpm * 0.85;
@@ -291,7 +291,7 @@ enginelab::EngineConfig withIdleScrew(enginelab::EngineConfig config, double tur
 /** `wideOpen`: the gate's phase 4 instead (1.2 s wide open, 12 s recovery).
  *  `early`: the early-blip check (0.5 s wide open 6 s after the start). */
 void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false,
-               bool early = false) {
+               bool early = false, int extraSteps = 0) {
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
@@ -310,7 +310,7 @@ void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false,
     // lengthened from 8 s to 16 s, so the trace was blipping at 14 s off an
     // unsettled idle while the gate blipped at 22 s off a settled one -- the
     // instrument was explaining a different experiment from the one that failed.
-    constexpr double traceStartSeconds = 6.0;
+    const double traceStartSeconds = 6.0 + extraSteps * stepSeconds;
     constexpr double traceIdleSeconds = 16.0;
     const auto blipStart = early ? traceStartSeconds : traceStartSeconds + traceIdleSeconds;
     const auto blipEnd = blipStart + (wideOpen && !early ? 1.2 : 0.5);
@@ -325,7 +325,7 @@ void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false,
         controls.load = 0.0;
         const auto frame = simulator.step(stepSeconds, controls);
         // Fine cadence through the catch and the blip recovery, coarse between.
-        const auto fine = t < 8.0 || (t >= blipStart - 0.25 && t < blipStart + 3.0);
+        const auto fine = t < 8.0 || (t >= blipStart - 0.25 && t < blipStart + (early ? 6.0 : 3.0));
         const auto cadence = fine ? 0.10 : 0.25;
         if (step % std::max(1, static_cast<int>(cadence / stepSeconds)) == 0) {
             const auto& s = frame.state;
@@ -393,9 +393,11 @@ int main(int argc, char** argv) {
             std::vector<std::string> wanted;
             auto wideOpen = false;
             auto early = false;
+            auto extraSteps = 0;
             for (int index = 2; index < argc; ++index) {
                 if (std::string(argv[index]) == "--wot") wideOpen = true;
                 else if (std::string(argv[index]) == "--early") early = true;
+                else if (std::string(argv[index]) == "--extra-steps" && index + 1 < argc) extraSteps = std::stoi(argv[++index]);
                 else wanted.emplace_back(argv[index]);
             }
             if (wanted.empty()) wanted = { "Merlin", "LS3" };
@@ -406,7 +408,25 @@ int main(int argc, char** argv) {
                     [&](const std::string& token) {
                         return config.name.find(token) != std::string::npos;
                     });
-                if (matches) traceIdle(config, wideOpen, early);
+                if (matches) traceIdle(config, wideOpen, early, extraSteps);
+            }
+            return EXIT_SUCCESS;
+        }
+
+        if (argc > 2 && std::string(argv[1]) == "--early-scan") {
+            // `--early-scan name-substring [count]`: the early blip started
+            // 0..count-1 extra steps late. Its lowest speed is chaotic in that
+            // start (one step moved the flat-6's from 744 to 588 rpm): read a
+            // change to the blip recovery off the spread, not one start.
+            const auto count = argc > 3 ? std::stoi(argv[3]) : 12;
+            for (const auto& entry : catalog.entries) {
+                auto config = entry.config;
+                enginelab::normaliseEngineConfig(config);
+                if (config.name.find(argv[2]) == std::string::npos) continue;
+                std::printf("%s early blip min by extra steps:", config.name.c_str());
+                for (int extra = 0; extra < count; ++extra)
+                    std::printf(" %4.0f", measureEarlyBlip(config, {}, extra * 7));
+                std::printf("\n");
             }
             return EXIT_SUCCESS;
         }

@@ -103,8 +103,10 @@ void ReadoutStrip::paint(juce::Graphics& g) {
     drawTachometer(g, tachCell.reduced(14.0F, 0.0F));
 
     const auto diesel = config.fuel == FuelType::diesel;
+    // One petrol AFR off target, in lambda: the same warning on E85 or methanol.
+    const auto stoichiometric = config.fuelProperties.stoichiometricAirFuelRatio;
     const auto mixtureOff = state.airFuelRatioValid && !diesel
-        && std::abs(state.airFuelRatio - state.targetAirFuelRatio) > 1.0;
+        && std::abs(state.airFuelRatio - state.targetAirFuelRatio) > stoichiometric / 14.7;
     using units::Quantity;
     const auto& unit = model_.units;
     // The second power figure is the other horsepower-or-kilowatt reading.
@@ -121,7 +123,9 @@ void ReadoutStrip::paint(juce::Graphics& g) {
               : "VE " + fixed(state.volumetricEfficiency * 100.0, 0) + " %" },
         { "Air / fuel", state.airFuelRatioValid ? juce::String(state.airFuelRatio, 1) : utf8("\xe2\x80\x94"), {},
           !state.airFuelRatioValid ? utf8("cut / sync")
-              : (diesel ? "smoke limit " : "target ") + juce::String(state.targetAirFuelRatio, 1),
+              : utf8("\xce\xbb ") + juce::String(state.airFuelRatio / std::max(1.0, stoichiometric), 2)
+                  + utf8("  \xc2\xb7  ") + (diesel ? "limit " : "target ")
+                  + juce::String(state.targetAirFuelRatio, 1),
           mixtureOff ? colours::warn : colours::text },
         { "Exhaust gas", unit.value(Quantity::temperature, state.exhaustTemperatureC), unit.symbol(Quantity::temperature),
           "runner " + unit.text(Quantity::pressure, state.exhaustRunnerPressureKpa),
