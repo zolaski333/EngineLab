@@ -27,16 +27,15 @@ Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
 0.7.2: a big designed engine's turbo reaches its boost (a 193 L six 2.96 of
 3.0 bar) and the airbox is an expansion chamber, not a point volume.
 0.7.3: the diesel's premix follows its ignition delay; the dyno holds a light
-shaft. The petrol over-efficiency and low EGT are the gas's constant gamma:
-the thermally perfect gas is on `exp/thermally-perfect-gas`, not merged until
-a measured WOT airflow explains the 10-15 % torque it exposes (the friction
-is under Blair's, journal 2026-10-30). With the LS3's measured head and GM cam
-it meets GM within 1 %: the catalogue's exhaust port (0.51 plateau) under-flows
-(journal 2026-11-02); merging it needs every engine's valve data redone. 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux;
+shaft. 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux;
 0.7.6 lets a rotary stage its intake ports (a switched profile on 1,080 deg);
 0.7.7: owner reports (rotary crash, launch control, saving, H-pipe) and a
 designed rotary's exhaust (one a rotor) and sizing (litres or rotor);
 0.7.8: launch control in first gear, a rotary's exhaust designer opens.
+0.8.0 (owner's go of 2026-11-05): the thermally perfect gas with measured
+LS3/2JZ heads, tumble and Sandoval's friction (the Fireblade goal stopped at
+-12 %, journal 2026-11-04); fuel presets and the ECU in lambda; a bad value
+is corrected on load; inspector lists. 13B power is a named exception.
 A two-stroke diesel was never asked for (it needs a VISION.md amendment).
 Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.

@@ -7,7 +7,45 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-05
+
+### Added
+
+- **Fuels.** Click the combustion chamber (or *Fuel* in the Telemetry tab's
+  fuel-injection section): pick a fuel from the list (95 and 98 RON, E10,
+  E85, E100, methanol, avgas 100LL; EN 590 for a diesel) or edit its octane
+  (cetane on a diesel), heating value, stoichiometric ratio, latent heat and
+  laminar flame speed. The engine restarts on the new fuel. An engine whose
+  map is held under a measured knock limit (a designed engine, the I5) has
+  that limit measured again for the new octane, the engine paused for a few
+  seconds meanwhile.
+- **The ECU meters in lambda.** A spark engine's mixture map is petrol AFR
+  (lambda x 14.7) and another fuel is metered at the same lambda, as a
+  flex-fuel ECU does: a K20A on E85 holds lambda 0.90 and burns 1.49 times
+  the fuel (without it, it would have run at lambda 1.45). The Air / fuel
+  readout shows the lambda beside the AFR; the Telemetry tab names the fuel.
+- **Bearing friction and cooling airflow** in the crankshaft's and the
+  cylinder block's inspectors.
+
 ### Changed
+
+- **The gas is thermally perfect.** Each species' heat capacity follows its
+  temperature (JANAF), so a burnt charge expands at gamma ~1.27 instead of
+  ~1.35: the old gas extracted ~13 % too much work. Every engine makes less
+  power and runs hotter exhaust, and its sound changes slightly. With it:
+  the LS3 and the 2JZ breathe through their measured heads and cams, a
+  multi-valve head's tumble speeds its flame, and friction follows
+  Patton-Nitschke-Heywood (the rpm-squared terms are gone). Every catalogue
+  engine is within 15 % of its maker's rated torque and power, except the
+  13B at 8,500 rpm (16.8 % under, a named exception).
+- **The Big Twin's flame and the common-rail diesel's fuel limit.** The Big
+  Twin's flame-speed calibration, fitted under the old gas, is fitted again
+  (power -25.5 % -> -5.7 %); the diesel's full-load fuel limit at 4,000-4,500
+  rpm leaves its smoke limit to bind at rated power (EA288 -19 % -> -12 %).
+- **A coasting engine resumes its fuel earlier when it falls fast.** After a
+  wide-open blip a heavy engine resumed its fuel at 1.5 x idle with a dry
+  port and dipped toward a stall (the Merlin to 589 rpm). The resume now
+  leads the fall by 0.45 s, at most 1.55 x idle.
 
 - **An inspector choice opens a list.** The gearbox's shift style (and every
   other choice in a part's inspector) stepped to the next option on each
