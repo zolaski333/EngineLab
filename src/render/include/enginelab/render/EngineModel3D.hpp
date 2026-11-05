@@ -181,6 +181,10 @@ public:
     [[nodiscard]] std::uint16_t powerValvePart(std::size_t index) const noexcept {
         return index < cylinders_.size() ? cylinders_[index].powerValvePart : std::uint16_t { 0xFFFFU };
     }
+    /** Cylinder `index`'s combustion chamber (its flame); 0xFFFF past the end. */
+    [[nodiscard]] std::uint16_t flamePart(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].flamePart : std::uint16_t { 0xFFFFU };
+    }
     [[nodiscard]] std::uint16_t injectorPart(std::size_t index) const noexcept {
         return index < cylinders_.size() ? cylinders_[index].injectorPart : std::uint16_t { 0xFFFFU };
     }

@@ -1303,6 +1303,22 @@ PartsLibrary loadPartsLibrary(const std::filesystem::path& rootDirectory) {
     return loadParts(rootDirectory);
 }
 
+std::vector<FuelPreset> loadFuelPresets(const std::filesystem::path& rootDirectory) {
+    std::vector<FuelPreset> presets;
+    const auto file = rootDirectory / "parts" / "fuels.yaml";
+    if (!std::filesystem::exists(file)) return presets;
+    // yaml-cpp keeps a map's keys in file order.
+    for (const auto& item : YAML::LoadFile(file.string())) {
+        FuelPreset preset;
+        preset.key = item.first.as<std::string>();
+        preset.properties = decodeFuel(item.second);
+        assignIfPresent(item.second, "octane_rating", preset.octaneRating);
+        assignIfPresent(item.second, "latent_heat_kj_per_kg", preset.latentHeatKjPerKg);
+        presets.push_back(std::move(preset));
+    }
+    return presets;
+}
+
 void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey, std::size_t facesPerPort) {
     compileCatalogueExhaustPath(path, presetKey, facesPerPort);
 }

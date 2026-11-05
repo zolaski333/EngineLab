@@ -1046,7 +1046,7 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         || outOfRange("injection.referencePressureBar", config.injection.referencePressureBar, 1.2, 3'000.0)
         || outOfRange("injection.wallFilmFraction", config.injection.wallFilmFraction, 0.0, 0.98)
         || outOfRange("injection.vaporisationTimeConstantSeconds", config.injection.vaporisationTimeConstantSeconds, 0.001, 2.0)
-        || outOfRange("injection.latentHeatKjPerKg", config.injection.latentHeatKjPerKg, 10.0, 1'000.0)
+        || outOfRange("injection.latentHeatKjPerKg", config.injection.latentHeatKjPerKg, 10.0, 1'200.0)
         || outOfRange("injection.directChargeCoolingEfficiency", config.injection.directChargeCoolingEfficiency, 0.0, 1.0)
         || outOfRange("injection.portChargeCoolingEfficiency", config.injection.portChargeCoolingEfficiency, 0.0, 1.0)
         || outOfRange("injection.directSprayVaporisationTimeConstantSeconds", config.injection.directSprayVaporisationTimeConstantSeconds,

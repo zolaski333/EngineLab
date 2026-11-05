@@ -697,7 +697,7 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   before its outlet, or when a turbocharger would be left without a path;
 - the injectors, on each drawn injector (`PartRole::injector`: in the runner
   out of the head for port injection, in the chamber's roof on the intake side
-  for direct injection), and also on the intake ports or the combustion: flow
+  for direct injection), and also on the intake ports: flow
   in g/min (the configuration keeps mg/s) and fuel pressure in bar, plus a
   diesel's start of injection in degrees before firing TDC (the window keeps
   its length and moves with it), with the window, live duty cycle, fuel per cycle and, for port injection, the wall
@@ -705,6 +705,15 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   *Show in 3-D* button selects cylinder 1's injector
   (`EngineViewport::showInjectors`, back to the All layer if the current one
   hides it);
+- the fuel, on the combustion (`PartRole::combustion`): a `choice` among
+  `parts/fuels.yaml` of the engine's kind (`loadFuelPresets`: properties,
+  octane, latent heat) and the octane (cetane on a diesel), heating value,
+  stoichiometric ratio (the oxygen a mole needs follows it), latent heat
+  and laminar flame speed; a restart, and an edited fuel is named
+  "(edited)". The section's *Fuel* button selects cylinder 1's chamber
+  (`EngineViewport::showFuel`). A new octane on an engine with a knock-limit
+  curve has `MainComponent` run `calibrateKnockLimit` on a thread, the engine
+  paused, then take the new curve live;
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
   distance to it, and the turbine flow area; a supercharger: its pressure
   and drive ratios. A turbo and every exhaust component also offer a
@@ -712,7 +721,8 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   takes the turbo off, which restarts the engine; the view then selects the
   new turbo (`Reselect::role`), since the parts have changed;
 - the cylinder block: the air around the engine, as an altitude (the
-  standard atmosphere's pressure there) and a temperature, and a switch
+  standard atmosphere's pressure there) and a temperature, the cooling
+  airflow (`coolingEfficiency`, a restart), and a switch
   between regulated and realistic engine temperatures (`thermal.regulated`;
   the inspector's edit `choice`, taken at once; its rows show the coolant
   temperature and, realistic, when the radiator fan is on);
@@ -732,7 +742,8 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   framing and out of the ducts' solids, so neither the camera views nor the
   routing change;
 - the crankshaft: the inertia of the crank and flywheel (every shaft scaled
-  alike), with the total including the rods;
+  alike), with the total including the rods, and the bearing friction
+  (`frictionCoefficient`, a restart);
 - an intake or exhaust valve: its cam's duration and lift; the cylinder
   heads: the intake and exhaust centrelines, with the lobe separation and
   the overlap. Every camshaft moves by the same amount, a variable profile's

@@ -428,6 +428,45 @@ void checkHPipeSaved() {
     require(sideBranches(*decoded.config) == 2U, "and keeps its side branches there too");
 }
 
+/** Every listed fuel runs an engine of its kind as the inspector applies it
+ *  (properties, octane, latent heat), and a saved engine keeps it. */
+void checkFuelPresets(const EngineCatalogLoadResult& catalogue) {
+    const auto presets = loadFuelPresets(ENGINELAB_CATALOG_ROOT);
+    const auto named = [&presets](const std::string& key) {
+        return std::any_of(presets.begin(), presets.end(), [&key](const FuelPreset& preset) { return preset.key == key; });
+    };
+    require(named("ethanol_e85") && named("methanol_m100") && named("road_diesel_en590"),
+            "the fuel list has E85, methanol and diesel");
+    const auto engineOfKind = [&catalogue](bool diesel) {
+        const auto found = std::find_if(catalogue.entries.begin(), catalogue.entries.end(),
+            [diesel](const EngineCatalogEntry& entry) { return (entry.config.fuel == FuelType::diesel) == diesel; });
+        require(found != catalogue.entries.end(), "the catalogue has a spark and a diesel engine");
+        return found->config;
+    };
+    for (const auto& preset : presets) {
+        auto config = canonical(engineOfKind(preset.diesel()));
+        config.fuelProperties = preset.properties;
+        if (!preset.diesel()) {
+            require(preset.octaneRating > 0.0, preset.key + " has an octane");
+            config.octaneRating = preset.octaneRating;
+        }
+        require(preset.latentHeatKjPerKg > 0.0, preset.key + " has a latent heat");
+        config.injection.latentHeatKjPerKg = preset.latentHeatKjPerKg;
+        const auto invalid = validateEngineConfig(config);
+        require(!invalid, preset.key + " makes a valid engine: " + invalid.value_or(""));
+        Folder folder;
+        config.name = "Fuel " + preset.key;
+        const auto file = savedEngineFile(folder.path, config.name);
+        require(!saveEngine(file, config, nullptr), preset.key + ": the engine saves");
+        const auto read = readSavedEngine(file);
+        require(read.engine.has_value() && read.warnings.empty(), preset.key + ": it reads back as saved");
+        const auto& back = read.engine->config;
+        require(back.fuelProperties.name == preset.properties.name && back.octaneRating == config.octaneRating
+                    && back.injection.latentHeatKjPerKg == preset.latentHeatKjPerKg,
+                preset.key + ": with its fuel");
+    }
+}
+
 int main() {
     checkHPipeSaved();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
@@ -442,5 +481,6 @@ int main() {
     checkRunningEngineRenamed(cp2->config);
     checkSavedSound(catalogue);
     checkCatalogueRoundTrip(catalogue);
+    checkFuelPresets(catalogue);
     return 0;
 }

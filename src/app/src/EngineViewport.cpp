@@ -1614,6 +1614,17 @@ bool EngineViewport::showInjectors() {
     return true;
 }
 
+bool EngineViewport::showFuel() {
+    if (!scene_) return false;
+    const auto part = scene_->flamePart(0);
+    if (part >= scene_->parts().size()) return false;
+    const auto layer = static_cast<SceneLayerMode>(std::clamp(layers_.selected(), 0, 3));
+    if (!scenePartPickable(scene_->parts()[part], layer, shading_.selected() == 0))
+        layers_.setSelected(0, juce::sendNotificationSync);
+    setSelectedPart(static_cast<int>(part));
+    return true;
+}
+
 void EngineViewport::setSelectedPart(int part) {
     selectedPart_ = part;
     gasProbe_ = {};
@@ -1741,6 +1752,88 @@ void EngineViewport::updateInspector() {
         return result;
     };
 
+    // The fuel: a listed one, or its properties one at a time. Its chemistry
+    // is set when the engine is built, so it restarts.
+    const auto fuelEdit = [this, &config]() -> std::optional<PartInspector::Edit> {
+        if (!configEditor_) return std::nullopt;
+        const auto diesel = config.fuel == FuelType::diesel;
+        const auto& fuel = config.fuelProperties;
+        PartInspector::Edit result;
+        result.key = std::uint64_t { 13 } << 60U;
+        result.heading = "FUEL";
+        if (diesel)
+            result.value("Cetane number", fuel.cetaneNumber, "", 0, 1.0, 0.5, 30.0, 80.0);
+        else
+            result.value("Octane (RON)", config.octaneRating, "", 1, 1.0, 0.5, 70.0, 130.0);
+        result.value("Heating value", fuel.lowerHeatingValueMjPerKg, " MJ/kg", 1, 0.5, 0.1, 10.0, 60.0);
+        result.value("Stoichiometric AFR", fuel.stoichiometricAirFuelRatio, "", 2, 0.1, 0.01, 5.0, 25.0);
+        result.value("Latent heat", config.injection.latentHeatKjPerKg, " kJ/kg", 0, 10.0, 1.0, 10.0, 1'200.0);
+        if (!diesel)
+            result.value("Laminar flame speed", fuel.laminarFlameSpeedMps, " m/s", 3, 0.01, 0.002, 0.05, 2.0);
+        result.restarts = true;
+        // The listed fuels of this engine's kind; the engine's own is added
+        // when it is none of them.
+        std::vector<FuelPreset> offered;
+        for (const auto& preset : fuelPresets_)
+            if (preset.diesel() == diesel) offered.push_back(preset);
+        PartInspector::Edit::Choice choice;
+        choice.tooltip = "The fuel in the tank: its octane, heating value, mixture and flame. The engine restarts.";
+        choice.index = -1;
+        for (std::size_t index = 0; index < offered.size(); ++index) {
+            choice.options.push_back(juce::String::fromUTF8(offered[index].properties.name.c_str()));
+            if (offered[index].properties.name == fuel.name) choice.index = static_cast<int>(index);
+        }
+        if (choice.index < 0) {
+            choice.index = static_cast<int>(choice.options.size());
+            choice.options.push_back(juce::String::fromUTF8(fuel.name.c_str()));
+        }
+        if (!offered.empty()) {
+            result.choice = std::move(choice);
+            partChoice_ = [offered = std::move(offered), diesel](EngineConfig& edited, int index) {
+                if (index < 0 || static_cast<std::size_t>(index) >= offered.size()) return;
+                const auto& preset = offered[static_cast<std::size_t>(index)];
+                edited.fuelProperties = preset.properties;
+                if (!diesel && preset.octaneRating > 0.0) edited.octaneRating = preset.octaneRating;
+                if (preset.latentHeatKjPerKg > 0.0) edited.injection.latentHeatKjPerKg = preset.latentHeatKjPerKg;
+            };
+        }
+        result.note = diesel
+            ? "A higher cetane number lights sooner after injection, a softer premixed burn. The ECU's smoke limit "
+              "follows the stoichiometric ratio. The engine restarts to take them."
+            : "The knock model reads the octane: lower knocks sooner, and the knock control pulls the spark back. "
+              "The ECU's mixture map is in lambda, so another stoichiometric ratio (E85, methanol) is metered "
+              "right; the oxygen the fuel needs follows it. The engine restarts to take them.";
+        partEditor_ = [diesel](EngineConfig& edited, const std::vector<double>& values) {
+            const auto count = diesel ? 4U : 5U;
+            if (values.size() < count) return std::string("The fuel changed meanwhile.");
+            auto& fuel = edited.fuelProperties;
+            const auto before = fuel;
+            const auto octaneBefore = edited.octaneRating;
+            const auto latentBefore = edited.injection.latentHeatKjPerKg;
+            if (diesel) fuel.cetaneNumber = values[0];
+            else edited.octaneRating = values[0];
+            fuel.lowerHeatingValueMjPerKg = values[1];
+            // The oxygen a mole of fuel needs is what sets its stoichiometric
+            // ratio: they move together, or the engine refuses the fuel.
+            if (values[2] != fuel.stoichiometricAirFuelRatio && fuel.stoichiometricAirFuelRatio > 0.0)
+                fuel.oxygenMolesPerFuelMole *= values[2] / fuel.stoichiometricAirFuelRatio;
+            fuel.stoichiometricAirFuelRatio = values[2];
+            edited.injection.latentHeatKjPerKg = values[3];
+            if (!diesel) fuel.laminarFlameSpeedMps = values[4];
+            const auto changed = fuel.cetaneNumber != before.cetaneNumber
+                || fuel.lowerHeatingValueMjPerKg != before.lowerHeatingValueMjPerKg
+                || fuel.stoichiometricAirFuelRatio != before.stoichiometricAirFuelRatio
+                || fuel.laminarFlameSpeedMps != before.laminarFlameSpeedMps
+                || edited.octaneRating != octaneBefore || edited.injection.latentHeatKjPerKg != latentBefore;
+            // A listed fuel edited is no longer that fuel.
+            constexpr std::string_view editedSuffix { " (edited)" };
+            if (changed && !fuel.name.ends_with(editedSuffix) && fuel.name.size() + editedSuffix.size() <= 128U)
+                fuel.name += editedSuffix;
+            return std::string();
+        };
+        return result;
+    };
+
     // Fits a turbocharger sized for the engine, or takes it off: a restart.
     // Not offered on a supercharged engine, nor on a two-stroke (its
     // crankcase does the pumping: validation refuses forced induction).
@@ -1818,8 +1911,10 @@ void EngineViewport::updateInspector() {
                         50.0, 0.0, 5'000.0);
             edit->value("Temperature", config.ambientTemperatureC, utf8(" \xc2\xb0""C"), 0, 5.0, 1.0, -30.0, 50.0)
                 .quantity = units::Quantity::temperature;
+            edit->value("Cooling airflow", config.coolingEfficiency, utf8(" \xc3\x97"), 2, 0.1, 0.01, 0.1, 5.0);
             edit->note = "The air the engine breathes and its exhaust leaves into: the standard atmosphere's "
-                         "pressure at that altitude. The running engine takes it.";
+                         "pressure at that altitude. The running engine takes it. The cooling airflow scales the "
+                         "air through the radiator or over the fins (1 as built); it restarts the engine.";
             edit->choice = PartInspector::Edit::Choice {
                 { "Realistic", "Regulated" },
                 utf8("Regulated: coolant and oil held at ")
@@ -1835,6 +1930,7 @@ void EngineViewport::updateInspector() {
                 const auto temperatureC = values[1];
                 edited.ambientPressureKpa = pressureKpaAtAltitude(altitudeM);
                 edited.ambientTemperatureC = temperatureC;
+                if (values.size() > 2U) edited.coolingEfficiency = values[2];
                 return std::string();
             };
         }
@@ -1925,13 +2021,16 @@ void EngineViewport::updateInspector() {
             edit->key = std::uint64_t { 6 } << 60U;
             edit->heading = "FLYWHEEL";
             edit->value("Inertia", config.rotatingInertiaKgM2, utf8(" kg\xc2\xb7m\xc2\xb2"), 3, 0.01, 0.001, 0.01, 5.0);
+            edit->value("Bearing friction", config.frictionCoefficient, "", 3, 0.01, 0.002, 0.0, 1.0);
             edit->note = "The crankshaft and its flywheel, every shaft scaled alike. A lighter flywheel revs up and "
-                         "down faster. The running engine takes it.";
+                         "down faster. The running engine takes it. The bearing friction adds 10 x its value N.m "
+                         "per litre to the bearings' drag (the pistons' is apart); it restarts the engine.";
             partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
                 const auto inertia = values[0];
                 const auto scale = inertia / std::max(1.0e-6, edited.rotatingInertiaKgM2);
                 for (auto& crankshaft : edited.crankshafts) crankshaft.momentOfInertiaKgM2 *= scale;
                 edited.rotatingInertiaKgM2 = inertia;
+                if (values.size() > 1U) edited.frictionCoefficient = values[1];
                 return std::string();
             };
         }
@@ -2137,10 +2236,10 @@ void EngineViewport::updateInspector() {
     }
     case render::PartRole::combustion:
         title = "Combustion";
-        if (config.injection.mode == InjectionMode::direct) {
-            edit = injectorEdit();
-            add("Injection", "Direct");
-        }
+        // The injectors have their own part; the chamber edits the fuel.
+        edit = fuelEdit();
+        add("Fuel", juce::String::fromUTF8(config.fuelProperties.name.c_str()));
+        add("Injection", config.injection.mode == InjectionMode::direct ? "Direct" : "Port");
         if (live != nullptr) {
             add("Burned fraction", juce::String(juce::roundToInt(100.0 * live->burnedFraction)) + " %");
             add("Flame speed", juce::String(live->flameSpeedMps, 1) + " m/s");

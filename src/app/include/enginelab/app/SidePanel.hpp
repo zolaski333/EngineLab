@@ -18,12 +18,16 @@ public:
     /** Called by the fuel-injection section's button: show the injectors in
         the 3-D view, with their inspector. */
     std::function<void()> onShowInjectors;
+    /** Called by the section's Fuel button: the combustion chamber's
+        inspector, where the fuel is chosen and edited. */
+    std::function<void()> onShowFuel;
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
     const DashboardModel& model_;
     ActionButton showInjectors_ { "Show in 3-D", ActionButton::Style::compact };
+    ActionButton showFuel_ { "Fuel", ActionButton::Style::compact };
 };
 
 /** Exhaust preset, impulse response and the mix levels the wheel adjusts. */
@@ -71,6 +75,8 @@ public:
     AudioPanel audio;
     /** The Telemetry tab asks to show the injectors in the 3-D view. */
     std::function<void()> onShowInjectors;
+    /** The Telemetry tab asks for the fuel's inspector. */
+    std::function<void()> onShowFuel;
 
     void paint(juce::Graphics&) override;
     void resized() override;

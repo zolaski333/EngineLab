@@ -90,7 +90,11 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
         duty = std::max(duty, state.cylinderStates[index].injectorDutyCycle);
         fuel = std::max(fuel, state.cylinderStates[index].meteredFuelMgPerCycle);
     }
+    const auto& config = model.config;
     return {
+        { "Fuel", juce::String::fromUTF8(config.fuelProperties.name.c_str())
+              + (config.fuel == FuelType::diesel ? juce::String()
+                     : utf8("  \xc2\xb7  ") + juce::String(config.octaneRating, 1) + " RON") },
         { "Injection", juce::String(direct ? "Direct" : "Port") + utf8("  \xc2\xb7  ")
               + juce::String(static_cast<int>(model.config.cylinders.size())) + " injectors" },
         { "Flow / pressure", fixed(injection.injectorFlowMgPerSecond * 0.06, 0) + " g/min / "
@@ -138,7 +142,7 @@ struct Trace final {
 
 constexpr int traceChartHeight = 190;
 constexpr int engineRowCount = 13;
-constexpr int injectionRowCount = 4;
+constexpr int injectionRowCount = 5;
 constexpr int drivelineRowCount = 13;
 constexpr int mixRowHeight = 34;
 constexpr int mixRowCount = 9;
@@ -150,6 +154,12 @@ TelemetryPanel::TelemetryPanel(const DashboardModel& model) : model_(model) {
         if (onShowInjectors) onShowInjectors();
     };
     addAndMakeVisible(showInjectors_);
+    showFuel_.setTooltip("Selects cylinder 1's combustion chamber in the 3-D view: the fuel, its octane and "
+                         "its properties, listed or edited.");
+    showFuel_.onClick = [this] {
+        if (onShowFuel) onShowFuel();
+    };
+    addAndMakeVisible(showFuel_);
 }
 
 int TelemetryPanel::preferredHeight() const {
@@ -165,6 +175,8 @@ void TelemetryPanel::resized() {
         + engineRowCount * rowHeight + 18;
     const auto width = showInjectors_.idealWidth();
     showInjectors_.setBounds(getWidth() - padding - width, top, width, sectionHeight - 2);
+    const auto fuelWidth = showFuel_.idealWidth();
+    showFuel_.setBounds(showInjectors_.getX() - 6 - fuelWidth, top, fuelWidth, sectionHeight - 2);
 }
 
 void TelemetryPanel::paint(juce::Graphics& g) {
@@ -525,6 +537,9 @@ SidePanel::SidePanel(const DashboardModel& model, std::function<bool()> wheelMod
     tabs_.onChange = [this](int tab) { showTab(tab); };
     telemetry_.onShowInjectors = [this] {
         if (onShowInjectors) onShowInjectors();
+    };
+    telemetry_.onShowFuel = [this] {
+        if (onShowFuel) onShowFuel();
     };
     addAndMakeVisible(tabs_);
     addAndMakeVisible(dyno);

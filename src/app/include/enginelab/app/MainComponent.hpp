@@ -19,6 +19,7 @@
 #include <enginelab/render/RenderSnapshot.hpp>
 #include <enginelab/runtime/DataLogger.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
+#include <enginelab/runtime/KnockLimitCalibration.hpp>
 #include <enginelab/scripting/EngineScriptHotReloader.hpp>
 #include <enginelab/serialization/EngineEditScope.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
@@ -27,6 +28,8 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <memory>
 #include <array>
+#include <atomic>
+#include <thread>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -114,6 +117,12 @@ private:
         owns the boost. */
     bool applyEngineEdit(const EngineConfig&, double rampSeconds = ui::EngineViewport::cylinderRampSeconds);
     bool applyEngineEditGroups(const EngineConfig&, double rampSeconds);
+    /** A spark engine whose map is held under a measured knock limit gets
+        the limit measured again for a new octane, off the message thread,
+        the running engine paused meanwhile (as the designer does). */
+    void remeasureKnockLimit(const EngineConfig&);
+    void knockLimitMeasured(double octaneRating, std::string engineName, KnockLimitCalibration);
+    void stopKnockProbe();
     /** Starts or stops the datalogger (Documents/EngineLab logs). */
     void toggleDatalog();
     /** An edit of the camshafts only: taken by the running engine over
@@ -204,6 +213,10 @@ private:
     bool calibrationModified_ { false };
     std::shared_ptr<const calibration::CalibrationSnapshot> seenCalibration_;
     std::filesystem::path catalogRoot_;
+    std::thread knockProbe_;
+    std::atomic<bool> cancelKnockProbe_ { false };
+    bool knockProbing_ {};
+    bool knockProbePausedBefore_ {};
     EngineConfig config_;
     int selectedPresetIndex_ { -1 };
     std::unique_ptr<EngineRuntime> runtime_;
