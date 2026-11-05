@@ -467,7 +467,26 @@ void checkFuelPresets(const EngineCatalogLoadResult& catalogue) {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    // `--report <folder>`: what the app would say about a folder of saved
+    // engines (a user's, to diagnose a file missing from the menu).
+    if (argc == 3 && std::string(argv[1]) == "--report") {
+        const auto saved = loadSavedEngines(argv[2], ENGINELAB_CATALOG_ROOT);
+        std::cout << saved.engines.size() << " engines loaded\n";
+        for (const auto& error : saved.errors) std::cout << "not loaded: " << error << '\n';
+        for (const auto& warning : saved.warnings) std::cout << "corrected: " << warning << '\n';
+        // The app's menu tells engines apart by name: a second one is not loaded.
+        const auto shipped = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
+        std::vector<std::string> names;
+        for (const auto& entry : shipped.entries) names.push_back(entry.config.name);
+        for (const auto& engine : saved.engines) {
+            if (std::find(names.begin(), names.end(), engine.config.name) != names.end())
+                std::cout << "not loaded: " << engine.file.filename().string()
+                          << ": another engine is already named \"" << engine.config.name << "\"\n";
+            names.push_back(engine.config.name);
+        }
+        return 0;
+    }
     checkHPipeSaved();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
