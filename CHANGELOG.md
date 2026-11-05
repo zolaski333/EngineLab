@@ -32,7 +32,10 @@ file formats, always with an in-memory migration).
 - **The gas is thermally perfect.** Each species' heat capacity follows its
   temperature (JANAF), so a burnt charge expands at gamma ~1.27 instead of
   ~1.35: the old gas extracted ~13 % too much work. Every engine makes less
-  power and runs hotter exhaust, and its sound changes slightly. With it:
+  power and runs hotter exhaust, and its sound changes: at the same steady
+  point most engines move by less than 1 dB, the LS3 is 3.6 dB louder (its
+  measured head), the EA288 2.3 dB (more fuel), and the K20A's pulses are
+  sharper (crest 2.6 -> 3.5). With it:
   the LS3 and the 2JZ breathe through their measured heads and cams, a
   multi-valve head's tumble speeds its flame, and friction follows
   Patton-Nitschke-Heywood (the rpm-squared terms are gone). Every catalogue

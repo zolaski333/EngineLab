@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-05 — 0.8.0's sound against 0.7.8, each catalogue engine at one steady point
+
+- `AudioRenderHarness --catalogue-filter <engine>` on 0.8.0 and on 0.7.8 (+10 commits, catalogue identical): its governed dyno at 72 % throttle, 4 s, default voicing.
+- RMS within 1 dB on 13 of 18 (Big Twin -0.5, Aircooled -0.9, CP3 -0.9, 13B +0.6, K20A +0.7). LS3 +3.6 dB at the same 3,615 rpm (the measured head), EA288 +2.3 dB (the smoke limit's fuel), Audi I5 -2.1 dB at another point (the governor now holds 4,090 rpm where 0.7.8 ran away to 5,842), Merlin +0.4 dB but its strongest resonance moves 415 -> 3,379 Hz.
+- K20A crest 2.64 -> 3.50, brightness +33 %; 2JZ low band 83 -> 66 %; EA288 and EJ25 strongest resonance moves below 400 Hz. No clipping, limiter or dropout on either.
+- `AudioAbHarness` aborts (0xC0000409) on its first engine on both versions: not a 0.8.0 regression, not investigated.
+- Not judged: by ear, or against a recording.
+
 ## 2026-11-05 — 0.8.0 closing: an earlier fuel resume, the ECU in lambda, two catalogue refits under the thermally perfect gas
 
 - Idle: the post-blip dip is lean misfires at the fuel-cut resume on an empty port film. A resume led by the deceleration (rpm + 0.45 s of its rate, at most 1.55 x the idle) restores the WOT-blip gates. The early blip's minimum is chaotic in its start: `IdleStability --early-scan`, 12 starts 7 steps apart, Aircooled base 664-700, now 589-698 (1 of 12 under its 608 gate, the canonical start 635); Merlin base 639-702, now 637-702.
