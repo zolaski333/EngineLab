@@ -7,6 +7,12 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-11-06
+
+The first published release of 0.8: the v0.8.0 tag's build failed a Linux
+test and was never released, so 0.8.1 also carries everything listed under
+0.8.0 below.
+
 ### Fixed
 
 - **The cruise control no longer hunts.** On most engines it swung the

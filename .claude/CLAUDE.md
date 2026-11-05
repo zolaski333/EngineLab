@@ -37,6 +37,8 @@ LS3/2JZ heads, tumble and Sandoval's friction (the Fireblade goal stopped at
 -12 %, journal 2026-11-04); fuel presets and the ECU in lambda; a bad value
 is corrected on load; inspector lists. 13B power is a named exception; so is
 the flat-6's early-blip dip (0.70 x idle, chaotic in the start, journal 2026-11-05).
+0.8.1: 0.8.0's first release (its tag failed that gate on Linux), the cruise
+control no longer hunts.
 A two-stroke diesel was never asked for (it needs a VISION.md amendment).
 Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.
