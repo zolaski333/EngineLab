@@ -98,6 +98,11 @@ MainComponent::MainComponent() {
 
     refreshEngineChoices();
     topBar_.onEngineSelected = [this](int presetIndex) { selectEngine(presetIndex); };
+    topBar_.onUnloadedEngineSelected = [this](const ui::TopBar::UnloadedEngine& engine) {
+        showError(engine.file + utf8(" is not loaded"),
+                  engine.reason + utf8("\n\nCorrect the file, then choose Reload engine (Return) to read the "
+                                       "engine files again."));
+    };
     topBar_.abButton.onClick = [this] { switchAbVersion(); };
     topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
@@ -170,6 +175,12 @@ MainComponent::MainComponent() {
     dyno.onExportCsv = [this] { exportDynoCsv(); };
     side_.audio.onExhaustPreset = [this](int presetIndex) { applyExhaustPreset(presetIndex); };
     side_.onShowInjectors = [this] { (void)viewport_.showInjectors(); };
+    side_.onShowFuel = [this] { (void)viewport_.showFuel(); };
+    try {
+        viewport_.setFuelPresets(loadFuelPresets(catalogRoot_));
+    } catch (const std::exception&) {
+        // A malformed parts/fuels.yaml: the inspector edits the engine's own fuel only.
+    }
     viewport_.setWheelModifierCheck([this] { return wheelModifierDown(); });
     viewport_.setGasFieldSource([this](double crankAngleDegrees, GasFieldSnapshot& field) {
         if (!runtime_) return false;
@@ -204,13 +215,14 @@ MainComponent::MainComponent() {
 
     selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
     if (!savedEngineErrors.isEmpty())
-        showError(utf8("Saved engines skipped"), savedEngineErrors.joinIntoString("\n"));
+        showError(utf8("Engine files"), savedEngineErrors.joinIntoString("\n"));
     startTimerHz(30);
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this)] { if (safe) safe->grabKeyboardFocus(); });
 }
 
 MainComponent::~MainComponent() {
     stopTimer();
+    stopKnockProbe();
     stopEngineScriptWatcher();
     audioWorkshopWindow_.reset();
     exhaustDesignerWindow_.reset();
@@ -220,22 +232,46 @@ MainComponent::~MainComponent() {
 }
 
 juce::StringArray MainComponent::loadPresets() {
-    juce::StringArray errors;
+    juce::StringArray lines;
+    std::vector<ui::TopBar::UnloadedEngine> unloaded;
+    // "file: reason" -> listed in the engine menu, and a line of the report.
+    const auto notLoaded = [&lines, &unloaded](const std::string& error) {
+        const auto text = utf8(error);
+        const auto split = text.indexOf(": ");
+        unloaded.push_back({ split > 0 ? text.substring(0, split) : text,
+                             split > 0 ? text.substring(split + 2) : text });
+        lines.add(utf8("Not loaded: ") + text);
+    };
     presets_.clear();
-    for (auto& config : makeCatalogOrBasePresets(catalogRoot_))
-        presets_.push_back({ std::move(config), std::nullopt, {} });
+    auto catalogue = loadEngineCatalog(catalogRoot_);
+    if (catalogue.entries.empty()) {
+        // No catalogue beside the program: the built-in engines, as before.
+        for (auto& config : makeBaseEnginePresets()) presets_.push_back({ std::move(config), std::nullopt, {} });
+    } else {
+        for (auto& entry : catalogue.entries)
+            presets_.push_back({ std::move(entry.config), std::nullopt, {} });
+        // A catalogue file that fails used to vanish from the menu silently.
+        for (const auto& error : catalogue.errors)
+            if (error.find(" voicing: ") == std::string::npos) notLoaded(error);
+            else lines.add(utf8(error));
+    }
+    for (const auto& warning : catalogue.warnings) lines.add(utf8("Corrected: ") + utf8(warning));
     auto saved = loadSavedEngines(pathOf(savedEnginesFolder()), catalogRoot_);
-    for (const auto& error : saved.errors) errors.add(utf8(error));
+    for (const auto& error : saved.errors)
+        if (error.find(" voicing: ") == std::string::npos) notLoaded(error);
+        else lines.add(utf8(error));
+    for (const auto& warning : saved.warnings) lines.add(utf8("Corrected: ") + utf8(warning));
     for (auto& engine : saved.engines) {
         // The menu tells engines apart by name.
         if (presetIndexOf(engine.config.name) >= 0) {
-            errors.add(fileOf(engine.file).getFileName() + utf8(": another engine is already named \"")
-                       + utf8(engine.config.name) + "\"");
+            notLoaded(fileOf(engine.file).getFileName().toStdString() + ": another engine is already named \""
+                      + engine.config.name + "\"; rename it in the file");
             continue;
         }
         presets_.push_back({ std::move(engine.config), std::move(engine.calibration), std::move(engine.file) });
     }
-    return errors;
+    topBar_.setUnloadedEngines(std::move(unloaded));
+    return lines;
 }
 
 void MainComponent::refreshEngineChoices() {
@@ -456,10 +492,64 @@ bool MainComponent::applyEngineEdit(const EngineConfig& requested, double rampSe
     constexpr double seaLevelPressureKpa = 101.325;
     const auto boostStepKpa = (edited.forcedInduction.wastegatePressureRatio
         - config_.forcedInduction.wastegatePressureRatio) * seaLevelPressureKpa;
+    // The knock limit was measured on the old octane.
+    const auto octaneMoved = edited.fuel == FuelType::gasoline && edited.octaneRating != config_.octaneRating
+        && !edited.ignition.knockLimitCurve.empty();
     const auto applied = applyEngineEditGroups(edited, rampSeconds);
     if (applied && boostStepKpa != 0.0 && runtime_)
         (void)calibration::shiftBoostTargetTable(*runtime_->calibrationStore(), boostStepKpa);
+    if (applied && octaneMoved) remeasureKnockLimit(config_);
     return applied;
+}
+
+void MainComponent::stopKnockProbe() {
+    cancelKnockProbe_.store(true);
+    if (knockProbe_.joinable()) knockProbe_.join();
+    if (knockProbing_ && runtime_) runtime_->setPaused(knockProbePausedBefore_);
+    knockProbing_ = false;
+}
+
+void MainComponent::remeasureKnockLimit(const EngineConfig& config) {
+    stopKnockProbe();
+    if (!runtime_) return;
+    knockProbing_ = true;
+    knockProbePausedBefore_ = runtime_->paused();
+    // The sweep is a dyno run of its own: it does not share the computer
+    // with the running engine.
+    runtime_->setPaused(true);
+    viewport_.setEditStatus(utf8("Finding the knock-limited spark on ") + juce::String(config.octaneRating, 1)
+                            + utf8(" RON on the dyno; the engine is paused meanwhile (some seconds)..."));
+    cancelKnockProbe_.store(false);
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    knockProbe_ = std::thread([this, safe, config]() {
+        auto measured = calibrateKnockLimit(config, &cancelKnockProbe_);
+        if (cancelKnockProbe_.load()) return;
+        juce::MessageManager::callAsync([safe, octane = config.octaneRating, name = config.name,
+                                         measured = std::move(measured)]() mutable {
+            if (safe) safe->knockLimitMeasured(octane, std::move(name), std::move(measured));
+        });
+    });
+}
+
+void MainComponent::knockLimitMeasured(double octaneRating, std::string engineName,
+                                       KnockLimitCalibration measured) {
+    if (!knockProbing_) return;
+    if (knockProbe_.joinable()) knockProbe_.join();
+    knockProbing_ = false;
+    if (runtime_) runtime_->setPaused(knockProbePausedBefore_);
+    // Another engine or another octane since: this curve is not theirs.
+    if (config_.name != engineName || config_.octaneRating != octaneRating) return;
+    if (!measured.error.empty()) {
+        viewport_.setEditStatus(utf8("The knock limit could not be measured again (") + utf8(measured.error.c_str())
+                                + utf8("): the knock control alone holds the spark."));
+        auto unlimited = config_;
+        unlimited.ignition.knockLimitCurve.clear();
+        (void)applyEngineEdit(unlimited, 0.0);
+        return;
+    }
+    auto limited = config_;
+    limited.ignition.knockLimitCurve = std::move(measured.curve);
+    if (applyEngineEdit(limited, 0.0)) viewport_.setEditStatus({});
 }
 
 bool MainComponent::applyEngineEditGroups(const EngineConfig& edited, double rampSeconds) {
@@ -1284,7 +1374,7 @@ void MainComponent::reloadEngine() {
         const auto previousIndex = selectedPresetIndex_;
         const auto errors = loadPresets();
         sessionEdits_.erase(name);
-        if (!errors.isEmpty()) showError(utf8("Saved engines skipped"), errors.joinIntoString("\n"));
+        if (!errors.isEmpty()) showError(utf8("Engine files"), errors.joinIntoString("\n"));
         auto index = presetIndexOf(name);
         if (index < 0) index = std::clamp(previousIndex, 0, static_cast<int>(presets_.size()) - 1);
         // Not an edit to keep: the selection forgets the running engine first.

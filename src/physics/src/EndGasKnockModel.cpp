@@ -19,8 +19,8 @@ double EndGasKnockModel::unburnedMolarHeatCapacityCp(double temperatureK,
     // for air (3.50 R at 300 K, 3.98 R at 1,000 K) and the stoichiometric
     // products (N2, CO2, H2O: 3.69 R at 300 K, 4.49 R at 1,200 K); a quadratic
     // for gasoline vapour, taken as iso-octane (189 J/(mol K) at 298 K, ~390
-    // at 800 K), within 5 %. The simulator's own gas holds air at 5/2 R of cv
-    // at every temperature, right at 300 K and 14 % short at 900 K.
+    // at 800 K), within 5 %. The simulator's own gas, linear in temperature
+    // over 300-2,600 K, holds air's cv 2 % short of these at 900 K.
     const auto air = (3.305 + 6.58e-4 * t) * universalGasConstant;
     const auto products = (3.44 + 8.36e-4 * t) * universalGasConstant;
     const auto above = t - 298.0;

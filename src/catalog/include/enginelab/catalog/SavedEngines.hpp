@@ -28,6 +28,8 @@ struct SavedEngine final {
 struct SavedEngineRead final {
     std::optional<SavedEngine> engine;
     std::string error;
+    /** Values clamped into their range to load the file, one line each. */
+    std::vector<std::string> warnings;
 };
 
 struct SavedEngineLoad final {
@@ -35,6 +37,8 @@ struct SavedEngineLoad final {
     std::vector<SavedEngine> engines;
     /** One line per file that could not be read. */
     std::vector<std::string> errors;
+    /** One line per value clamped into its range ("file: what"). */
+    std::vector<std::string> warnings;
 };
 
 /** `<folder>/<name>.json`, the name made safe for a file system. */

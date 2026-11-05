@@ -393,6 +393,7 @@ template <typename T>
     assignIfPresent(node, "exhaust_centerline_deg", value.exhaustCenterlineDegrees);
     assignIfPresent(node, "intake_flow_coefficient", value.intakeFlowCoefficient);
     assignIfPresent(node, "exhaust_flow_coefficient", value.exhaustFlowCoefficient);
+    assignIfPresent(node, "exhaust_port_head_area_fraction", value.exhaustPortHeadAreaFraction);
     assignIfPresent(node, "variable_profile_enabled", value.variableProfileEnabled);
     assignIfPresent(node, "switch_rpm", value.switchRpm);
     assignIfPresent(node, "switch_throttle", value.switchThrottle);
@@ -939,7 +940,8 @@ void applyCrankOffsets(EngineConfig& config) {
     return spec;
 }
 
-[[nodiscard]] EngineConfig decodeEngineFile(const std::filesystem::path& path, const PartsLibrary& parts) {
+[[nodiscard]] EngineConfig decodeEngineFile(const std::filesystem::path& path, const PartsLibrary& parts,
+                                            std::vector<std::string>* repairs = nullptr) {
     const auto document = YAML::LoadFile(path.string());
     if (const auto design = document["design"]) {
         auto designed = designEngine(decodeEngineSpec(design), parts);
@@ -1279,6 +1281,7 @@ void applyCrankOffsets(EngineConfig& config) {
             config.cycle == EngineCycle::rotary ? 3U : 1U);
 
     normaliseEngineConfig(config);
+    if (repairs != nullptr) *repairs = repairEngineConfigRanges(config);
     if (const auto error = validateEngineConfig(config)) throw std::runtime_error(*error);
     return config;
 }
@@ -1298,6 +1301,22 @@ void applyCrankOffsets(EngineConfig& config) {
 
 PartsLibrary loadPartsLibrary(const std::filesystem::path& rootDirectory) {
     return loadParts(rootDirectory);
+}
+
+std::vector<FuelPreset> loadFuelPresets(const std::filesystem::path& rootDirectory) {
+    std::vector<FuelPreset> presets;
+    const auto file = rootDirectory / "parts" / "fuels.yaml";
+    if (!std::filesystem::exists(file)) return presets;
+    // yaml-cpp keeps a map's keys in file order.
+    for (const auto& item : YAML::LoadFile(file.string())) {
+        FuelPreset preset;
+        preset.key = item.first.as<std::string>();
+        preset.properties = decodeFuel(item.second);
+        assignIfPresent(item.second, "octane_rating", preset.octaneRating);
+        assignIfPresent(item.second, "latent_heat_kj_per_kg", preset.latentHeatKjPerKg);
+        presets.push_back(std::move(preset));
+    }
+    return presets;
 }
 
 void compileLegacyExhaustPath(ExhaustPathConfig& path, std::string_view presetKey, std::size_t facesPerPort) {
@@ -1372,7 +1391,10 @@ EngineCatalogLoadResult loadEngineCatalog(const std::filesystem::path& rootDirec
     for (const auto& file : files) {
         try {
             EngineCatalogEntry entry;
-            entry.config = decodeEngineFile(file, parts);
+            std::vector<std::string> repairs;
+            entry.config = decodeEngineFile(file, parts, &repairs);
+            for (const auto& repair : repairs)
+                result.warnings.push_back(file.filename().string() + ": " + repair);
             entry.sourcePath = file;
             if (const auto document = YAML::LoadFile(file.string()); document["family"])
                 entry.family = document["family"].as<std::string>();

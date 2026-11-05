@@ -12,6 +12,7 @@
 // settle time can be shorter than a cold measurePoint. Absolutes still come
 // from here, not from the --trace instrument, which changes substep structure.
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -50,6 +51,9 @@ std::optional<bool> partitionExhaustNetworkOverride;
 // moves with the speed of sound in it, so this says how hot the gas is where a
 // tuned length is read.
 bool pipeTemperatureReport = false;
+// --exhaust-port-plateau: the exhaust port's effective area as a fraction of
+// the valve head area (production 0.51), to read a measured flow bench against.
+std::optional<double> exhaustPortPlateauOverride;
 constexpr std::array<std::string_view, 37> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
@@ -460,6 +464,7 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     simulatorOptions.evolveExhaustJunctionAxialMomentum =
         !useWellMixedExhaustJunctions;
     simulatorOptions.partitionExhaustNetwork = partitionExhaustNetworkOverride;
+    simulatorOptions.exhaustMaximumHeadAreaFraction = exhaustPortPlateauOverride;
     // A convergence knob, not a setting: an expansion chamber's cones are two
     // or three cells at the production two-stroke mesh, and the shortest
     // element sets the whole network's time step, so a finer mesh costs both
@@ -475,8 +480,15 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     // where it locks the network sees the same part of every blowdown. A real
     // resonance moves with pipe length and engine speed; an alias moves when
     // either of these changes and the gas dynamics do not.
-    if (crankDegreesPerStep > 0.0)
+    // A finer step needs the solver's frequency ceiling raised with it: at
+    // 1 deg a 10,000 rpm limiter asks 60 kHz, and the refused config aborted
+    // the harness.
+    if (crankDegreesPerStep > 0.0) {
         config.solver.maximumCrankDegreesPerStep = crankDegreesPerStep;
+        config.solver.maximumMechanicalFrequencyHz = std::clamp(
+            std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0 / crankDegreesPerStep * 1.01,
+            config.solver.maximumMechanicalFrequencyHz, 100'000.0);
+    }
     if (couplingMicroseconds > 0.0)
         simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
             couplingMicroseconds * 1.0e-6;
@@ -573,6 +585,7 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
         enginelab::EngineSimulatorOptions simulatorOptions;
         simulatorOptions.evolveExhaustJunctionAxialMomentum =
             !useWellMixedExhaustJunctions;
+        simulatorOptions.exhaustMaximumHeadAreaFraction = exhaustPortPlateauOverride;
         enginelab::EngineSimulator simulator(
             config, ecu, physics, events, exhaust, simulatorOptions);
         const double dt = frameSeconds;
@@ -654,6 +667,13 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
     std::filesystem::path referenceFile;
+    // Prints the reference comparison and succeeds whatever it finds: a gate
+    // the physics does not meet yet still reports its score.
+    auto referenceReportOnly = false;
+    // An engine the user saved (`<name>.json`), swept instead of the
+    // catalogue; its saved ECU tables are not read (the sweep's ECU follows
+    // the configuration, as for a catalogue engine).
+    std::filesystem::path savedEngineFile;
     std::string filter;
     auto stepRpm = 500.0;
     auto schemaOnly = false;
@@ -684,9 +704,11 @@ int main(int argc, char** argv) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
+        else if (argument == "--saved-engine" && index + 1 < argc) savedEngineFile = argv[++index];
         else if (argument == "--step" && index + 1 < argc) stepRpm = std::stod(argv[++index]);
         else if (argument == "--reference-file" && index + 1 < argc)
             referenceFile = argv[++index];
+        else if (argument == "--report-only") referenceReportOnly = true;
         else if (argument == "--schema-only") schemaOnly = true;
         else if (argument == "--well-mixed-junctions")
             useWellMixedExhaustJunctions = true;
@@ -713,16 +735,19 @@ int main(int argc, char** argv) {
             partitionExhaustNetworkOverride = false;
         else if (argument == "--pipe-temperature")
             pipeTemperatureReport = true;
+        else if (argument == "--exhaust-port-plateau" && index + 1 < argc)
+            exhaustPortPlateauOverride = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--step rpm]"
-                         " [--reference-file csv] [--schema-only]"
+                         " [--filter name-fragment] [--saved-engine file.json] [--step rpm]"
+                         " [--reference-file csv] [--report-only] [--schema-only]"
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
-                         " [--exhaust-whole] [--pipe-temperature]\n";
+                         " [--exhaust-whole] [--pipe-temperature]"
+                         " [--exhaust-port-plateau fraction]\n";
             return EXIT_FAILURE;
         }
     }
@@ -746,18 +771,31 @@ int main(int argc, char** argv) {
     if (!referenceFile.empty())
         return validateReferencePoints(
             catalogRoot, referenceFile, filter, useWellMixedExhaustJunctions)
+                || referenceReportOnly
             ? EXIT_SUCCESS : EXIT_FAILURE;
     writeHeader(std::cout);
 
-    const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
-    for (const auto& error : catalog.errors)
-        std::cerr << "catalog error: " << error << '\n';
-    if (catalog.entries.empty()) {
-        std::cerr << "no engines loaded\n";
-        return EXIT_FAILURE;
-    }
     std::vector<enginelab::EngineConfig> engines;
-    if (filter.empty()) {
+    const auto catalog = savedEngineFile.empty()
+        ? enginelab::loadEngineCatalog(catalogRoot) : enginelab::EngineCatalogLoadResult {};
+    if (!savedEngineFile.empty()) {
+        auto saved = enginelab::readSavedEngine(savedEngineFile);
+        if (!saved.engine) {
+            std::cerr << "saved engine: " << saved.error << '\n';
+            return EXIT_FAILURE;
+        }
+        engines.push_back(std::move(saved.engine->config));
+    } else {
+        for (const auto& error : catalog.errors)
+            std::cerr << "catalog error: " << error << '\n';
+        if (catalog.entries.empty()) {
+            std::cerr << "no engines loaded\n";
+            return EXIT_FAILURE;
+        }
+    }
+    if (!savedEngineFile.empty()) {
+        // The saved engine is the whole selection.
+    } else if (filter.empty()) {
         engines.reserve(catalog.entries.size());
         for (const auto& entry : catalog.entries)
             engines.push_back(entry.config);

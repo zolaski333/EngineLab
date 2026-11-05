@@ -614,6 +614,25 @@ struct ParallelSubstepState final {
     return std::clamp(lambda * fuel.stoichiometricAirFuelRatio, 0.0, 100.0);
 }
 
+/** A multi-valve pent-roof head's charge tumbles: the intake jet rolls it
+ *  into a vortex across the bore whose angular speed is a fixed ratio of the
+ *  crank's (the tumble ratio), and compression breaks it into the turbulence
+ *  the flame burns in, so u' goes as the crank speed times the bore. The
+ *  flame model's u' goes as the mean piston speed, crank speed times the
+ *  stroke: this is the ratio between the two, 1 on a square engine. Without
+ *  it a short-stroke engine burnt over more crank degrees the more
+ *  oversquare it was (CA50 41 deg ATDC on a designed CBR1000RR-R; journal
+ *  2026-11-02/03). A two-valve head has no tumble to speak of and keeps u'
+ *  in piston speed; a two-stroke, a rotary and a diesel are not on this
+ *  flame. */
+[[nodiscard]] double tumbleTurbulenceScale(const EngineConfig& config,
+                                           const CylinderConfig& cylinder) noexcept {
+    if (config.cycle != EngineCycle::fourStroke || config.fuel == FuelType::diesel
+        || cylinder.intakeValveCount < 2 || !(cylinder.strokeMm > 0.0))
+        return 1.0;
+    return std::clamp(cylinder.boreMm / cylinder.strokeMm, 0.5, 2.5);
+}
+
 [[nodiscard]] double stribeckFrictionForce(const CylinderConfig& cylinder,
                                             double pistonSpeedMps,
                                             double cylinderWallForceN) noexcept {
@@ -1423,6 +1442,7 @@ bool EngineSimulator::beginCamshaftChange(EngineConfig& target, double rampSecon
         std::swap(running.intakeFlowCurve, wanted.intakeFlowCurve);
         std::swap(running.exhaustFlowCurve, wanted.exhaustFlowCurve);
         std::swap(running.continuousControl, wanted.continuousControl);
+        running.exhaustPortHeadAreaFraction = wanted.exhaustPortHeadAreaFraction;
     }
     camshaftChange_ = std::move(change);
     advanceCamshaftChange();
@@ -3534,6 +3554,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
                     state_.load, config_.combustionCalibration.residualDilutionSensitivity,
                     config_.combustionCalibration.chamberTurbulenceIntensityRatio
+                        * tumbleTurbulenceScale(config_, cylinder)
                         * combustionCycleMultiplier_[cylinderIndex],
                     config_.combustionCalibration.ignitionSiteCount };
                 ignitionPending_[cylinderIndex] = !cylinderMisfires_[cylinderIndex];
@@ -3583,6 +3604,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
                 state_.load, config_.combustionCalibration.residualDilutionSensitivity,
                 config_.combustionCalibration.chamberTurbulenceIntensityRatio
+                    * tumbleTurbulenceScale(config_, cylinder)
                     * combustionCycleMultiplier_[cylinderIndex],
                 config_.combustionCalibration.ignitionSiteCount };
             if (compressionIgnitionEngine) {
@@ -3757,8 +3779,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             chamberPressureBar_[cylinderIndex] = chamberKpa / 100.0;
             // Port plateaus: 0.58 and 0.51 of valve head area are the middle of
             // the production band in the literature cited on the helper. They
-            // are deliberately not race-port figures -- a catalogue engine that
-            // wants more says so through its camshaft flow curve.
+            // are deliberately not race-port figures -- an engine whose head
+            // was flowed on a bench gives its exhaust plateau on its camshaft.
             // A two-stroke has ports instead: the piston uncovers them, the
             // transfer ports standing in for the intake valves (their duct is
             // the intake runner, the crankcase its plenum).
@@ -3776,7 +3798,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 : effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
                     cylinder.exhaustValveCount, cylinder.exhaustValveDiameterMm,
                     valveTrain.exhaustDischargeCoefficient, 0.34, 0.41,
-                    std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(0.51),
+                    std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(
+                        cams.config->exhaustPortHeadAreaFraction > 0.0
+                            ? cams.config->exhaustPortHeadAreaFraction : 0.51),
                         0.05, 1.5));
             // The scavenging window as a state, opened and closed by the
             // transfer ports themselves and advanced by the sub-step. What it
@@ -5429,14 +5453,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // the friction-MEP sweep in CoreTests.
         // The base linear term is retained through the low/mid-speed range:
         // increasing it globally made the large, low-revving Merlin marginal
-        // on idle catch. Above 4,000 rpm, windage/valvetrain/accessory losses add
-        // a common speed term. A small constant-power accessory/windage term is
-        // faded in over 3,500-4,500 rpm as well: unlike another RPM coefficient,
-        // its torque falls with speed and therefore cannot drive FMEP beyond the
-        // high-rpm literature envelope. Together they contribute about 0.08 bar
-        // at 6,000 rpm and 0.14 bar at 10,000 rpm, correcting the shared bias
-        // while leaving every catalogue idle/blip below the threshold untouched.
-        const auto highSpeedFrictionRpm = std::max(0.0, state_.rpm - 4'000.0);
+        // on idle catch. A small constant-power accessory/windage term is
+        // faded in over 3,500-4,500 rpm: its torque falls with speed.
+        // Linear in rpm, with the Stribeck piston below the sum follows
+        // Sandoval's revision of Patton-Nitschke-Heywood (MIT 2002, SAE
+        // 2003-01-0725) within 0.1-0.3 bar on a K20A to 8,000 rpm and a
+        // CBR1000RR-R to 14,500. A 3.5e-8 rpm^2 term and a 1.5e-4 per rpm above
+        // 4,000 (added for "underestimated high-rpm losses" under the
+        // constant-gamma gas) charged them 0.36 and 1.12 bar over it at their
+        // power points: removed (journal 2026-11-04).
         const auto accessoryRampLinear = std::clamp(
             (state_.rpm - 3'500.0) / 1'000.0, 0.0, 1.0);
         const auto accessoryRamp = accessoryRampLinear * accessoryRampLinear
@@ -5448,9 +5473,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             : 0.0;
         const auto bearingFriction = state_.rpm > 1.0
             ? breathedLitres * (1.4 + config_.frictionCoefficient * 10.0
-                              + state_.rpm * 0.00055
-                              + highSpeedFrictionRpm * 0.00015
-                              + state_.rpm * state_.rpm * 0.000000035)
+                              + state_.rpm * 0.00055)
                 + highSpeedAccessoryTorque
             : 0.0;
         const auto pistonFriction = state_.angularVelocityRadPerSecond > 1.0

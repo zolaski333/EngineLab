@@ -390,6 +390,10 @@ struct Held final {
     double minRpm { 1.0e9 };
     double maxRpm { 0.0 };
     double boost { 0.0 };
+    /** The absorber's torque, window mean: at a held speed, the brake torque.
+     *  `torqueNm` is the state's last-substep value once a frame, which a
+     *  single firing at a sub-multiple of 240 Hz samples at fixed phases. */
+    double absorbedNm { 0.0 };
 };
 
 // MSVC 17.4 fails with C1001 compiling this loop optimised; the simulator it
@@ -398,12 +402,13 @@ struct Held final {
 #pragma optimize("", off)
 #endif
 /** Cranked, then `throttle` held (against a dyno at `dynoRpm` if not zero);
- *  means over the last 2 s of 8. */
-[[nodiscard]] Held held(const EngineConfig& config, double throttle, double dynoRpm, double dynoNmPerRpm = 2.0) {
+ *  means over the last 2 s of `seconds`. */
+[[nodiscard]] Held held(const EngineConfig& config, double throttle, double dynoRpm, double dynoNmPerRpm = 2.0,
+                        double seconds = 8.0) {
     auto rig = std::make_unique<Rig>(config);
-    constexpr int frames = 8 * 240;
-    constexpr int firstMeasured = frames - 2 * 240;
-    constexpr double weight = 1.0 / static_cast<double>(frames - firstMeasured);
+    const int frames = static_cast<int>(seconds * 240.0);
+    const int firstMeasured = frames - 2 * 240;
+    const double weight = 1.0 / static_cast<double>(frames - firstMeasured);
     Held result;
     auto speed = 0.0;
     for (auto frame = 0; frame < frames; ++frame) {
@@ -419,6 +424,7 @@ struct Held final {
         result.rpm += state.rpm * weight;
         result.torqueNm += state.torqueNm * weight;
         result.boost += state.boostPressureRatio * weight;
+        result.absorbedNm += controls.dynamometerTorqueNm * weight;
         result.minRpm = std::min(result.minRpm, state.rpm);
         result.maxRpm = std::max(result.maxRpm, state.rpm);
     }
@@ -442,7 +448,7 @@ void inlineSevenRuns() {
 /** The designer has no size cap: a 30 L radial (refused at 20 L before
  *  0.6.0) and a 25 cc single (refused under 50 cc) both build and pull at
  *  full throttle, held by an absorber that does not swing them. The single
- *  reads 7.7 bar where real 25 cc engines make 5-10, the radial 12.7. */
+ *  reads 10.1 bar where real 25 cc engines make 5-10, the radial 10.6. */
 void enginesOfAnySizeRun() {
     EngineSpec radial;
     radial.name = "Radial Nine";
@@ -465,10 +471,16 @@ void enginesOfAnySizeRun() {
         // single's 0.01 kg m2 the 2 N.m/rpm it was given braked all or nothing
         // (9,404-9,626 rpm about 9,600, 16.4 bar; the test failed under GCC).
         const auto stableNmPerRpm = 0.5 * config.rotatingInertiaKgM2 / frameSeconds * 3.14159265 / 30.0;
-        const auto run = held(config, 1.0, dynoRpm, std::min(2.0 * std::max(1.0, litres / 2.0), stableNmPerRpm));
-        const auto bmepBar = run.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
-        std::cout << "  " << spec.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.torqueNm
-                  << " N.m, BMEP " << bmepBar << " bar, " << run.minRpm << "-" << run.maxRpm << " rpm\n";
+        // 12 s: the single, opened at 2 s, reaches its 9,600 rpm at 6.2 s;
+        // the last 2 s of 8 caught it still climbing (9,255-9,637 rpm).
+        const auto run = held(config, 1.0, dynoRpm, std::min(2.0 * std::max(1.0, litres / 2.0), stableNmPerRpm), 12.0);
+        // The absorber's mean: the single fires at 80 Hz at 9,600 rpm, and
+        // the state's torque read once a 240 Hz frame gave 7.7 bar or -0.4
+        // with the same engine (journal 2026-11-04).
+        const auto bmepBar = run.absorbedNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
+        std::cout << "  " << spec.name << " (" << litres << " L) at " << run.rpm << " rpm: " << run.absorbedNm
+                  << " N.m absorbed (state " << run.torqueNm << "), BMEP " << bmepBar << " bar, " << run.minRpm
+                  << "-" << run.maxRpm << " rpm\n";
         require(run.maxRpm - run.minRpm < 100.0, spec.name + " is held at its speed, not swung about it");
         require(bmepBar > 4.0 && bmepBar < 20.0, spec.name + " pulls at full throttle");
     }
@@ -498,6 +510,21 @@ void enginesOfAnySizeRun() {
     // Still spooling 4-6 s after the throttle opened from idle: 2.69 of 2.96.
     require(run.boost > 0.85 * config.forcedInduction.wastegatePressureRatio, "the marine six reaches its boost");
     require(bmepBar > 20.0 && bmepBar < 30.0, "and pulls like a turbocharged medium-speed diesel");
+
+    // Rated at 750 rpm, as a MAN 32/40 is (500 kW a cylinder on 32.2 L: 24.9
+    // bar), its governor's limit 10 % above: the car diesel's fuel limit,
+    // stretched to the redline, held it to 20.0 bar there (24.0 with the fix
+    // under constant gamma, 21.5 under the thermally perfect gas). The gate is
+    // VISION.md's 15 % under the maker's figure.
+    auto rated = marine;
+    rated.name = "Marine Six rated at 750 rpm";
+    rated.overrides = { { "redline_rpm", 825.0 }, { "idle_rpm", 350.0 }, { "peak_power_rpm", 750.0 } };
+    const auto ratedConfig = *designed(rated).config;
+    const auto ratedRun = held(ratedConfig, 1.0, 750.0, stableNmPerRpm);
+    const auto ratedBmepBar = ratedRun.torqueNm * 4.0 * 3.14159265 / (litres * 1.0e-3) * 1.0e-5;
+    std::cout << "  " << rated.name << " at " << ratedRun.rpm << " rpm: " << ratedRun.torqueNm
+              << " N.m, BMEP " << ratedBmepBar << " bar\n";
+    require(ratedBmepBar > 0.85 * 24.9 && ratedBmepBar < 30.0, "the rated marine six keeps its fuel at its rated speed");
 }
 
 /** A catalogue file may hold a design instead of a whole engine. */

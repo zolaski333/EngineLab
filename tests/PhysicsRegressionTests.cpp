@@ -192,14 +192,16 @@ int main() {
         enginelab::GasCell cell;
         cell.initialise(101.325, 1.0, 300.0);
         constexpr double targetTemperatureK = 12'000.0;
-        const auto heatCapacity = cell.totalMoles() * cell.molarHeatCapacityCvEffective();
-        cell.addHeatJoules(heatCapacity * (targetTemperatureK - cell.temperatureK()));
+        // The gas is thermally perfect: the heat that takes it to the target
+        // is U(target) - U(now), not a constant Cv times the rise.
+        cell.addHeatJoules(cell.internalEnergyAtTemperatureJ(targetTemperatureK)
+            - cell.internalEnergyJoules());
         const auto temperature = cell.temperatureK();
         const auto pressureFromState = cell.totalMoles() * enginelab::GasCell::universalGasConstant
             * temperature / cell.volumeM3() / 1'000.0;
         require(std::abs(temperature - targetTemperatureK) < targetTemperatureK * 1.0e-12,
                 "high-temperature sensible energy must not disappear behind a display cap");
-        require(std::abs(cell.internalEnergyJoules() - heatCapacity * temperature)
+        require(std::abs(cell.internalEnergyJoules() - cell.internalEnergyAtTemperatureJ(temperature))
                     < cell.internalEnergyJoules() * 1.0e-12
                 && std::abs(cell.pressureKpa() - pressureFromState) < pressureFromState * 1.0e-12,
                 "temperature, pressure and conserved internal energy must remain thermodynamically consistent");
@@ -208,15 +210,22 @@ int main() {
     {
         enginelab::GasCell cell;
         cell.initialise(101.325, 0.62, 340.0);
-        const auto gamma = cell.heatCapacityRatioEffective();
-        const auto invariantBefore = cell.pressureKpa()
-            * std::pow(cell.volumeM3(), gamma);
+        // Cv = a + b T, so U(T) / T = a + b T / 2: two temperatures give both.
+        const auto energyPerKelvin = [&](double t) { return cell.internalEnergyAtTemperatureJ(t) / t; };
+        const auto slope = 2.0 * (energyPerKelvin(1'000.0) - energyPerKelvin(500.0)) / 500.0;
+        const auto intercept = energyPerKelvin(500.0) - 0.5 * slope * 500.0;
+        const auto moleGasConstant = cell.totalMoles() * enginelab::GasCell::universalGasConstant;
+        const auto temperatureBefore = cell.temperatureK();
+        const auto volumeBefore = cell.volumeM3();
         cell.setVolumeAdiabatic(cell.volumeLitres() * 0.37);
-        const auto invariantAfter = cell.pressureKpa()
-            * std::pow(cell.volumeM3(), gamma);
-        require(std::abs(invariantAfter - invariantBefore)
-                    < std::max(1.0, std::abs(invariantBefore)) * 1.0e-11,
-                "finite adiabatic volume changes must preserve P*V^gamma");
+        const auto temperatureAfter = cell.temperatureK();
+        // An isentrope of a thermally perfect gas: the entropy change
+        // a ln(T2/T1) + b (T2 - T1) - nR ln(V1/V2) is zero.
+        const auto entropyChange = intercept * std::log(temperatureAfter / temperatureBefore)
+            + slope * (temperatureAfter - temperatureBefore)
+            - moleGasConstant * std::log(volumeBefore / cell.volumeM3());
+        require(slope > 0.0 && std::abs(entropyChange) < moleGasConstant * 1.0e-11,
+                "finite adiabatic volume changes must follow the isentrope");
 
         cell.addHeatJoules(-cell.internalEnergyJoules());
         require(cell.temperatureK() == 0.0 && cell.pressureKpa() == 0.0,

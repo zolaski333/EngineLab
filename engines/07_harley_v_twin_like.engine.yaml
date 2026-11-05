@@ -41,8 +41,11 @@ engine:
   # cycle-authoritative. At 0.50 the old marginal fit had drifted to +5.45% at
   # the torque point and +16.26% at the power point; 0.42 measures -3.48% and
   # +3.77% against the same two committed anchors without relaxing their gate.
+  # The thermally perfect gas took the over-efficiency this fit hid: 0.42 then
+  # measured -8.6 % and -25.5 %; 0.58 measures +6.9 % and -5.7 % (journal
+  # 2026-11-05).
   combustion_calibration:
-    chamber_turbulence_intensity_ratio: 0.42
+    chamber_turbulence_intensity_ratio: 0.58
   uses:
     fuel: pump_gasoline_95
     injection: sequential_port

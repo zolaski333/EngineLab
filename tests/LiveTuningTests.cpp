@@ -464,12 +464,14 @@ void realisticTemperaturesFollowHeatAndAir() {
 }
 
 /** Light knock does not wear the engine: the 2JZ held at full load with its
- * spark map advanced 8 deg runs at its knock limit, where the knock control
- * holds it, and ends with no damage. Counted linearly, it lost 0.3-0.5 % of
+ * spark map advanced 8 deg on a 91 RON fuel (on its 98 that stays under the
+ * limit) runs at its knock limit, where the knock control holds it, and ends
+ * with no damage. Counted linearly, it lost 0.3-0.5 % of
  * power for good per dyno pass. */
 void lightKnockDoesNotWear() {
     auto config = catalogueEngine("2JZ");
     for (auto& sample : config.ignition.timingCurve) sample.advanceDegrees += 8.0;
+    config.octaneRating = 91.0;
     Rig rig(config);
     constexpr auto frames = 10 * 240;
     double rpm = 0.0;

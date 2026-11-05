@@ -1,4 +1,5 @@
 #include <enginelab/gasdynamics/FiniteVolumeDuct.hpp>
+#include <enginelab/physics/ConservativeGasSystem.hpp>
 
 #include <algorithm>
 #include <bit>
@@ -232,21 +233,15 @@ void accumulateFluxIntegral(EulerFluxIntegral& integral,
 } // namespace
 
 ThermodynamicModel ThermodynamicModel::standardCombustionGas() noexcept {
-    constexpr double oxygenMolarMassKg = 0.0319988;
-    constexpr double inertMolarMassKg = 0.0280134;
-    constexpr double gasolineMolarMassKg = 0.11423;
-    constexpr double oxygenMolesPerFuelMole = 12.5;
-    constexpr double productMolesPerFuelMole = 17.0;
-    constexpr double burnedGamma = 1.26;
-    const auto burnedMolarMassKg =
-        (gasolineMolarMassKg + oxygenMolesPerFuelMole * oxygenMolarMassKg)
-        / productMolesPerFuelMole;
+    // GasCell's laws, so a cylinder's energy means the same temperature here.
     return { {
-        SpeciesThermodynamics { oxygenMolarMassKg, 2.5 * universalGasConstantJPerMolK },
-        SpeciesThermodynamics { inertMolarMassKg, 2.5 * universalGasConstantJPerMolK },
-        SpeciesThermodynamics { gasolineMolarMassKg, 145.0 },
-        SpeciesThermodynamics { burnedMolarMassKg,
-                                universalGasConstantJPerMolK / (burnedGamma - 1.0) },
+        SpeciesThermodynamics { GasCell::oxygenMolarMassKg,
+            GasCell::oxygenCvInterceptJPerMolK, GasCell::oxygenCvSlopeJPerMolK2 },
+        SpeciesThermodynamics { GasCell::inertMolarMassKg,
+            GasCell::inertCvInterceptJPerMolK, GasCell::inertCvSlopeJPerMolK2 },
+        SpeciesThermodynamics { GasCell::gasolineMolarMassKg, GasCell::fuelVapourCvJPerMolK },
+        SpeciesThermodynamics { GasCell::burnedGasMolarMassKg,
+            GasCell::burnedCvInterceptJPerMolK, GasCell::burnedCvSlopeJPerMolK2 },
     } };
 }
 
@@ -254,7 +249,9 @@ bool ThermodynamicModel::valid() const noexcept {
     for (const auto& entry : species) {
         if (!finite(entry.molarMassKgPerMol) || !(entry.molarMassKgPerMol > 0.0)
             || !finite(entry.molarHeatCapacityCvJPerMolK)
-            || !(entry.molarHeatCapacityCvJPerMolK > 0.0))
+            || !(entry.molarHeatCapacityCvJPerMolK > 0.0)
+            || !finite(entry.molarHeatCapacityCvSlopeJPerMolK2)
+            || entry.molarHeatCapacityCvSlopeJPerMolK2 < 0.0)
             return false;
     }
     return true;
@@ -290,6 +287,11 @@ EulerMixtureModel::EulerMixtureModel(ThermodynamicModel model) noexcept
         specificHeatCapacityCvJPerKgK_[index] =
             model_.species[index].molarHeatCapacityCvJPerMolK
             * inverseMolarMassKg_[index];
+        specificHeatCapacityCvSlopeJPerKgK2_[index] =
+            model_.species[index].molarHeatCapacityCvSlopeJPerMolK2
+            * inverseMolarMassKg_[index];
+        thermallyPerfect_ = thermallyPerfect_
+            || model_.species[index].molarHeatCapacityCvSlopeJPerMolK2 != 0.0;
     }
 }
 
@@ -310,6 +312,7 @@ std::optional<ConservativeState> EulerMixtureModel::conservativeFromPrimitive(
     ConservativeState result;
     auto molarDensity = 0.0;
     auto heatCapacityDensity = 0.0;
+    auto heatCapacitySlopeDensity = 0.0;
     for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
         const auto massFraction = composition.massFractions[index] / fractionSum;
         const auto speciesDensity = density * massFraction;
@@ -318,10 +321,14 @@ std::optional<ConservativeState> EulerMixtureModel::conservativeFromPrimitive(
         molarDensity += speciesMolesPerM3;
         heatCapacityDensity += speciesMolesPerM3
             * model_.species[index].molarHeatCapacityCvJPerMolK;
+        heatCapacitySlopeDensity += speciesMolesPerM3
+            * model_.species[index].molarHeatCapacityCvSlopeJPerMolK2;
     }
     if (!(molarDensity > 0.0) || !(heatCapacityDensity > 0.0)) return std::nullopt;
     const auto temperature = pressure / (molarDensity * universalGasConstantJPerMolK);
-    const auto internalEnergyDensity = heatCapacityDensity * temperature;
+    const auto internalEnergyDensity = thermallyPerfect_
+        ? temperature * (heatCapacityDensity + 0.5 * heatCapacitySlopeDensity * temperature)
+        : heatCapacityDensity * temperature;
     result.momentumDensityKgPerM2S = density * velocity;
     result.totalEnergyDensityJPerM3 = internalEnergyDensity
         + 0.5 * density * velocity * velocity;
@@ -366,6 +373,7 @@ bool EulerMixtureModel::recoverPrimitive(const ConservativeState& state,
     auto density = 0.0;
     auto molarDensity = 0.0;
     auto heatCapacityDensity = 0.0;
+    auto heatCapacitySlopeDensity = 0.0;
     for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
         const auto speciesDensity = state.speciesMassDensityKgPerM3[index];
         if (!finite(speciesDensity) || speciesDensity < 0.0) return false;
@@ -374,6 +382,8 @@ bool EulerMixtureModel::recoverPrimitive(const ConservativeState& state,
         molarDensity += molesPerM3;
         heatCapacityDensity += speciesDensity
             * specificHeatCapacityCvJPerKgK_[index];
+        heatCapacitySlopeDensity += speciesDensity
+            * specificHeatCapacityCvSlopeJPerKgK2_[index];
     }
     if (!(density > minimumDensityKgPerM3) || !(molarDensity > 0.0)
         || !(heatCapacityDensity > 0.0) || !finite(state.momentumDensityKgPerM2S)
@@ -387,10 +397,19 @@ bool EulerMixtureModel::recoverPrimitive(const ConservativeState& state,
         || !finite(internalEnergyDensity))
         return false;
 
-    const auto temperature = internalEnergyDensity / heatCapacityDensity;
+    // A thermally perfect mixture holds a T + b T^2 / 2 per unit volume:
+    // its positive root, written without the cancellation of
+    // (-a + sqrt(a^2 + 2 b e)) / b, and the local gamma on Cv at that T.
+    const auto temperature = thermallyPerfect_
+        ? 2.0 * internalEnergyDensity / (heatCapacityDensity + std::sqrt(
+            heatCapacityDensity * heatCapacityDensity
+            + 2.0 * heatCapacitySlopeDensity * internalEnergyDensity))
+        : internalEnergyDensity / heatCapacityDensity;
     const auto pressure = molarDensity * universalGasConstantJPerMolK * temperature;
     const auto gamma = 1.0
-        + molarDensity * universalGasConstantJPerMolK / heatCapacityDensity;
+        + molarDensity * universalGasConstantJPerMolK / (thermallyPerfect_
+            ? heatCapacityDensity + heatCapacitySlopeDensity * temperature
+            : heatCapacityDensity);
     const auto soundSpeedSquared = gamma * pressure / density;
     if (!(temperature > 0.0) || !(pressure > 0.0) || !(gamma > 1.0)
         || !(soundSpeedSquared > 0.0) || !finite(temperature) || !finite(pressure)

@@ -13,7 +13,7 @@ The set created with each engine contains:
 
 | Identifier | Shape | Effect |
 |---|---|---|
-| `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target |
+| `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target; on a spark engine in petrol AFR (lambda × 14.7), metered at that lambda on any fuel (E85 at 9.81, methanol at 6.47) |
 | `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections; on a diesel, the start of injection (deg BTDC), no earlier than the injection part's window |
 | `idle.target_rpm` | scalar | idle speed the idle governor holds (not on a carburettor) |
 | `limits.rev_rpm` | scalar | rev limiter threshold |
@@ -120,7 +120,9 @@ no governor and no such entry: its idle stop screw sets its idle
 ### Idle and fuel-cut strategies (not tunable)
 
 - **Fuel cut on overrun**: below 2 % throttle and above 1.65 × the idle
-  target; fuel resumes below 1.5 × idle, ramped in at 3/s. A rotary cuts
+  target; fuel resumes below 1.5 × idle, ramped in at 3/s, or earlier when
+  the engine falls fast: 0.45 s of its fall ahead of idle, at most 1.55 ×
+  idle (a heavy engine's port film refills before it reaches idle). A rotary cuts
   above 2.5 × idle and resumes below 2.25 ×: its face waits 1,080° of the
   shaft for its first fire and its light shaft coasts down twice as fast.
   A two-stroke keeps its fuel on overrun.

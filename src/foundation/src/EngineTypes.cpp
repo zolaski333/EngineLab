@@ -681,16 +681,36 @@ double combustionPulse(double cylinderPhaseDegrees, double ignitionAdvanceDegree
         ? std::pow(std::sin(pressurePhase * std::numbers::pi / 180.0), 2.0) : 0.0;
 }
 
-std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
+namespace {
+
+/** `repairs` non-null: `config` is a mutable object, and a finite value
+ *  outside its range that is one of its own members (a scalar of the engine
+ *  or of a part it holds by value, not an element of a list) is clamped into
+ *  its range and reported instead of refused. */
+std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vector<std::string>* repairs) {
     const auto inRange = [](double value, double minimum, double maximum) {
         return std::isfinite(value) && value >= minimum && value <= maximum;
+    };
+    const auto* const configBytes = reinterpret_cast<const unsigned char*>(&config);
+    const auto ownMember = [configBytes](const double& value) {
+        const auto* const at = reinterpret_cast<const unsigned char*>(&value);
+        return at >= configBytes && at + sizeof(double) <= configBytes + sizeof(EngineConfig);
     };
     // The first value found outside its range, named in the message: a
     // designed engine is refused by what is wrong, not with a generic line.
     std::string rangeFailure;
-    const auto outOfRange = [&inRange, &rangeFailure](const char* name, double value, double minimum,
-                                                      double maximum) {
+    const auto outOfRange = [&inRange, &rangeFailure, &ownMember, repairs](const char* name, const double& value,
+                                                                         double minimum, double maximum) {
         if (inRange(value, minimum, maximum)) return false;
+        if (repairs != nullptr && std::isfinite(value) && minimum <= maximum && ownMember(value)) {
+            const auto clamped = std::clamp(value, minimum, maximum);
+            char text[224];
+            std::snprintf(text, sizeof(text), "%s = %g, outside %g to %g: loaded as %g", name, value, minimum,
+                          maximum, clamped);
+            repairs->emplace_back(text);
+            const_cast<double&>(value) = clamped;
+            return false;
+        }
         if (rangeFailure.empty()) {
             char text[192];
             std::snprintf(text, sizeof(text), "%s = %g, outside %g to %g", name, value, minimum, maximum);
@@ -1026,7 +1046,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || outOfRange("injection.referencePressureBar", config.injection.referencePressureBar, 1.2, 3'000.0)
         || outOfRange("injection.wallFilmFraction", config.injection.wallFilmFraction, 0.0, 0.98)
         || outOfRange("injection.vaporisationTimeConstantSeconds", config.injection.vaporisationTimeConstantSeconds, 0.001, 2.0)
-        || outOfRange("injection.latentHeatKjPerKg", config.injection.latentHeatKjPerKg, 10.0, 1'000.0)
+        || outOfRange("injection.latentHeatKjPerKg", config.injection.latentHeatKjPerKg, 10.0, 1'200.0)
         || outOfRange("injection.directChargeCoolingEfficiency", config.injection.directChargeCoolingEfficiency, 0.0, 1.0)
         || outOfRange("injection.portChargeCoolingEfficiency", config.injection.portChargeCoolingEfficiency, 0.0, 1.0)
         || outOfRange("injection.directSprayVaporisationTimeConstantSeconds", config.injection.directSprayVaporisationTimeConstantSeconds,
@@ -1165,7 +1185,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         if (!inRange(cam.continuousControl.responseFrequencyHz, 0.1, 100.0)
             || (cam.continuousControl.enabled && cam.continuousControl.samples.empty())
             || cam.continuousControl.samples.size() > 128
-            || !validateFlowCurve(cam.intakeFlowCurve) || !validateFlowCurve(cam.exhaustFlowCurve)) return false;
+            || !validateFlowCurve(cam.intakeFlowCurve) || !validateFlowCurve(cam.exhaustFlowCurve)
+            || !(cam.exhaustPortHeadAreaFraction == 0.0 || inRange(cam.exhaustPortHeadAreaFraction, 0.2, 1.2)))
+            return false;
         for (std::size_t index = 0; index < cam.continuousControl.samples.size(); ++index) {
             const auto& sample = cam.continuousControl.samples[index];
             if (!inRange(sample.rpm, 0.0, 30'000.0) || !inRange(sample.load, 0.0, 1.5)
@@ -1736,6 +1758,20 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     // to bore and stroke and back.
     if (!inRange(displacement, 0.0005, 100'000.0)) return "Total displacement must be between 0.5 cc and 100,000 litres";
     return std::nullopt;
+}
+
+} // namespace
+
+std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
+    return validateOrRepair(config, nullptr);
+}
+
+std::vector<std::string> repairEngineConfigRanges(EngineConfig& config) {
+    std::vector<std::string> repairs;
+    // Each pass clamps every value it reaches; a refusal of another kind
+    // stops the pass early, so clamping can uncover nothing it did not see.
+    (void)validateOrRepair(config, &repairs);
+    return repairs;
 }
 
 const char* afterfireBlockerName(std::uint32_t mask) noexcept {

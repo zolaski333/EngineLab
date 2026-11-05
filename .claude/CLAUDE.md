@@ -27,14 +27,15 @@ Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
 0.7.2: a big designed engine's turbo reaches its boost (a 193 L six 2.96 of
 3.0 bar) and the airbox is an expansion chamber, not a point volume.
 0.7.3: the diesel's premix follows its ignition delay; the dyno holds a light
-shaft. The petrol over-efficiency and low EGT are the gas's constant gamma:
-the thermally perfect gas is on `exp/thermally-perfect-gas`, not merged until
-a measured WOT airflow explains the 10-15 % torque it exposes (the friction
-is under Blair's, journal 2026-10-30). 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux;
+shaft. 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux;
 0.7.6 lets a rotary stage its intake ports (a switched profile on 1,080 deg);
 0.7.7: owner reports (rotary crash, launch control, saving, H-pipe) and a
 designed rotary's exhaust (one a rotor) and sizing (litres or rotor);
 0.7.8: launch control in first gear, a rotary's exhaust designer opens.
+0.8.0 (owner's go of 2026-11-05): the thermally perfect gas with measured
+LS3/2JZ heads, tumble and Sandoval's friction (the Fireblade goal stopped at
+-12 %, journal 2026-11-04); fuel presets and the ECU in lambda; a bad value
+is corrected on load; inspector lists. 13B power is a named exception.
 A two-stroke diesel was never asked for (it needs a VISION.md amendment).
 Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.
@@ -158,7 +159,7 @@ masks everything); `EngineLabPhysicsPerfHarness` needs `--idle` beside
 `EngineLabDynoSweepHarness` `--crank-degrees`, `--coupling-us` and
 `--frame-hz` resize the mechanical substep, the exhaust flush clock and the
 240 Hz outer frame, and a gas-dynamic feature stays where it is when any one
-changes; `EngineLabGeometrySensitivityHarness` says
+changes (sweep mode only: `--reference-file` ignores all but `--frame-hz`); `EngineLabGeometrySensitivityHarness` says
 whether an exhaust change moved the timbre (`shape`) or only the level
 (`level`).
 
@@ -180,6 +181,8 @@ whether an exhaust change moved the timbre (`shape`) or only the level
 - **A test's absorber acts once a frame on the frame before's speed**: stiffer
   than half the shaft's inertia a frame (N.m per rad/s) it brakes all or
   nothing, and the mean torque is the swing's (a 25 cc single read 16 bar).
+  `state.torqueNm` read once a frame aliases a single's firing (80 Hz at
+  9,600 rpm): average the absorber's torque.
 - **An assertion on a quantity forced to zero below a threshold proves nothing**
   until you have checked that the threshold is reached.
 - **Misleading fields**: `exhaustPressureKpa` is a peak, the back-pressure is
@@ -215,7 +218,9 @@ whether an exhaust change moved the timbre (`shape`) or only the level
   request is bit-identical. The two-stroke mesh converges near 12 mm and
   production (100 mm) is 18 % below converged -- a real-time budget limit, not
   a physics one. Do not read a delivery hump off `max(delivered_ve)`: it picks
-  the lugged through-flow.
+  the lugged through-flow. A four-stroke's idle rides on the 360 mm cells within
+  0.3 m of the outlet: ambient oxygen diffuses to the valve (sport 125 2,074 rpm
+  for 1,300; refined there, 1,325, but the sound moves: `exp/outlet-mesh`).
 
 ## Refuted — do not propose again without new evidence
 
@@ -225,7 +230,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
 - **Exhaust**: the "unified duct" rewrite (the 300 mm mesh carries the audible
   geometry, 12-14 dB); CFL 0.9; MUSCL-Hancock; third-order faces; one-sided open
   ends; deepening the muffler's single chamber (16 dB notch on the EJ25
-  fundamental).
+  fundamental); the exhaust valve's flow as a four-valve superbike's missing
+  power (Cd 0.90 and plateau 1.5 give the designed CBR +3 %).
 - **Performance**: fork-join per cylinder with woken threads (the resident pool
   runs the pass since 2026-10-20); AVX/AVX2 (dependent-division latency); a
   telemetry cache for listening; state-variable valve-flow reconstruction
@@ -234,7 +240,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   half-reserve at 4 processors (3 workers drop audio, 2 cost the 2JZ); a
   parallel two-stroke cylinder pass (Gauss-Seidel volumes and one PRNG
   sequence below 8 cylinders); coarse closed-valve steps (x1.05, a sound
-  source); a rotary's crank step at 3 deg, its face's 2 deg of 720 (13B
+  source); a 150 mm four-stroke exhaust mesh against the idle's outlet air
+  (Hayabusa, CP4, 13B, 2JZ fall under 1.0); a rotary's crank step at 3 deg, its face's 2 deg of 720 (13B
   torque +1.45 % mean, +4.6 % at 4,000 rpm against 1.5 deg; 2 deg +0.34 %).
 - **Two-stroke**: a 50 mm mesh; coupling the exhaust every substep beyond
   BDC-to-transfer-close, a characteristic valve, finer transfer coupling (none
@@ -258,7 +265,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or
   trajectory-resolved forward delivery; individual throttles as a small 0-D cell
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
-  belongs inside the 1-D runner).
+  belongs inside the 1-D runner); Mazda's published 13B port areas as its
+  high-rpm gap (+0.4 % at 8,500), or its VDI (no fixed runner passes +1.6 %).
 - **Backfire** (journal 2026-10-24/25): "1-D cannot carry a front" (it rises in
   0.2-0.8 ms); "the heat is too slow to become a wave"; the EVO timing as
   what silences a pop (the 100 kPa source bound did clip it: now 1 MPa); slugs collecting in the muffler (phi
@@ -281,7 +289,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
 - **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
   constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
   octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363
-  N.m); the I5 at 2.1 bar. A weaker Douaud-Eyzat pressure exponent has no
+  N.m); the I5 at 2.1 bar; Douaud-Eyzat's prefactor at x1.5 under the
+  thermally perfect gas (NA maps reach their limit, 2JZ/EJ25 makers' points
+  -4 %; journal 2026-11-03). A weaker Douaud-Eyzat pressure exponent has no
   source (pressure matters more in the NTC band).
 - **The other simulator's ingredients, one at a time** (journal 2026-10-13/14):
   output stage, pressure-release outlet, valve-area noise, mild room IR -- none

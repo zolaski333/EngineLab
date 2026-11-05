@@ -169,11 +169,14 @@ struct HeldRun final {
     return config;
 }
 
-/** The 2JZ at full load with its spark map advanced 8 deg, past its knock
- *  limit (its stock map runs clean), knock control on and off. */
+/** The 2JZ at full load with its spark map advanced 8 deg, on a 91 RON fuel
+ *  for its 98, past its knock limit (its stock map on its fuel runs clean, and
+ *  under the thermally perfect gas +8 deg on 98 stays under it: knock peak
+ *  0.03), knock control on and off. */
 void knockRunsFreeWithoutControl() {
     auto config = catalogueEngine("2JZ");
     for (auto& sample : config.ignition.timingCurve) sample.advanceDegrees += 8.0;
+    config.octaneRating = 91.0;
     const auto on = heldFullLoad(config, calibration::ecuLimits::defaultKnockRetardGainDegrees, 12.0, 6.0);
     const auto off = heldFullLoad(config, 0.0, 12.0, 6.0);
     for (const auto& [name, run] : { std::pair { "on ", on }, std::pair { "off", off } })

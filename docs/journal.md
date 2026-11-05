@@ -5,6 +5,164 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-05 — 0.8.0 closing: an earlier fuel resume, the ECU in lambda, two catalogue refits under the thermally perfect gas
+
+- Idle: the post-blip dip is lean misfires at the fuel-cut resume on an empty port film. A resume led by the deceleration (rpm + 0.45 s of its rate, at most 1.55 x the idle) restores the WOT-blip gates. The early blip's minimum is chaotic in its start: `IdleStability --early-scan`, 12 starts 7 steps apart, Aircooled base 664-700, now 589-698 (1 of 12 under its 608 gate, the canonical start 635); Merlin base 639-702, now 637-702.
+- ECU map in petrol AFR (lambda x 14.7), scaled by the fuel's stoichiometry: E85 on the K20A holds lambda 0.90, fuel x 1.49, torque within 2 %, EGT +10 C. Fuel presets (`parts/fuels.yaml`, Heywood D.4) carry octane and latent heat; an octane edit re-measures the knock limit.
+- Big Twin flame ratio 0.42 -> 0.58: -8.6 / -25.5 % -> +6.9 / -5.7 %. EA288 smoke limit 47 -> 52 mg at 4,000 (44 at 4,500; 110 kW at 235 g/kWh is 54 mg): lambda 1.29 89 kW -> 96.6 kW (-12.2 %).
+- Reference gate 24/24 (EJ25 power -14.9 %, marginal). 13B 153 kW at 8,500 is a named exception (-16.8 %; port areas and VDI refuted). Marine six gate at 0.85 of MAN's 24.9 bar (21.5 measured). Knock tests run the over-advanced 2JZ on 91 RON.
+- Not measured: the sound of the refits, real time, the early-blip tail's cause.
+
+## 2026-11-04 — The designed CBR's last 20 %: no single factor, all bounds stacked leave -12 % (nothing changed)
+
+- Same CBR, `DynoSweepHarness --step 500` (reference mode ignores `--crank-degrees`, `--coupling-us`, `--exhaust-cell-mm`, `--settle`, `--advance-offset`: bit-identical). Base 126.3 kW at 14,500, pmep 1.51, exhaust stroke 1.22 bar.
+- Resolution: the coupling sits at its 125 us cap (10.9 deg at 14,500); converged by 35 us: +2.5 % power, pumping -0.21 bar. Crank 1 deg: -2.4 %. Both: 127.1 kW (+0.6 %). 0.5 deg wrote no output. `--frame-hz 480`, 25 mm cells, a 6 s settle: within 1.4 %. Not an artefact.
+- Combustion (`PhysicsPerfHarness --trace 14500`): CA50 21.1 deg ATDC, 10-90 % 34.6 deg. The designer's knock limit (27.7 deg) does not bind there (removed: +0.4 %). Map +6 / +12 deg: CA50 16.2 / 13.2, power +2.9 / +4.6 %.
+- Cams: valves 32.4 / 27.5 mm against Honda's 32.5 / 28.5; no SC82 lift or timing found; the designer's L/D 0.30 / 0.33 equals the SC59's published 8.9 / 8.4 mm on 29 / 24 mm. Unsourced bounds: its own disabled high profile (12.5 / 11.8 mm, 282 / 276 deg) +6.4 %, exhaust +20 deg +2.0 %, intake +20 deg +1.3 % (torque -1.5 %).
+- Stacked (high cams, +6 deg without the knock limit, crank 1 deg, coupling 25 us): 141.2 kW at 14,500 (-11.8 %), 107.8 N.m at 10,000 (-4.6 %), delivered VE 1.10 at 12,500, no knock.
+- Measured reference: Cycle World, US-spec SP on a Dynojet 250i, 165.4 hp (123.4 kW) at the wheel at 12,000, 74.6 lb-ft at 10,580 (Honda claims 186 hp US, 214 hp EU). No measured EU curve found.
+
+## 2026-11-04 — The exhaust valve's flow is not the designed CBR's missing power (nothing changed)
+
+- Designed CBR1000RR-R (`EngineLab.DesignedReference` set, 39cc47e, `DynoSweepHarness --reference-file`): exhaust valve 27.5 mm derived, curtain Cd 0.62, 9.14 mm lift (L/D 0.33), so the 0.51 plateau caps its high lift.
+- Plateau alone (`--exhaust-port-plateau`): 0.51 / 0.65 / 1.0 give 96.9 / 97.6 / 97.5 N.m at 12,500 (Honda 113) and 127.7 / 129.4 / 130.1 kW at 14,500 (Honda 160): -20.2 -> -18.7 % at twice the plateau.
+- Bound, Cd 0.90 and plateau 1.5 (about three times a real port's area at full lift): 98.9 N.m, 132.0 kW, -17.5 %. The control SC59 moves alike (-12.3 -> -11.2 % at plateau 1.0).
+- Sources agree with 0.51 for a four-valve head: the 2JZ's five benches read 0.50 (journal 2026-11-03); only the two-valve LS3 reads 0.65.
+- The area-step boundary is set aside on local branch `exp/area-step`, with its measurements in that branch's journal.
+- Not measured: where the 1.22 bar of exhaust-stroke pumping at 14,500 comes from, if not the valve.
+
+## 2026-11-04 — The designed CBR's high-rpm breathing, one factor each; an area step between two ducts over-dissipates (nothing changed)
+
+- Designed CBR1000RR-R, `DynoSweepHarness --step 500`, torque at 12,500 / 14,500 against the design: plenum 1.3 -> 5.2 L +2.1 / +1.8 %; airbox 3 -> 10 L bit-identical; runner 38 -> 44 mm -3.6 / -0.2; runner 131 -> 170 / 95 mm +0.3 / -4.2, -3.4 / +1.1; primaries 345 -> 250 / 450 / 600 mm +0.3 / +0.2, +1.3 / +2.7, +1.5 / +2.3; primaries 40 mm -0.3 / -0.2; Honda's 32.5 / 28.5 mm valves (designer 32.4 / 27.5) +0.8 / +0.1; exhaust plateau 0.65 / 1.0 +0.6 / +1.2, +0.6 / +0.7 (the valve is worth ~0.2 bar of pumping). Merge diameters are not read (bit-identical).
+- At 14,500 the intake stroke costs 0.29 bar, the exhaust stroke 1.22: the cylinder sits at 2-3 bar through the stroke over a primary at 1.0-1.5 bar (152 kPa at 260 deg). No hardware factor moves it by more than 0.2 bar. The 20 % gap is not in the designer's choices, and no measured superbike airflow or pumping exists to judge the model's level.
+- Anomaly: enlarging the collector, tailpipe and outlet x2 costs 13 % (primary cycle mean 96 -> 133 kPa). Steady-flow bench on `ExhaustGasNetwork` (scratch test, a held reservoir through 1 m of 50 mm then 1 m of 35/50/70 mm, 20 mm cells): a 50 -> 70 mm expansion at 117 m/s loses 8.5 kPa of stagnation pressure, the whole upstream head, where Borda-Carnot gives 2.0; a 50 -> 35 mm contraction loses K = 1.46 of the downstream head where a sudden contraction is 0.25-0.30; a uniform pipe 0.24 kPa. A duct-to-duct interface takes a constant-area Riemann flux on the smaller face.
+- The throttle's stagnation-fed orifice on those faces (prototype, not kept): the contraction becomes lossless, the expansion inconsistent (more than the upstream head at 106 kPa); the x2 collector -13 -> -1.7 %, the designed CBR +0.1 %. A 2-into-1 merge with axial momentum (the engine's setting) is fine: K = 0.14-0.16 of the trunk head (a Y-piece 0.1-0.4). As a plenum at rest it meters by rho c u (11-15 kPa at 22-34 m/s); the engine does not use that mode.
+- Open: a sourced area-step boundary (Benson / Winterbone-Pearson: isentropic contraction, Borda-Carnot expansion) for every engine and the default sound. Not the Fireblade's gap.
+
+## 2026-11-04 — Friction: the rpm^2 and above-4,000 terms removed; designed engines 6.9 -> 3.4 %, control 2/6 -> 0/6 out
+
+- One factor: the lumped polynomial's 3.5e-8 rpm^2 and 1.5e-4 (rpm - 4,000)+ terms (the latter added 2026-08-27 for "underestimated high-rpm losses", under constant gamma). Without them the simulator's fmep follows Sandoval's Patton-Nitschke-Heywood within 0.1-0.3 bar (K20A 7,000/8,000: 1.91/2.14 vs 1.87/2.08; CBR 12,500/14,500: 2.28/2.62 vs 2.39/2.67); with them it ran 0.27-1.12 bar over. At 4,000-6,000 the two already agreed (K20A 1.29 vs 1.30, CBR 1.47 vs 1.54), untuned.
+- Designed set: tuning median |error| 6.9 -> 3.4 %, 4/16 -> 2/16 out (CBR1000RR-R -20.2 power, -14.3 torque, was -29.5 / -20.2); control 11.5 -> 10.3 %, 2/6 -> 0/6 out. Cycle World shape RMS CP2 7.1 -> 6.3, CP3 7.7 -> 6.4 (peak 7,000 as measured), CP4 12.6 -> 11.7, M8 7.1 -> 6.8 %. LS3 / LS7 torque +10.8 / +11.7 (were +9.9 / +10.6).
+- Catalogue: 3 -> 2 points out (Big Twin -25.5, EA288 -19.0; EJ25 -14.9 back in); motorcycles -4.4 to +2.3 %; Aircooled +8.2 power. 13B 145.6 -> 153.1 kW (gate 156.4). Owner's Fireblade 124 -> 133 kW at 13,000, torque peak 110.9 N.m at 10,000. BSFC 1-4 g/kWh lower. Diesels and two-strokes unchanged.
+- Guards: four-stroke idles on target, 100 % fired; RD350 as before. ctest 91/97: `IdleStabilityRegression` now fails, Merlin and Aircooled dipping to 589 / 592 rpm after a WOT blip (gate 624 / 608) on a 0.045 bar change at the Merlin's 3,200 rpm limit: the idle catch's sensitivity, not investigated. `ShiftStyle` passes again. Not measured: the sound, real time.
+- `EngineDesign`'s single read -0.08 N.m at 9,616 rpm: the state's torque once a 240 Hz frame samples an 80 Hz single at fixed phases (7.7 bar before by luck). The absorber's mean gives 10.1 bar, as `DynoSweepHarness` (1.97 N.m at 10,000).
+
+## 2026-11-04 — The designed sport engines' gap at their power points, term by term (nothing changed)
+
+- Branch state (x2 knock), `DynoSweepHarness --step 500` on the designed set; bmep = delivered VE x (gross imep / delivered VE) - pmep - fmep at each maker's point (interpolated). The warm-started sweep carries history: the CBR's 14,500 rpm point moves 1.2 % with a knock-limit change at 1,950 rpm.
+- Combustion is not it: gross imep / delivered VE 14.0-14.7 bar and gross indicated efficiency on the fuel 0.365-0.385 (lambda 0.88-0.90) on every engine, hits and misses alike.
+- Power points that miss (CBR1000RR-R -29.5 %, Panigale -19, SC59 -19, CP3 -16) deliver 0.98-1.06 where those that hit (CP4 -5, Hayabusa -5) deliver 1.09; pmep 1.3-1.5 bar (exhaust stroke 1.0-1.2 of it) against 1.0-1.1. A 25 mm exhaust mesh moves them -1 to -3 %.
+- CBR at 14,500, one factor each: no muffler +0.4 %, collector and outlet x1.3 +4.4 %, exhaust plateau 0.65 +3.9 %.
+- Friction at equal piston speed: CBR 14,500 (23.4 m/s) 3.74 bar, K20A 8,000 (22.9) 2.50. Sandoval 2.67 / 2.08, Blair 3.46 / 3.40. The two sources disagree on the level but both charge the CBR 0.06-0.59 bar more than the K20A where the simulator charges 1.24: its rpm polynomial grows with rpm, not piston speed. Following either source's CBR/K20A step: +0.65-1.18 bar, +7-13 % CBR power.
+- Left after that: 1.7-2.9 bar on the CBR, a delivered VE of 1.14-1.22 at 14,500 if pumping were right. No measured superbike airflow was found (web searches: none), so that term cannot be judged.
+
+## 2026-11-03 — Knock under the thermally perfect gas: no Douaud-Eyzat prefactor fits both NA and boosted engines
+
+- `KnockControl` and `LiveTuning` fail on the branch: the 2JZ map +8 deg peaks at knock 0.029 and 0 (need > 0.1). The 2026-10-23 doubling (35.4 ms) was set under constant gamma by "a production map sits 0-3 deg from its limit"; redone here the same way (`DynoSweepHarness --step 500`, retard = map at RON 130 minus commanded, at the map and `--advance-offset 5`/`10`).
+- x1 (17.68): retard behind the map K20 7.8 deg, LS3 4.3, 2JZ 11.4, EJ25 12 (stop), I5 6.1 -- as under the old gas. x1.25: NA 2 deg, 2JZ 8, EJ25 12. x1.5: K20 0 / 2.9 at +5, LS3 1.0 / 1.5, I5 1.0; 2JZ 7.4 below 3,000, EJ25 9.9. x2: K20 and LS3 clean even 10 deg over their maps (under the old gas +5 knocked); 2JZ 7.3 below 3,000, EJ25 4.2.
+- x1.5 meets the criterion on the NA engines and passes both tests (on: peak 0.12, mean 0.096; off: 0.41), but the makers' points move 2JZ torque -12.3 -> -16.1 %, EJ25 power -15.5 -> -19.5 % (designed set unchanged: its knock limit is measured at build). Not kept: it trades one error for another. x2 kept; the two tests stay failing until the owner decides.
+- The NA/boosted split is Douaud-Eyzat over-predicting knock as intake pressure rises (Energy & Fuels, doi 10.1021/acs.energyfuels.4c04775, a snippet). A pressure exponent without a source stays refuted.
+
+## 2026-11-03 — The LS3 and the 2JZ on measured heads; the gates left on the branch
+
+- Real heads replace authored curves (Cd 0.36-0.42 at 3 mm where benches read 0.70-0.81). LS3: GM's cam card (254/260 deg, 14.0/13.3 mm), its head's benches (Lingenfelter, EngineLabs, Edelbrock), exhaust plateau 0.65 (new `exhaust_port_head_area_fraction` on a camshaft; 0 keeps 0.51). 2JZ: Toyota's 233 deg 8.25 mm cams, 33.5/29.0 mm valves, the median of five benches (Supramania thread), plateaus 0.56/0.50 as the defaults.
+- Makers' points: LS3 -5.7/-24.2 -> -0.0/+0.2 %; 2JZ -14.8/-10.4 -> -12.3/-11.9 %. Every other engine and the designed set unchanged (points and sweep maxima to 0.1 %). `CatalogReference` 3 of 24 out: EJ25 power -15.5 (no head data found), Big Twin -26.5 (0.42 anchor; without it delivered VE 0.99 at 2,500 where H-D implies ~0.86: cam and intake authored, no M8 bench found), EA288 -19.4 (lambda 1.27, 47 mg/stroke at 4,000 where 110 kW at ~245 g/kWh needs ~56: boost and fuel limit authored).
+- `EngineDesign`'s 25 cc single was a transient in the window (opened at 2 s, at 9,600 rpm only at 6.2 s; the last 2 s of 8 read 9,255-9,637): 12 s, 9,598-9,638 rpm, 7.67 bar. The test then reaches the marine six: 21.5 bar rated (gate 22-30; 24.0 under constant gamma), BSFC 197 g/kWh at lambda 1.19 against ~180 for a real one: the diesel reads 3-8 % inefficient under the gas, open.
+- Rotary: 145.6 kW at 8,500 (Mazda 184, gate 156.4); the gas alone, tumble does not apply. Not investigated.
+- `ShiftStyle` fails with the 2JZ's head (alone too): a dual-clutch upshift's 20 deg retard shortens the push 435.5 -> 426.8 ms, at the test's 2 % edge. ctest 91/97: that, CatalogReference, Rotary, KnockControl, LiveTuning, EngineDesign (marine six).
+
+## 2026-11-03 — High-speed friction: the two sources bracket the simulator; not changed
+
+- Sources: Sandoval's revision of Patton-Nitschke-Heywood (MIT thesis 2002, App. A-2, = SAE 2003-01-0725; motored 5.4 L V8 and 3.0 L V6, 90 C) and Blair (1999, p. 536, 1.0 bar + 0.105 bar per m/s).
+- Sandoval's terms on a CBR1000RR-R (81 x 48.5, 5 mains 33 x 18 mm, rods 34 x 17, DOHC flat followers, the paper's DOHC constants estimated): 1.92 bar at 9,000 rpm, 2.39 at 12,500, 2.53 at 13,500 (piston 0.79, valvetrain 0.57, crank 0.47, auxiliaries 0.44). Blair: 2.53, 3.12, 3.29. The simulator on the owner's design (imep - bmep): 2.18, 3.13, 3.43. K20A at 7,000: Sandoval 1.87, Blair 3.1, simulator 2.2.
+- The two disagree by 0.8-1.2 bar at 20 m/s and the simulator sits within 4 % of Blair at the power point: no source asks for less. Friction is not the Fireblade's missing power; its pumping (pmep 1.2-1.4 bar at 12,500-13,500) and air are what is left.
+
+## 2026-11-03 — A tumbling head's turbulence in rpm x bore: designed engines 11 -> 7 %, control 19 -> 12 %
+
+- Branch `physics/designed-engines` (not merged): the thermally perfect gas (b55ce40), then the flame's turbulence x bore/stroke on a multi-valve four-stroke spark engine (a tumble turns at a ratio of the crank speed across the bore; a two-valve head keeps u' in piston speed). Each measured alone on the whole set (`EngineLab.DesignedReference`, catalogue points, `--step 500` sweeps).
+- Gas alone: every engine -12 to -17 % (RD350 -19, EA288 -8/-12); BSFC minimum K20 206 -> 236, LS3 221 -> 255 g/kWh, EGT +40-80 C; designed tuning median 11.1 -> 10.4 %, control 19.2 -> 23.8 %; catalogue 0 -> 6 points out of 15 % (power points).
+- Exhaust plateau 0.51 -> 0.65 on top (`--exhaust-port-plateau`, now also in reference mode): four-valve engines 0 to +2 %, the two-valve LS3 +8 % power. One bench (an LS3/L92 head) is the only source: not kept.
+- Tumble on the gas: CA50 41 -> 18 deg ATDC on the designed CBR1000RR-R, 46 -> 15 on the Panigale, all designed engines 6-21; gross IMEP / delivered VE 14.0-14.7 bar on every one (was 11-14.5). Designed tuning median 6.9 %, 4/16 out; control 11.5 %, 2/6 out. CP4 torque peak 7,000 -> 9,000 rpm (Cycle World 9,250). Square and two-valve engines unchanged by construction.
+- Anchors, each removed alone: CP2 0.80 -> none -3/-8 %, CP3 0.80 -> 0/-5, CP4 1.25 -> -5/-5: removed (and the two CP2 variants'). EJ25 and I5 1.50 -> -16/-22, -18/-23: kept. Big Twin 0.42 -> +21/+11 (kept, -9/-27). Aircooled: its 964 has two valves (the catalogue gives four); with two, 0.55 -> -11/-24, none -> +20/+11: kept as authored. Their common pattern: low-speed torque high, high-speed power low.
+- Branch catalogue: 4 of 24 points out (LS3 power -24, EJ25 -16, Big Twin -27, EA288 -19: the diesel has no spark flame, so it is the gas): `EngineLab.CatalogReference` fails, the branch is not mergeable as it is. Owner's Fireblade: 114 -> 124 kW, torque peak 7,500 -> 9,000.
+- Friction (step 4) not touched: the Sandoval-Heywood thesis was unreachable (HTTP 429), no other readable source gives a high-speed fmep. At ~20 m/s the rpm polynomial charges the Fireblade 3.0-3.8 bar, the K20A 2.1.
+- Guards: four-stroke idles on target, 100 % fired; RD350 1,533 rpm sd 216, 18.6 % fired (was 1,471, 138, 24.2 %). Real time -5 to -9 % capacity, lowest I5 1.45, EJ25 1.63, 13B 1.64. Sound `shape` 0.4-3.4 dB (K20A worst), level within 1 dB: a default-sound change for the owner's ear. ctest 92/97: CatalogReference, Rotary (184 kW at 8,500), KnockControl and LiveTuning (the 2JZ no longer reaches its knock limit) and EngineDesign's 25 cc single, which swings 9,255-9,637 on the test's soft absorber while `DynoSweepHarness` holds it (sd 1.9 rpm, -13 % torque like the others).
+
+## 2026-11-03 — Engines designed from their data sheets: the error follows bore/stroke (r = -0.89)
+
+- New gate `EngineLab.DesignedReference` (report only): 11 engines the designer builds from a data sheet alone (`designed-engines.spec`: bore, stroke, CR, layout, use, rated-power speed / 0.9 as redline; knock limit measured as the window does), against 22 makers' points; 8 tuning, 3 control (LS7, Panigale 1299, SC59) never used to decide. Sources: `designed-manufacturer-sources.md`.
+- Baseline (main physics): tuning median |error| 11.1 %, signed +8.4 %, stdev 18.6 %, 6/16 outside 15 %; control 19.2 %, 3/6 outside. Fireblade -28 / -38 % (81.8 N.m at 12,500, 99.4 kW at 14,500), Panigale -24 / -34 %; LS3 +28 / +27 %, LS7 +30 / +11 %, M8 +36 / +15 %, K20A +13 / +9 %. Every hold PASS.
+- Error against bore/stroke (0.91-1.91): correlation -0.89. CA50 6-14 deg ATDC on square and long-stroke engines, 25-29 on the SC59, 32-35 CP4, 41-42 Fireblade, 45-47 Panigale (10-90 % 53-61 deg).
+- Gross IMEP / delivered VE 15.6-16.5 bar wherever CA50 is under 20 deg (the constant gamma's over-efficiency: the 2-valve V8s, the M8, the K20A land 13-36 % high), 12.6-13.4 on the two slowest burners.
+- fmep at ~20 m/s piston speed: K20A 2.06, CP2 2.49, Hayabusa 2.59, Fireblade 3.05 bar (the rpm polynomial charges a short stroke for its rpm). Cycle World shape RMS (each curve over its own peak): CP2 6.2, CP3 7.1, CP4 13.0 (peak 7,000 vs 9,250), M8 5.7 %.
+- Not covered: crank offsets, VTEC, 4-2-1 exhausts (the designer has none). Nothing in the physics changed.
+
+## 2026-11-02 — A designed Fireblade: the flame burns in bore/stroke, the losses peak the torque at 9,000
+
+- Owner's designed CBR1000RR-R (81 x 48.5, CR 12.1, saved JSON; `DynoSweepHarness --saved-engine`): 103.8 N.m at 7,500, 114 kW at 12,500 (Honda: 113 N.m at 12,500, 160 kW at 14,500; inlet/exhaust valves 32.5/28.5, CR 13.0, 52 mm bodies, 4-2-1). Delivered VE 1.15 at 11,500: not short of air.
+- Trace: CA50 34 deg ATDC at 7,500, 42 at 13,500 (spark 28 BTDC, the build's knock limit). The flame front's speed follows the mean piston speed and crosses half the bore, so burn angle goes as bore/stroke: 1.67 here. The CP4's 1.25 turbulence (its comment: 60 deg burns) is this, patched per engine; a designed four-stroke gets 1.0.
+- One factor: turbulence 1.67 (= bore/stroke): 126 N.m at 9,000, 148 kW at 13,000, gross IMEP/VE flat at 16.1-16.5 bar. Then CR 13 +2.6 % power, lift 11/10 mm +2.6 %, advance +5 deg +2 %, exhaust plateau 0.65 +0.6 %; runner 100-220 mm, primaries 600 mm, 52 mm bodies, durations +18 deg: the torque peak never leaves 9,000-9,500.
+- Between 9,000 and 14,500: fmep 2.19 -> 3.74 bar (the bearing polynomial is in rpm, with an rpm^2 term fitted on car engines under ~8,000), pmep 0.42 -> 1.46 (exhaust stroke 1.17), VE 1.12 -> 1.07. Honda's 14,500 / 12,500 torque ratio is 0.93; the model's 0.85.
+- Catalogue makers' points with turbulence x bore/stroke (`exp/flame-bore-scale`, `EXP_FLAME_BS=1`): square engines unchanged; Hayabusa +6/+8 %, CP4 +9/+12 %, CP3 +7/+11 %, CP2 +4/+6 %, Aircooled out (+25/+27 %: its 0.55 anchor). The constant-gamma over-efficiency (gross IMEP/VE 16+) still hides what each anchor fixed. Nothing merged.
+
+## 2026-11-02 — With the LS3's measured head and cam, the thermally perfect gas meets GM within 1 %
+
+- References: GM 321 kW at 5,900, 575 N.m at 4,600; GM cam (Summit/LSXMag) 14.0/13.3 mm, 254/260 deg at 0.006", 117/117 deg; L92/LS3 rectangle-port flow bench (Lingenfelter, EngineLabs, Edelbrock; may be an L92 head) converted at 28" H2O (mm2 = cfm x 4.378); forum WOT MAF logs 280-338 g/s near 6,000 (anecdotal, snippets only).
+- Catalogue LS3 (one factor each, main gas): GM lift +7.3 % torque at 6,000; GM centrelines -4 to -6 %; exhaust plateau 0.51 -> 0.65 (the bench's) +0.3 % at 2,000, +11.7 % at 6,000, exhaust-stroke mep 1.38 -> 0.99 bar: the shape of the common high-rpm deficit.
+- Bench Cd curves + GM cam + plateau 0.65 (`DynoSweepHarness --exhaust-port-plateau`), main gas / gas branch: 4,500 rpm 662 / 569 N.m, 5,500 373 / 317 kW, 6,000 381 / 320 kW; BSFC on the branch 262-294 g/kWh, airflow 349 g/s at 5,900. Branch: -1 % torque, -0.3 % power, ratio 5,900/4,600 0.91 (GM 0.90). Main gas: +15-18 %.
+- Read: the constant gamma's over-efficiency was hidden by the catalogue's under-flowing exhaust port (0.51) and low-lift Cd, not by airflow. Only the LS3 has bench data; nothing changed on main (any change moves every engine's power and sound).
+
+## 2026-11-02 — The small engine's idle is the mesh within 0.3 m of the outlet; the cure moves the sound
+
+- One factor (branch `exp/outlet-mesh`): only the ducts within a reach of each outlet are refined, never below the network's own CFL length (the time step is unchanged by construction). The 44 mm tailpipe stub alone: no effect. Reach 0.3 m: idle sport 125 2,074 -> 1,325 (target 1,300), sport 250 1,808 -> 1,322, sport 600 1,420 -> 1,292, road 125 1,369 -> 1,347, Hayabusa 1,314 -> 1,260, CP4 1,379 -> 1,323, CP3 1,334 -> 1,306; K20, LS3, CP2, Merlin, 13B, 2JZ, Big Twin within 1 %. A floor of 50 mm leaves the sport 125 at 1,508, 100 mm at 1,406: it is the cell size at the outlet end.
+- WOT, whole catalogue `--step 500`: the same as a 150 mm mesh everywhere (CP4 torque +3.5 -> -0.3 %, CP3 power -4.8 -> -8.3 %), BSFC within 1 g/kWh, one point outside 15 % before and after. Off (`EXP_REACH_M=0`) is byte-identical to main.
+- Real time (alternated, 4 kept, minimum): Hayabusa 1.071 -> 1.023, CP4 1.107 -> 1.027, 13B 1.112 -> 1.097, 2JZ 1.212 -> 1.203, Big Twin 2.30 -> 1.66 (cells 14 -> 26).
+- Sound (`GeometrySensitivityHarness --output-stage-ab --wav-out`, then `--wav-reference`; a repeat render is 0.00 dB): shape Hayabusa 3.8 dB at 3,000 (-11 dB at 800 Hz), 0.9 at 8,000; CP4 3.6 at 3,000; Aircooled 2.6; K20 0.6 / 1.9 at 3,000 / 7,000; 2JZ 1.9; Big Twin 1.4; CP2, 13B 0.9; LS3 0.3. A default-sound change: not merged.
+- An outlet plume (composition only) was not built: the inert outlet left the sport 125 at 1,791, and it would mask a numerical diffusion with two unsourced constants. `EngineLabAudioAbHarness` aborts (0xC0000409) at its first engine on main.
+- 13B's VDI: at 8,500 rpm a switched runner is one fixed length, and 200-800 mm never passed 193 N.m (journal 2026-11-01): at most +1.6 % of the 9 % gap. Not built.
+
+## 2026-11-01 — The idle's exhaust air is the outlet's oxygen; a finer mesh costs real time
+
+- Diagnostic (built, run, reverted): the exhaust outlet's ambient set inert, production mesh, `PhysicsPerfHarness --trace 1 --idle --settle 8`. Idle (inert / 50 mm): Hayabusa 1,223 / 1,256, CP4 1,296 / 1,304, CP3 1,307 / 1,309, Aircooled 760 / 741, Merlin 787 / 795. The outlet's oxygen is the whole catalogue mesh effect. The sport 125 keeps a second coarse-mesh effect (inert 1,791, 50 mm 1,318).
+- Idle at 150 / 100 mm is converged within 1-2 % (sport 125 1,373 / 1,359, Hayabusa 1,261, CP4 1,326 / 1,324). The Aircooled at 50 mm (741, for 780) suggests its bypass was set on the artefact.
+- Four-strokes at 150 mm, whole catalogue `DynoSweepHarness --step 500`: makers' points move 1-4 % (CP4 torque +3.5 -> 0.0 %, CP3 power -4.8 -> -8.7 %), the count outside 15 % stays 1, BSFC unchanged.
+- Real time (`RealtimeBudgetHarness --free-run --with-audio --relative-rpm 0.95`, alternated, 4 kept rounds, minimum), production -> 150 mm: LS3 1.287 -> 1.039, 13B 1.116 -> 0.996, Hayabusa 1.141 -> 0.967, CP4 1.122 -> 0.983, K20 1.231 -> 1.037, 2JZ 1.127 -> 0.981, Radial 2.48 -> 2.10, Merlin 1.53 -> 1.72. A global finer mesh is refused (real time). Still open: an outlet that holds its own plume, or a finer cell on the tailpipe end only. Sound not measured.
+- B4, CP2 at 8,750 rpm (trace, exhaust stroke): cylinder 2.485 bar mean against 1.747 at the runner's port end (6,500: 1.843 / 1.48). The excess pumping is about half valve and half runner wave. The Full System's 42 mm primaries still pump 0.82 bar (torque ratio 0.85 against 0.837). Derived valves 32 / 27.2 mm against Web Cam's standard 31.5 / 26.5 (a vendor, not Yamaha). No stock lift or timing found. Not changed.
+
+## 2026-11-01 — A small engine's high idle is the exhaust mesh; the high-rpm deficit is not numerical
+
+- The sport 125's extra air comes in through its exhaust. `PhysicsPerfHarness --trace 1 --idle --settle 8`: delivered through the intake 3.9 mg a cycle (2,074 rpm x 3.9 mg = the 0.33 mm2 closed-throttle leak's ~0.057 g/s), trapped 21.3. Oxygen from the outlet reaches the valve through the production 360 mm cells (its 347 mm primary is one cell). `--exhaust-cell-mm`: 200 -> 1,802 rpm, 50 -> 1,328 (16.7 mg delivered), 25 -> 1,325, for 1,300. Road 125 1,369 -> 1,343.
+- Catalogue at 50 mm: CP2 1,407/1,406, K20 953/954, LS3 718/718 (converged); Hayabusa 1,314 -> 1,256 (idle 1,250; delivered 21.5 -> 35.0 mg). Small cylinders with sport overlap. Not fixed: the cure is the production mesh, which moves every engine's sound and real-time budget.
+- High-rpm deficit, resolution (`DynoSweepHarness`): CP2 25 mm cells within 1-3 %, `--crank-degrees 1.0` -1.5 to -2.5 % at every speed, `--coupling-us 40` within 0.8 %; 13B the same within 1 %. The shape does not move: it is the model's physics.
+- `DynoSweepHarness --crank-degrees` below ~1.6 deg aborted (0xC0000409) on any engine revving past ~9,000 rpm: the finer step asked more than the solver's 60 kHz ceiling and the refused config threw. The ceiling now follows the step (capped at validation's 100 kHz); without the flag the sweep is byte-identical.
+- With the gas (`exp/tpg-rebased`), delivered VE at makers' torque points is a real engine's: K20 1.00, CP2 0.99, LS3 0.97, Hayabusa 1.06, CP4 1.10; at power points it falls (LS3 0.81) while BSFC rises 9-22 % at equal lambda. Still no public WOT airflow, pmep or motored friction to split it (searched: LS3/K20Z3 MAF logs, Patton-Heywood pumping terms, motorcycle motored fmep).
+
+## 2026-11-01 — The 13B's ports are Mazda's published ones; they are not its -8 %
+
+- Mazda Technical Review 21 (2003) "New Rotary Engine RENESIS Mounted on RX-8", Table 1, columns 13B-REW / high power / standard: intake areas 10.11 / 7.81 / 6.64 cm2 (primary / secondary / auxiliary, high power); timings primary 3 ATDC-65 ABDC, secondary 45-36, auxiliary 38-50 (the service manual's 80 ABDC for the auxiliary disagrees); S-DAIS: SSV 3,750, VFAD 5,500, APV 6,000, VDI 7,250 rpm (Fig. 14).
+- One factor, the three ports as summed trapezoids at the catalogue's Cd 0.75, primary + secondary below 6,000 and all three above (switched profile): 8,500 rpm 190.2 -> 190.9 N.m (+0.4 %), 5,500 233.0 -> 235.4, 2,000 +2.9 %. Auxiliary closing at 80: 194.5 at 8,500 (+2.3 %). Not kept: the gap is not port area.
+- Single factors at 8,500 / 5,500 (Mazda 207 / 216 N.m, ratio 0.957; catalogue 0.816): runner 50 -> 60 mm 204 / 242 (0.844), exhaust "valves" 30 -> 36 mm +2.6 %, runner length 200-800 mm none above 193 at 8,500, muffler restriction and `friction_coefficient` < 0.5 %. The runner, exhaust port and exhaust are estimated; Mazda's VDI (a shorter effective runner above 7,250) is not modelled. Not changed.
+
+## 2026-11-01 — The flame-speed ratios under 1 are torque anchors; the high-rpm deficit is every engine's
+
+- WOT burn phasing (`PhysicsPerfHarness --trace`, CA50 from the burned fraction): K20 7-12 deg ATDC, LS3 15, Radial 5; CP2 20-26, CP3 25-33, CP4 22-27, Hayabusa 20-23, Big Twin 35-42, Aircooled 43-48 (CA10-90 43-58 deg). A non-knocking NA engine runs CA50 ~8-10 (Heywood). The Big Twin's 0.42, the Aircooled's 0.55 and the CP2/CP3 0.80 were fitted to makers' torque (their comments, commits 97b49a3, 2465157, d8e0ec9).
+- One factor, those ratios at 1.0, `DynoSweepHarness --step 250`, current gas: Big Twin CA50 7.4, torque +13.6 -> +38.8 %, Aircooled +11 -> +45 %, CP2 +4 -> +10 %, CP3 +4 -> +11 %; BSFC down 10-55 g/kWh. Shape against Cycle World improves (CP2 7.5 -> 6.2 %, CP3 6.8 -> 5.1, Big Twin 7.1 -> 4.5 % RMS).
+- `exp/thermally-perfect-gas` rebased on 0.7.8 (local `exp/tpg-rebased`), whole catalogue at `--step 500`, makers' points outside 15 %: main 1, gas 7, gas + ratios 1.0 still 7. K20 BSFC 206 -> 236, LS3 221 -> 255. With the gas, engines already at MBT (K20, LS3, Hayabusa, CP4) lose 7-15 % torque and 12-25 % power; the Big Twin and Aircooled with ratio 1.0 end +21 to +30 %. Each anchor hid a different, engine's own error.
+- CP2 8,750 / 6,500 rpm torque 0.810 (Cycle World 0.876): spark +12 deg 0.796 at 9,000 / 6,000 (0.770 at 0), ratio 1.0 0.836, gas 0.781. Not the burn. Breakdown 6,500 -> 8,750: gross IMEP per VE -4.5 %, VE -3 %, pmep 0.62 -> 1.25 bar (exhaust stroke 0.48 -> 0.98), fmep 1.88 -> 2.55 (Blair 2.56 -> 3.10). At makers' power points every NA engine pumps 0.9-1.6 bar, 0.6-1.4 of it on the exhaust stroke against 12-42 kPa of mean back-pressure; LS3 VE 0.83 at 6,000.
+- Nothing changed. What would decide it: a measured WOT pmep, exhaust-port pressure or airflow on any catalogue engine. Valve areas are Heywood's (exhaust plateau 0.50-0.55 of head area); not shown wrong.
+
+## 2026-11-01 — Small sport idle and the 13B's port areas: leads, not fixes
+
+- Designed (DesignBench, `--idle-firing 20 --settle 8`): sport 125 single 2,016 rpm for 1,300, sport 250 twin 1,752, sport 600 four 1,411, road 125 1,353 for 1,350. At 2,016 the governor's bypass is shut (error -55 %), manifold 31 kPa (road: 21 at 1,353); the sport cams' overlap pumps less. Trace: oxygen trapped at the spark 21.4 mg against 4.7 mg delivered through the intake that cycle (road 19.6 against 12.3); whether that is overlap backflow bookkeeping or a real oxygen source is not settled.
+- 13B ports: Mazda Technical Review 2003 (no. 2) and a secondary table give intake areas, primary / secondary / auxiliary, 10.11 / 7.81 / 6.64 cm2 (high power), 9.29 / 8.99 (standard), 13B-REW 6.09 / 9.29; the column mapping is unread in the original PDF. Not applied.
+
+## 2026-11-01 — A designed diesel's fuel limit follows its peak power, not its redline
+
+- The designer stretched the common-rail part's full-load limit (the EA288's, 54 mg at 2,500-3,000 rpm, 30 at 5,000, rated at 4,000) by redline / 5,000. A marine six given its 750 rpm as a redline was fuelled as a car near its limit: 4.6 g a stroke at 450-525 rpm, 2.6 at 750; `DynoSweepHarness --settle 10` 38.7 kN.m at 600, 35.0 at 650. A MAN 32/40 (same bore and stroke) is rated ~500 kW a cylinder at 720-750 rpm, ~4 g a stroke at ~180 g/kWh.
+- Its redline is also its limiter (fuel cut from ~0.91 x): a real one is rated below its governor's limit. With redline 825, peak power 750 (both designer fields), held at 750: 20.0 bar BMEP before, 24.0 bar / 36.9 kN.m (2.92 MW, 487 kW a cylinder) with the limit's speeds x peak power / 4,000.
+- The default peak power (0.8 x redline) keeps redline / 5,000 to the bit: `DesignBench`, seven designs (three diesels) byte-identical. `EngineLab.EngineDesign` holds the rated six at 750 rpm above 22 bar (fails before: 19.98).
+- Not measured: the EGT and smoke at the rated point; a real medium-speed engine's fuel against speed (only its rated point).
+
 ## 2026-10-31 — Owner reports: launch control in first, a rotary's exhaust designer
 
 - Launch control still did not arm in 0.7.7: the ECU required `gear >= 1`, but the driveline counts first as 0 (-1 neutral, the dashboard shows gear + 1). Both tests had the same off-by-one (`LaunchControlTests` called 0 neutral; `ActiveLimits` passed 1 as first). With first as 0 both fail before the fix (CP2, launch 4,000 rpm: peak 10,422 rpm, no launch bit) and pass after (4,172 rpm, bit set).

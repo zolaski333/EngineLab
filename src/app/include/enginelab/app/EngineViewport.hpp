@@ -3,6 +3,7 @@
 #include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/EngineScene.hpp>
 #include <enginelab/app/Widgets.hpp>
+#include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/foundation/GasFieldSnapshot.hpp>
 #include <enginelab/render/CrankClock.hpp>
 #include <enginelab/render/GasFieldView.hpp>
@@ -153,7 +154,7 @@ public:
         bool restarts {};
         /** A switch the engine takes at once (the block's regulated
             temperatures, the gearbox's shift style), in the ramp choice's
-            place. A click steps to the next option; the button shows the
+            place. A click opens the list of options; the button shows the
             current one. */
         struct Choice final {
             std::vector<juce::String> options;
@@ -274,6 +275,13 @@ public:
     /** Where a bore, stroke, rod or camshaft change goes, with its ramp in
         seconds (0: at the next cycle). */
     void setCylinderEditor(std::function<bool(const EngineConfig&, double rampSeconds)>);
+    /** The fuels the combustion chamber's inspector lists, in this order. */
+    void setFuelPresets(std::vector<FuelPreset> presets) { fuelPresets_ = std::move(presets); }
+    /** Selects cylinder 1's combustion chamber, with the fuel's inspector. */
+    bool showFuel();
+    /** Why an edit was refused or what became of it, under the inspector's
+        steppers; empty clears it. */
+    void setEditStatus(juce::String status) { inspector_.setEditStatus(std::move(status)); }
     /** Seconds over which a gradual bore and stroke change happens. */
     static constexpr double cylinderRampSeconds = 3.0;
     /** The exhaust gas network's cell length chosen in the view settings:
@@ -402,6 +410,7 @@ private:
     std::function<std::string(EngineConfig&, const std::vector<double>&)> partEditor_;
     /** How the selected part takes its edit's choice, when it has one. */
     std::function<void(EngineConfig&, int)> partChoice_;
+    std::vector<FuelPreset> fuelPresets_;
     /** When the choice adds or removes parts (a turbo): the role to select
         once the engine is back, instead of the same part index. */
     std::optional<render::PartRole> partChoiceSelects_;

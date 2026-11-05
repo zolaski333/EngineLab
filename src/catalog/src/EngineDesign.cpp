@@ -1485,10 +1485,18 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             : derive("injector_flow_mg_s", "Injector flow", "mg/s", injectorFlow,
                 "the part's, or the full-load fuel at 80 % duty if more");
         if (diesel) {
+            // The part's limit is the EA288's, rated at 4,000 rpm: its speeds
+            // follow the design's peak power, so a marine six rated at 750 rpm
+            // under an 825 rpm limit keeps its fuel there: 24 bar, as a MAN
+            // 32/40, where the redline's stretch gave 20 (journal 2026-11-01).
+            // The default peak power, 0.8 x redline, keeps redline / 5,000
+            // to the bit.
             const auto scale = litres / countD / 0.492 * boost / 2.3;
+            const auto speedScale = peakPowerRpm == 0.8 * config.redlineRpm
+                ? config.redlineRpm / 5'000.0 : peakPowerRpm / 4'000.0;
             for (auto& sample : config.injection.fullLoadFuelLimit) {
                 sample.milligramsPerCycle *= scale;
-                sample.rpm *= config.redlineRpm / 5'000.0;
+                sample.rpm *= speedScale;
             }
             auto& calibration = config.combustionCalibration;
             calibration.wallHeatTransferCoefficientWPerK = 0.58;

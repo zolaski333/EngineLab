@@ -23,10 +23,15 @@
  * override by key, so `expansion_chamber_tuned_length_mm=900` or
  * `exhaust_port_open_deg=88` work exactly as the designer's own fields do, and
  * a typo surfaces as the designer's own "unknown key" error.
+ *
+ * `--knock-limit` measures each design's knock-limited spark on the dyno
+ * before writing it, as the designer window does when it builds: without it
+ * a bench design runs on the map alone, which is not the engine a user gets.
  */
 
 #include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
+#include <enginelab/runtime/KnockLimitCalibration.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 
 #include <filesystem>
@@ -188,6 +193,7 @@ int main(int argc, char** argv) {
     std::filesystem::path outputRoot;
     std::filesystem::path valuesFile;
     auto quiet = false;
+    auto knockLimit = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--spec" && index + 1 < argc) specFile = argv[++index];
@@ -195,9 +201,10 @@ int main(int argc, char** argv) {
         else if (argument == "--output" && index + 1 < argc) outputRoot = argv[++index];
         else if (argument == "--values" && index + 1 < argc) valuesFile = argv[++index];
         else if (argument == "--quiet") quiet = true;
+        else if (argument == "--knock-limit") knockLimit = true;
         else {
             std::cerr << "usage: EngineLabDesignBench --spec file [--catalog-root dir]"
-                         " [--output dir] [--values file.csv] [--quiet]\n";
+                         " [--output dir] [--values file.csv] [--quiet] [--knock-limit]\n";
             return 2;
         }
     }
@@ -252,11 +259,18 @@ int main(int argc, char** argv) {
             ++failures;
             continue;
         }
-        const auto designed = enginelab::designCatalogueEngine(entry.spec, catalogRoot);
+        auto designed = enginelab::designCatalogueEngine(entry.spec, catalogRoot);
         if (!designed.config) {
             std::cerr << entry.key << ": " << designed.error << '\n';
             ++failures;
             continue;
+        }
+        if (knockLimit && !outputRoot.empty()) {
+            // As the designer window: a curve that cannot be measured leaves
+            // the knock control alone to hold the map.
+            auto limit = enginelab::calibrateKnockLimit(*designed.config);
+            if (limit.error.empty()) designed.config->ignition.knockLimitCurve = std::move(limit.curve);
+            else std::cerr << entry.key << ": knock limit not measured: " << limit.error << '\n';
         }
         if (values)
             for (const auto& value : designed.values) writeValuesRow(values, entry.key, value);

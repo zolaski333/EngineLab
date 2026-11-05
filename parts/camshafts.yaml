@@ -58,6 +58,38 @@ turbo_street:
     - { lift_mm: 7.0, discharge_coefficient: 0.60 }
     - { lift_mm: 9.8, discharge_coefficient: 0.66 }
 
+# The 2JZ-GTE's own: Toyota's 233 / 233 deg and 8.25 / 8.25 mm (the
+# USDM / European cams; the centrelines are the street turbo's, not found).
+# Curtain Cd: the median of five benches of the stock head at 28 in H2O
+# (Supramania "Supra head flow" thread: BXRsupra, poggie, M2racing,
+# silvino, StuHagen), cfm x 4.378 = mm2 over two 33.5 / 29.0 mm valves.
+# Its plateaus are the literature's: 0.56 / 0.50 of head area at 0.5 in.
+toyota_2jz_gte:
+  intake_duration_deg: 233
+  exhaust_duration_deg: 233
+  intake_lift_mm: 8.25
+  exhaust_lift_mm: 8.25
+  intake_centerline_deg: 112
+  exhaust_centerline_deg: 116
+  intake_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 1.27, discharge_coefficient: 0.737 }
+    - { lift_mm: 2.54, discharge_coefficient: 0.753 }
+    - { lift_mm: 3.81, discharge_coefficient: 0.753 }
+    - { lift_mm: 5.08, discharge_coefficient: 0.688 }
+    - { lift_mm: 6.35, discharge_coefficient: 0.622 }
+    - { lift_mm: 7.62, discharge_coefficient: 0.560 }
+    - { lift_mm: 10.16, discharge_coefficient: 0.461 }
+  exhaust_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 1.27, discharge_coefficient: 0.700 }
+    - { lift_mm: 2.54, discharge_coefficient: 0.709 }
+    - { lift_mm: 3.81, discharge_coefficient: 0.668 }
+    - { lift_mm: 5.08, discharge_coefficient: 0.577 }
+    - { lift_mm: 6.35, discharge_coefficient: 0.514 }
+    - { lift_mm: 7.62, discharge_coefficient: 0.447 }
+    - { lift_mm: 10.16, discharge_coefficient: 0.357 }
+
 diesel_low_speed:
   intake_duration_deg: 224
   exhaust_duration_deg: 228
@@ -93,6 +125,37 @@ big_v8_street:
     - { lift_mm: 3.0, discharge_coefficient: 0.36 }
     - { lift_mm: 8.0, discharge_coefficient: 0.61 }
     - { lift_mm: 12.4, discharge_coefficient: 0.68 }
+
+# The LS3's own: GM's cam card (14.0 / 13.3 mm lift, 254 / 260 deg at
+# 0.006 in, both centrelines 117 deg) and a rectangle-port head flowed at
+# 28 in H2O (Lingenfelter, EngineLabs, Edelbrock benches; possibly the L92
+# head, the same castings), cfm x 4.378 = mm2 over the valve curtain. The
+# exhaust saturates at 0.65 of head area, not the 0.51 a production port
+# is given without a bench (journal 2026-11-02, -03).
+gm_ls3:
+  intake_duration_deg: 254
+  exhaust_duration_deg: 260
+  intake_lift_mm: 14.0
+  exhaust_lift_mm: 13.3
+  intake_centerline_deg: 117
+  exhaust_centerline_deg: 117
+  exhaust_port_head_area_fraction: 0.65
+  intake_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 2.54, discharge_coefficient: 0.70 }
+    - { lift_mm: 5.08, discharge_coefficient: 0.78 }
+    - { lift_mm: 7.62, discharge_coefficient: 0.68 }
+    - { lift_mm: 10.16, discharge_coefficient: 0.69 }
+    - { lift_mm: 12.7, discharge_coefficient: 0.565 }
+    - { lift_mm: 15.24, discharge_coefficient: 0.53 }
+  exhaust_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 2.54, discharge_coefficient: 0.72 }
+    - { lift_mm: 5.08, discharge_coefficient: 0.81 }
+    - { lift_mm: 7.62, discharge_coefficient: 0.67 }
+    - { lift_mm: 10.16, discharge_coefficient: 0.62 }
+    - { lift_mm: 12.7, discharge_coefficient: 0.52 }
+    - { lift_mm: 15.24, discharge_coefficient: 0.43 }
 
 motorcycle_high_rpm:
   intake_duration_deg: 284

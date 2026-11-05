@@ -48,11 +48,6 @@ engine:
       # plausible full-load retard only in the top-end cell.
       - { rpm: 11500, advance_deg: 25.5 }
       - { rpm: 12500, advance_deg: 25.5 }
-  # The short-stroke, high-revving CP4 relies on a strong tumble field. Without
-  # it a mean-piston-speed-only closure burns for about 60 crank degrees at
-  # 9000 rpm, versus the 35-45 degree interval expected of this pent-roof head.
-  combustion_calibration:
-    chamber_turbulence_intensity_ratio: 1.25
   uses:
     injection: high_flow_port
     exhaust: motorcycle_4_2_1

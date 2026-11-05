@@ -23,6 +23,21 @@ struct PartsLibrary final {
 /** Reads every `*.yaml` under `<root>/parts`; throws on a malformed file. */
 [[nodiscard]] PartsLibrary loadPartsLibrary(const std::filesystem::path& rootDirectory);
 
+/** A fuel as a user picks it: its properties, the octane it is sold at (0
+ *  for a diesel) and the heat its liquid takes to evaporate. */
+struct FuelPreset final {
+    std::string key;
+    FuelConfig properties;
+    double octaneRating {};
+    double latentHeatKjPerKg {};
+    /** Compression ignition (a cetane number), not a spark. */
+    [[nodiscard]] bool diesel() const noexcept { return properties.cetaneNumber > 0.0; }
+};
+
+/** `<root>/parts/fuels.yaml` in file order; empty when the file is missing.
+ *  Throws on a malformed file. */
+[[nodiscard]] std::vector<FuelPreset> loadFuelPresets(const std::filesystem::path& rootDirectory);
+
 /**
  * Gives a path with no graph the one its scalar geometry describes: one
  * primary per cylinder, a collector, the mid pipe and silencer, an outlet
@@ -41,7 +56,11 @@ struct EngineCatalogEntry final {
 
 struct EngineCatalogLoadResult final {
     std::vector<EngineCatalogEntry> entries;
+    /** One line per file that could not be read: that engine is missing. */
     std::vector<std::string> errors;
+    /** One line per value clamped into its range ("file: what"); the
+     *  shipped catalogue has none. */
+    std::vector<std::string> warnings;
 };
 
 enum class EngineCatalogSelectionStatus {

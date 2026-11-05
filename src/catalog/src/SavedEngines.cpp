@@ -135,7 +135,10 @@ SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
         result.error = *failed;
         return result;
     }
-    auto decoded = JsonEngineSerializer {}.decode(text);
+    // A hand-edited value outside its range is clamped, not a reason to
+    // drop the engine from the menu.
+    std::vector<std::string> repairs;
+    auto decoded = JsonEngineSerializer {}.decode(text, &repairs);
     if (!decoded) {
         result.error = nameOf(engineFile) + ": " + decoded.error;
         return result;
@@ -159,6 +162,7 @@ SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
         engine.calibration = parsed.takeValue();
     }
     result.engine = std::move(engine);
+    for (auto& repair : repairs) result.warnings.push_back(nameOf(engineFile) + ": " + std::move(repair));
     return result;
 }
 
@@ -179,6 +183,7 @@ SavedEngineLoad loadSavedEngines(const std::filesystem::path& folder, const std:
             result.errors.push_back(std::move(read.error));
             continue;
         }
+        for (auto& warning : read.warnings) result.warnings.push_back(std::move(warning));
         if (auto failed = restoreAudioVoicing(read.engine->config, catalogueRoot))
             result.errors.push_back(nameOf(file) + " voicing: " + *failed);
         result.engines.push_back(std::move(*read.engine));

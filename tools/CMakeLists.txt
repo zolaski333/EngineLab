@@ -49,7 +49,7 @@ enginelab_set_warnings(EngineLabExhaustFlowBench)
 
 add_executable(EngineLabDesignBench DesignBench.cpp)
 target_link_libraries(EngineLabDesignBench PRIVATE
-    EngineLab::Catalog EngineLab::Serialization EngineLab::Foundation)
+    EngineLab::Runtime EngineLab::Catalog EngineLab::Serialization EngineLab::Foundation)
 enginelab_set_warnings(EngineLabDesignBench)
 
 add_executable(EngineLabExhaustNetworkCostBench ExhaustNetworkCostBench.cpp)

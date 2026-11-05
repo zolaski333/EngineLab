@@ -1,3 +1,16 @@
+# Fuels a user can pick (the Combustion part's inspector lists them in this
+# order). `octane_rating` is the research octane number the knock model reads;
+# `latent_heat_kj_per_kg` is the liquid's heat of vaporisation, the port or
+# cylinder charge cooling. An engine file naming one under `uses: fuel:`
+# takes its properties only: its octane stays its own `octane_rating`.
+#
+# Alcohol blends are mass-weighted from their components (Heywood, Internal
+# Combustion Engine Fundamentals, 2nd ed., Table D.4): ethanol LHV 26.9 MJ/kg,
+# stoichiometric AFR 9.0, latent heat 840 kJ/kg; methanol 20.0 MJ/kg, 6.47,
+# 1,103 kJ/kg; gasoline 43.0 MJ/kg, 14.7, 350 kJ/kg. Laminar flame speeds
+# keep the alcohol-to-isooctane ratios of Metghalchi and Keck (1982):
+# methanol x1.40; ethanol x1.2 (Gulder 1982).
+
 pump_gasoline_95:
   name: Pump gasoline 95 RON
   lower_heating_value_mj_per_kg: 43.0
@@ -8,6 +21,8 @@ pump_gasoline_95:
   product_moles_per_fuel_mole: 17.0
   laminar_flame_speed_mps: 0.38
   turbulence_flame_speed_gain: 1.55
+  octane_rating: 95
+  latent_heat_kj_per_kg: 350
 
 premium_gasoline_98:
   name: Premium gasoline 98 RON
@@ -19,7 +34,65 @@ premium_gasoline_98:
   product_moles_per_fuel_mole: 17.0
   laminar_flame_speed_mps: 0.39
   turbulence_flame_speed_gain: 1.60
+  octane_rating: 98
+  latent_heat_kj_per_kg: 350
 
+# 10 % ethanol by volume (10.3 % by mass), sold as 95 RON (EN 228).
+gasoline_e10:
+  name: Gasoline E10 95 RON
+  lower_heating_value_mj_per_kg: 41.3
+  density_kg_per_l: 0.750
+  stoichiometric_afr: 14.11
+  molar_mass_g_per_mol: 99.1
+  oxygen_moles_per_fuel_mole: 10.40
+  product_moles_per_fuel_mole: 14.34
+  laminar_flame_speed_mps: 0.39
+  turbulence_flame_speed_gain: 1.55
+  octane_rating: 95
+  latent_heat_kj_per_kg: 400
+
+# 85 % ethanol by volume (85.7 % by mass); RON 100-105 is quoted, 105 taken.
+ethanol_e85:
+  name: Ethanol E85
+  lower_heating_value_mj_per_kg: 29.2
+  density_kg_per_l: 0.783
+  stoichiometric_afr: 9.81
+  molar_mass_g_per_mol: 50.37
+  oxygen_moles_per_fuel_mole: 3.60
+  product_moles_per_fuel_mole: 5.76
+  laminar_flame_speed_mps: 0.45
+  turbulence_flame_speed_gain: 1.55
+  octane_rating: 105
+  latent_heat_kj_per_kg: 770
+
+ethanol_e100:
+  name: Ethanol E100
+  lower_heating_value_mj_per_kg: 26.9
+  density_kg_per_l: 0.789
+  stoichiometric_afr: 9.0
+  molar_mass_g_per_mol: 46.07
+  oxygen_moles_per_fuel_mole: 3.0
+  product_moles_per_fuel_mole: 5.0
+  laminar_flame_speed_mps: 0.46
+  turbulence_flame_speed_gain: 1.55
+  octane_rating: 109
+  latent_heat_kj_per_kg: 840
+
+methanol_m100:
+  name: Methanol M100
+  lower_heating_value_mj_per_kg: 20.0
+  density_kg_per_l: 0.792
+  stoichiometric_afr: 6.47
+  molar_mass_g_per_mol: 32.04
+  oxygen_moles_per_fuel_mole: 1.5
+  product_moles_per_fuel_mole: 3.0
+  laminar_flame_speed_mps: 0.53
+  turbulence_flame_speed_gain: 1.55
+  octane_rating: 109
+  latent_heat_kj_per_kg: 1103
+
+# Its rating is the aviation lean figure (ASTM D910, at least 99.6, a motor-
+# method number); its research octane is higher, so 100 is conservative.
 avgas_100ll:
   name: Aviation gasoline 100LL surrogate
   lower_heating_value_mj_per_kg: 43.5
@@ -30,6 +103,8 @@ avgas_100ll:
   product_moles_per_fuel_mole: 17.0
   laminar_flame_speed_mps: 0.40
   turbulence_flame_speed_gain: 1.45
+  octane_rating: 100
+  latent_heat_kj_per_kg: 350
 
 road_diesel_en590:
   name: EN 590 road diesel C12H23 surrogate
@@ -43,3 +118,4 @@ road_diesel_en590:
   laminar_flame_speed_mps: 0.0
   turbulence_flame_speed_gain: 0.0
   cetane_number: 51
+  latent_heat_kj_per_kg: 270
