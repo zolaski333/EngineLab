@@ -39,6 +39,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -75,6 +76,9 @@ struct Sample final {
     double shiftProgress { 0.0 };
     int engagedGear { -1 };
     bool shifting { false };
+    /** Per cylinder: fuel delivered last cycle, mg, and the misfire flag. */
+    std::array<double, 8> deliveredFuelMg {};
+    unsigned misfireMask { 0U };
 };
 
 struct ShiftMetrics final {
@@ -497,6 +501,10 @@ ShiftMetrics measureShift(
         sample.shiftProgress = tick.drive.shiftProgress;
         sample.engagedGear = tick.drive.engagedGear;
         sample.shifting = tick.drive.shiftInProgress;
+        for (std::size_t c = 0; c < std::min<std::size_t>(s.cylinderStateCount, sample.deliveredFuelMg.size()); ++c) {
+            sample.deliveredFuelMg[c] = s.cylinderStates[c].deliveredFuelMgPerCycle;
+            if (s.cylinderStates[c].misfiring) sample.misfireMask |= 1U << c;
+        }
         samples.push_back(sample);
 
         if (!shiftIssued && !tick.drive.shiftInProgress
@@ -622,11 +630,17 @@ ShiftMetrics measureShift(
         const auto from = std::max(0, shiftSampleIndex - 6);
         for (std::size_t i = static_cast<std::size_t>(from); i < samples.size(); ++i) {
             const auto& s = samples[i];
-            std::printf(" %6.3f %7.0f  %5.2f  %6.3f %5.3f %9.2f %8.1f %7.3f %8.1f %5.2f %5d%s\n",
+            std::printf(" %6.3f %7.0f  %5.2f  %6.3f %5.3f %9.2f %8.1f %7.3f %8.1f %5.2f %5d",
                         s.t, s.rpm, s.throttleCmd, s.engineThrottle, s.torqueCut,
                         s.exhaustFlowGps, s.clutchTorque, s.clutchPressure, s.slipRpm,
-                        s.shiftProgress, s.engagedGear,
-                        static_cast<int>(i) == shiftSampleIndex ? "  <== SHIFT" : "");
+                        s.shiftProgress, s.engagedGear);
+            // Fuel each cylinder burnt its last cycle, mg; * = misfiring.
+            std::printf("  fuel");
+            for (std::size_t c = 0; c < std::min<std::size_t>(
+                     config.cylinders.size(), s.deliveredFuelMg.size()); ++c)
+                std::printf(" %5.1f%s", s.deliveredFuelMg[c],
+                    ((s.misfireMask >> c) & 1U) != 0U ? "*" : " ");
+            std::printf("%s\n", static_cast<int>(i) == shiftSampleIndex ? "  <== SHIFT" : "");
         }
     }
     return metrics;
@@ -687,6 +701,7 @@ int main(int argc, char** argv) {
     double triggerFraction = 0.86;
     bool trace = false;
     std::optional<enginelab::ShiftStyle> shiftStyle;
+    std::optional<double> dualClutchCut;
     std::filesystem::path audioOutputDirectory;
     std::filesystem::path impulseResponsePath =
         std::filesystem::path(ENGINELAB_CATALOG_ROOT)
@@ -701,11 +716,13 @@ int main(int argc, char** argv) {
         else if (arg == "--ir" && index + 1 < argc)
             impulseResponsePath = argv[++index];
         else if (arg == "--trace") trace = true;
+        else if (arg == "--dct-cut" && index + 1 < argc) dualClutchCut = std::stod(argv[++index]);
         else if (arg == "--style" && index + 1 < argc
                  && (shiftStyle = enginelab::parseShiftStyle(argv[index + 1]))) ++index;
         else { std::cerr << "usage: ShiftTransientHarness [--filter frag] [--rpm r]"
                             " [--fraction f] [--trace] [--audio-output dir]"
-                            " [--ir file] [--style manual|sequential|dual_clutch]\n";
+                            " [--ir file] [--style manual|sequential|dual_clutch]"
+                            " [--dct-cut 0-1]\n";
                return EXIT_FAILURE; }
     }
     if (!audioOutputDirectory.empty())
@@ -763,6 +780,8 @@ int main(int argc, char** argv) {
         // condition it was measured under keeps it non-vacuous instead.
         config.vehicle.tyreGripLimitEnabled = true;
         if (shiftStyle) config.transmission.shiftStyle = *shiftStyle;
+        if (dualClutchCut)
+            config.transmission.dualClutchUpshiftCylinderCutFraction = *dualClutchCut;
         enginelab::normaliseEngineConfig(config);
         const auto rpm = triggerRpm > 0.0 ? triggerRpm : config.redlineRpm * triggerFraction;
         ShiftMetrics m;

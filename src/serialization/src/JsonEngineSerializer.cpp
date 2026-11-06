@@ -666,6 +666,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                            {"auto_blipper", config.transmission.autoBlipper},
                            {"dual_clutch_upshift_retard_deg",
                             config.transmission.dualClutchUpshiftRetardDegrees},
+                           {"dual_clutch_upshift_cylinder_cut",
+                            config.transmission.dualClutchUpshiftCylinderCutFraction},
                            {"centrifugal_clutch", config.transmission.centrifugalClutch},
                            {"centrifugal_clutch_engage_rpm",
                             config.transmission.centrifugalClutchEngageRpm}}},
@@ -1007,6 +1009,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
             config.transmission.autoBlipper = transmission.value("auto_blipper", config.transmission.autoBlipper);
             config.transmission.dualClutchUpshiftRetardDegrees = transmission.value(
                 "dual_clutch_upshift_retard_deg", config.transmission.dualClutchUpshiftRetardDegrees);
+            config.transmission.dualClutchUpshiftCylinderCutFraction = transmission.value(
+                "dual_clutch_upshift_cylinder_cut", config.transmission.dualClutchUpshiftCylinderCutFraction);
             config.transmission.centrifugalClutch = transmission.value(
                 "centrifugal_clutch", config.transmission.centrifugalClutch);
             config.transmission.centrifugalClutchEngageRpm = transmission.value(

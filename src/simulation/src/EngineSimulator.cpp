@@ -2759,6 +2759,30 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     compressionIgnitionResults_[cylinderIndex] = {};
                     cylinderMisfires_[cylinderIndex] = false;
                 }
+                // A dual clutch's injection cut, spread over the firings as
+                // an error-diffusion sequence: this pulse is the K-th of the
+                // engine (K = cylinders x the cylinder's count + its place in
+                // the firing order) and is cut when the running share of
+                // cut pulses passes the requested fraction there. Each
+                // cylinder carries its own count, so the cylinder pass may
+                // run in parallel.
+                {
+                    const auto& order = config_.firingOrder;
+                    const auto found = std::find(order.begin(), order.end(),
+                        config_.cylinders[cylinderIndex].id);
+                    const auto firings = static_cast<std::uint64_t>(
+                        std::max<std::size_t>(1, order.empty()
+                            ? config_.cylinders.size() : order.size()));
+                    const auto place = static_cast<std::uint64_t>(found != order.end()
+                        ? std::distance(order.begin(), found)
+                        : static_cast<std::ptrdiff_t>(cylinderIndex));
+                    const auto pulse = firings * injectionStartCount_[cylinderIndex] + place;
+                    const auto fraction = std::clamp(ecuCommand.cylinderCutFraction, 0.0, 1.0);
+                    injectionCutThisCycle_[cylinderIndex] = fraction > 0.0
+                        && std::floor(static_cast<double>(pulse + 1U) * fraction)
+                            > std::floor(static_cast<double>(pulse) * fraction);
+                    ++injectionStartCount_[cylinderIndex];
+                }
                 injectedFuelMolesThisCycle_[cylinderIndex] = 0.0;
                 entrainedFuelMolesThisCycle_[cylinderIndex] = 0.0;
                 requestedFuelMolesThisCycle_[cylinderIndex] = 0.0;
@@ -2926,7 +2950,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         * 1.16,
                     ecuCommand.targetAirFuelRatio)
                 : std::clamp(ecuCommand.targetAirFuelRatio, 5.0, 30.0);
-            auto physicalFuelTargetMoles = ecuCommand.fuelEnabled
+            const auto cylinderFuelEnabled = ecuCommand.fuelEnabled
+                && !injectionCutThisCycle_[cylinderIndex];
+            auto physicalFuelTargetMoles = cylinderFuelEnabled
                 ? measuredChargeMassMg / targetAirFuelRatio
                     * dieselFuelDemand
                     * ecuCommand.fuelCorrection
@@ -3027,7 +3053,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         / GasCell::oxygenMolarMassKg;
                     const auto footprintFreshAirMassKg = footprintOxygenMoles
                         / 0.21 * GasCell::airMolarMassKg;
-                    const auto targetInventoryMoles = ecuCommand.fuelEnabled
+                    const auto targetInventoryMoles = cylinderFuelEnabled
                         ? footprintFreshAirMassKg / targetAirFuelRatio
                             / fuelMolarMassKg
                         : 0.0;
@@ -6687,6 +6713,8 @@ void EngineSimulator::reset() noexcept {
     instantaneousCombustionPulse_.fill(0.0);
     injectedFuelMolesThisCycle_.fill(0.0);
     portPulseCreditSampled_.fill(false);
+    injectionCutThisCycle_.fill(false);
+    injectionStartCount_.fill(0U);
     portPulseInventoryCreditMoles_.fill(0.0);
     portPulsePrimeDeficitMoles_.fill(0.0);
     portPulseAvailableFraction_.fill(1.0);

@@ -25,6 +25,7 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -132,13 +133,18 @@ struct UpshiftResult final {
     double pushImpulse { 0.0 };       // integral of the excess over it, s
     double advanceBefore { 0.0 };     // ignition advance before the shift
     double lowestAdvance { 0.0 };     // lowest advance until synchronised
+    int misfiredCycles { 0 };         // cylinder cycles that misfired, to sync
+    int misfiredCylinders { 0 };      // how many cylinders took part
 };
 
 UpshiftResult measureUpshift(enginelab::EngineConfig config, enginelab::ShiftStyle style,
-                             double dualClutchRetardDegrees = -1.0, double shiftAtRedlineShare = 0.70) {
+                             double dualClutchRetardDegrees = -1.0, double shiftAtRedlineShare = 0.70,
+                             double dualClutchCylinderCut = -1.0) {
     config.transmission.shiftStyle = style;
     if (dualClutchRetardDegrees >= 0.0)
         config.transmission.dualClutchUpshiftRetardDegrees = dualClutchRetardDegrees;
+    if (dualClutchCylinderCut >= 0.0)
+        config.transmission.dualClutchUpshiftCylinderCutFraction = dualClutchCylinderCut;
     auto rig = std::make_unique<Rig>(config);
     rig->launchTo(config.redlineRpm * shiftAtRedlineShare);
     // Wheel torque before the shift, over the last 0.1 s.
@@ -156,8 +162,22 @@ UpshiftResult measureUpshift(enginelab::EngineConfig config, enginelab::ShiftSty
     result.advanceBefore = advanceBefore;
     result.lowestAdvance = advanceBefore;
     const auto lockBand = 2.0 * config.transmission.clutchLockSpeedRpm;
+    std::array<bool, 32> wasMisfiring {};
+    std::array<bool, 32> tookPart {};
     for (int index = 0; index < static_cast<int>(1.0 / stepSeconds); ++index) {
         const auto tick = rig->step(1.0, 1.0);
+        if (result.syncSeconds < 0.0) {
+            const auto count = std::min<std::size_t>(
+                tick.state.cylinderStateCount, wasMisfiring.size());
+            for (std::size_t cylinder = 0; cylinder < count; ++cylinder) {
+                const auto misfiring = tick.state.cylinderStates[cylinder].misfiring;
+                if (misfiring && !wasMisfiring[cylinder]) {
+                    ++result.misfiredCycles;
+                    tookPart[cylinder] = true;
+                }
+                wasMisfiring[cylinder] = misfiring;
+            }
+        }
         if (tick.drive.ignitionCut) {
             result.cutSeconds += stepSeconds;
             result.sparkCutSeen = result.sparkCutSeen || !tick.state.ecuSparkEnabled;
@@ -177,13 +197,16 @@ UpshiftResult measureUpshift(enginelab::EngineConfig config, enginelab::ShiftSty
             result.syncErrorShare = std::abs(tick.state.rpm - gearRpm) / std::max(1.0, gearRpm);
         }
     }
+    result.misfiredCylinders = static_cast<int>(
+        std::count(tookPart.begin(), tookPart.end(), true));
     std::printf("  %-34s %-11s cut %5.1f ms spark-off %d gap %5.1f ms sync %6.1f ms"
-                " wheel %5.2f-%5.2f push %5.1f ms sync err %5.3f advance %5.1f -> %5.1f deg\n",
+                " wheel %5.2f-%5.2f push %5.1f ms sync err %5.3f advance %5.1f -> %5.1f deg"
+                " misfired %d cycles on %d cylinders\n",
         config.name.c_str(), enginelab::shiftStyleName(style), result.cutSeconds * 1000.0,
         result.sparkCutSeen ? 1 : 0, result.gapSeconds * 1000.0, result.syncSeconds * 1000.0,
         result.minimumWheelShare, result.peakWheelShare, result.pushImpulse * 1000.0, result.syncErrorShare,
         result.advanceBefore,
-        result.lowestAdvance);
+        result.lowestAdvance, result.misfiredCycles, result.misfiredCylinders);
     return result;
 }
 
@@ -311,6 +334,7 @@ void checkSerialisation() {
     config.transmission.quickshifter = false;
     config.transmission.quickshifterCutSeconds = 0.08;
     config.transmission.autoBlipper = false;
+    config.transmission.dualClutchUpshiftCylinderCutFraction = 0.4;
     const enginelab::YamlEngineSerializer yaml;
     const enginelab::JsonEngineSerializer json;
     for (const auto* serializer : { static_cast<const enginelab::IEngineSerializer*>(&yaml),
@@ -320,8 +344,10 @@ void checkSerialisation() {
         require(decoded && decoded.config->transmission.shiftStyle == enginelab::ShiftStyle::sequential
                 && !decoded.config->transmission.quickshifter
                 && std::abs(decoded.config->transmission.quickshifterCutSeconds - 0.08) < 1.0e-9
-                && !decoded.config->transmission.autoBlipper,
-            "an engine file must keep its shift style, quickshifter and blipper");
+                && !decoded.config->transmission.autoBlipper
+                && std::abs(decoded.config->transmission
+                        .dualClutchUpshiftCylinderCutFraction - 0.4) < 1.0e-9,
+            "an engine file must keep its shift style, quickshifter, blipper and dual-clutch cut");
         auto unknown = encoded;
         const auto at = unknown.find("sequential");
         require(at != std::string::npos, "the shift style must be written by name");
@@ -367,9 +393,11 @@ int main() {
         const auto cp2Quick = measureUpshift(cp2, enginelab::ShiftStyle::sequential);
         const auto jzManual = measureUpshift(jz, enginelab::ShiftStyle::manual);
         const auto jzDual = measureUpshift(jz, enginelab::ShiftStyle::dualClutch);
-        std::printf("dual-clutch upshift 1 -> 2 at 85 %% of redline, spark retard 20 and 0 deg\n");
-        const auto jzRetard = measureUpshift(jz, enginelab::ShiftStyle::dualClutch, 20.0, 0.85);
-        const auto jzNoRetard = measureUpshift(jz, enginelab::ShiftStyle::dualClutch, 0.0, 0.85);
+        std::printf("dual-clutch upshift 1 -> 2 at 85 %% of redline, spark retard 20 and 0 deg, no cut\n");
+        const auto jzRetard = measureUpshift(jz, enginelab::ShiftStyle::dualClutch, 20.0, 0.85, 0.0);
+        const auto jzNoRetard = measureUpshift(jz, enginelab::ShiftStyle::dualClutch, 0.0, 0.85, 0.0);
+        std::printf("and with the default injection cut on top of the retard\n");
+        const auto jzCut = measureUpshift(jz, enginelab::ShiftStyle::dualClutch, 20.0, 0.85);
 
         // Quickshifter: the ignition is cut for the authored length (one
         // frame of rounding), the ECU really drops the spark, and the drive
@@ -401,6 +429,17 @@ int main() {
             "the spark retard must shorten the push the wheel feels");
         require(jzNoRetard.gapSeconds == 0.0 && jzNoRetard.syncErrorShare < 0.03,
             "without it the hand-over still completes with no gap");
+        // Past the retard's floor the ECU cuts injection on a share of the
+        // firings, spread over the cylinders in firing order: those cycles
+        // misfire (the "DSG fart"), and the engine, making less torque
+        // still, pushes the wheel for less time.
+        require(jzRetard.misfiredCycles == 0, "the retard alone must not misfire (control)");
+        require(jzCut.misfiredCycles >= 4 && jzCut.misfiredCylinders >= 3,
+            "a dual-clutch upshift's injection cut must drop firings across the cylinders");
+        require(jzCut.pushImpulse < jzRetard.pushImpulse,
+            "the injection cut must shorten the push further");
+        require(jzCut.gapSeconds == 0.0 && jzCut.syncSeconds > 0.0 && jzCut.syncErrorShare < 0.03,
+            "with the cut the hand-over still completes with no gap");
 
         std::printf("downshift 3 -> 2, throttle shut\n");
         const auto blipped = measureDownshift(cp2, true);

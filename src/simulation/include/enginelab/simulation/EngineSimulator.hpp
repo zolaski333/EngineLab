@@ -685,6 +685,12 @@ private:
      *  Re-reading them every substep turned transient vapour transport into
      *  extra injector pulses that could never be taken back. */
     std::array<bool, 32> portPulseCreditSampled_ {};
+    /** A dual clutch's injection cut: whether this cylinder's pulse is
+     *  suppressed for the cycle that began at its injection start, and how
+     *  many injection starts it has seen (its place in the firing sequence
+     *  that spreads the cut). */
+    std::array<bool, 32> injectionCutThisCycle_ {};
+    std::array<std::uint64_t, 32> injectionStartCount_ {};
     std::array<double, 32> portPulseInventoryCreditMoles_ {};
     std::array<double, 32> portPulsePrimeDeficitMoles_ {};
     std::array<double, 32> portPulseAvailableFraction_ {};

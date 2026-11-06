@@ -34,6 +34,7 @@ struct VehicleStep final {
     bool shiftIgnitionCut { false };
     double shiftSparkRetardDegrees { 0.0 };
     ThrottleAuthority throttleAuthority { ThrottleAuthority::driver };
+    double shiftCylinderCutFraction { 0.0 };
 };
 
 /** The one place where the driver and the driveline's own devices (a clutch

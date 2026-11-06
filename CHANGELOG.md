@@ -7,6 +7,17 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **The DSG fart.** On a loaded upshift a dual-clutch gearbox no longer
+  only retards the spark: the ECU also cuts the injection on part of the
+  firings, spread over the cylinders in firing order, as a production
+  engine does. Those cycles misfire, and the exhaust note breaks up for the
+  tenth of a second the shift lasts. The share of firings cut is
+  `dual_clutch_upshift_cylinder_cut` in the engine file (0.76 by default,
+  0 for the retard alone). No catalogue engine uses a dual clutch, so the
+  catalogue's sound is unchanged.
+
 ## [0.8.1] — 2026-11-06
 
 The first published release of 0.8: the v0.8.0 tag's build failed a Linux

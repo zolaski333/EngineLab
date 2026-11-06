@@ -922,6 +922,7 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         || outOfRange("transmission.shiftTorqueCutFraction", config.transmission.shiftTorqueCutFraction, 0.0, 1.0)
         || outOfRange("transmission.quickshifterCutSeconds", config.transmission.quickshifterCutSeconds, 0.01, 0.5)
         || outOfRange("transmission.dualClutchUpshiftRetardDegrees", config.transmission.dualClutchUpshiftRetardDegrees, 0.0, 40.0)
+        || outOfRange("transmission.dualClutchUpshiftCylinderCutFraction", config.transmission.dualClutchUpshiftCylinderCutFraction, 0.0, 1.0)
         || outOfRange("transmission.centrifugalClutchEngageRpm", config.transmission.centrifugalClutchEngageRpm, 0.0, 20'000.0)
         || outOfRange("vehicle.massKg", config.vehicle.massKg, 1.0, 1.0e6)
         || outOfRange("vehicle.dragCoefficient", config.vehicle.dragCoefficient, 0.05, 2.0)

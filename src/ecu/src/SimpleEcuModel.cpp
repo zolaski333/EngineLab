@@ -790,6 +790,13 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              lambdaLearningAllowed,
              decelerationFuelResumeEvent };
     command.revLimitRpm = revLimit;
+    // A dual clutch's upshift asks for less torque than the retard floor
+    // leaves: the rest is met by suppressing injection on a share of the
+    // firings. A cut cylinder's air is no lambda observation.
+    command.cylinderCutFraction = std::isfinite(controls.shiftCylinderCutFraction)
+        ? std::clamp(controls.shiftCylinderCutFraction, 0.0, 1.0) : 0.0;
+    if (command.cylinderCutFraction > 0.0)
+        command.lambdaLearningAllowed = false;
     // Past the map's -10 deg floor on purpose: the flame lit 20-40 deg after
     // top dead centre is still burning when the exhaust valve opens, and that
     // late, hot, partly burnt charge is what a pops-and-bangs map sends down

@@ -26,6 +26,7 @@ void DriverCommandArbiter::arbitrate(const DriverInputs& inputs, VehicleStep& st
         : ThrottleAuthority::driver;
     step.shiftIgnitionCut = step.drive.ignitionCut;
     step.shiftSparkRetardDegrees = step.drive.sparkRetardDegrees;
+    step.shiftCylinderCutFraction = step.drive.cylinderCutFraction;
 }
 
 VehicleStep advanceVehicle(DrivelineModel& driveline, double dtSeconds,
@@ -48,6 +49,7 @@ void applyVehicleStep(EngineControls& controls, const VehicleStep& step) noexcep
     controls.coolingAirSpeedMps = std::abs(step.drive.vehicleSpeedMps);
     controls.shiftIgnitionCut = step.shiftIgnitionCut;
     controls.shiftSparkRetardDegrees = step.shiftSparkRetardDegrees;
+    controls.shiftCylinderCutFraction = step.shiftCylinderCutFraction;
     controls.engagedGear = step.drive.engagedGear;
     controls.vehicleSpeedMps = std::abs(step.drive.vehicleSpeedMps);
 }

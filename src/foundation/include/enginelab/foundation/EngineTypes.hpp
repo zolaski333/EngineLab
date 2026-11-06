@@ -911,6 +911,14 @@ struct TransmissionConfig final {
      * the engine down, released as the speeds meet (0 = none). Production
      * calibrations are not published; the default is a choice. */
     double dualClutchUpshiftRetardDegrees { 20.0 };
+    /** The rest of that intervention: the share of the engine's torque the
+     * gearbox asks to remove, which the ECU meets past its retard floor by
+     * suppressing injection on that share of the firings, spread in firing
+     * order (Bosch ME7: a dual clutch asks for ~24 % of the torque during
+     * an upshift, and the cut, not the retard, makes the "fart"; NefMoto
+     * forum, "Launch control and DSG farts", 2021). Released with the
+     * retard as the speeds meet. 0 = retard only. */
+    double dualClutchUpshiftCylinderCutFraction { 0.76 };
     /** A CVT's start clutch: centrifugal (a scooter's: open at idle, no
      * creep) rather than wet. It bites at centrifugalClutchEngageRpm (0:
      * 1.7 x idle) and is shut at 1.35 x that. */
@@ -1390,6 +1398,9 @@ struct EngineControls final {
     /** A dual clutch's upshift torque intervention: spark retard, degrees,
      * taken off the mapped advance (within the ECU's advance limits). */
     double shiftSparkRetardDegrees { 0.0 };
+    /** Its injection cut: the share of firings, 0-1, whose fuel the ECU
+     * suppresses (the spark still fires, on air). */
+    double shiftCylinderCutFraction { 0.0 };
     /** The gear the driveline has engaged (-1: none, as on the dyno) and the
      * road speed, m/s, as the ECU's wheel-speed and gear inputs: its launch
      * control reads them. The simulator's own state had neither, so launch
@@ -2109,6 +2120,10 @@ struct EcuCommand final {
      *  `boost.target_gauge_kpa`); negative: the configuration's wastegate
      *  pressure ratio. */
     double boostTargetGaugeKpa { -1.0 };
+    /** Share of firings, 0-1, whose injection is suppressed (a dual
+     *  clutch's upshift intervention). The simulator spreads it over the
+     *  cylinders in firing order. */
+    double cylinderCutFraction { 0.0 };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

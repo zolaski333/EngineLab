@@ -811,7 +811,17 @@ edit, taken live.
   reaches the new speed sooner; the clutch's torque does not drop where it is
   already at its capacity (the 2JZ at 70-85 % of redline), so the push keeps
   its peak and is only shorter (journal). Production calibrations are not
-  published: the 20° is a choice. A downshift is blipped as above. The clutch pedal is not connected: the
+  published: the 20° is a choice. Past the retard's floor the ECU also cuts
+  injection on a share of the firings, `dual_clutch_upshift_cylinder_cut`
+  (default 0.76, released with the retard): that is the "DSG fart". A Bosch
+  ME7 asks for about 24 % of the torque during the shift and suppresses
+  injection where the latest spark still leaves too much (NefMoto forum,
+  "Launch control and DSG farts", one tuner's log). The simulator spreads the
+  cut pulses over the engine as an error-diffusion sequence in firing order,
+  each cylinder counting its own injection starts, decided at a cylinder's
+  injection start for the whole cycle. The spark still fires, on air. A port
+  injector's wall film still feeds a cut cylinder about a quarter of its
+  charge, so it misfires lean (I5, 2026-11-06). A downshift is blipped as above. The clutch pedal is not connected: the
   gearbox runs its own launch clutch. At idle, foot off, it holds a creep
   torque (25 Nm, or 5 % of the clutch's capacity if lower), released on the
   brake. With the throttle open it closes with the engine's speed, fully at a

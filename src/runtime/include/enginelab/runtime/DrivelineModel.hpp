@@ -39,6 +39,8 @@ struct DrivelineOutput final {
     /** A dual-clutch upshift's torque intervention: the spark retard it
      * asks of the ECU while the oncoming clutch pulls the engine down. */
     double sparkRetardDegrees { 0.0 };
+    /** And the share of firings whose injection it asks the ECU to cut. */
+    double cylinderCutFraction { 0.0 };
     double brakePressure { 0.0 };
     double brakeForceN { 0.0 };
     double roadLoadForceN { 0.0 };

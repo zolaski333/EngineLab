@@ -504,6 +504,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "auto_blipper" << YAML::Value << config.transmission.autoBlipper
         << YAML::Key << "dual_clutch_upshift_retard_deg" << YAML::Value
         << config.transmission.dualClutchUpshiftRetardDegrees
+        << YAML::Key << "dual_clutch_upshift_cylinder_cut" << YAML::Value
+        << config.transmission.dualClutchUpshiftCylinderCutFraction
         << YAML::Key << "centrifugal_clutch" << YAML::Value << config.transmission.centrifugalClutch
         << YAML::Key << "centrifugal_clutch_engage_rpm" << YAML::Value
         << config.transmission.centrifugalClutchEngageRpm << YAML::EndMap
@@ -1109,6 +1111,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             if (transmission["dual_clutch_upshift_retard_deg"])
                 config.transmission.dualClutchUpshiftRetardDegrees =
                     transmission["dual_clutch_upshift_retard_deg"].as<double>();
+            if (transmission["dual_clutch_upshift_cylinder_cut"])
+                config.transmission.dualClutchUpshiftCylinderCutFraction =
+                    transmission["dual_clutch_upshift_cylinder_cut"].as<double>();
             if (transmission["centrifugal_clutch"])
                 config.transmission.centrifugalClutch = transmission["centrifugal_clutch"].as<bool>();
             if (transmission["centrifugal_clutch_engage_rpm"])

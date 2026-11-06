@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-06 — the DSG fart: a dual clutch's injection cut
+
+- Source (no recording found, Freesound included): NefMoto forum, "Launch control and DSG farts" (Bosch ME7 tuners). The gearbox asks for ~24 % of the torque during an upshift (misol); the ECU retards to its shift floor (KFZWMNGS, ~-12 deg), then suppresses injection (evz_austot) where that is not enough. Retard alone gives no fart. Whether 24 % is the torque kept or removed is not certain: read as kept (only then does a cut follow).
+- Before: our dual clutch only retarded (20 deg, the -10 deg floor), no misfire. Added `dual_clutch_upshift_cylinder_cut` (default 0.76, released with the retard), an error-diffusion sequence in firing order, decided per cylinder at its injection start.
+- `ShiftTransientHarness --filter I5 --style dual_clutch --trace`, 1->2 at 6,111 rpm: a cut cylinder gets 20-26 mg of port film for ~100 mg and misfires; ~3 firings in 4 drop over ~120 ms; the clutch's torque 790 -> 500-620 N.m; sync 4,331 rpm against 4,491. The shift's level is ~3 dB lower (50 ms RMS). The owner heard the A/B (`listening-test/2026-11-06/dsg/`) and said to keep going.
+- `EngineLab.ShiftStyle`, 2JZ at 85 % of redline: 7 misfired cycles on 6 cylinders, push 343 ms against 407 with the retard alone; fails with the cut zeroed. Not measured: a direct-injection engine (no film), the app, the full ctest.
+
 ## 2026-11-05 — 0.8.0's CI: IdleStabilityRegression fails on Linux, the flat-6's early blip
 
 - CI (Linux GCC 13, CI and Release jobs): "Aircooled-like 3.6 Flat-6: dips toward stall after a WOT blip 6 s after the start (588 rpm)", gate 608 (0.78 x 780). Reproduced in an Ubuntu 24.04 container; Windows reads 635 on the same start. Both Windows jobs passed.

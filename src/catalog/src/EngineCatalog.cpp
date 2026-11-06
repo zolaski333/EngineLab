@@ -551,6 +551,7 @@ template <typename T>
     assignIfPresent(node, "quickshifter_cut_s", value.quickshifterCutSeconds);
     assignIfPresent(node, "auto_blipper", value.autoBlipper);
     assignIfPresent(node, "dual_clutch_upshift_retard_deg", value.dualClutchUpshiftRetardDegrees);
+    assignIfPresent(node, "dual_clutch_upshift_cylinder_cut", value.dualClutchUpshiftCylinderCutFraction);
     assignIfPresent(node, "centrifugal_clutch", value.centrifugalClutch);
     assignIfPresent(node, "centrifugal_clutch_engage_rpm", value.centrifugalClutchEngageRpm);
     return value;
