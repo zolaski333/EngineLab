@@ -13,7 +13,7 @@ The set created with each engine contains:
 
 | Identifier | Shape | Effect |
 |---|---|---|
-| `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target; on a spark engine in petrol AFR (lambda × 14.7), metered at that lambda on any fuel (E85 at 9.81, methanol at 6.47) |
+| `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target; on a spark engine in petrol AFR (lambda × 14.7), metered at that lambda on any fuel (E85 at 9.81, methanol at 6.47); the ECU tuner shows and takes it in the fuel's own AFR (a cell of 13.2 reads 5.81 on methanol) |
 | `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections; on a diesel, the start of injection (deg BTDC), no earlier than the injection part's window |
 | `idle.target_rpm` | scalar | idle speed the idle governor holds (not on a carburettor) |
 | `limits.rev_rpm` | scalar | rev limiter threshold |
@@ -71,7 +71,8 @@ a ceiling it does not reach. Saved tables without this entry and
 superchargers fall back on the configuration's ratio.
 
 The canonical bounds are shared by validation, the generated metadata and the
-ECU: 10.5 to 18 for AFR, -10° to 55° for advance, 150 to 25,000 rpm for the
+ECU: 9 to 18 for AFR (petrol AFR, lambda 0.61 to 1.22; a generated map
+stays at 10.5 or leaner), -10° to 55° for advance, 150 to 25,000 rpm for the
 rev limiter, 50 to 3,000 rpm for the idle target, 0 to 125 g per cycle for a
 diesel's fuel, 0 to 40° per unit of knock for the knock gain, 0 to 510 kPa for
 the boost target (a pressure ratio of 6, the configuration's ceiling). A cell accepted by the tuner is therefore no longer silently

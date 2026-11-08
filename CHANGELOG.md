@@ -27,6 +27,17 @@ file formats, always with an in-memory migration).
   touched. The advance is yours to tune in the ECU; the knock control still
   pulls back what the octane cannot take. The fuel keeps its name. Another
   fuel or another fuel value still restarts the engine.
+- **An alcohol in the tank is metered right.** A fuel of another
+  stoichiometric ratio (E85, methanol) now resizes the injectors and any
+  carburettor jets for the same mixture, as a tuner does (methanol takes 2.3
+  times the fuel mass), so they no longer run out at high rpm. The ECU's
+  fuel learning took its sanity bounds in petrol AFR and threw away the
+  rich cycles of an alcohol: the I5 on methanol ran lambda 0.74 for 0.84,
+  the LS3 and the flat-6 rich at low rpm. Petrol engines are unchanged.
+- **The ECU tuner shows the mixture in the fuel's own AFR** (13.2 on petrol
+  reads 5.81 on methanol); the map is still stored in lambda. Its richest
+  value goes from 10.5 to 9 petrol AFR (lambda 0.61, past the rich-misfire
+  limit), for alcohol maps; the shipped maps are unchanged.
 
 ## [0.8.1] — 2026-11-06
 

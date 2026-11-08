@@ -1,5 +1,10 @@
 #include <enginelab/app/AudioWorkshopWindow.hpp>
+#include <enginelab/app/EcuTunerWindow.hpp>
+#include <enginelab/calibration/CalibrationStore.hpp>
+#include <enginelab/calibration/EcuCalibration.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
+#include <enginelab/app/FuelEditing.hpp>
 #include <enginelab/app/FuelWindow.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 
@@ -488,6 +493,31 @@ int main() {
                     && applied->fuelProperties.name == other->properties.name + " (edited)",
                 "an edited fuel value is applied and renames the fuel");
 
+        // An alcohol in the tank refits the metering for the same mixture:
+        // the injectors flow the stoichiometric ratio's share more mass, a
+        // carburettor's jets also the root of the density's.
+        const auto alcohol = std::find_if(presets.begin(), presets.end(), [](const auto& preset) {
+            return !preset.diesel() && preset.properties.stoichiometricAirFuelRatio < 10.0; });
+        require(alcohol != presets.end(), "fuels.yaml lists an alcohol");
+        auto refitted = petrol->config;
+        refitted.intake.carburettor.enabled = true;
+        refitted.intake.carburettor.mainJetFlowNumber = 200.0;
+        const auto petrolFuel = refitted.fuelProperties;
+        const auto injectorBefore = refitted.injection.injectorFlowMgPerSecond;
+        enginelab::fuel_editing::applyPreset(refitted, *alcohol);
+        const auto massRatio = petrolFuel.stoichiometricAirFuelRatio
+            / alcohol->properties.stoichiometricAirFuelRatio;
+        require(near(refitted.injection.injectorFlowMgPerSecond, injectorBefore * massRatio),
+                "an alcohol's injectors flow the stoichiometric ratio's share more fuel");
+        require(near(refitted.intake.carburettor.mainJetFlowNumber, 200.0 * massRatio
+                    * std::sqrt(petrolFuel.densityKgPerL / alcohol->properties.densityKgPerL)),
+                "an alcohol's main jet passes the same mixture");
+        auto unchanged = petrol->config;
+        enginelab::fuel_editing::applyPreset(unchanged, *other);
+        require(petrolFuel.stoichiometricAirFuelRatio != other->properties.stoichiometricAirFuelRatio
+                    || unchanged.injection.injectorFlowMgPerSecond == petrol->config.injection.injectorFlowMgPerSecond,
+                "a petrol of the same ratio keeps its injectors");
+
         const auto diesel = std::find_if(catalog.entries.begin(), catalog.entries.end(),
             [](const auto& entry) { return entry.config.fuel == enginelab::FuelType::diesel; });
         require(diesel != catalog.entries.end(), "catalog has a diesel");
@@ -496,6 +526,54 @@ int main() {
         for (auto* child : fuelContent->getChildren())
             if (dynamic_cast<juce::Slider*>(child) != nullptr) ++dieselFields;
         require(dieselFields == 4, "a diesel's fuel has four fields, a cetane number first");
+    }
+
+    {
+        // The ECU's target AFR map is stored in petrol AFR (lambda x 14.7)
+        // and reads, and is typed, in the fuel's own AFR.
+        const auto spark = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [](const auto& entry) { return entry.config.fuel == enginelab::FuelType::gasoline; });
+        require(spark != catalog.entries.end(), "catalog has a spark engine");
+        auto store = std::make_shared<enginelab::calibration::CalibrationStore>();
+        require(store->publish(enginelab::calibration::makeDefaultEcuCalibration(spark->config),
+                               { 0, "engine-default" }).published, "the default calibration publishes");
+        enginelab::EcuTunerComponent tuner(store);
+        tuner.setSize(980, 620);
+        constexpr double methanolStoichiometricAfr = 6.47;
+        tuner.setFuel("Methanol M100", methanolStoichiometricAfr, false);
+        juce::ComboBox* selector = nullptr;
+        for (auto* child : tuner.getChildren())
+            if (auto* box = dynamic_cast<juce::ComboBox*>(child)) selector = box;
+        require(selector != nullptr, "the tuner lists its maps");
+        auto afrItem = -1;
+        for (int index = 0; index < selector->getNumItems(); ++index)
+            if (selector->getItemText(index).contains(juce::String(std::string(
+                    enginelab::calibration::keys::targetAirFuelRatio))))
+                afrItem = index;
+        require(afrItem >= 0, "the tuner lists the target AFR map");
+        selector->setSelectedItemIndex(afrItem, juce::sendNotificationSync);
+        std::vector<juce::TextEditor*> cells;
+        for (auto* child : tuner.getChildren())
+            if (auto* cell = dynamic_cast<juce::TextEditor*>(child)) cells.push_back(cell);
+        const auto stored = [&store] {
+            const auto snapshot = store->snapshot();
+            const auto* entry = snapshot->find(enginelab::calibration::keys::targetAirFuelRatio);
+            const auto* table = entry != nullptr
+                ? std::get_if<enginelab::calibration::CalibrationTable2D>(entry) : nullptr;
+            return table != nullptr && !table->values.empty() ? table->values.front() : -1.0;
+        };
+        const auto scale = methanolStoichiometricAfr / enginelab::calibration::ecuLimits::petrolStoichiometricAirFuelRatio;
+        require(!cells.empty() && std::abs(cells.front()->getText().getDoubleValue() - stored() * scale) < 0.01,
+                "a methanol engine's AFR map reads in methanol AFR");
+        cells.front()->setText("5.80", false);
+        cells.front()->onReturnKey();
+        require(std::abs(stored() - 5.80 / scale) < 1.0e-9, "a methanol AFR typed is stored as petrol AFR");
+        tuner.setFuel("Premium gasoline 98 RON", 14.7, false);
+        require(std::abs(stored() * 1.0 - 5.80 / scale) < 1.0e-9 && std::abs(
+                    [&tuner] { for (auto* child : tuner.getChildren())
+                        if (auto* cell = dynamic_cast<juce::TextEditor*>(child)) return cell->getText().getDoubleValue();
+                        return -1.0; }() - 5.80 / scale) < 0.01,
+                "on petrol the same map reads in petrol AFR");
     }
 
     std::cout

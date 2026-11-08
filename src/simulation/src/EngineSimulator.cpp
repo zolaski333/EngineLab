@@ -602,6 +602,17 @@ struct ParallelSubstepState final {
     return curve.back().milligramsPerCycle;
 }
 
+/** The metering's sanity bounds were written in petrol AFR (5-30 for a
+ *  command, 4-40 for an observation). Another fuel takes them at the same
+ *  lambda: on methanol (6.47) a fixed AFR 4 is lambda 0.62, so the learner
+ *  dropped the rich cycles and held the mixture at lambda 0.74 against a
+ *  0.84 target. Exactly 1 on a 14.7 petrol; a diesel keeps its own. */
+[[nodiscard]] double petrolAfrBoundScale(const EngineConfig& config) noexcept {
+    const auto stoichiometric = config.fuelProperties.stoichiometricAirFuelRatio;
+    return config.fuel == FuelType::diesel || !(stoichiometric > 0.0)
+        ? 1.0 : stoichiometric / 14.7;
+}
+
 [[nodiscard]] double airFuelRatioForCell(const GasCell& cell, const FuelConfig& fuel) noexcept {
     const auto fuelMoles = cell.mixture().fuelMoles;
     if (fuelMoles <= 1.0e-15) return 100.0;
@@ -2951,7 +2962,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ? std::max(config_.fuelProperties.stoichiometricAirFuelRatio
                         * 1.16,
                     ecuCommand.targetAirFuelRatio)
-                : std::clamp(ecuCommand.targetAirFuelRatio, 5.0, 30.0);
+                : std::clamp(ecuCommand.targetAirFuelRatio,
+                    5.0 * petrolAfrBoundScale(config_), 30.0 * petrolAfrBoundScale(config_));
             const auto cylinderFuelEnabled = ecuCommand.fuelEnabled
                 && !injectionCutThisCycle_[cylinderIndex];
             auto physicalFuelTargetMoles = cylinderFuelEnabled
@@ -3379,7 +3391,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     actualAfrValidLastCycle_[cylinderIndex] = true;
                     if (portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex]
                             > 0.0
-                        && mixtureAfr > 4.0 && mixtureAfr < 40.0) {
+                        && mixtureAfr > 4.0 * petrolAfrBoundScale(config_)
+                    && mixtureAfr < 40.0 * petrolAfrBoundScale(config_)) {
                         // The simulation observes the completed in-cylinder
                         // mixture directly, so the resume controller can correct
                         // the following pulse without pretending that a delayed
@@ -3388,7 +3401,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         // two-second rich lock, yet leaves transport/film state
                         // authoritative and avoids a one-cycle sign oscillation.
                         const auto targetAfr = std::clamp(
-                            ecuCommand.targetAirFuelRatio, 5.0, 30.0);
+                            ecuCommand.targetAirFuelRatio, 5.0 * petrolAfrBoundScale(config_),
+                            30.0 * petrolAfrBoundScale(config_));
                         const auto logarithmicError = std::clamp(
                             std::log(mixtureAfr / targetAfr), -0.70, 0.70);
                         portFuelResumeFuelTrim_[cylinderIndex] = std::clamp(
@@ -3418,9 +3432,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     && ecuCommand.lambdaLearningAllowed
                     && requestedFuelMoles > 1.0e-15;
                 if (observableFuelCommand && state_.rpm > 450.0
-                    && mixtureAfr > 4.0 && mixtureAfr < 40.0) {
+                    && mixtureAfr > 4.0 * petrolAfrBoundScale(config_)
+                    && mixtureAfr < 40.0 * petrolAfrBoundScale(config_)) {
                     const auto targetAfr = std::clamp(
-                        ecuCommand.targetAirFuelRatio, 5.0, 30.0);
+                        ecuCommand.targetAirFuelRatio, 5.0 * petrolAfrBoundScale(config_),
+                            30.0 * petrolAfrBoundScale(config_));
                     // Attribute the observation to each cell in proportion to
                     // the authority it actually held over the command that
                     // produced it -- the same blend the command was built

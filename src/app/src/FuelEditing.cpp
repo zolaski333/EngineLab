@@ -1,5 +1,7 @@
 #include <enginelab/app/FuelEditing.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <string_view>
 
 namespace enginelab::fuel_editing {
@@ -26,6 +28,31 @@ std::vector<double> values(const EngineConfig& config) {
     return result;
 }
 
+void refitFuelMetering(EngineConfig& config, const FuelConfig& before) {
+    if (config.fuel == FuelType::diesel) return;
+    const auto& after = config.fuelProperties;
+    if (!(before.stoichiometricAirFuelRatio > 0.0) || !(after.stoichiometricAirFuelRatio > 0.0)) return;
+    const auto massRatio = before.stoichiometricAirFuelRatio / after.stoichiometricAirFuelRatio;
+    if (!std::isfinite(massRatio) || massRatio == 1.0) return;
+    // The validation's ranges bound the refit.
+    config.injection.injectorFlowMgPerSecond = std::clamp(
+        config.injection.injectorFlowMgPerSecond * massRatio, 10.0, 500'000.0);
+    const auto densityRatio = before.densityKgPerL > 0.0 && after.densityKgPerL > 0.0
+        ? before.densityKgPerL / after.densityKgPerL : 1.0;
+    const auto jetScale = massRatio * std::sqrt(densityRatio);
+    const auto rejet = [&](CarburettorConfig& carburettor) {
+        if (!carburettor.enabled) return;
+        carburettor.mainJetFlowNumber = std::clamp(carburettor.mainJetFlowNumber * jetScale, 5.0, 5'000.0);
+        carburettor.pilotJetFlowNumber = std::clamp(carburettor.pilotJetFlowNumber * jetScale, 1.0, 2'000.0);
+        carburettor.starterJetFlowNumber = std::clamp(carburettor.starterJetFlowNumber * jetScale, 0.0, 20'000.0);
+        // The pump displaces a volume: the same mass shot takes this much.
+        carburettor.acceleratorPumpStrokeCc = std::clamp(
+            carburettor.acceleratorPumpStrokeCc * massRatio * densityRatio, 0.0, 100.0);
+    };
+    rejet(config.intake.carburettor);
+    for (auto& path : config.intakePaths) rejet(path.geometry.carburettor);
+}
+
 std::string apply(EngineConfig& edited, const std::vector<double>& values) {
     const auto diesel = edited.fuel == FuelType::diesel;
     const auto count = diesel ? 4U : 5U;
@@ -42,6 +69,7 @@ std::string apply(EngineConfig& edited, const std::vector<double>& values) {
         fuel.oxygenMolesPerFuelMole *= values[2] / fuel.stoichiometricAirFuelRatio;
     fuel.stoichiometricAirFuelRatio = values[2];
     edited.injection.latentHeatKjPerKg = values[3];
+    refitFuelMetering(edited, before);
     if (!diesel) fuel.laminarFlameSpeedMps = values[4];
     // The octane is the engine's (an engine file's octane_rating), not the
     // listed fuel's: a new octane alone keeps the fuel's name, and the
@@ -60,7 +88,9 @@ std::string apply(EngineConfig& edited, const std::vector<double>& values) {
 
 void applyPreset(EngineConfig& edited, const FuelPreset& preset) {
     const auto diesel = edited.fuel == FuelType::diesel;
+    const auto before = edited.fuelProperties;
     edited.fuelProperties = preset.properties;
+    refitFuelMetering(edited, before);
     if (!diesel && preset.octaneRating > 0.0) edited.octaneRating = preset.octaneRating;
     if (preset.latentHeatKjPerKg > 0.0) edited.injection.latentHeatKjPerKg = preset.latentHeatKjPerKg;
 }
@@ -79,7 +109,8 @@ const char* note(bool diesel) {
         : "The knock model reads the octane: lower knocks sooner, and the knock control pulls the spark back. "
           "A new octane is taken at once and changes no spark map: the advance is yours to tune (ECU). "
           "The ECU's mixture map is in lambda, so another stoichiometric ratio (E85, methanol) is metered "
-          "right; the oxygen the fuel needs follows it. The other values restart the engine.";
+          "right; the oxygen the fuel needs follows it, and the injectors and carburettor jets are resized "
+          "to deliver it (methanol takes 2.3 times the fuel mass). The other values restart the engine.";
 }
 
 } // namespace enginelab::fuel_editing

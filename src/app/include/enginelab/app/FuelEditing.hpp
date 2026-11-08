@@ -31,6 +31,13 @@ struct Field final {
 [[nodiscard]] std::string apply(EngineConfig&, const std::vector<double>& values);
 /** Puts a listed fuel in the tank. */
 void applyPreset(EngineConfig&, const FuelPreset&);
+/** Refits the fuel metering for the fuel now on `config`, as a tuner does
+    for E85 or methanol: the same mixture takes `before`'s stoichiometric
+    ratio over the new one times the fuel mass, so the injectors flow that
+    much more mass and the carburettor jets pass it (an orifice's mass flow
+    goes as its area times the square root of the fuel's density). A spark
+    engine only; nothing changes when the ratio does not. */
+void refitFuelMetering(EngineConfig& config, const FuelConfig& before);
 /** The listed fuels an engine of this kind can burn. */
 [[nodiscard]] std::vector<FuelPreset> presetsFor(const std::vector<FuelPreset>&, bool diesel);
 /** What the fields change, in a sentence or three. */

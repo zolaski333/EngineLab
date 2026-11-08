@@ -26,6 +26,13 @@ public:
     void resized() override;
     void setOperatingPoint(double rpm, double normalizedLoad);
     void setSessionLocked(bool locked);
+    /** The fuel in the tank. A spark engine's target AFR map is stored in
+     *  petrol AFR (lambda x 14.7); it is shown and typed in this fuel's own
+     *  AFR, so a methanol map reads 5.8 where petrol reads 13.2. */
+    void setFuel(const std::string& name, double stoichiometricAirFuelRatio, bool diesel);
+    /** What a stored value of `id` reads on screen (1 but for a spark
+     *  engine's target AFR). */
+    [[nodiscard]] double displayScaleOf(const std::string& id) const noexcept;
 
 private:
     void timerCallback() override;
@@ -51,6 +58,10 @@ private:
     double operatingLoad_ {};
     bool rebuilding_ { false };
     bool sessionLocked_ { false };
+    std::string fuelName_;
+    double afrDisplayScale_ { 1.0 };
+    /** A spark engine whose fuel is known: its AFR map reads in that fuel. */
+    bool fuelAfr_ { false };
 
     juce::ComboBox mapSelector_;
     std::vector<std::string> mapIds_;
@@ -89,6 +100,7 @@ public:
     void closeButtonPressed() override;
     void setOperatingPoint(double rpm, double normalizedLoad);
     void setSessionLocked(bool locked);
+    void setFuel(const std::string& name, double stoichiometricAirFuelRatio, bool diesel);
 
 private:
     EcuTunerComponent* tuner_ {};

@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-08 — an alcohol's metering: injectors resized, the trim's bounds in lambda
+
+- Injectors resized by the stoichiometric ratio (x2.27 on methanol): EJ25 lambda 0.86/0.86/0.84 at 2,000/4,000/6,000 rpm (petrol 0.87/0.86/0.84), RD350 0.89-0.93 (was 0.50-1.53); no more flat fuel flow. Jets take the same ratio times the root of the density ratio (no catalogue carburettor to measure it on).
+- I5 still 0.72/0.71/0.64. `DynoCurveHarness`: its trim stayed at 1.00 (petrol learns 0.90-0.92). Molar mass at 100 g/mol changes nothing (0.71), so the fuel vapour's volume is not it.
+- Cause: the learner only took observations at AFR 4-40 and clamped the target to 5-30, petrol numbers; AFR 4 is lambda 0.62 on methanol, so the rich cycles were dropped and the trim held on the lean ones. In lambda now (x stoichiometric / 14.7; exactly 1 on every catalogue fuel).
+- After: I5 0.837/0.837/0.805, trim 0.93/0.91/0.89, torque 449/506/458 N.m, cycle CV 0.2 % (6 % before); LS3 0.90/0.90/0.89, flat-6 0.90/0.90/0.89. `EngineLab.LiveSettings` (methanol I5 at 2,000 rpm) reads 0.733 without, 0.837 with.
+- Not measured: E85, idle and transients on alcohol, a carburetted engine, the app by hand.
+
 ## 2026-11-08 — fuels on the catalogue; a new octane is taken live
 
 - `DynoSweepHarness --step 2000`, catalogue copied with `uses: fuel: methanol_m100` and the injection parts' latent heat at 1,103 kJ/kg: 12 of 17 spark engines hold lambda 0.89-0.90 at WOT, as on petrol (the ECU's lambda metering is right).

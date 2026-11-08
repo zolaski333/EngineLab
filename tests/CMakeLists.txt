@@ -384,6 +384,7 @@ endif()
 add_executable(EngineLabAudioWorkshopTests
     AudioWorkshopTests.cpp
     "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/EcuTunerWindow.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/ExhaustDesignerWindow.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/FuelEditing.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/FuelWindow.cpp"

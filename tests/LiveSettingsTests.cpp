@@ -12,6 +12,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/serialization/EngineEditScope.hpp>
+#include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -426,9 +427,61 @@ void turboSoundFollowsSettings() {
             "a turbo added needs a new renderer");
 }
 
+/** An alcohol holds the lambda its map asks for. The metering's bounds were
+ *  petrol AFR: on methanol (6.47) the learner dropped every cycle below
+ *  AFR 4 (lambda 0.62) and the I5 sat at lambda 0.74-0.76 against 0.84, its
+ *  trim stuck at 1.0 (journal 2026-11-08). Injectors sized for the fuel. */
+void alcoholHoldsItsLambda() {
+    auto config = catalogueEngine("Audi I5");
+    const auto petrolStoichiometric = config.fuelProperties.stoichiometricAirFuelRatio;
+    config.fuelProperties.name = "Methanol M100";
+    config.fuelProperties.lowerHeatingValueMjPerKg = 20.0;
+    config.fuelProperties.densityKgPerL = 0.792;
+    config.fuelProperties.stoichiometricAirFuelRatio = 6.47;
+    config.fuelProperties.molarMassGramsPerMole = 32.04;
+    config.fuelProperties.oxygenMolesPerFuelMole = 1.5;
+    config.fuelProperties.productMolesPerFuelMole = 3.0;
+    config.fuelProperties.laminarFlameSpeedMps = 0.53;
+    config.octaneRating = 109.0;
+    config.injection.latentHeatKjPerKg = 1'103.0;
+    config.injection.injectorFlowMgPerSecond *= petrolStoichiometric / 6.47;
+    Rig rig(config);
+    // As the dyno harness measured it: started at 0.55 throttle, then full
+    // throttle held at 2,000 rpm by the absorber.
+    for (auto frame = 0; frame < 2 * 240; ++frame)
+        (void)rig.simulator->step(frameSeconds, { true, frame < 360, 0.55, 0.0 });
+    DynoAbsorberController absorber(rig.simulator->config());
+    absorber.reset(rig.simulator->state().rpm, rig.simulator->state().torqueNm);
+    double lambdaSum = 0.0;
+    double targetSum = 0.0;
+    int samples = 0;
+    for (auto frame = 0; frame < 10 * 240; ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = rig.simulator->state().rpm < 550.0;
+        controls.throttle = 1.0;
+        controls.dynamometerTorqueNm =
+            absorber.advance(frameSeconds, 2'000.0, rig.simulator->state()).brakeTorqueNm;
+        const auto& state = rig.simulator->step(frameSeconds, controls).state;
+        if (t >= 8.0 && state.airFuelRatioValid) {
+            lambdaSum += state.lambda;
+            targetSum += state.targetAirFuelRatio / 6.47;
+            ++samples;
+        }
+    }
+    require(samples > 240, "the methanol I5 must run and report its mixture");
+    const auto lambda = lambdaSum / samples;
+    const auto target = targetSum / samples;
+    std::cout << "methanol I5 lambda " << lambda << " for a target of " << target << '\n';
+    require(std::abs(lambda / target - 1.0) < 0.03,
+        "the methanol I5 must hold its target lambda within 3 %");
+}
+
 } // namespace
 
 void liveSettingsRegression() {
+    alcoholHoldsItsLambda();
     editScopeSortsEdits();
     identicalSettingsAreInvisible();
     anotherMachineIsRefused();

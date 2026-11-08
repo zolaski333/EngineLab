@@ -423,6 +423,9 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     adoptAudioVoicing(config_.audioVoicing);
     voicingRevision_ = audioVoicingRevision(catalogRoot_);
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
+    if (ecuTunerWindow_)
+        ecuTunerWindow_->setFuel(config_.fuelProperties.name, config_.fuelProperties.stoichiometricAirFuelRatio,
+                                 config_.fuel == FuelType::diesel);
     renderSnapshotBuilder_ = std::make_unique<RenderSnapshotBuilder>(config_);
     renderSnapshotInterpolator_.reset();
     model_.renderSnapshot = {};
@@ -885,6 +888,8 @@ void MainComponent::showEcuTuner() {
     if (!runtime_) return;
     if (!ecuTunerWindow_)
         ecuTunerWindow_ = std::make_unique<EcuTunerWindow>(runtime_->calibrationStore());
+    ecuTunerWindow_->setFuel(config_.fuelProperties.name, config_.fuelProperties.stoichiometricAirFuelRatio,
+                             config_.fuel == FuelType::diesel);
     ecuTunerWindow_->setSessionLocked(runtime_->dynoRunning());
     ecuTunerWindow_->setVisible(true);
     ecuTunerWindow_->toFront(true);

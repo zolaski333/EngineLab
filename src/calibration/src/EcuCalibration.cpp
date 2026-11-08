@@ -89,7 +89,7 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
                 afrValues.push_back(std::clamp(
                     ecuLimits::referenceAirFuelRatio + afrLoadCorrection
                         - highSpeedEnrichment,
-                    ecuLimits::minimumAirFuelRatio,
+                    ecuLimits::minimumDefaultMapAirFuelRatio,
                     ecuLimits::maximumGasolineAirFuelRatio));
             }
             ignitionValues.push_back(std::clamp(timingAt(config, rpm)

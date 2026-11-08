@@ -105,6 +105,21 @@ void EcuTunerComponent::setOperatingPoint(double rpm, double normalizedLoad) {
     repaint();
 }
 
+void EcuTunerComponent::setFuel(const std::string& name, double stoichiometricAirFuelRatio, bool diesel) {
+    const auto scale = diesel || !(stoichiometricAirFuelRatio > 0.0)
+        ? 1.0 : stoichiometricAirFuelRatio / calibration::ecuLimits::petrolStoichiometricAirFuelRatio;
+    const auto fuelAfr = !diesel && scale > 0.0;
+    if (scale == afrDisplayScale_ && name == fuelName_ && fuelAfr == fuelAfr_) return;
+    afrDisplayScale_ = scale;
+    fuelName_ = name;
+    fuelAfr_ = fuelAfr;
+    if (!rebuilding_) rebuildCells();
+}
+
+double EcuTunerComponent::displayScaleOf(const std::string& id) const noexcept {
+    return fuelAfr_ && id == calibration::keys::targetAirFuelRatio ? afrDisplayScale_ : 1.0;
+}
+
 void EcuTunerComponent::setSessionLocked(bool locked) {
     if (sessionLocked_ == locked) return;
     sessionLocked_ = locked;
@@ -181,8 +196,19 @@ void EcuTunerComponent::rebuildCells() {
         return;
     }
     const auto& metadata = calibration::metadataOf(*entry);
-    descriptionLabel_.setText(utf8(metadata.displayName + "  ·  " + metadata.description
-        + "  [" + std::string(calibration::toString(metadata.unit)) + "]"), juce::dontSendNotification);
+    const auto scale = displayScaleOf(id);
+    // A spark engine's AFR map is stored in petrol AFR; it reads in the
+    // fuel's own AFR, the number the dyno and the gauges show.
+    const auto fuelAfr = fuelAfr_ && id == calibration::keys::targetAirFuelRatio;
+    const auto unitText = fuelAfr
+        ? "AFR of " + fuelName_ + ", lambda x " + juce::String(scale * calibration::ecuLimits::petrolStoichiometricAirFuelRatio, 2).toStdString()
+        : std::string(calibration::toString(metadata.unit));
+    const auto description = fuelAfr
+        ? std::string("Commanded mixture by engine speed and load, in the fuel's own AFR (stored as petrol AFR: "
+                      "another fuel is metered at the same lambda).")
+        : metadata.description;
+    descriptionLabel_.setText(utf8(metadata.displayName + "  ·  " + description
+        + "  [" + unitText + "]"), juce::dontSendNotification);
 
     const std::vector<double>* values = nullptr;
     const calibration::CalibrationAxis* xAxis = nullptr;
@@ -231,13 +257,13 @@ void EcuTunerComponent::rebuildCells() {
     valueEditors_.reserve(count);
     committedTexts_.reserve(count);
     for (std::size_t index = 0; index < count; ++index) {
-        const auto value = values != nullptr ? (*values)[index] : scalarValue;
+        const auto value = (values != nullptr ? (*values)[index] : scalarValue) * scale;
         auto editor = std::make_unique<juce::TextEditor>();
         const auto text = number(value, metadata.displayPrecision);
         editor->setText(text, false);
         editor->setJustification(juce::Justification::centred);
         editor->setFont(juce::FontOptions(14.0F, juce::Font::bold));
-        editor->setColour(juce::TextEditor::backgroundColourId, cellColour(value, minimum, maximum));
+        editor->setColour(juce::TextEditor::backgroundColourId, cellColour(value, minimum * scale, maximum * scale));
         editor->setColour(juce::TextEditor::textColourId, juce::Colours::white);
         editor->setColour(juce::TextEditor::highlightColourId, juce::Colour(0xffe89945));
         editor->onReturnKey = [this, index] { commitCell(index); };
@@ -296,6 +322,8 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
     const auto id = selectedCalibrationId().toStdString();
     const auto* current = draft_.find(id);
     if (current == nullptr) return;
+    // Typed in the fuel's own AFR, stored in petrol AFR.
+    value /= displayScaleOf(id);
     auto edited = *current;
     auto changed = false;
     std::visit([&](auto& calibrationEntry) {
@@ -393,7 +421,8 @@ void EcuTunerComponent::updateToolState() {
     selectionLabel_.setText(selection_.empty() || entry == nullptr
             ? juce::String("Click a cell; shift-click selects a block, ctrl-click adds a cell")
             : juce::String(static_cast<int>(selection_.size())) + utf8(selection_.size() == 1 ? " cell" : " cells")
-                + utf8("  ·  step ") + juce::String(step, std::max(0, calibration::metadataOf(*entry).displayPrecision - 1)),
+                + utf8("  ·  step ") + juce::String(step * displayScaleOf(calibration::metadataOf(*entry).id),
+                    std::max(0, calibration::metadataOf(*entry).displayPrecision - 1)),
         juce::dontSendNotification);
     repaint();
 }
@@ -578,6 +607,10 @@ void EcuTunerWindow::setOperatingPoint(double rpm, double normalizedLoad) {
 
 void EcuTunerWindow::setSessionLocked(bool locked) {
     if (tuner_ != nullptr) tuner_->setSessionLocked(locked);
+}
+
+void EcuTunerWindow::setFuel(const std::string& name, double stoichiometricAirFuelRatio, bool diesel) {
+    if (tuner_ != nullptr) tuner_->setFuel(name, stoichiometricAirFuelRatio, diesel);
 }
 
 } // namespace enginelab

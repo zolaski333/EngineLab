@@ -32,7 +32,12 @@ namespace enginelab::calibration::ecuLimits {
 // These are hard runtime limits as well as editor/serialization limits. Keep
 // one contract so a value accepted by the tuner is never silently clamped to a
 // different range by the ECU.
-inline constexpr double minimumAirFuelRatio = 10.5;
+// Petrol AFR (lambda x 14.7). Lambda 0.61, past the rich-misfire onset at
+// 0.68: an alcohol map may run rich and a tuner may find that limit.
+inline constexpr double minimumAirFuelRatio = 9.0;
+// The richest cell a generated (default) map holds, unchanged since the
+// limit above was 10.5: the shipped engines keep their maps.
+inline constexpr double minimumDefaultMapAirFuelRatio = 10.5;
 inline constexpr double maximumGasolineAirFuelRatio = 18.0;
 inline constexpr double maximumDieselSmokeLimitAirFuelRatio = 40.0;
 inline constexpr double maximumAirFuelRatio =
