@@ -24,6 +24,8 @@ void takeSettings(EngineConfig& probe, const EngineConfig& edited) {
     probe.transmission = edited.transmission;
     probe.vehicle = edited.vehicle;
     probe.thermal = edited.thermal;
+    // Only the knock model reads it, at every step.
+    probe.octaneRating = edited.octaneRating;
 }
 
 /** False when the banks are not the same ones: that edit is not a camshaft

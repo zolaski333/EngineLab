@@ -32,7 +32,6 @@ std::string apply(EngineConfig& edited, const std::vector<double>& values) {
     if (values.size() < count) return "The fuel changed meanwhile.";
     auto& fuel = edited.fuelProperties;
     const auto before = fuel;
-    const auto octaneBefore = edited.octaneRating;
     const auto latentBefore = edited.injection.latentHeatKjPerKg;
     if (diesel) fuel.cetaneNumber = values[0];
     else edited.octaneRating = values[0];
@@ -44,11 +43,14 @@ std::string apply(EngineConfig& edited, const std::vector<double>& values) {
     fuel.stoichiometricAirFuelRatio = values[2];
     edited.injection.latentHeatKjPerKg = values[3];
     if (!diesel) fuel.laminarFlameSpeedMps = values[4];
+    // The octane is the engine's (an engine file's octane_rating), not the
+    // listed fuel's: a new octane alone keeps the fuel's name, and the
+    // running engine takes it without a restart.
     const auto changed = fuel.cetaneNumber != before.cetaneNumber
         || fuel.lowerHeatingValueMjPerKg != before.lowerHeatingValueMjPerKg
         || fuel.stoichiometricAirFuelRatio != before.stoichiometricAirFuelRatio
         || fuel.laminarFlameSpeedMps != before.laminarFlameSpeedMps
-        || edited.octaneRating != octaneBefore || edited.injection.latentHeatKjPerKg != latentBefore;
+        || edited.injection.latentHeatKjPerKg != latentBefore;
     // A listed fuel edited is no longer that fuel.
     constexpr std::string_view editedSuffix { " (edited)" };
     if (changed && !fuel.name.ends_with(editedSuffix) && fuel.name.size() + editedSuffix.size() <= 128U)
@@ -75,8 +77,9 @@ const char* note(bool diesel) {
         ? "A higher cetane number lights sooner after injection, a softer premixed burn. The ECU's smoke limit "
           "follows the stoichiometric ratio. The engine restarts to take them."
         : "The knock model reads the octane: lower knocks sooner, and the knock control pulls the spark back. "
+          "A new octane is taken at once and changes no spark map: the advance is yours to tune (ECU). "
           "The ECU's mixture map is in lambda, so another stoichiometric ratio (E85, methanol) is metered "
-          "right; the oxygen the fuel needs follows it. The engine restarts to take them.";
+          "right; the oxygen the fuel needs follows it. The other values restart the engine.";
 }
 
 } // namespace enginelab::fuel_editing

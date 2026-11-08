@@ -479,8 +479,14 @@ int main() {
         fuelFields.front()->setValue(other->octaneRating + 2.0, juce::sendNotificationSync);
         applyButton->onClick();
         require(near(applied->octaneRating, other->octaneRating + 2.0)
+                    && applied->fuelProperties.name == other->properties.name,
+                "a new octane is applied and keeps the fuel's name (the octane is the engine's)");
+        fuelWindow.setConfig(*applied);
+        fuelFields[1]->setValue(other->properties.lowerHeatingValueMjPerKg + 1.0, juce::sendNotificationSync);
+        applyButton->onClick();
+        require(near(applied->fuelProperties.lowerHeatingValueMjPerKg, other->properties.lowerHeatingValueMjPerKg + 1.0)
                     && applied->fuelProperties.name == other->properties.name + " (edited)",
-                "an edited value is applied and renames the fuel");
+                "an edited fuel value is applied and renames the fuel");
 
         const auto diesel = std::find_if(catalog.entries.begin(), catalog.entries.end(),
             [](const auto& entry) { return entry.config.fuel == enginelab::FuelType::diesel; });

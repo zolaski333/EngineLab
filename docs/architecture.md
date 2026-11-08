@@ -710,13 +710,14 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   octane, latent heat) and the octane (cetane on a diesel), heating value,
   stoichiometric ratio (the oxygen a mole needs follows it), latent heat
   and laminar flame speed; a restart, and an edited fuel is named
-  "(edited)". The same fields (`app/FuelEditing.hpp`, shared) are in the
-  *Fuel* window (`FuelWindow`), opened by the top bar's *Fuel* button and
-  by the Telemetry section's: its edits wait for *Apply*, a field not
-  edited keeps the fuel's exact value, and it shows the knock re-measure's
-  status. A new octane on an engine with a knock-limit
-  curve has `MainComponent` run `calibrateKnockLimit` on a thread, the engine
-  paused, then take the new curve live;
+  "(edited)". The octane alone is the engine's, not the fuel's: it is a
+  live setting (`EngineEditScope::settings`, the knock model reads it every
+  step), keeps the fuel's name and changes no spark map or knock-limit
+  curve -- the advance is the user's to tune. The same fields
+  (`app/FuelEditing.hpp`, shared) are in the *Fuel* window (`FuelWindow`),
+  opened by the top bar's *Fuel* button and by the Telemetry section's: its
+  edits wait for *Apply*, and a field not edited keeps the fuel's exact
+  value;
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
   distance to it, and the turbine flow area; a supercharger: its pressure
   and drive ratios. A turbo and every exhaust component also offer a

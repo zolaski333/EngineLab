@@ -268,6 +268,18 @@ void editScopeSortsEdits() {
     const auto mixedScope = engineEditScope(turbo, mixed);
     require(mixedScope.cylinders && mixedScope.settings && !mixedScope.other,
             "a bore and boost edit is both, nothing else");
+    auto octane = turbo;
+    octane.octaneRating = 130.0;
+    const auto octaneScope = engineEditScope(turbo, octane);
+    require(octaneScope.settings && !octaneScope.other,
+            "a new octane is a settings edit: the engine takes it without a restart");
+    auto octaneRuntime = std::make_unique<EngineRuntime>(turbo);
+    require(octaneRuntime->applyLiveSettings(octane) && octaneRuntime->engineConfig().octaneRating == 130.0,
+            "the runtime takes a new octane live");
+    auto octaneRig = std::make_unique<Rig>(turbo);
+    auto incoming = octane;
+    require(octaneRig->simulator->replaceSettings(incoming) && octaneRig->simulator->config().octaneRating == 130.0,
+            "the simulator's knock model reads the new octane");
     auto other = turbo;
     other.redlineRpm -= 200.0;
     require(engineEditScope(turbo, other).other, "a redline edit needs a restart");

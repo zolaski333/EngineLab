@@ -224,7 +224,6 @@ MainComponent::MainComponent() {
 
 MainComponent::~MainComponent() {
     stopTimer();
-    stopKnockProbe();
     stopEngineScriptWatcher();
     audioWorkshopWindow_.reset();
     exhaustDesignerWindow_.reset();
@@ -495,64 +494,10 @@ bool MainComponent::applyEngineEdit(const EngineConfig& requested, double rampSe
     constexpr double seaLevelPressureKpa = 101.325;
     const auto boostStepKpa = (edited.forcedInduction.wastegatePressureRatio
         - config_.forcedInduction.wastegatePressureRatio) * seaLevelPressureKpa;
-    // The knock limit was measured on the old octane.
-    const auto octaneMoved = edited.fuel == FuelType::gasoline && edited.octaneRating != config_.octaneRating
-        && !edited.ignition.knockLimitCurve.empty();
     const auto applied = applyEngineEditGroups(edited, rampSeconds);
     if (applied && boostStepKpa != 0.0 && runtime_)
         (void)calibration::shiftBoostTargetTable(*runtime_->calibrationStore(), boostStepKpa);
-    if (applied && octaneMoved) remeasureKnockLimit(config_);
     return applied;
-}
-
-void MainComponent::stopKnockProbe() {
-    cancelKnockProbe_.store(true);
-    if (knockProbe_.joinable()) knockProbe_.join();
-    if (knockProbing_ && runtime_) runtime_->setPaused(knockProbePausedBefore_);
-    knockProbing_ = false;
-}
-
-void MainComponent::remeasureKnockLimit(const EngineConfig& config) {
-    stopKnockProbe();
-    if (!runtime_) return;
-    knockProbing_ = true;
-    knockProbePausedBefore_ = runtime_->paused();
-    // The sweep is a dyno run of its own: it does not share the computer
-    // with the running engine.
-    runtime_->setPaused(true);
-    setEditStatus(utf8("Finding the knock-limited spark on ") + juce::String(config.octaneRating, 1)
-                            + utf8(" RON on the dyno; the engine is paused meanwhile (some seconds)..."));
-    cancelKnockProbe_.store(false);
-    auto safe = juce::Component::SafePointer<MainComponent>(this);
-    knockProbe_ = std::thread([this, safe, config]() {
-        auto measured = calibrateKnockLimit(config, &cancelKnockProbe_);
-        if (cancelKnockProbe_.load()) return;
-        juce::MessageManager::callAsync([safe, octane = config.octaneRating, name = config.name,
-                                         measured = std::move(measured)]() mutable {
-            if (safe) safe->knockLimitMeasured(octane, std::move(name), std::move(measured));
-        });
-    });
-}
-
-void MainComponent::knockLimitMeasured(double octaneRating, std::string engineName,
-                                       KnockLimitCalibration measured) {
-    if (!knockProbing_) return;
-    if (knockProbe_.joinable()) knockProbe_.join();
-    knockProbing_ = false;
-    if (runtime_) runtime_->setPaused(knockProbePausedBefore_);
-    // Another engine or another octane since: this curve is not theirs.
-    if (config_.name != engineName || config_.octaneRating != octaneRating) return;
-    if (!measured.error.empty()) {
-        setEditStatus(utf8("The knock limit could not be measured again (") + utf8(measured.error.c_str())
-                                + utf8("): the knock control alone holds the spark."));
-        auto unlimited = config_;
-        unlimited.ignition.knockLimitCurve.clear();
-        (void)applyEngineEdit(unlimited, 0.0);
-        return;
-    }
-    auto limited = config_;
-    limited.ignition.knockLimitCurve = std::move(measured.curve);
-    if (applyEngineEdit(limited, 0.0)) setEditStatus({});
 }
 
 bool MainComponent::applyEngineEditGroups(const EngineConfig& edited, double rampSeconds) {
@@ -630,6 +575,7 @@ bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
     config_.transmission = running.transmission;
     config_.vehicle = running.vehicle;
     config_.thermal = running.thermal;
+    config_.octaneRating = running.octaneRating;
     // The simulation has the new settings: a sound that cannot follow them
     // needs the restart after all.
     if (!audio_->replaceForcedInduction(config_.forcedInduction))

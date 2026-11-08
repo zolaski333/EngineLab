@@ -610,6 +610,7 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     change->config.transmission = edited.transmission;
     change->config.vehicle = edited.vehicle;
     change->config.thermal = edited.thermal;
+    change->config.octaneRating = edited.octaneRating;
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
@@ -632,6 +633,7 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     config_.transmission = change->config.transmission;
     config_.vehicle = change->config.vehicle;
     config_.thermal = change->config.thermal;
+    config_.octaneRating = change->config.octaneRating;
     {
         const std::scoped_lock lock(liveExhaustMutex_);
         std::swap(pendingSettingsChange_, change);

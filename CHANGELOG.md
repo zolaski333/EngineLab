@@ -18,6 +18,16 @@ file formats, always with an in-memory migration).
   0 for the retard alone). No catalogue engine uses a dual clutch, so the
   catalogue's sound is unchanged.
 
+### Changed
+
+- **A new octane is taken at once.** Changing only the octane (Fuel window
+  or the combustion chamber) no longer restarts the engine, pauses it, or
+  measures the knock-limited spark again: the running engine's knock model
+  reads the new octane at the next step, and no spark map or knock limit is
+  touched. The advance is yours to tune in the ECU; the knock control still
+  pulls back what the octane cannot take. The fuel keeps its name. Another
+  fuel or another fuel value still restarts the engine.
+
 ## [0.8.1] — 2026-11-06
 
 The first published release of 0.8: the v0.8.0 tag's build failed a Linux

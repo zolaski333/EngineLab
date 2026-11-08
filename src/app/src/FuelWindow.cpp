@@ -47,8 +47,8 @@ public:
         }
         note_.setColour(juce::Label::textColourId, ui::colours::muted);
         status_.setColour(juce::Label::textColourId, ui::colours::warn);
-        applyButton_.setTooltip(utf8("Puts this fuel in the tank. The engine restarts; a new octane measures the "
-                                     "knock-limited spark again (some seconds)."));
+        applyButton_.setTooltip(utf8("Puts this fuel in the tank. A new octane alone is taken at once; another "
+                                     "fuel or value restarts the engine. No spark map is changed."));
         applyButton_.onClick = [this] { applyEdits(); };
         revertButton_.setTooltip(utf8("Back to the fuel in the tank."));
         revertButton_.onClick = [this] { show(shown_); };

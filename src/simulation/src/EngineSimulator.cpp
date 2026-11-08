@@ -1556,6 +1556,8 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
         crankshaft.flywheelMassKg = source.flywheelMassKg;
     }
     config_.rotatingInertiaKgM2 = config.rotatingInertiaKgM2;
+    // The knock model reads the octane at every step.
+    config_.octaneRating = config.octaneRating;
     return true;
 }
 

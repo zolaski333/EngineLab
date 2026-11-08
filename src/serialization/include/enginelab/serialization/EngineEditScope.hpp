@@ -17,8 +17,8 @@ struct EngineEditScope final {
      *  (applyLiveCylinderResize). */
     bool cylinders { false };
     /** config.injection, config.forcedInduction, config.ignition,
-     *  config.exhaustAfterfire and the crankshafts' inertia
-     *  (applyLiveSettings). */
+     *  config.exhaustAfterfire, the crankshafts' inertia and the fuel's
+     *  octane (applyLiveSettings). */
     bool settings { false };
     /** config.intake, config.intakePaths, the legacy plenum volume and
      *  throttle bore, and each cylinder's own runner size (applyLiveIntake). */

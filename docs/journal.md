@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-08 — fuels on the catalogue; a new octane is taken live
+
+- `DynoSweepHarness --step 2000`, catalogue copied with `uses: fuel: methanol_m100` and the injection parts' latent heat at 1,103 kJ/kg: 12 of 17 spark engines hold lambda 0.89-0.90 at WOT, as on petrol (the ECU's lambda metering is right).
+- Injectors saturate on methanol (2.3x the fuel mass): I5 at 6,000 rpm lambda 1.18 (fuel flow flat at 38.9 g/s from 4,000), EJ25 1.14 (31.1 g/s). Real, but nothing but the "Injector duty" readout says so.
+- Rich at 2,000 rpm, not explained: I5 0.66 (petrol 0.84; under the 0.68 rich limit, misfires), LS3 0.745 (0.90), Flat-6 0.80 (0.90). LS3 is the latent heat (0.90 again at 350 kJ/kg); I5 and Flat-6 stay rich at 350. RD350's carburettor meters by jet: lambda 0.50-1.53, torque 4.5 N.m against 25.
+- Knock-limit re-measure at 130 RON (`KnockLimitCalibration`): 31 s (2JZ), 43 s (I5); it ends. No path leaving the engine paused for good was found in the code; the app run could not reproduce (the Fuel window opened off-screen on this PC).
+- Kept, on the owner's word: no re-measure. The octane is a live setting (the knock model reads it every step), keeps the fuel's name and touches no spark map or knock limit. `EngineLab.LiveSettings` fails without it.
+- Not measured: E85 across the catalogue, idle and transients on alcohol, the app by hand.
+
 ## 2026-11-06 — the DSG fart: a dual clutch's injection cut
 
 - Source (no recording found, Freesound included): NefMoto forum, "Launch control and DSG farts" (Bosch ME7 tuners). The gearbox asks for ~24 % of the torque during an upshift (misol); the ECU retards to its shift floor (KFZWMNGS, ~-12 deg), then suppresses injection (evz_austot) where that is not enough. Retard alone gives no fart. Whether 24 % is the torque kept or removed is not certain: read as kept (only then does a cut follow).
