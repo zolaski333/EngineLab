@@ -6,6 +6,7 @@
 #include <numbers>
 #include <numeric>
 #include <stdexcept>
+#include <limits>
 #include <utility>
 
 namespace enginelab::render {
@@ -1394,8 +1395,18 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
 std::optional<PartHit> pickPart(const EngineModel3D& model, const std::vector<SceneInstance>& instances, Vec3 origin,
                                 Vec3 direction, const std::function<bool(std::uint16_t)>& pickable) {
     std::optional<PartHit> best;
+    // Each see-through duct's near and far wall along the ray, and the
+    // nearest solid hit.
+    struct Span final {
+        float near { std::numeric_limits<float>::max() };
+        float far { -1.0F };
+    };
+    std::vector<std::pair<std::uint16_t, Span>> ducts;
+    std::optional<PartHit> solid;
     for (const auto& instance : instances) {
         if (instance.part >= model.parts().size() || !pickable(instance.part)) continue;
+        const auto seeThrough = model.parts()[instance.part].material == SceneMaterial::intakeFlow;
+        Span span;
         const auto& mesh = model.parts()[instance.part].mesh;
         for (std::size_t i = 0; i + 2U < mesh.indices.size(); i += 3U) {
             // Moller-Trumbore, both faces.
@@ -1413,9 +1424,22 @@ std::optional<PartHit> pickPart(const EngineModel3D& model, const std::vector<Sc
             const auto v = dot(direction, q) * inverse;
             if (v < 0.0F || u + v > 1.0F) continue;
             const auto distance = dot(e2, q) * inverse;
-            if (distance > 0.0F && (!best || distance < best->distance)) best = PartHit { instance.part, distance };
+            if (!(distance > 0.0F)) continue;
+            if (!best || distance < best->distance) best = PartHit { instance.part, distance };
+            if (seeThrough) {
+                span.near = std::min(span.near, distance);
+                span.far = std::max(span.far, distance);
+            } else if (!solid || distance < solid->distance) {
+                solid = PartHit { instance.part, distance };
+            }
         }
+        if (seeThrough && span.far >= 0.0F) ducts.emplace_back(instance.part, span);
     }
+    // The nearest hit is a see-through duct's wall with a solid part inside
+    // it, before its far wall: the part is what was aimed at.
+    if (best && solid && best->part != solid->part)
+        for (const auto& [part, span] : ducts)
+            if (part == best->part && solid->distance > span.near && solid->distance < span.far) return solid;
     return best;
 }
 

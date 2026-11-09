@@ -360,7 +360,10 @@ struct PartHit final {
     float distance {};
 };
 
-/** The nearest part a ray meets, among the posed instances `pickable` accepts. */
+/** The nearest part a ray meets, among the posed instances `pickable` accepts.
+ *  A see-through intake duct (the gas flow's material) does not hide what it
+ *  holds: a solid part the ray meets between the duct's near and far walls
+ *  (a port injector in its runner) is picked rather than the duct. */
 [[nodiscard]] std::optional<PartHit> pickPart(const EngineModel3D&, const std::vector<SceneInstance>&, Vec3 origin,
                                               Vec3 direction, const std::function<bool(std::uint16_t)>& pickable);
 

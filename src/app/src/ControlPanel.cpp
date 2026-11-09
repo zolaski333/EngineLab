@@ -1,6 +1,7 @@
 #include <enginelab/app/ControlPanel.hpp>
 
 #include <enginelab/app/Theme.hpp>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <utility>
@@ -56,6 +57,10 @@ ControlPanel::ControlPanel() {
                               "near the limiter flat out, and kicks down. A gear key takes it back to manual"));
     for (auto* button : { &gearDown, &gearUp, &brake, &clutch, &cruise, &resetTrip, &automatic })
         addAndMakeVisible(*button);
+    engineBrake.setTooltip(utf8("Engine brake (compression release): each press brakes more cylinders, "
+                                "the last press turns it off. It holds with your foot off the pedal and the "
+                                "clutch in, cuts their fuel, and lets go near idle"));
+    addChildComponent(engineBrake);
 
     prepareSlider(afrTrim.slider, -3.0, 3.0, 0.1, 0.0);
     afrTrim.slider.setDoubleClickReturnValue(true, 0.0);
@@ -84,6 +89,26 @@ void ControlPanel::setKeyCaps(const ActionMap& actions) {
     clutch.setKeyCap(cap(AppAction::clutchHold));
     cruise.setKeyCap(cap(AppAction::cruise));
     automatic.setKeyCap(cap(AppAction::automaticGearbox));
+    engineBrake.setKeyCap(cap(AppAction::engineBrake));
+}
+
+void ControlPanel::setEngineBrake(std::uint32_t stages) {
+    engineBrakeStages_ = stages;
+    engineBrake.setVisible(stages > 0);
+    setEngineBrakeStage(0);
+    resized();
+    repaint();
+}
+
+std::uint32_t ControlPanel::nextEngineBrakeStage() const noexcept {
+    return engineBrakeStages_ == 0 || engineBrakeStage_ >= engineBrakeStages_ ? 0U : engineBrakeStage_ + 1U;
+}
+
+void ControlPanel::setEngineBrakeStage(std::uint32_t stage) {
+    engineBrakeStage_ = std::min(stage, engineBrakeStages_);
+    const auto text = engineBrakeStage_ == 0 ? juce::String("Engine brake off")
+        : "Engine brake " + juce::String(engineBrakeStage_) + "/" + juce::String(engineBrakeStages_);
+    if (engineBrake.getButtonText() != text) engineBrake.setButtonText(text);
 }
 
 void ControlPanel::setDiesel(bool diesel) {
@@ -109,7 +134,7 @@ void ControlPanel::refresh(const DashboardModel& model) {
                                        static_cast<juce::Component*>(&afrTrim),
                                        static_cast<juce::Component*>(&sparkTrim) })
         control->setEnabled(!running);
-    for (auto* button : { &gearDown, &gearUp, &brake, &clutch, &cruise, &automatic })
+    for (auto* button : { &gearDown, &gearUp, &brake, &clutch, &cruise, &automatic, &engineBrake })
         button->setEnabled(!running);
 
     // The speedometer and trip computer. Nothing here repaints unless a
@@ -143,6 +168,9 @@ void ControlPanel::refresh(const DashboardModel& model) {
     clutch.setEngaged(state.clutchPressure < 0.5 && state.gear != -1);
     cruise.setEngaged(state.cruiseEngaged);
     automatic.setEngaged(state.automaticShifting);
+    // Lit while it holds; its stage stays shown while it waits for the
+    // pedal to lift or the speed to rise.
+    engineBrake.setEngaged(state.engineBrakeCylinders > 0);
     const auto cruiseText = state.cruiseEngaged
         ? "Cruise " + unit.value(Quantity::speed, state.cruiseSetSpeedMps, 0)
         : juce::String("Cruise");
@@ -235,6 +263,10 @@ void ControlPanel::resized() {
     }
     pair(brake, clutch);
     pair(cruise, resetTrip);
+    if (engineBrake.isVisible()) {
+        engineBrake.setBounds(area.removeFromTop(30));
+        area.removeFromTop(6);
+    }
     area.removeFromTop(8);
     trimsHeader_ = area.removeFromTop(22).toFloat();
     area.removeFromTop(4);

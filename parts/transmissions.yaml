@@ -113,3 +113,26 @@ scooter_cvt:
   driven_wheel_inertia_kg_m2: 0.35
   differential_inertia_kg_m2: 0.005
   gearbox_input_inertia_kg_m2: 0.001
+
+# A heavy truck's 12-speed automated manual, direct drive in 12th: one dry
+# clutch the gearbox works itself, the gaps of a range-splitter box (about
+# 1.29 a step). The ratios are those published for ZF's TraXon 12-speed
+# direct-drive box; the 0.8 s shift, the shift speeds and the rotating
+# inertias are estimates, not a unit's figures. The final drive is the
+# designer's (85 km/h cruise in 12th).
+truck_12_speed_automated:
+  gear_ratios: [16.69, 12.92, 9.93, 7.69, 5.90, 4.57, 3.66, 2.83, 2.17, 1.68, 1.29, 1.00]
+  final_drive_ratio: 2.64
+  max_clutch_torque_nm: 4000
+  reverse_ratio: 15.0
+  shift_style: automated_manual
+  shift_duration_s: 0.8
+  automatic_shifting: true
+  automatic_upshift_rpm: 1600
+  automatic_downshift_rpm: 1000
+  driveline_efficiency: 0.94
+  driven_wheel_inertia_kg_m2: 120.0
+  differential_inertia_kg_m2: 1.5
+  gearbox_input_inertia_kg_m2: 0.35
+  clutch_thermal_capacity_j_per_c: 90000
+  clutch_cooling_w_per_c: 30.0

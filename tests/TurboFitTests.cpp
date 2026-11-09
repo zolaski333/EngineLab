@@ -11,8 +11,10 @@
 //   allows (boost over the charge's temperature rise), with the mixture kept
 //   rich and no heavy knock. The reference is the charge density, not a
 //   number read back from this simulator.
+// - A designed single's turbo holds its wastegate boost at 7,000 rpm.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -145,5 +147,23 @@ int main() {
                 + std::to_string(density) + ")");
     require(boosted.lambda > 0.78 && boosted.lambda < 0.95, "the mixture stays rich at boost");
     require(boosted.knock < 0.45, "no heavy knock at the fitted boost");
+
+    // A turbine fed by one cylinder takes each blowdown whole: a designed
+    // single's turbo holds its wastegate boost at high speed (with the gate
+    // the size of a multi's, 1.5 x the turbine, it read 2.2 for 1.56).
+    EngineSpec spec;
+    spec.name = "Designed turbo single";
+    spec.use = EngineUse::roadMotorcycle;
+    spec.cylinderCount = 1;
+    spec.displacementLitres = 0.5;
+    spec.induction = Induction::turbocharged;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "a turbo single designs: " + designed.error);
+    const auto& single = designed.config->forcedInduction;
+    const auto singleHeld = hold(*designed.config, 7'000.0);
+    std::cout << "TurboFit: designed single at 7,000 rpm: boost " << singleHeld.boost << " for "
+              << single.wastegatePressureRatio << ", " << singleHeld.torqueNm << " Nm\n";
+    require(std::abs(singleHeld.boost - single.wastegatePressureRatio) < 0.08,
+            "a single's turbo holds its wastegate boost");
     return EXIT_SUCCESS;
 }

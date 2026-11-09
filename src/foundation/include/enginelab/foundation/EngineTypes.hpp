@@ -20,7 +20,7 @@ enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, cu
 enum class ConnectingRodType : std::uint8_t { conventional, master, articulated };
 enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
 enum class DrivenAxleLayout : std::uint8_t { front, rear, all };
-enum class ShiftStyle : std::uint8_t { manual, sequential, dualClutch, cvt };
+enum class ShiftStyle : std::uint8_t { manual, sequential, dualClutch, cvt, automatedManual };
 enum class StructuralNvhProvenance : std::uint8_t {
     estimatedFamily, calculatedGeometry, measured
 };
@@ -901,7 +901,13 @@ struct TransmissionConfig final {
      *    ratio (lowest) and the last (tallest), held where it keeps the
      *    engine at a speed scheduled from the pedal (VariatorControl). One
      *    forward position. It starts on its own clutch: a wet one that
-     *    creeps, as a dual clutch's, or a scooter's centrifugal one. */
+     *    creeps, as a dual clutch's, or a scooter's centrifugal one.
+     *  - automatedManual: a manual gearbox and its one dry clutch worked by
+     *    actuators (a single-clutch "robotised" box, a truck's AMT). No
+     *    pedal: it starts on its own clutch, as a dual clutch does, and an
+     *    upshift is a manual's, clutch out and torque cut over
+     *    shiftDurationSeconds, so the drive has a gap. Downshifts are
+     *    blipped. */
     ShiftStyle shiftStyle { ShiftStyle::manual };
     bool quickshifter { true };
     double quickshifterCutSeconds { 0.065 };
@@ -1316,6 +1322,37 @@ void applyRotaryFaceGeometry(EngineConfig& config) noexcept;
  *  scale of Woschni's law in a rotary (the rotor tip speed). */
 [[nodiscard]] double rotaryApexSpeedMps(const RotaryConfig&, double shaftRadPerSecond) noexcept;
 
+/** A compression-release engine brake (a "jake brake"): with the driver's
+ *  switch on, the pedal released and the clutch in, each braking cylinder's
+ *  fuel is cut and a small extra lift opens one exhaust valve near the top of
+ *  its compression stroke. The air the piston compressed blows down into the
+ *  exhaust instead of pushing the piston back down, so the compression work
+ *  is not returned: the shaft is braked. Four-strokes only; the designer fits
+ *  it to a truck. */
+struct EngineBrakeConfig final {
+    bool fitted { false };
+    /** The brake event's peak lift on the one valve it opens, mm: about
+     *  1-2 mm on production brakes. */
+    double valveLiftMm { 2.0 };
+    /** Where the event peaks, crank degrees after firing top dead centre
+     *  (negative: before), and its whole duration. */
+    double peakAfterTdcDegrees { 0.0 };
+    double durationDegrees { 80.0 };
+    /** Below this speed the brake lets go: a brake cutting fuel near idle
+     *  would stall the engine. */
+    double minimumRpm { 1'000.0 };
+    /** The driver's switch has this many stages; stage k of N brakes
+     *  round(k x cylinders / N) cylinders. */
+    std::uint32_t stageCount { 3 };
+};
+
+/** The extra exhaust-valve lift the engine brake adds at `phaseDegrees` of a
+ *  cylinder's 720 deg cycle (0 at firing top dead centre): a cosine-squared
+ *  bump. It is taken over the valve count so that the curtain area equals one
+ *  valve's at the brake's lift. */
+[[nodiscard]] double engineBrakeLiftMm(const EngineBrakeConfig&, double phaseDegrees,
+                                       std::uint32_t exhaustValveCount) noexcept;
+
 struct EngineConfig final {
     std::uint32_t schemaVersion { currentEngineSchemaVersion };
     std::string name { "Untitled engine" };
@@ -1361,6 +1398,7 @@ struct EngineConfig final {
     ExhaustAfterfireConfig exhaustAfterfire;
     TransmissionConfig transmission;
     VehicleConfig vehicle;
+    EngineBrakeConfig engineBrake;
     /** Resolved default -> family -> engine voicing. Runtime-only: the engine
      * serializers remain physics/configuration documents, while the catalogue
      * YAML files in voicing/ own listening-chain choices. */
@@ -1407,6 +1445,9 @@ struct EngineControls final {
      * control never armed in the application (owner report 2026-10-30). */
     int engagedGear { -1 };
     double vehicleSpeedMps { 0.0 };
+    /** The engine brake's switch: 0 off, up to `engineBrake.stageCount`.
+     * The runtime passes 0 while the clutch is out or a shift is under way. */
+    std::uint32_t engineBrakeStage { 0 };
 };
 
 struct CylinderState final {
@@ -1755,6 +1796,9 @@ struct EngineState final {
     /** Real chemical heat release occurring in the physical exhaust network. */
     double exhaustAfterfireHeatReleaseKw { 0.0 };
     double exhaustAfterfireFuelBurnMgPerSecond { 0.0 };
+    /** Cylinders the engine brake holds this step (fuel cut, brake valve
+     * event on): zero when it is off or released. */
+    std::uint32_t engineBrakeCylinders { 0 };
     /** ECU currently meters the authored partial fuel charge with spark cut. */
     bool exhaustAfterfireOverrunActive { false };
     /** Bitmask of `AfterfireBlocker` explaining the line above when it is

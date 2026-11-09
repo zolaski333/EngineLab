@@ -14,8 +14,9 @@ namespace enginelab {
  *
  * Component ids are those of the path's network or, on a path authored as
  * scalar geometry, of makeEditableExhaustNetwork(). There the primaries share
- * one length and diameter, a collector and an outlet have no length, and a
- * silencer's diameter is its body's.
+ * one length and diameter and a silencer's diameter is its body's. Every
+ * component's length is editable; a collector, splitter, crossover or outlet
+ * at 0 has none (a lumped junction, an open end).
  */
 struct ExhaustComponentSize final {
     double lengthMm { 0.0 };
@@ -30,12 +31,13 @@ struct ExhaustComponentSize final {
 
 /**
  * Resizes one component in place. Returns an empty string on success, or why
- * the edit was refused (the configuration is then unchanged): a length on a
- * component without one, a size out of range, or an edit that would change
- * which components the path has (a silencer no wider than its pipes stops
- * being one). On the only path of a scalar exhaust, the global geometry
- * (`EngineConfig::exhaust`) changes with it. The caller still validates the
- * whole configuration.
+ * the edit was refused (the configuration is then unchanged): a size out of
+ * range (0 is a length only for a component that may have none), or an edit
+ * that would change which components the path has (a silencer no wider than
+ * its pipes stops being one). On the only path of a scalar exhaust, the
+ * global geometry (`EngineConfig::exhaust`) changes with it; a length the
+ * scalar fields cannot hold (a collector's, an outlet's) makes the path its
+ * authored network first. The caller still validates the whole configuration.
  */
 [[nodiscard]] std::string resizeExhaustComponent(
     EngineConfig& config, std::uint32_t pathId, std::uint32_t componentId,

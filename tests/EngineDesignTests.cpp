@@ -775,6 +775,94 @@ void fuelSystemsAreDesigned() {
         "velocity stacks draw from the air through a bellmouth wider than the throttle");
 }
 
+/** A fuel system or an intake chosen on a built engine (the 3-D view's
+ *  injector, throttle body or airbox) is the one the designer would have
+ *  fitted had it been chosen there: the same jets, venturi, injectors,
+ *  window, airbox and lips. */
+void fuelSystemsAreRefitted() {
+    const auto near = [](double a, double b) { return std::abs(a - b) <= 1.0e-9 * std::max(1.0, std::abs(b)); };
+    const auto port = *designed(sportFour()).config;
+    auto spec = sportFour();
+    spec.fuelSystem = FuelSystem::carburettor;
+    const auto carb = *designed(spec).config;
+    spec.fuelSystem = FuelSystem::directInjection;
+    const auto direct = *designed(spec).config;
+    require(fuelSystemOf(port) == FuelSystem::portInjection && fuelSystemOf(carb) == FuelSystem::carburettor
+            && fuelSystemOf(direct) == FuelSystem::directInjection, "the fuel system is read back");
+
+    const auto toCarb = withFuelSystem(port, FuelSystem::carburettor, parts());
+    require(toCarb.config.has_value(), "a port-injected four takes a carburettor: " + toCarb.error);
+    const auto& made = toCarb.config->intake.carburettor;
+    const auto& want = carb.intake.carburettor;
+    require(fuelSystemOf(*toCarb.config) == FuelSystem::carburettor && made.fixedVenturi == want.fixedVenturi
+            && near(made.venturiDiameterMm, want.venturiDiameterMm)
+            && near(made.mainJetFlowNumber, want.mainJetFlowNumber)
+            && near(made.pilotJetFlowNumber, want.pilotJetFlowNumber)
+            && near(made.starterJetFlowNumber, want.starterJetFlowNumber)
+            && near(made.acceleratorPumpStrokeCc, want.acceleratorPumpStrokeCc),
+        "the carburettor is the one the designer fits");
+    for (const auto& path : toCarb.config->intakePaths)
+        require(path.geometry.carburettor.enabled, "on every intake path");
+
+    const auto toDirect = withFuelSystem(port, FuelSystem::directInjection, parts());
+    require(toDirect.config.has_value(), "a port-injected four takes direct injection: " + toDirect.error);
+    const auto& injection = toDirect.config->injection;
+    require(injection.mode == InjectionMode::direct
+            && near(injection.startAngleDegrees, direct.injection.startAngleDegrees)
+            && near(injection.endAngleDegrees, direct.injection.endAngleDegrees)
+            && near(injection.injectorFlowMgPerSecond, direct.injection.injectorFlowMgPerSecond)
+            && near(injection.railPressureBar, direct.injection.railPressureBar),
+        "the direct injection is the one the designer fits");
+
+    const auto back = withFuelSystem(*toCarb.config, FuelSystem::portInjection, parts());
+    require(back.config.has_value() && fuelSystemOf(*back.config) == FuelSystem::portInjection
+            && near(back.config->injection.injectorFlowMgPerSecond, port.injection.injectorFlowMgPerSecond)
+            && near(back.config->injection.startAngleDegrees, port.injection.startAngleDegrees),
+        "and back to port injection, as designed");
+
+    auto dieselSpec = sportFour();
+    dieselSpec.fuel = FuelType::diesel;
+    const auto diesel = *designed(dieselSpec).config;
+    const auto refused = withFuelSystem(diesel, FuelSystem::carburettor, parts());
+    require(!refused.config && refused.error.find("direct injection") != std::string::npos,
+        "a diesel keeps its direct injection, saying why");
+    const auto same = withFuelSystem(diesel, FuelSystem::directInjection, parts());
+    require(same.config && same.config->injection.fullLoadFuelLimit.size() == diesel.injection.fullLoadFuelLimit.size()
+            && near(same.config->injection.injectorFlowMgPerSecond, diesel.injection.injectorFlowMgPerSecond),
+        "the system it has is no edit");
+
+    auto twin = twinTwoStroke();
+    const auto twinCarb = *designed(twin).config;
+    twin.fuelSystem = FuelSystem::directInjection;
+    const auto twinDirect = *designed(twin).config;
+    const auto twinRefit = withFuelSystem(twinCarb, FuelSystem::directInjection, parts());
+    require(twinRefit.config.has_value() && fuelSystemOf(*twinRefit.config) == FuelSystem::directInjection
+            && near(twinRefit.config->injection.startAngleDegrees, twinDirect.injection.startAngleDegrees)
+            && near(twinRefit.config->injection.endAngleDegrees, twinDirect.injection.endAngleDegrees),
+        "a two-stroke's carburettors become direct injection after its exhaust port shuts");
+    const auto twinBack = withFuelSystem(*twinRefit.config, FuelSystem::carburettor, parts());
+    require(twinBack.config.has_value() && twinBack.config->intakePaths.size() == twinCarb.intakePaths.size(),
+        "and back to a carburettor a cylinder");
+    for (std::size_t index = 0; index < twinCarb.intakePaths.size(); ++index)
+        require(near(twinBack.config->intakePaths[index].geometry.carburettor.mainJetFlowNumber,
+                     twinCarb.intakePaths[index].geometry.carburettor.mainJetFlowNumber),
+            "jetted as designed");
+
+    for (const auto style : { IntakeStyle::podFilter, IntakeStyle::velocityStacks, IntakeStyle::airbox }) {
+        auto styled = sportFour();
+        styled.intakeStyle = style;
+        const auto wanted = designed(styled).config->intake;
+        const auto refit = withIntakeStyle(port, style);
+        require(refit.config.has_value() && intakeStyleOf(*refit.config) == style, "the intake is refitted");
+        const auto& got = refit.config->intake;
+        require(got.podFilter == wanted.podFilter && near(got.airboxVolumeLitres, wanted.airboxVolumeLitres)
+                && near(got.inletDuctLengthMm, wanted.inletDuctLengthMm)
+                && near(got.inletDuctDiameterMm, wanted.inletDuctDiameterMm)
+                && near(got.bellmouthDiameterMm, wanted.bellmouthDiameterMm),
+            std::string("as the designer fits it: ") + intakeStyleName(style));
+    }
+}
+
 /** What the designer derives survives a save: the throttle's closed leak was
  *  never written, so a designed engine reloaded ran on the 0.6 mm2 default. */
 void designedValuesSurviveASave() {
@@ -1155,6 +1243,7 @@ int main() {
     exhaustIsDesigned();
     hPipeFlowsBothWays();
     fuelSystemsAreDesigned();
+    fuelSystemsAreRefitted();
     designedValuesSurviveASave();
     carburettedFourPullsFromIdle();
     rootsSuperchargerFollowsItsDisplacement();

@@ -162,6 +162,9 @@ public:
             int index {};
         };
         std::optional<Choice> choice;
+        /** A second switch, on its own row above the buttons (the
+            throttle body's fuel system and what it breathes from). */
+        std::optional<Choice> secondChoice;
         juce::String note;
 
         /** A length in mm, shown in the viewer's length unit. */
@@ -182,6 +185,8 @@ public:
     void setUnits(const UnitFormat* units) noexcept { units_ = units; }
     /** Called at once when the edit's choice is switched, with its new index. */
     std::function<void(int index)> onChoice;
+    /** The same for the edit's second choice. */
+    std::function<void(int index)> onSecondChoice;
     /** Called when a typed value is applied or cancelled, to hand the
         keyboard back. */
     std::function<void()> onDoneTyping;
@@ -227,6 +232,10 @@ private:
     ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
     ActionButton rampEdit_ { "Next cycle", ActionButton::Style::compact };
     ActionButton choiceEdit_ { {}, ActionButton::Style::compact };
+    ActionButton secondChoiceEdit_ { {}, ActionButton::Style::compact };
+    /** Opens `second` or the first choice's list under its button. */
+    void openChoice(bool second);
+    [[nodiscard]] bool hasSecondChoice() const noexcept;
     /** The owner's choice (2026-10-06): a resize glides over the ramp by
         default, which also avoids the lean cycle of an instant change. */
     bool gradual_ { true };
@@ -277,6 +286,9 @@ public:
     void setCylinderEditor(std::function<bool(const EngineConfig&, double rampSeconds)>);
     /** The fuels the combustion chamber's inspector lists, in this order. */
     void setFuelPresets(std::vector<FuelPreset> presets) { fuelPresets_ = std::move(presets); }
+    /** The parts library the injector and throttle body refit a fuel system
+        from. */
+    void setPartsLibrary(PartsLibrary parts) { parts_ = std::move(parts); }
     /** Selects cylinder 1's combustion chamber, with the fuel's inspector. */
     bool showFuel();
     /** Why an edit was refused or what became of it, under the inspector's
@@ -385,7 +397,7 @@ private:
     /** Applies the selected part's partEditor_ through configEditor_. */
     void applyPartEdit(const std::vector<double>& values);
     /** Applies the selected part's partChoice_ through configEditor_. */
-    void applyPartChoice(int index);
+    void applyPartChoice(int index, bool second = false);
     void updateLegend();
 
     const DashboardModel& model_;
@@ -410,10 +422,17 @@ private:
     std::function<std::string(EngineConfig&, const std::vector<double>&)> partEditor_;
     /** How the selected part takes its edit's choice, when it has one. */
     std::function<void(EngineConfig&, int)> partChoice_;
+    /** The same for its second choice. */
+    std::function<void(EngineConfig&, int)> partSecondChoice_;
     std::vector<FuelPreset> fuelPresets_;
+    /** The parts a fuel system is refitted from; none, and it is not offered. */
+    std::optional<PartsLibrary> parts_;
     /** When the choice adds or removes parts (a turbo): the role to select
         once the engine is back, instead of the same part index. */
     std::optional<render::PartRole> partChoiceSelects_;
+    /** When the choice moves every part's index (an airbox fitted or taken
+        off): nothing is selected once the engine is back. */
+    bool partChoiceDeselects_ {};
     /** The part an edit resized: selected again, with the camera kept, when
         the engine comes back. An exhaust component by its ids (the scene's
         parts change), a cylinder part by its index (they do not). */

@@ -17,6 +17,32 @@ file formats, always with an in-memory migration).
   `dual_clutch_upshift_cylinder_cut` in the engine file (0.76 by default,
   0 for the retard alone). No catalogue engine uses a dual clutch, so the
   catalogue's sound is unchanged.
+- **Trucks and their engine brake.** The designer's "Built for" list has a
+  Truck: a heavy-duty engine (11.5 m/s at the governor, idle 600, boost
+  2.8) in a 40 t tractor with a 12-speed automated gearbox, geared to cruise
+  85 km/h near 1,200 rpm. A truck's four-stroke gets a compression-release
+  engine brake (a "jake brake"), the only use that does. Its switch appears
+  under Cruise (key 0): each press brakes more cylinders (a six: 2, 4, 6),
+  the last turns it off. It holds with your foot off the pedal and the
+  clutch in, cuts those cylinders' fuel and opens one exhaust valve 2 mm at
+  the top of their compression, so the air they compressed blows into the
+  exhaust instead of pushing the piston back. It lets go below 1,000 rpm and
+  during a shift. Its bark is the gas dynamics' own: no sound was added. A
+  saved engine keeps it (`engine_brake` in the file).
+- **Automated manual gearbox.** A sixth gearbox style, one clutch the
+  gearbox works itself (Selespeed, SMG, Easytronic, a truck's AMT): no
+  pedal, it creeps and launches as a dual clutch does, but an upshift opens
+  the clutch and the drive pauses for the shift, and a downshift is
+  blipped. Pick it in the gearbox inspector ("Automated manual") or
+  `shift_style: automated_manual`. The shift time is the gearbox's
+  `shift_duration_s` (an estimate, not a unit's figure).
+- **The injection and the intake are picked by clicking them.** On the 3-D
+  view, the injector (or the throttle body) offers port injection, direct
+  injection or a carburettor, and the airbox, the inlet duct or the
+  throttle body offers an airbox, a pod filter or open trumpets. Each is
+  fitted as the designer fits it, sized for the engine (injector flow,
+  carburettor jets and venturi, airbox volume, bellmouths), and the engine
+  restarts with it. A diesel stays direct-injected.
 
 ### Changed
 
@@ -45,6 +71,24 @@ file formats, always with an in-memory migration).
   reads 5.81 on methanol); the map is still stored in lambda. Its richest
   value goes from 10.5 to 9 petrol AFR (lambda 0.61, past the rich-misfire
   limit), for alcohol maps; the shipped maps are unchanged.
+
+### Fixed
+
+- **A turbo on a single is drawn, and it can be set.** On an engine whose
+  exhaust has no collector (a single, a twin with two separate pipes) the
+  turbo now sits at the end of the primary pipe, in the 3-D view and in the
+  gas dynamics, instead of an invisible model at the tailpipe; click it to
+  change its settings. Such a turbine takes every exhaust pulse whole, so
+  a turbo fitted or designed on it now gets a wastegate twice as large;
+  a single saved before with a turbo may overboost until its wastegate
+  area is enlarged in the turbo's inspector. Catalogue turbo engines are
+  unchanged.
+- **A zero-length collector, splitter or outlet can be given a length by
+  clicking it**, and back to 0. The length can now be set on every
+  exhaust element from the 3-D view (0 or 10 mm to 30 m); an element under
+  about 50 mm is warned as costly.
+- **The injector can be clicked.** It sat inside the see-through intake
+  runner, and the click always went to the runner's wall.
 
 ## [0.8.1] — 2026-11-06
 

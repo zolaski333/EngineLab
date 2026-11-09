@@ -183,6 +183,10 @@ public:
     void setLoad(double value) noexcept { load_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
     void setClutchPressure(double value) noexcept { clutchPressure_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 1.0); }
     void setBrakePressure(double value) noexcept { brakePressure_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
+    /** The engine brake's switch: 0 off, up to its stage count (the engine
+     * ignores it when none is fitted). */
+    void setEngineBrakeStage(std::uint32_t stage) noexcept { engineBrakeStage_.store(stage, std::memory_order_relaxed); }
+    [[nodiscard]] std::uint32_t engineBrakeStage() const noexcept { return engineBrakeStage_.load(std::memory_order_relaxed); }
     void shiftUp() noexcept;
     void shiftDown() noexcept;
     /** Switches the gearbox between automatic and manual shifting. A gear
@@ -486,7 +490,8 @@ private:
     /** The driver's pedals as the UI set them last. */
     [[nodiscard]] DriverInputs driverInputs() const noexcept {
         return { throttle_.load(), clutchPressure_.load(std::memory_order_relaxed),
-                 brakePressure_.load(std::memory_order_relaxed) };
+                 brakePressure_.load(std::memory_order_relaxed),
+                 engineBrakeStage_.load(std::memory_order_relaxed) };
     }
     /** Static exhaust telemetry for the audio (paths, areas, delays, gains),
      * from the configuration and the graph compiled from it. */
@@ -565,6 +570,7 @@ private:
     std::atomic<double> load_ { 0.08 };
     std::atomic<double> clutchPressure_ { 1.0 };
     std::atomic<double> brakePressure_ { 0.0 };
+    std::atomic<std::uint32_t> engineBrakeStage_ { 0 };
     std::atomic<int> gear_ { -1 };
     std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
     std::atomic<std::uint64_t> cruiseToggleRequests_ { 0 };

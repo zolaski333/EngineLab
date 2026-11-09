@@ -30,18 +30,26 @@ template <typename Config>
     return found != network.components.end() ? &*found : nullptr;
 }
 
-[[nodiscard]] bool hasLength(ExhaustComponentType type) noexcept {
+/** A collector, a splitter, a crossover and an outlet may have no length: a
+ *  junction lumped where the pipes meet, an outlet that is only the open end
+ *  of the pipe before it. Back to zero, they are that again. */
+[[nodiscard]] bool mayHaveNoLength(ExhaustComponentType type) noexcept {
     switch (type) {
+    case ExhaustComponentType::merge:
+    case ExhaustComponentType::splitter:
+    case ExhaustComponentType::crossover:
+    case ExhaustComponentType::outlet: return true;
     case ExhaustComponentType::pipe:
     case ExhaustComponentType::muffler:
     case ExhaustComponentType::resonator:
-    case ExhaustComponentType::catalyst:
-    case ExhaustComponentType::crossover: return true;
-    case ExhaustComponentType::merge:
-    case ExhaustComponentType::splitter:
-    case ExhaustComponentType::outlet: return false;
+    case ExhaustComponentType::catalyst: return false;
     }
     return false;
+}
+
+/** On a scalar-geometry path, the components whose length has a field. */
+[[nodiscard]] bool hasScalarLength(ExhaustComponentType type) noexcept {
+    return type == ExhaustComponentType::pipe || type == ExhaustComponentType::muffler;
 }
 
 [[nodiscard]] bool isPrimary(const ExhaustNetworkConfig& network, std::uint32_t componentId) noexcept {
@@ -71,17 +79,17 @@ std::optional<ExhaustComponentSize> exhaustComponentSize(const EngineConfig& con
     ExhaustComponentSize size;
     size.lengthMm = component->lengthMm;
     size.diameterMm = component->diameterMm;
+    // Every component has a length to edit. A length of zero on a collector
+    // or an outlet is no length at all; on a scalar path, a component whose
+    // length has no field takes it by making the path an authored network.
+    size.lengthEditable = true;
     if (scalar) {
         // The scalar fields: a silencer is sized by its body, which the
         // network shows as a volume over a core passage.
-        size.lengthEditable = component->type == ExhaustComponentType::pipe
-            || component->type == ExhaustComponentType::muffler;
         if (component->type == ExhaustComponentType::muffler)
             size.diameterMm = path->geometry.mufflerChamberDiameterMm;
         size.sharedByPrimaries = component->type == ExhaustComponentType::pipe && path->cylinderIds.size() > 1U
             && isPrimary(network, componentId);
-    } else {
-        size.lengthEditable = hasLength(component->type) || component->lengthMm > 0.0;
     }
     return size;
 }
@@ -91,15 +99,23 @@ std::string resizeExhaustComponent(EngineConfig& config, std::uint32_t pathId, s
     const auto size = exhaustComponentSize(config, pathId, componentId);
     if (!size) return "No such exhaust component.";
     if (!(diameterMm >= minimumDiameterMm && diameterMm <= maximumDiameterMm))
-        return "The diameter must be between 10 and 400 mm.";
+        return "The diameter must be between 4 and 3,000 mm.";
     const auto lengthChanged = std::abs(lengthMm - size->lengthMm) > 1.0e-9;
     if (lengthChanged && !size->lengthEditable) return "This component has no length to edit.";
-    if (lengthChanged && !(lengthMm >= minimumLengthMm && lengthMm <= maximumLengthMm))
-        return "The length must be between 10 and 5,000 mm.";
-
     auto edited = config;
     auto& path = *findPath(edited, pathId);
-    const auto scalar = !path.network || path.network->components.empty();
+    auto scalar = !path.network || path.network->components.empty();
+    const auto type = findComponent(scalar ? makeEditableExhaustNetwork(path) : *path.network, componentId)->type;
+    const auto noLength = mayHaveNoLength(type) && lengthMm == 0.0;
+    if (lengthChanged && !noLength && !(lengthMm >= minimumLengthMm && lengthMm <= maximumLengthMm))
+        return mayHaveNoLength(type) ? "The length must be 0 (none) or between 10 and 30,000 mm."
+                                     : "The length must be between 10 and 30,000 mm.";
+    // A scalar path has no field for this length: it becomes the network it
+    // was drawn from, which then keeps it.
+    if (scalar && lengthChanged && !hasScalarLength(type)) {
+        path.network = makeEditableExhaustNetwork(path);
+        scalar = false;
+    }
     if (scalar) {
         const auto before = makeEditableExhaustNetwork(path);
         auto& geometry = path.geometry;
@@ -136,7 +152,7 @@ std::string resizeExhaustComponent(EngineConfig& config, std::uint32_t pathId, s
         // narrower collector holds less gas. Left as it was, the volume stayed
         // lumped at the branch however short the trunk was made.
         if (component.type == ExhaustComponentType::merge && component.volumeLitres > 0.0
-                && component.lengthMm > 0.0 && component.diameterMm > 0.0)
+                && component.lengthMm > 0.0 && lengthMm > 0.0 && component.diameterMm > 0.0)
             component.volumeLitres *= (lengthMm * diameterMm * diameterMm)
                 / (component.lengthMm * component.diameterMm * component.diameterMm);
         component.lengthMm = lengthMm;

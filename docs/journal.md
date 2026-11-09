@@ -5,6 +5,23 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-09 — a truck's engine brake; the refit and the automated manual
+
+- Compression release on the exhaust valve (2 mm, cos2 over 80 deg peaking at firing TDC), fuel cut, three stages (2/4/6 of six), only on a designed `truck` four-stroke. `EngineLab.EngineBrake`, 12.78 L six (131 x 158, turbo) motored at 2,100 rpm by a PI on the shaft: drag 183 N.m off, 1,253 on, 235 kW = 18.4 kW/L; a standard Jacobs brake gives 416 kW on a 13 L at 2,100 (~32 kW/L). 0.57 x, inside the test's 0.5-1.5.
+- One factor each (stage 3, kW/L): peak at -10/-20/-30 deg 17.0/12.1/7.2; duration 60/120 deg 17.9/18.2. Earlier opening or a longer event does not close the gap; lift, boost while motoring and the turbine's back-pressure are not measured.
+- Fuel at 1,400 rpm, pedal 0.01: 0.188 g/s off, 0 on.
+- The fuel/intake refit (`withFuelSystem`, `withIntakeStyle`) moved the designer's sizing into shared functions: `DesignBench` on 11 specs (port, DI turbo, carburettor, trumpets, pod, V8 super, diesel, aircraft, 2T carb, 2T DI, rotary) against the old parts: values and YAML byte-identical.
+- Designed 12.8 L truck six, `RealtimeBudgetHarness --free-run --with-audio --relative-rpm 0.9`: 1.77/1.66 (two runs, no control engine), no audio drop; `--designer-probe` 1.90.
+- Not measured: the brake's sound, the automated manual's 0.8 s shift (unsourced), the truck parts (TraXon ratios; the rest estimated), the app by hand.
+
+## 2026-11-09 — a single's turbo: drawn, on the network, its gate doubled
+
+- Owner report: a turbo on a single is not drawn and cannot be set. `collectorTurbineFaces` and the 3-D layout both needed a junction with >= 2 inputs: the single fell back to the lumped outlet turbine. Now a path with no junction puts the face out of the one pipe its ports open into; the view bolts the turbo to that pipe's end.
+- Designed 0.5 L road single (`DesignBench`, 1.56 target), `DynoSweepHarness`: lumped 46.1/49.0/51.1/50.4/48.4/42.9 N.m at 2,000-7,000 rpm, MAP 158 flat; on the face 52.2-59.4 N.m, MAP 158 -> 224 kPa at 7,000.
+- `TurboDownstreamAuthorityHarness --spool` 5,000/7,000: boost 2.03/2.21 with the gate fully open (wg 1.000): the gate is too small, not the control. Gate x2 (336 mm2): 1.560 at wg 0.71/0.77, 54.5/44.0 N.m; x4: the same at 0.36/0.39.
+- A designed twin at 1.5x holds 1.56 at wg 0.77/0.95; catalogue turbos at 6,000 rpm 0.69-0.95. So `sizedTurbocharger` gives 3.0x when one cylinder feeds a turbine (also on a count change). `EngineLab.TurboFit`: the single reads 1.561 at 7,000 rpm; 2.2 without (fails).
+- Not measured: a real turbo single's gate size, a saved single's 1.5x gate (it now overboosts: enlarge it in the turbo inspector), the Big Twin with a fitted turbo, the app by hand.
+
 ## 2026-11-09 — a slide carburettor's throat is its slide
 
 - Owner report: the designed V4-2S stalls at the 1/10/20 % throttle buttons, lean, clip 1. `PhysicsPerfHarness --saved-engine --freerev`: lambda 1.7 (1 %), 4-6.8 (10 %), 2.1-2.3 (20 %), stalled within 4 s; the designed 250 single too (5-6.8 at 10 %). The catalogue RD350 is injected: no catalogue engine had a two-stroke carburettor at part throttle.

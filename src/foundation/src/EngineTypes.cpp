@@ -903,6 +903,11 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         || outOfRange("exhaust.mufflerPerforatedOpenAreaRatio", config.exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
         || !validMufflerPacking(config.exhaust)
         || !validMidpipe(config.exhaust)
+        || outOfRange("engineBrake.valveLiftMm", config.engineBrake.valveLiftMm, 0.0, 10.0)
+        || outOfRange("engineBrake.peakAfterTdcDegrees", config.engineBrake.peakAfterTdcDegrees, -90.0, 90.0)
+        || outOfRange("engineBrake.durationDegrees", config.engineBrake.durationDegrees, 5.0, 180.0)
+        || outOfRange("engineBrake.minimumRpm", config.engineBrake.minimumRpm, 0.0, 50'000.0)
+        || outOfRange("engineBrake.stageCount", static_cast<double>(config.engineBrake.stageCount), 1.0, 8.0)
         || outOfRange("transmission.finalDriveRatio", config.transmission.finalDriveRatio, 1.0, maximumFinalDriveRatio)
         || outOfRange("transmission.maxClutchTorqueNm", config.transmission.maxClutchTorqueNm, 0.1, 10'000'000.0)
         || outOfRange("transmission.drivelineEfficiency", config.transmission.drivelineEfficiency, 0.2, 1.0)
@@ -911,7 +916,8 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         || outOfRange("transmission.shiftDurationSeconds", config.transmission.shiftDurationSeconds, 0.01, 3.0)
         || outOfRange("transmission.automaticUpshiftRpm", config.transmission.automaticUpshiftRpm, 0.0, 50'000.0)
         || outOfRange("transmission.automaticDownshiftRpm", config.transmission.automaticDownshiftRpm, 0.0, 30'000.0)
-        || outOfRange("transmission.reverseRatio", config.transmission.reverseRatio, 0.1, 10.0)
+        // A truck's reverse is 13-16, its first gear 16.7 (ZF TraXon).
+        || outOfRange("transmission.reverseRatio", config.transmission.reverseRatio, 0.1, 25.0)
         || outOfRange("transmission.gearboxInputInertiaKgM2", config.transmission.gearboxInputInertiaKgM2, 0.0, 10'000.0)
         || outOfRange("transmission.differentialInertiaKgM2", config.transmission.differentialInertiaKgM2, 0.0, 10'000.0)
         || outOfRange("transmission.clutchThermalCapacityJPerC", config.transmission.clutchThermalCapacityJPerC, 1.0, 1.0e9)
@@ -1128,7 +1134,7 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
     if (config.transmission.gearRatios.empty() || config.transmission.gearRatios.size() > 12)
         return "Transmission must contain between 1 and 12 forward gears";
     for (const auto gearRatio : config.transmission.gearRatios)
-        if (!inRange(gearRatio, 0.05, 10.0)) return "Transmission gear ratios must be finite and positive";
+        if (!inRange(gearRatio, 0.05, 25.0)) return "Transmission gear ratios must be between 0.05 and 25";
     // Zero derives a shift speed from the engine (ShiftSchedule).
     if (config.transmission.automaticDownshiftRpm > 0.0 && config.transmission.automaticUpshiftRpm > 0.0
         && config.transmission.automaticDownshiftRpm >= config.transmission.automaticUpshiftRpm)
@@ -1795,6 +1801,7 @@ const char* shiftStyleName(ShiftStyle style) noexcept {
     case ShiftStyle::sequential: return "sequential";
     case ShiftStyle::dualClutch: return "dual_clutch";
     case ShiftStyle::cvt: return "cvt";
+    case ShiftStyle::automatedManual: return "automated_manual";
     }
     return "manual";
 }
@@ -1804,7 +1811,18 @@ std::optional<ShiftStyle> parseShiftStyle(const std::string& name) noexcept {
     if (name == "sequential") return ShiftStyle::sequential;
     if (name == "dual_clutch") return ShiftStyle::dualClutch;
     if (name == "cvt") return ShiftStyle::cvt;
+    if (name == "automated_manual") return ShiftStyle::automatedManual;
     return std::nullopt;
+}
+
+double engineBrakeLiftMm(const EngineBrakeConfig& brake, double phaseDegrees,
+                         std::uint32_t exhaustValveCount) noexcept {
+    if (!(brake.valveLiftMm > 0.0) || !(brake.durationDegrees > 0.0)) return 0.0;
+    const auto distance = std::remainder(phaseDegrees - brake.peakAfterTdcDegrees, 720.0);
+    const auto half = 0.5 * brake.durationDegrees;
+    if (!(std::abs(distance) < half)) return 0.0;
+    const auto shape = std::cos(0.5 * std::numbers::pi * distance / half);
+    return brake.valveLiftMm * shape * shape / static_cast<double>(std::max<std::uint32_t>(1, exhaustValveCount));
 }
 
 } // namespace enginelab

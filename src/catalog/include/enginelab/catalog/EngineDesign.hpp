@@ -14,9 +14,10 @@ namespace enginelab {
 
 /** What an engine is built for. It sets the values a designer picks for that
  *  family: piston speed at the redline, cams, idle, silencer, gearbox and
- *  vehicle. */
+ *  vehicle. A truck's four-stroke also gets a compression-release engine
+ *  brake (EngineBrakeConfig), the only use that does. */
 enum class EngineUse : std::uint8_t {
-    roadCar, sportCar, roadMotorcycle, sportMotorcycle, cruiserMotorcycle, aircraft
+    roadCar, sportCar, roadMotorcycle, sportMotorcycle, cruiserMotorcycle, aircraft, truck
 };
 
 /** `supercharged` fits the use's usual machine: a Roots, a centrifugal one on
@@ -186,6 +187,34 @@ struct DesignedEngine final {
  * no voicing of its own. Never throws; a failure is in `error`.
  */
 [[nodiscard]] DesignedEngine designCatalogueEngine(const EngineSpec& spec, const std::filesystem::path& catalogRoot);
+
+/** The fuel system `config` has: a carburettor on any intake path, else its
+ *  injection's mode. */
+[[nodiscard]] FuelSystem fuelSystemOf(const EngineConfig& config) noexcept;
+/** What its throttle breathes from: an airbox, a pod filter, or an open
+ *  mouth (trumpets). */
+[[nodiscard]] IntakeStyle intakeStyleOf(const EngineConfig& config) noexcept;
+
+/**
+ * `config` with another fuel system, sized as the designer sizes it for this
+ * engine's displacement, redline and boost: the injection part and window,
+ * the injectors' flow, or a carburettor's venturi and jets on every intake
+ * path, for the fuel in the tank. Everything else is kept, the ignition map
+ * and its knock limit included. A diesel takes direct injection only. Never
+ * throws; a refusal is in `error`, the settled values in `values`.
+ */
+[[nodiscard]] DesignedEngine withFuelSystem(const EngineConfig& config, FuelSystem system,
+                                            const PartsLibrary& parts);
+[[nodiscard]] DesignedEngine withFuelSystem(const EngineConfig& config, FuelSystem system,
+                                            const std::filesystem::path& catalogRoot);
+
+/**
+ * `config` breathing from another intake: an airbox sized as the designer
+ * sizes it (a motorcycle's, under the tank, when the vehicle weighs under
+ * 600 kg; a car's, with its snorkel, otherwise), a pod filter or open
+ * trumpets, on every intake path. Never throws.
+ */
+[[nodiscard]] DesignedEngine withIntakeStyle(const EngineConfig& config, IntakeStyle style);
 
 [[nodiscard]] const char* engineUseName(EngineUse) noexcept;
 [[nodiscard]] std::optional<EngineUse> parseEngineUse(std::string_view) noexcept;

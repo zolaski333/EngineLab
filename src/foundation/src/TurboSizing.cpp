@@ -20,6 +20,17 @@ double turbochargerDesignShaftSpeedRpm(double pressureRatio, double inducerDiame
     return tipSpeedMps * 60.0 / (3.14159265 * 0.001 * std::max(1.0, inducerDiameterMm));
 }
 
+namespace {
+// The wastegate's area against the turbine's. A turbine fed by one cylinder
+// takes each blowdown whole: a designed 0.5 L single held its gate fully open
+// at 5,000-7,000 rpm and still reached 2.0-2.2 for 1.56 with 1.5 x, and held
+// 1.56 with the gate 71-77 % open at 3.0 x; a designed twin holds it 77-95 %
+// open at 1.5 x (journal 2026-11-09).
+double wastegateShareOfTurbine(double cylindersPerTurbine) {
+    return cylindersPerTurbine < 1.5 ? 3.0 : 1.5;
+}
+} // namespace
+
 ForcedInductionConfig sizedTurbocharger(const EngineConfig& config) {
     const auto litres = std::max(0.05, breathingDisplacementLitres(config));
     const auto redline = std::max(1'000.0, config.redlineRpm);
@@ -37,7 +48,8 @@ ForcedInductionConfig sizedTurbocharger(const EngineConfig& config) {
     turbo.turbineEfficiency = 0.70;
     turbo.chargeTemperatureRiseC = diesel ? 28.0 : 42.0;
     turbo.turbineFlowAreaMm2 = 0.028 * litres * redline;
-    turbo.wastegateFlowAreaMm2 = 1.5 * turbo.turbineFlowAreaMm2;
+    turbo.wastegateFlowAreaMm2 = wastegateShareOfTurbine(
+        static_cast<double>(config.cylinders.size())) * turbo.turbineFlowAreaMm2;
     turbo.compressorInducerDiameterMm = 7.8 * std::sqrt(litres * redline / 1'000.0 * turbo.pressureRatio);
     turbo.turbineExducerDiameterMm = 0.9 * turbo.compressorInducerDiameterMm;
     turbo.shaftInertiaKgM2 = 4.75e-13 * std::pow(turbo.compressorInducerDiameterMm, 5.0);
@@ -79,7 +91,10 @@ EngineConfig withTurbochargerCount(EngineConfig config, std::uint32_t count) {
     // Resolved before the count changes: the default reads it.
     turbo.compressorDesignMassFlowKgPerSecond = compressorDesignMassFlowKgPerSecond(config) * share;
     turbo.turbineFlowAreaMm2 *= share;
-    turbo.wastegateFlowAreaMm2 *= share;
+    const auto cylinders = static_cast<double>(std::max<std::size_t>(1, config.cylinders.size()));
+    turbo.wastegateFlowAreaMm2 *= share
+        * wastegateShareOfTurbine(cylinders / static_cast<double>(now))
+        / wastegateShareOfTurbine(cylinders / static_cast<double>(was));
     turbo.compressorInducerDiameterMm *= size;
     turbo.turbineExducerDiameterMm *= size;
     turbo.designShaftSpeedRpm /= size;

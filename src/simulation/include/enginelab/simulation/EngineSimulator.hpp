@@ -170,6 +170,10 @@ struct IntakeSplitReservoirDiagnostics final {
     double maximumVolumeMismatchM3 { 0.0 };
 };
 
+/** The pedal above which the engine brake lets go (a real one's throttle
+ *  switch opens at the first travel of the pedal). */
+inline constexpr double engineBrakeMaximumThrottle = 0.02;
+
 class EngineSimulator final : public IEngineSimulation {
 public:
     EngineSimulator(EngineConfig, IEcuModel&, IPhysicsModel&, IFiringEventGenerator&,
@@ -853,6 +857,8 @@ private:
     };
     std::array<PendingUnburnedPocket, 32> pendingUnburnedPockets_ {};
     bool previousAfrObservationCommandEnabled_ { false };
+    // Whether the engine brake held last step (its speed cut-out's hysteresis).
+    bool engineBrakeHeld_ { false };
     std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> physicalExhaustNetwork_;
     /** The exhaust layout at construction. Live changes keep its topology, so
      * it stays the reference a new network is checked against, from any

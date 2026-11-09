@@ -693,6 +693,14 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         document["engine"]["rotary"] = { {"generating_radius_mm", config.rotary.generatingRadiusMm},
             {"eccentricity_mm", config.rotary.eccentricityMm}, {"rotor_width_mm", config.rotary.rotorWidthMm},
             {"rotor_count", config.rotary.rotorCount} };
+    // Written when one is fitted, so every other engine's file is unchanged.
+    if (config.engineBrake.fitted)
+        document["engine"]["engine_brake"] = { {"fitted", true},
+            {"valve_lift_mm", config.engineBrake.valveLiftMm},
+            {"peak_after_tdc_deg", config.engineBrake.peakAfterTdcDegrees},
+            {"duration_deg", config.engineBrake.durationDegrees},
+            {"minimum_rpm", config.engineBrake.minimumRpm},
+            {"stage_count", config.engineBrake.stageCount} };
     // Written for a two-stroke only, so a four-stroke file is unchanged.
     if (config.cycle == EngineCycle::twoStroke) {
         document["engine"]["two_stroke"] = { {"exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees}, {"transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees}, {"exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm}, {"transfer_port_width_mm", config.twoStroke.transferPortWidthMm}, {"port_discharge_coefficient", config.twoStroke.portDischargeCoefficient}, {"crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio}, {"scavenge_loop_length_ratio", config.twoStroke.scavengeLoopLengthRatio} };
@@ -844,6 +852,16 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
             config.rotary.eccentricityMm = rotary.value("eccentricity_mm", config.rotary.eccentricityMm);
             config.rotary.rotorWidthMm = rotary.value("rotor_width_mm", config.rotary.rotorWidthMm);
             config.rotary.rotorCount = rotary.value("rotor_count", config.rotary.rotorCount);
+        }
+        if (engine.contains("engine_brake")) {
+            const auto& brake = engine.at("engine_brake");
+            auto& value = config.engineBrake;
+            value.fitted = brake.value("fitted", value.fitted);
+            value.valveLiftMm = brake.value("valve_lift_mm", value.valveLiftMm);
+            value.peakAfterTdcDegrees = brake.value("peak_after_tdc_deg", value.peakAfterTdcDegrees);
+            value.durationDegrees = brake.value("duration_deg", value.durationDegrees);
+            value.minimumRpm = brake.value("minimum_rpm", value.minimumRpm);
+            value.stageCount = brake.value("stage_count", value.stageCount);
         }
         if (engine.contains("two_stroke")) {
             const auto& ports = engine.at("two_stroke");

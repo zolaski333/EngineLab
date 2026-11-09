@@ -827,6 +827,16 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "rotor_width_mm" << YAML::Value << config.rotary.rotorWidthMm
             << YAML::Key << "rotor_count" << YAML::Value << config.rotary.rotorCount
             << YAML::EndMap;
+    // Written when one is fitted, so every other engine's file is unchanged.
+    if (config.engineBrake.fitted)
+        out << YAML::Key << "engine_brake" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "fitted" << YAML::Value << true
+            << YAML::Key << "valve_lift_mm" << YAML::Value << config.engineBrake.valveLiftMm
+            << YAML::Key << "peak_after_tdc_deg" << YAML::Value << config.engineBrake.peakAfterTdcDegrees
+            << YAML::Key << "duration_deg" << YAML::Value << config.engineBrake.durationDegrees
+            << YAML::Key << "minimum_rpm" << YAML::Value << config.engineBrake.minimumRpm
+            << YAML::Key << "stage_count" << YAML::Value << config.engineBrake.stageCount
+            << YAML::EndMap;
     // Written for a two-stroke only, so a four-stroke file is unchanged.
     if (config.cycle == EngineCycle::twoStroke) {
         out << YAML::Key << "two_stroke" << YAML::Value << YAML::BeginMap
@@ -1142,6 +1152,15 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 config.vehicle.centerOfGravityHeightM =
                     vehicle["center_of_gravity_height_m"].as<double>();
             if (vehicle["maximum_brake_force_n"]) config.vehicle.maximumBrakeForceN = vehicle["maximum_brake_force_n"].as<double>();
+        }
+        if (const auto brake = engine["engine_brake"]) {
+            auto& value = config.engineBrake;
+            value.fitted = brake["fitted"].as<bool>(value.fitted);
+            value.valveLiftMm = brake["valve_lift_mm"].as<double>(value.valveLiftMm);
+            value.peakAfterTdcDegrees = brake["peak_after_tdc_deg"].as<double>(value.peakAfterTdcDegrees);
+            value.durationDegrees = brake["duration_deg"].as<double>(value.durationDegrees);
+            value.minimumRpm = brake["minimum_rpm"].as<double>(value.minimumRpm);
+            value.stageCount = brake["stage_count"].as<std::uint32_t>(value.stageCount);
         }
         config.intake.plenumVolumeLitres = config.plenumVolumeLitres;
         config.intake.throttleDiameterMm = config.throttleDiameterMm;

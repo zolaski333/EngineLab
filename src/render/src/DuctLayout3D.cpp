@@ -154,6 +154,11 @@ struct Node final {
     bool turbo {};
     /** With `turbo`, its placement in the caller's list. */
     std::size_t turboSlot {};
+    /** With `turbo`, bolted ahead of this node instead: a path with no
+        junction, its one primary ending on the turbine at `turboInlet`, and
+        this node resuming past it. */
+    bool turboAtInlet {};
+    Vec3 turboInlet;
     Vec3 exitLane;
     float exitZ {};
 };
@@ -521,8 +526,24 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
     auto& nodes = layout.nodes;
     for (const auto i : layout.order) {
         auto& node = nodes[i];
-        if (node.firstJunction && node.turbo && turbos != nullptr)
+        if (node.firstJunction && node.turbo && turbos != nullptr && node.turboAtInlet) {
+            // The turbine where the primary ends, then this node past it:
+            // the turbo bolted to a collector of nothing.
+            auto mount = node;
+            mount.zOut = node.zIn;
+            mount.outletDiameter = node.ins.empty() ? node.diameter : nodes[node.ins.front()].outletDiameter;
+            mount.body = mount.outletDiameter;
+            mount.mouth = 0.0F;
+            placeTurbo(layout, mount, spec, (*turbos)[node.turboSlot]);
+            node.turboInlet = at(node.lane, node.zIn);
+            node.lane = mount.exitLane;
+            node.zIn = mount.exitZ;
+            node.zOut = node.zIn + node.drawLength;
+            node.exitLane = node.lane;
+            node.exitZ = node.zOut;
+        } else if (node.firstJunction && node.turbo && turbos != nullptr) {
             placeTurbo(layout, node, spec, (*turbos)[node.turboSlot]);
+        }
         if (node.stack || node.firstJunction) continue;
         if (node.routed) {
             if (node.ins.empty()) {
@@ -593,7 +614,8 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         node.lane = lanes > 0 ? laneSum * (1.0F / static_cast<float>(lanes)) : Vec3 {};
         node.zIn = z;
         node.zOut = z + node.drawLength;
-        if (node.turbo && turbos != nullptr) placeTurbo(layout, node, spec, (*turbos)[node.turboSlot]);
+        if (node.turbo && !node.turboAtInlet && turbos != nullptr)
+            placeTurbo(layout, node, spec, (*turbos)[node.turboSlot]);
     }
 }
 
@@ -859,6 +881,27 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             found = true;
             break;
         }
+        // No junction (a single, or a path a cylinder has to itself): the
+        // simulator's turbine is where the one primary ends, so the turbo is
+        // drawn there, ahead of the first component past the primary.
+        for (const auto i : layouts[p].order) {
+            if (found) break;
+            auto& node = nodes[i];
+            if (!node.firstJunction || node.routed || node.stack || !node.cylinders.empty() || node.ins.size() != 1U
+                || fed[i] < total)
+                continue;
+            const auto& primary = nodes[node.ins.front()];
+            if (!primary.routed || !primary.ins.empty() || primary.outs.size() != 1U
+                || primary.cylinders.size() != total)
+                continue;
+            node.turbo = true;
+            node.turboAtInlet = true;
+            node.turboSlot = turbos->size();
+            TurboPlacement placement;
+            placement.unit = static_cast<std::uint32_t>(unit);
+            turbos->push_back(std::move(placement));
+            found = true;
+        }
         if (found) unitPlaced[unit] = true;
     }
     for (std::size_t a = 0; a < junctions.size(); ++a) {
@@ -974,7 +1017,11 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             if (joins) {
                 const auto& downstream = nodes[node.outs.front()];
                 const auto k = indexIn(downstream.ins, i);
-                if (k >= throughIns(downstream)) {
+                if (downstream.turboAtInlet) {
+                    // Onto the turbine, along the trunk.
+                    b = downstream.turboInlet;
+                    dirB = zAxis;
+                } else if (k >= throughIns(downstream)) {
                     // Into the flank, from the side it comes from.
                     Vec3 outward;
                     b = flank(downstream, a, outward);

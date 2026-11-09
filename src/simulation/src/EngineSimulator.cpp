@@ -276,9 +276,10 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
 
 /** Where a turbine sits: the face out of each exhaust path's collector, the
  *  first junction all of the path's cylinders reach (where the 3-D view bolts
- *  the turbo), when it leaves through a single face into a duct. Each face
- *  carries its path's share of the cylinders. Empty unless every path with
- *  cylinders has one. */
+ *  the turbo), when it leaves through a single face into a duct; on a path
+ *  with no junction, the face out of the one pipe its ports open into. Each
+ *  face carries its path's share of the cylinders. Empty unless every path
+ *  with cylinders has one. */
 struct TurbineFace final {
     std::size_t interfaceIndex { 0 };
     double cylinderShare { 0.0 };
@@ -341,6 +342,37 @@ struct TurbineFace final {
             faces.push_back({ outgoingIndex, static_cast<double>(pathCylinders[path])
                 / static_cast<double>(std::max<std::size_t>(1, totalCylinders)), path, pathCylinders[path] });
             found = true;
+        }
+        // No junction: every port of the path opens into one pipe (a single,
+        // or a path a cylinder has to itself). Its turbine is bolted where
+        // that primary ends, into the duct that follows -- where the 3-D view
+        // draws it. Without this the turbine was a lumped one at the outlet.
+        if (!found) {
+            std::optional<std::size_t> primary;
+            auto onePipe = true;
+            for (const auto& port : layout.cylinderPorts()) {
+                if (port.pathIndex != path) continue;
+                if (port.networkEndpoint.type == ExhaustEndpointType::junction
+                    || (primary && *primary != port.networkEndpoint.elementIndex))
+                    onePipe = false;
+                primary = port.networkEndpoint.elementIndex;
+            }
+            std::size_t outgoing = 0;
+            std::size_t outgoingIndex = 0;
+            for (std::size_t index = 0; onePipe && primary && index < layout.interfaces().size(); ++index) {
+                const auto& connection = layout.interfaces()[index];
+                if (connection.upstream.type == ExhaustEndpointType::ductOutlet
+                    && connection.upstream.elementIndex == *primary) {
+                    ++outgoing;
+                    outgoingIndex = index;
+                }
+            }
+            if (onePipe && primary && outgoing == 1
+                && layout.interfaces()[outgoingIndex].downstream.type != ExhaustEndpointType::junction) {
+                faces.push_back({ outgoingIndex, static_cast<double>(pathCylinders[path])
+                    / static_cast<double>(std::max<std::size_t>(1, totalCylinders)), path, pathCylinders[path] });
+                found = true;
+            }
         }
         if (!found) return {};
     }
@@ -1548,6 +1580,7 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     std::swap(config_.forcedInduction, config.forcedInduction);
     std::swap(config_.ignition, config.ignition);
     std::swap(config_.exhaustAfterfire, config.exhaustAfterfire);
+    std::swap(config_.engineBrake, config.engineBrake);
     // The driveline (EngineRuntime) runs on these; the copy keeps config()
     // describing the engine that runs.
     std::swap(config_.transmission, config.transmission);
@@ -1856,6 +1889,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.exhaustAfterfireOverrunActive =
             ecuCommand.overrunAfterfireActive;
         state_.exhaustAfterfireBlockers = ecuCommand.overrunAfterfireBlockers;
+        {
+            // The engine brake holds with its switch on, the pedal released
+            // and the engine running on its own, and lets go below its
+            // minimum speed. It takes hold again 100 rpm higher, so a speed
+            // sitting on the cut-out does not chatter it. Stage k of N
+            // brakes the first round(k x cylinders / N) cylinders.
+            const auto& brake = config_.engineBrake;
+            const auto stages = std::max<std::uint32_t>(1, brake.stageCount);
+            const auto stage = std::min(safeControls.engineBrakeStage, stages);
+            const auto armed = brake.fitted && config_.cycle == EngineCycle::fourStroke && stage > 0
+                && safeControls.ignitionEnabled && !safeControls.starterEngaged
+                && safeControls.throttle <= engineBrakeMaximumThrottle;
+            engineBrakeHeld_ = armed
+                && state_.rpm >= brake.minimumRpm + (engineBrakeHeld_ ? 0.0 : 100.0);
+            state_.engineBrakeCylinders = engineBrakeHeld_
+                ? static_cast<std::uint32_t>(std::lround(static_cast<double>(config_.cylinders.size())
+                    * static_cast<double>(stage) / static_cast<double>(stages)))
+                : 0U;
+        }
         state_.ecuFuelCorrection = ecuCommand.fuelCorrection;
         state_.ecuDieselFuelQuantityLimitMgPerCycle =
             ecuCommand.dieselFuelQuantityLimitMgPerCycle;
@@ -2670,6 +2722,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         valveTrainStates_[cylinderIndex], cyclePhase, state_.rpm, state_.load, 0.0,
                         valveCycleDegrees);
             }
+            // The engine brake's event on one exhaust valve, added to the cam's
+            // (they never overlap: it sits at firing top dead centre). The gas
+            // solver sees it as any other exhaust lift; the blowdown into the
+            // exhaust is the brake's sound.
+            const auto engineBraking = static_cast<std::uint32_t>(cylinderIndex)
+                < state_.engineBrakeCylinders;
+            if (engineBraking) {
+                auto& result = valveTrainResults_[cylinderIndex];
+                const auto brakeLift = engineBrakeLiftMm(config_.engineBrake, cyclePhase,
+                    cylinder.exhaustValveCount);
+                if (brakeLift > result.exhaustLiftMm) {
+                    result.exhaustLiftMm = brakeLift;
+                    result.exhaustDischargeCoefficient = valveFlowCoefficient(brakeLift,
+                        cams.config->exhaustFlowCoefficient, cams.config->exhaustFlowCurve);
+                }
+            }
             const auto& valveTrain = valveTrainResults_[cylinderIndex];
             const auto requestedSparkPhase = std::fmod(cycleDegrees - ecuCommand.ignitionAdvanceDegrees
                 + cylinder.ignitionOffsetDegrees + cycleDegrees, cycleDegrees);
@@ -2968,8 +3036,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     ecuCommand.targetAirFuelRatio)
                 : std::clamp(ecuCommand.targetAirFuelRatio,
                     5.0 * petrolAfrBoundScale(config_), 30.0 * petrolAfrBoundScale(config_));
+            // A braking cylinder takes no fuel: its compression is the brake.
             const auto cylinderFuelEnabled = ecuCommand.fuelEnabled
-                && !injectionCutThisCycle_[cylinderIndex];
+                && !injectionCutThisCycle_[cylinderIndex] && !engineBraking;
             auto physicalFuelTargetMoles = cylinderFuelEnabled
                 ? measuredChargeMassMg / targetAirFuelRatio
                     * dieselFuelDemand
@@ -6737,6 +6806,8 @@ void EngineSimulator::reset() noexcept {
     portPulseCreditSampled_.fill(false);
     injectionCutThisCycle_.fill(false);
     injectionStartCount_.fill(0U);
+    engineBrakeHeld_ = false;
+    state_.engineBrakeCylinders = 0U;
     portPulseInventoryCreditMoles_.fill(0.0);
     portPulsePrimeDeficitMoles_.fill(0.0);
     portPulseAvailableFraction_.fill(1.0);

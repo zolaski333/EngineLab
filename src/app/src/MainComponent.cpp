@@ -122,6 +122,7 @@ MainComponent::MainComponent() {
     controls_.gearDown.onClick = [this] { if (runtime_) runtime_->shiftDown(); };
     controls_.gearUp.onClick = [this] { if (runtime_) runtime_->shiftUp(); };
     controls_.cruise.onClick = [this] { if (runtime_) runtime_->toggleCruise(); };
+    controls_.engineBrake.onClick = [this] { stepEngineBrake(); };
     controls_.automatic.onClick = [this] {
         if (runtime_) runtime_->setAutomaticShifting(!model_.state.automaticShifting);
     };
@@ -183,6 +184,11 @@ MainComponent::MainComponent() {
         // A malformed parts/fuels.yaml: the engine's own fuel is edited only.
     }
     viewport_.setFuelPresets(fuelPresets_);
+    try {
+        viewport_.setPartsLibrary(loadPartsLibrary(catalogRoot_));
+    } catch (const std::exception&) {
+        // No parts library: the fuel system is not offered on click.
+    }
     viewport_.setWheelModifierCheck([this] { return wheelModifierDown(); });
     viewport_.setGasFieldSource([this](double crankAngleDegrees, GasFieldSnapshot& field) {
         if (!runtime_) return false;
@@ -420,6 +426,9 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     if (!preserveCalibration)
         controls_.afrTrim.slider.setValue(0.0, juce::dontSendNotification);
     controls_.setDiesel(diesel);
+    // The new runtime starts with the engine brake off.
+    controls_.setEngineBrake(config_.engineBrake.fitted && config_.cycle == EngineCycle::fourStroke
+        ? config_.engineBrake.stageCount : 0U);
     adoptAudioVoicing(config_.audioVoicing);
     voicingRevision_ = audioVoicingRevision(catalogRoot_);
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
@@ -463,6 +472,13 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     viewport_.refresh();
     configChanged_ = true;
     return true;
+}
+
+void MainComponent::stepEngineBrake() {
+    if (!runtime_) return;
+    const auto stage = controls_.nextEngineBrakeStage();
+    runtime_->setEngineBrakeStage(stage);
+    controls_.setEngineBrakeStage(stage);
 }
 
 void MainComponent::toggleDatalog() {
@@ -1760,6 +1776,11 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     if (actionMap_.matches(AppAction::dynoRamp, key)) { if (runtime_) runtime_->setDynoRampEnabled(!runtime_->dynoRampEnabled()); return true; }
     if (actionMap_.matches(AppAction::abSwitch, key)) { switchAbVersion(); return true; }
     if (actionMap_.matches(AppAction::cruise, key)) { if (runtime_) runtime_->toggleCruise(); return true; }
+    if (actionMap_.matches(AppAction::engineBrake, key)) {
+        if (!controls_.engineBrake.isVisible()) return false;
+        stepEngineBrake();
+        return true;
+    }
     if (actionMap_.matches(AppAction::datalog, key)) { toggleDatalog(); return true; }
     if (actionMap_.matches(AppAction::automaticGearbox, key)) {
         if (runtime_) runtime_->setAutomaticShifting(!model_.state.automaticShifting);

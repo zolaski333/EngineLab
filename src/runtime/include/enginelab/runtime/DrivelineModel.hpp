@@ -65,9 +65,10 @@ public:
     [[nodiscard]] int requestedGear() const noexcept { return requestedGear_; }
     [[nodiscard]] const TransmissionConfig& transmission() const noexcept { return config_.transmission; }
     /** Whether the driver's clutch pedal reaches the clutch: not on a dual
-     * clutch or a CVT, which run their own start clutch. */
+     * clutch, an automated manual or a CVT, which work their own clutch. */
     [[nodiscard]] bool driverClutchConnected() const noexcept {
-        return config_.transmission.shiftStyle != ShiftStyle::dualClutch && !continuouslyVariable();
+        const auto style = config_.transmission.shiftStyle;
+        return style != ShiftStyle::dualClutch && style != ShiftStyle::automatedManual && !continuouslyVariable();
     }
     [[nodiscard]] bool continuouslyVariable() const noexcept {
         return config_.transmission.shiftStyle == ShiftStyle::cvt;

@@ -14,7 +14,12 @@ struct DriverInputs final {
     /** The clutch the driver holds: 1 engaged (pedal up), 0 declutched. */
     double clutchPedal { 1.0 };
     double brake { 0.0 };
+    /** The engine brake's switch (EngineBrakeConfig): 0 off. */
+    std::uint32_t engineBrakeStage { 0 };
 };
+
+/** The clutch the engine brake needs to hold: nearly closed. */
+inline constexpr double engineBrakeMinimumClutch = 0.9;
 
 /** Which actor set the engine's throttle this frame. */
 enum class ThrottleAuthority : std::uint8_t {
@@ -35,6 +40,8 @@ struct VehicleStep final {
     double shiftSparkRetardDegrees { 0.0 };
     ThrottleAuthority throttleAuthority { ThrottleAuthority::driver };
     double shiftCylinderCutFraction { 0.0 };
+    /** The engine brake's stage the engine receives: the driver's, or 0. */
+    std::uint32_t engineBrakeStage { 0 };
 };
 
 /** The one place where the driver and the driveline's own devices (a clutch
@@ -50,7 +57,10 @@ struct VehicleStep final {
  *  1. the driveline is given the clutch drivelineClutch() returns;
  *  2. a clutch shift scales the driver's throttle by its torque cut;
  *  3. an auto-blipper may open the throttle past that, never close it;
- *  4. a quickshifter's ignition cut passes through to the ECU.
+ *  4. a quickshifter's ignition cut passes through to the ECU;
+ *  5. the engine brake's switch passes through only while the clutch is
+ *     engaged and no shift is under way (a real one's clutch switch, and an
+ *     automated gearbox's release for the shift).
  * The dyno bypasses all of it: the bench, not a driver, holds the engine. */
 class DriverCommandArbiter final {
 public:

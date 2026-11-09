@@ -38,7 +38,10 @@ ActionMap::ActionMap()
         // Next to the brake: the cruise control sets or cancels.
         { "cruise", juce::KeyPress(juce::KeyPress::rightKey) },
         { "automatic_gearbox", letter('8') },
-        { "datalog", letter('9') }
+        { "datalog", letter('9') },
+        // A truck's engine brake: each press takes the switch a stage up,
+        // and off after the last.
+        { "engine_brake", letter('0') }
     }} {
     load();
 }

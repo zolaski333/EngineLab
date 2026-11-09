@@ -188,8 +188,11 @@ DrivelineModel::ShiftAction DrivelineModel::chooseShiftAction(double clutchPedal
             return ShiftAction::handOver;
         return ShiftAction::timed;
     }
+    // An automated manual's controller blips down too: it opens its clutch,
+    // frees the dogs and brings the engine to the lower gear's speed.
     if ((transmission.shiftStyle == ShiftStyle::sequential && transmission.autoBlipper)
-            || transmission.shiftStyle == ShiftStyle::dualClutch)
+            || transmission.shiftStyle == ShiftStyle::dualClutch
+            || transmission.shiftStyle == ShiftStyle::automatedManual)
         return ShiftAction::blip;
     return ShiftAction::timed;
 }

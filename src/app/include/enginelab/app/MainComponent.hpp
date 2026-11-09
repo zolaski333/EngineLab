@@ -122,6 +122,8 @@ private:
         the running engine paused meanwhile (as the designer does). */
     /** Starts or stops the datalogger (Documents/EngineLab logs). */
     void toggleDatalog();
+    /** The engine brake's switch, one stage up (off after the last). */
+    void stepEngineBrake();
     /** An edit of the camshafts only: taken by the running engine over
         `rampSeconds` when its banks and valve controls stay
         (EngineSimulator::camshaftsReplaceable), else a restart. */

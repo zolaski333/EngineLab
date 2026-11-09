@@ -131,3 +131,20 @@ test_stand:
   wheelbase_m: 2.65
   center_of_gravity_height_m: 0.52
   maximum_brake_force_n: 14000
+
+# A loaded European tractor and semi-trailer at its 40 t limit. Cd 0.6 on
+# 10 m2 and rolling 0.006 are typical of a current long-haul combination;
+# 315/70 R22.5 tyres (0.51 m); the drive axle carries its 11.5 t legal load.
+# The driven axle's fraction and the brake force (half a g) are estimates.
+truck_tractor:
+  mass_kg: 40000
+  drag_coefficient: 0.60
+  frontal_area_m2: 10.0
+  tire_radius_m: 0.51
+  rolling_resistance_coefficient: 0.006
+  tire_friction_coefficient: 0.80
+  driven_axle_layout: rear
+  driven_axle_weight_fraction: 0.29
+  wheelbase_m: 3.80
+  center_of_gravity_height_m: 1.50
+  maximum_brake_force_n: 196000

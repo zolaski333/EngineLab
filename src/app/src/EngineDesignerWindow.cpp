@@ -23,8 +23,8 @@ namespace {
 
 using ui::utf8;
 
-constexpr std::array<EngineUse, 6> uses { EngineUse::roadCar, EngineUse::sportCar, EngineUse::roadMotorcycle,
-    EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle, EngineUse::aircraft };
+constexpr std::array<EngineUse, 7> uses { EngineUse::roadCar, EngineUse::sportCar, EngineUse::roadMotorcycle,
+    EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle, EngineUse::aircraft, EngineUse::truck };
 constexpr std::array<EngineLayout, 5> layouts { EngineLayout::inlineLayout, EngineLayout::vLayout,
     EngineLayout::flat, EngineLayout::radial, EngineLayout::custom };
 
@@ -91,7 +91,10 @@ public:
         };
         addChoice(fuel_, "Fuel", { "Petrol", "Diesel" });
         addChoice(use_, "Built for",
-            { "Road car", "Sport car", "Road motorcycle", "Sport motorcycle", "Cruiser motorcycle", "Aircraft" });
+            { "Road car", "Sport car", "Road motorcycle", "Sport motorcycle", "Cruiser motorcycle", "Aircraft",
+              "Truck" });
+        use_.combo.setTooltip(utf8("A truck is a heavy-duty engine in a 40 t tractor with a 12-speed automated "
+            "gearbox; its four-stroke gets an engine brake (compression release), the only use that does."));
         addChoice(layout_, "Layout", { "Inline", "V", "Flat (boxer)", "Radial", "W / several banks" });
         addField(cylinders_, "Cylinders", "7");
         addField(bankAngle_, "Bank angle (deg)", "");

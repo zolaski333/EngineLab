@@ -210,7 +210,13 @@ limit (`minimumRotatingInertiaKgM2` and the others, `EngineTypes.hpp`), and its
 rule says so; a value set by hand outside them is refused by name. The
 closed-throttle leak follows the throttle bore (0.6 mm2 at 60 mm and over)
 and is saved with the engine (`closed_throttle_leak_mm2`; before 0.6.0 a
-reloaded design ran on the 0.6 mm2 default).
+reloaded design ran on the 0.6 mm2 default). The `truck` use is the only one
+that fits an engine brake (four-strokes only; *Engine brake* in
+`simulation-model.md`), with the `truck_12_speed_automated` gearbox and the
+`truck_tractor` vehicle, its final drive set for 85 km/h at 0.55 x redline in
+top gear rather than for a drag-limited top speed. The control panel shows
+the brake's switch (`ControlPanel::engineBrake`, key 0) only on such an
+engine.
 
 The window has three pages. *Engine*: the spec, the speeds, the
 compression and the induction (natural, turbocharged, supercharged -- a Roots,
@@ -634,7 +640,11 @@ solver's own state, not by an animation:
 Clicking a part opens an inspector: the part's authored geometry and, for a
 duct, the solver's pressure range, gas and wall temperatures and cell count
 at the displayed angle. The pick is a ray cast on the CPU against the posed
-meshes of the visible layer; X-ray shells let the click through.
+meshes of the visible layer; X-ray shells let the click through. A
+see-through duct (the intake runners) gives way to a solid part inside it:
+when the nearest hit is such a duct's wall and a solid part is hit between
+that duct's near and far walls, the solid part is picked (the injector in
+its runner).
 
 For a duct the inspector also draws an oscilloscope: the pressure of the
 clicked cell (the cell nearest the click along the centreline) over one
@@ -655,8 +665,12 @@ stepper limits), Escape or a click elsewhere cancels it, and both hand the
 keyboard back to the engine controls. `resizeExhaustComponent` (exhaust
 library, no JUCE) writes the edit into the configuration: the component of
 the path's network or, on a path authored as scalar geometry, the scalar
-field behind it (the primaries share one size; a collector and an outlet
-have no length; a silencer is sized by its body). It refuses an edit that
+field behind it (the primaries share one size; a silencer is sized by its
+body). Every component's length can be edited: a merge, splitter, crossover
+or outlet takes 0 (no length) or 10 mm to 30 m, a pipe or silencer 10 mm to
+30 m; a scalar path whose component has no scalar length is turned into its
+network first. The inspector warns that an element under about 50 mm sets a
+short time step for the whole network. It refuses an edit that
 would change which components the path has (a silencer no wider than its
 pipes stops being one) and, on the only path, mirrors the geometry into
 `EngineConfig::exhaust`, which normalisation copies back and the solver
@@ -704,7 +718,15 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   film. The side panel's Telemetry tab has a *Fuel injection* section whose
   *Show in 3-D* button selects cylinder 1's injector
   (`EngineViewport::showInjectors`, back to the All layer if the current one
-  hides it);
+  hides it). The injector and the throttle body also offer the fuel system
+  as a `choice` (port injection, direct injection, carburettor:
+  `withFuelSystem()`, the designer's own sizing of the injectors, the
+  carburettor's venturi and jets, and a two-stroke's direct window; a
+  diesel refuses all but direct), and the airbox, the inlet duct and the
+  throttle body (its `secondChoice`, on a row of its own) the intake style
+  (airbox, pod filter, open trumpets: `withIntakeStyle()`, sized as the
+  designer does). Both restart the engine; the view then selects the
+  injector, or deselects when the intake's parts changed;
 - the fuel, on the combustion (`PartRole::combustion`): a `choice` among
   `parts/fuels.yaml` of the engine's kind (`loadFuelPresets`: properties,
   octane, latent heat) and the octane (cetane on a diesel), heating value,
@@ -733,7 +755,8 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 - the gearbox (`PartRole::gearbox`, drawn on every engine with two gears or
   more): the clutch shift time and the quickshifter's ignition cut in ms,
   and the shift style as a `choice` (manual, quickshifter, quickshifter and
-  blipper, dual clutch; see *Shift styles* in `simulation-model.md`). Its
+  blipper, dual clutch, CVT, automated manual; see *Shift styles* in
+  `simulation-model.md`). Its
   rows show the engaged gear, its ratio, the input shaft speed, the clutch
   slip and the road speed. A car's box sits in line behind the flywheel and
   its clutch disc, the layshaft below; a motorcycle's (vehicle under 500 kg)

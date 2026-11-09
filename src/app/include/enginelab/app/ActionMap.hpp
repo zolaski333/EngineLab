@@ -21,6 +21,7 @@ enum class AppAction : std::size_t {
     cruise,
     automaticGearbox,
     datalog,
+    engineBrake,
     count
 };
 

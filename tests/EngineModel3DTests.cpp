@@ -741,6 +741,8 @@ void checkSupercharger(const EngineModel3D& model) {
 }
 
 int silencersKept = 0;
+int lengthsGiven = 0;
+int injectorsBehindDucts = 0;
 
 /** Resizing a drawn exhaust component from the 3-D view changes that
     component, and only that, in the configuration the scene is drawn from. */
@@ -762,12 +764,35 @@ void checkExhaustResize(const EngineModel3D& model) {
             target = &duct;
             size = found;
         }
-        // A length on a component without one is refused, and changes nothing.
-        if (!found->lengthEditable) {
-            auto refused = config;
-            require(!resizeExhaustComponent(refused, duct.pathId, duct.elementId, 300.0, found->diameterMm).empty()
-                        && refused.exhaustPaths[0].geometry.primaryLengthMm == config.exhaustPaths[0].geometry.primaryLengthMm,
-                    name + ": a length on a collector or an outlet is refused");
+        require(found->lengthEditable, name + ": every exhaust component has a length to edit from the view");
+        // A collector or an outlet with no length takes one from the view (it
+        // could only be given one in the exhaust designer before), is drawn
+        // at it, and goes back to none at 0.
+        // A rotary's port passage is drawn as the port through its housing,
+        // whatever its length: not checked here.
+        if (found->lengthMm == 0.0 && config.cycle != EngineCycle::rotary
+            && (duct.componentType == ExhaustComponentType::merge || duct.componentType == ExhaustComponentType::outlet)) {
+            auto lengthened = config;
+            const auto error = resizeExhaustComponent(lengthened, duct.pathId, duct.elementId, 120.0, found->diameterMm);
+            require(error.empty(), name + ": a collector or an outlet with no length takes one (" + error + ")");
+            const auto invalid = validateEngineConfig(lengthened);
+            require(!invalid, name + ": the lengthened exhaust is valid (" + invalid.value_or("") + ")");
+            const auto after = exhaustComponentSize(lengthened, duct.pathId, duct.elementId);
+            require(after && std::abs(after->lengthMm - 120.0) < 1.0e-9, name + ": the length is the one asked");
+            const EngineModel3D redrawn(lengthened);
+            const auto drawn = std::any_of(redrawn.ducts().begin(), redrawn.ducts().end(), [&duct](const SceneDuct& item) {
+                return item.kind == DuctKind::exhaustComponent && item.pathId == duct.pathId
+                    && item.elementId == duct.elementId && std::abs(item.authoredLengthMm - 120.0F) < 0.5F;
+            });
+            require(drawn, name + ": the new length is drawn");
+            auto none = lengthened;
+            require(resizeExhaustComponent(none, duct.pathId, duct.elementId, 0.0, found->diameterMm).empty()
+                        && exhaustComponentSize(none, duct.pathId, duct.elementId)->lengthMm == 0.0,
+                    name + ": a length of 0 is none again");
+            auto tooShort = lengthened;
+            require(!resizeExhaustComponent(tooShort, duct.pathId, duct.elementId, 5.0, found->diameterMm).empty(),
+                    name + ": a length under 10 mm other than 0 is refused");
+            ++lengthsGiven;
         }
         // A silencer narrowed to its pipes would stop being one: refused.
         if (duct.componentType == ExhaustComponentType::muffler) {
@@ -869,6 +894,40 @@ void checkInjectors(const EngineModel3D& model) {
             require(dot(tip - probe.deckCentre, probe.axis) > 0.3F * bore, label + "a port injector sits out of the head");
             require(dot(aim, normalise(intake.inner - tip)) > 0.99F, label + "a port injector sprays at the intake valves");
             ++portInjectorsDrawn;
+        }
+        // A click on the injector picks it, even through the see-through
+        // runner it sits in: aimed at its body from six sides, with the
+        // intake's ducts in the way (the head's shell is not pickable in the
+        // X-ray view).
+        std::vector<SceneInstance> instances;
+        model.pose({}, instances);
+        Vec3 centre {};
+        const auto& vertices = model.parts()[part].mesh.vertices;
+        for (const auto& vertex : vertices) centre = centre + vertex.position;
+        centre = centre * (1.0F / static_cast<float>(std::max<std::size_t>(1U, vertices.size())));
+        // The see-through duct it sits in: its cylinder's runner.
+        const auto cylinderId = config.cylinders[c].id;
+        const auto flow = [&model, cylinderId](std::uint16_t p) {
+            return std::any_of(model.ducts().begin(), model.ducts().end(), [p, cylinderId](const SceneDuct& duct) {
+                return duct.part == p && duct.kind == DuctKind::intakeRunner && duct.elementId == cylinderId;
+            }) && model.parts()[p].material == SceneMaterial::intakeFlow;
+        };
+        for (const auto direction : { Vec3 { 1, 0, 0 }, Vec3 { -1, 0, 0 }, Vec3 { 0, 1, 0 }, Vec3 { 0, -1, 0 },
+                                      Vec3 { 0, 0, 1 }, Vec3 { 0, 0, -1 } }) {
+            const auto origin = centre - direction * 5'000.0F;
+            const auto hit = pickPart(model, instances, origin, direction,
+                [&](std::uint16_t p) { return p == part || flow(p); });
+            const auto duct = pickPart(model, instances, origin, direction, flow);
+            const auto injector = pickPart(model, instances, origin, direction, [part](std::uint16_t p) { return p == part; });
+            if (!injector) continue;
+            // The runner's far wall, from the other side.
+            const auto back = pickPart(model, instances, centre + direction * 5'000.0F, direction * -1.0F, flow);
+            const auto inside = duct && back && duct->distance < injector->distance
+                && 10'000.0F - back->distance > injector->distance;
+            if (!duct || inside) {
+                if (inside) ++injectorsBehindDucts;
+                require(hit && hit->part == part, label + "a click on the injector picks it, not the runner around it");
+            }
         }
     }
 }
@@ -1296,6 +1355,37 @@ void checkRotaryExhausts(const EngineCatalogLoadResult& catalogue) {
     checkRotaryExhaust(*designed.config);
 }
 
+/** A single has no collector: its turbo is drawn where the one primary ends,
+    where the simulator puts its turbine, and clicks as a turbocharger (it was
+    not drawn at all, so its settings could not be reached). */
+void checkSingleCylinderTurbo() {
+    EngineSpec spec;
+    spec.name = "Designed turbo single";
+    spec.use = EngineUse::roadMotorcycle;
+    spec.cylinderCount = 1;
+    spec.displacementLitres = 0.5;
+    spec.induction = Induction::turbocharged;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "a turbo single designs: " + designed.error);
+    const EngineModel3D model(*designed.config);
+    require(model.turbos().size() == 1U && model.turbo().placed, "a single's turbo is drawn");
+    const auto& turbo = model.turbo();
+    // The primary, the duct its port opens into, ends on the turbine's inlet.
+    const auto primary = std::find_if(model.ducts().begin(), model.ducts().end(), [&](const SceneDuct& duct) {
+        return duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::pipe
+            && duct.centreline.size() >= 2U && length(duct.centreline.front() - model.exhaustPorts().front().position) < 1.0F;
+    });
+    require(primary != model.ducts().end(), "the single's primary is drawn from its port");
+    require(!turbo.scroll.empty() && length(primary->centreline.back() - turbo.scroll.front()) < 2.0F,
+            "the single's primary ends on the turbine");
+    auto clickable = 0;
+    for (std::uint16_t part = 0; part < model.parts().size(); ++part)
+        if (model.identify(part).role == PartRole::turbo) ++clickable;
+    require(clickable > 0, "a click on the single's turbo names it");
+    const auto invalid = validateEngineConfig(*designed.config);
+    require(!invalid, "the turbo single is valid (" + invalid.value_or("") + ")");
+}
+
 void checkHPipeDrawing() {
     EngineSpec spec;
     spec.name = "Designed H-pipe V8";
@@ -1335,6 +1425,7 @@ void checkHPipeDrawing() {
 
 int main() {
     checkHPipeDrawing();
+    checkSingleCylinderTurbo();
     checkTubeContact();
     checkRouter();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
@@ -1350,6 +1441,7 @@ int main() {
         checkInjectors(EngineModel3D(other));
     }
     require(portInjectorsDrawn > 0 && directInjectorsDrawn > 0, "port and direct injectors are both checked");
+    require(injectorsBehindDucts > 0, "an injector behind a runner wall was clicked (else this proves nothing)");
     // A motorcycle's gearbox stands behind the crank, clear of every barrel:
     // behind a V's front bank stands its rear one (owner's report 2026-10-24,
     // a designed V's box inside its cylinders).
@@ -1519,6 +1611,7 @@ int main() {
             "every catalogue engine sounds from its drawn openings");
     require(inletDuctsChecked > 0, "an inlet duct's mouth was checked (else this proves nothing)");
     require(silencersKept > 0, "a scalar silencer narrowed to its outlet is refused");
+    require(lengthsGiven > 0, "a collector or an outlet with no length was given one");
     // Measured 2026-10-05: the four 140 mm pipes of the X of the LS3, which
     // must cross between the banks, the end primary of the I5, and the two
     // end primaries of the 2JZ, whose 430 mm cannot reach a collector they

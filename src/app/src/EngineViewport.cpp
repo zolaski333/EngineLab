@@ -1,5 +1,6 @@
 #include <enginelab/app/EngineViewport.hpp>
 #include <enginelab/app/FuelEditing.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
@@ -16,6 +17,7 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 
 namespace enginelab::ui {
@@ -543,32 +545,11 @@ namespace {
 } // namespace
 
 PartInspector::PartInspector() {
-    for (auto* button : { &resetEdit_, &rampEdit_, &choiceEdit_ }) addChildComponent(button);
+    for (auto* button : { &resetEdit_, &rampEdit_, &choiceEdit_, &secondChoiceEdit_ }) addChildComponent(button);
     // A click opens the list of options (it used to step to the next one, so
     // reaching the fourth gearbox meant three restyles of the running box).
-    choiceEdit_.onClick = [this] {
-        if (!edit_ || !edit_->choice || edit_->choice->options.empty()) return;
-        const auto& choice = *edit_->choice;
-        juce::PopupMenu menu;
-        for (std::size_t option = 0; option < choice.options.size(); ++option)
-            menu.addItem(static_cast<int>(option) + 1, choice.options[option], true,
-                         static_cast<int>(option) == choice.index);
-        const auto key = edit_->key;
-        menu.showMenuAsync(juce::PopupMenu::Options {}
-                               .withTargetComponent(&choiceEdit_)
-                               .withMinimumWidth(choiceEdit_.getWidth()),
-            [safe = juce::Component::SafePointer<PartInspector>(this), key](int result) {
-                if (safe == nullptr || result <= 0) return;
-                // The part may have changed while the menu was open.
-                if (!safe->edit_ || safe->edit_->key != key || !safe->edit_->choice) return;
-                auto& current = *safe->edit_->choice;
-                const auto picked = result - 1;
-                if (picked >= static_cast<int>(current.options.size()) || picked == current.index) return;
-                current.index = picked;
-                safe->choiceEdit_.setButtonText(choiceText(current));
-                if (safe->onChoice) safe->onChoice(picked);
-            });
-    };
+    choiceEdit_.onClick = [this] { openChoice(false); };
+    secondChoiceEdit_.onClick = [this] { openChoice(true); };
     rampEdit_.setTooltip("When the engine takes the change: at the next cycle, or gradually over "
                          + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s");
     const auto showRamp = [this] {
@@ -670,13 +651,18 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
     }
     resetEdit_.setVisible(edit_.has_value());
     rampEdit_.setVisible(edit_.has_value() && edit_->offersRamp);
-    choiceEdit_.setVisible(edit_.has_value() && edit_->choice.has_value() && !edit_->choice->options.empty());
-    if (edit_ && edit_->choice && !edit_->choice->options.empty()) {
-        auto& choice = *edit_->choice;
-        choice.index = std::clamp(choice.index, 0, static_cast<int>(choice.options.size()) - 1);
-        choiceEdit_.setButtonText(choiceText(choice));
-        choiceEdit_.setTooltip(choice.tooltip);
-    }
+    const auto showChoice = [this](std::optional<Edit::Choice>* choice, ActionButton& button) {
+        const auto shown = edit_.has_value() && choice->has_value() && !(*choice)->options.empty();
+        button.setVisible(shown);
+        if (!shown) return;
+        auto& current = **choice;
+        current.index = std::clamp(current.index, 0, static_cast<int>(current.options.size()) - 1);
+        button.setButtonText(choiceText(current));
+        button.setTooltip(current.tooltip);
+    };
+    std::optional<Edit::Choice> none;
+    showChoice(edit_ ? &edit_->choice : &none, choiceEdit_);
+    showChoice(edit_ ? &edit_->secondChoice : &none, secondChoiceEdit_);
     updateEditButtons();
     if (resize) setSize(getWidth(), idealHeight());
     resized();
@@ -730,11 +716,41 @@ void PartInspector::updateEditButtons() {
     repaint();
 }
 
+bool PartInspector::hasSecondChoice() const noexcept {
+    return edit_ && edit_->secondChoice && !edit_->secondChoice->options.empty();
+}
+
+void PartInspector::openChoice(bool second) {
+    if (!edit_) return;
+    auto& slot = second ? edit_->secondChoice : edit_->choice;
+    if (!slot || slot->options.empty()) return;
+    auto& button = second ? secondChoiceEdit_ : choiceEdit_;
+    juce::PopupMenu menu;
+    for (std::size_t option = 0; option < slot->options.size(); ++option)
+        menu.addItem(static_cast<int>(option) + 1, slot->options[option], true,
+                     static_cast<int>(option) == slot->index);
+    const auto key = edit_->key;
+    menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&button).withMinimumWidth(button.getWidth()),
+        [safe = juce::Component::SafePointer<PartInspector>(this), key, second](int result) {
+            if (safe == nullptr || result <= 0) return;
+            // The part may have changed while the menu was open.
+            if (!safe->edit_ || safe->edit_->key != key) return;
+            auto& current = second ? safe->edit_->secondChoice : safe->edit_->choice;
+            if (!current) return;
+            const auto picked = result - 1;
+            if (picked >= static_cast<int>(current->options.size()) || picked == current->index) return;
+            current->index = picked;
+            (second ? safe->secondChoiceEdit_ : safe->choiceEdit_).setButtonText(choiceText(*current));
+            const auto& callback = second ? safe->onSecondChoice : safe->onChoice;
+            if (callback) callback(picked);
+        });
+}
+
 int PartInspector::editHeight() const {
     if (!edit_) return 0;
     const auto width = static_cast<float>((getWidth() > 0 ? getWidth() : 280) - 24);
     auto height = inspectorEditHeader + inspectorEditRow * static_cast<int>(edit_->fields.size())
-        + inspectorEditButtons;
+        + inspectorEditButtons * (hasSecondChoice() ? 2 : 1);
     for (const auto* text : { &edit_->note, &editStatus_ })
         if (text->isNotEmpty())
             height += 4 + static_cast<int>(std::ceil(noteLayout(*text, colours::faint, width).getHeight()));
@@ -754,6 +770,8 @@ void PartInspector::resized() {
         downButtons_[index]->setBounds(row.removeFromRight(inspectorStepperWidth));
     }
     if (typing_ >= 0) valueEditor_.setBounds(valueArea(static_cast<std::size_t>(typing_)));
+    if (hasSecondChoice())
+        secondChoiceEdit_.setBounds(area.removeFromTop(inspectorEditButtons).withTrimmedTop(4).removeFromRight(160));
     auto buttons = area.removeFromTop(inspectorEditButtons).withTrimmedTop(4);
     resetEdit_.setBounds(buttons.removeFromRight(64));
     buttons.removeFromRight(6);
@@ -1137,6 +1155,7 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     inspector_.setUnits(&model_.units);
     inspector_.onApplyEdit = [this](const std::vector<double>& values, bool gradual) { applyEdit(values, gradual); };
     inspector_.onChoice = [this](int index) { applyPartChoice(index); };
+    inspector_.onSecondChoice = [this](int index) { applyPartChoice(index, true); };
     inspector_.onDoneTyping = [this] { if (onClaimKeyboard) onClaimKeyboard(); };
 
     addChildComponent(cutaway_);
@@ -1227,15 +1246,23 @@ void EngineViewport::applyPartEdit(const std::vector<double>& values) {
     }
 }
 
-void EngineViewport::applyPartChoice(int index) {
-    if (!scene_ || !configEditor_ || !partChoice_ || selectedPart_ < 0) return;
+void EngineViewport::applyPartChoice(int index, bool second) {
+    const auto& choose = second ? partSecondChoice_ : partChoice_;
+    if (!scene_ || !configEditor_ || !choose || selectedPart_ < 0) return;
     auto edited = scene_->config();
-    partChoice_(edited, index);
+    // A choice that cannot be made says why by throwing.
+    try {
+        choose(edited, index);
+    } catch (const std::exception& refused) {
+        inspector_.setEditStatus(juce::String::fromUTF8(refused.what()));
+        return;
+    }
     if (const auto invalid = validateEngineConfig(edited)) {
         inspector_.setEditStatus(juce::String::fromUTF8(invalid->c_str()));
         return;
     }
     reselect_ = partChoiceSelects_ ? Reselect { 0, 0, -1, partChoiceSelects_ } : Reselect { 0, 0, selectedPart_ };
+    if (partChoiceDeselects_) reselect_.reset();
     if (!configEditor_(edited)) {
         reselect_.reset();
         inspector_.setEditStatus("The engine did not take the edit.");
@@ -1656,7 +1683,9 @@ void EngineViewport::updateInspector() {
     std::optional<PartInspector::Edit> edit;
     partEditor_ = {};
     partChoice_ = {};
+    partSecondChoice_ = {};
     partChoiceSelects_.reset();
+    partChoiceDeselects_ = false;
     std::vector<PartInspector::Row> rows;
     const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
     // Bore and stroke are one engine-wide edit, offered on any cylinder.
@@ -1814,12 +1843,58 @@ void EngineViewport::updateInspector() {
             { "No turbo", "Turbo" },
             utf8("Fits a turbocharger sized for this engine, and restarts it: turbine ")
                 + juce::String(juce::roundToInt(sized.turbineFlowAreaMm2)) + utf8(" mm\xc2\xb2 on each exhaust path's "
-                "collector (at the outlets without one), ")
+                "collector (where the primary ends without one), ")
                 + juce::String(sized.pressureRatio - 1.0, 1) + utf8(" bar of boost from ")
                 + juce::String(juce::roundToInt(sized.fullBoostRpm)) + utf8(" rpm (a lower boost the higher the "
                 "compression). The ignition map stays the engine's own: a high-compression engine may knock at "
                 "boost. Or takes the turbo off."),
             forced.enabled ? 1 : 0 };
+    };
+
+    // The fuel system, a restart: refitted as the engine designer sizes it
+    // (withFuelSystem). A diesel keeps its direct injection. Into the first
+    // or the second choice.
+    const auto fuelSystemChoice = [this, &config](bool second) -> std::optional<PartInspector::Edit::Choice> {
+        if (!parts_ || config.fuel == FuelType::diesel) return std::nullopt;
+        static constexpr std::array systems { FuelSystem::portInjection, FuelSystem::directInjection,
+                                              FuelSystem::carburettor };
+        const auto current = fuelSystemOf(config);
+        (second ? partSecondChoice_ : partChoice_) = [this](EngineConfig& edited, int index) {
+            const auto system = systems[static_cast<std::size_t>(std::clamp(index, 0, 2))];
+            auto refit = withFuelSystem(edited, system, *parts_);
+            if (!refit.config) throw std::runtime_error(refit.error);
+            edited = std::move(*refit.config);
+            // The injector comes back as the one selected; a carburettor
+            // has none, and nothing stays selected.
+            partChoiceSelects_ = render::PartRole::injector;
+        };
+        return PartInspector::Edit::Choice {
+            { "Port injection", "Direct injection", "Carburettor" },
+            utf8("The fuel system, refitted as the engine designer sizes it for this engine and its fuel, and the "
+                 "engine restarts: injectors in the ports, petrol injected into the cylinder on the intake stroke, "
+                 "or a carburettor on every intake path with its jets sized for the engine (hand jetting is lost). "
+                 "The ignition map and its knock limit stay the old system's: direct injection's cooler charge "
+                 "knocks later, so there may be advance to find."),
+            static_cast<int>(std::find(systems.begin(), systems.end(), current) - systems.begin()) };
+    };
+    // What the throttle breathes from, a restart: an airbox as the designer
+    // sizes it, a pod filter, or open trumpets (withIntakeStyle).
+    const auto intakeStyleChoice = [this, &config](bool second) -> std::optional<PartInspector::Edit::Choice> {
+        static constexpr std::array styles { IntakeStyle::airbox, IntakeStyle::podFilter, IntakeStyle::velocityStacks };
+        const auto current = intakeStyleOf(config);
+        (second ? partSecondChoice_ : partChoice_) = [this](EngineConfig& edited, int index) {
+            auto refit = withIntakeStyle(edited, styles[static_cast<std::size_t>(std::clamp(index, 0, 2))]);
+            if (!refit.config) throw std::runtime_error(refit.error);
+            edited = std::move(*refit.config);
+            // The airbox comes or goes: the part indices move.
+            partChoiceDeselects_ = true;
+        };
+        return PartInspector::Edit::Choice {
+            { "Airbox", "Pod filter", "Open trumpets" },
+            utf8("What the throttle breathes from, and the engine restarts: an airbox sized as the engine designer "
+                 "sizes it (a motorcycle's under the tank, a car's with its snorkel), a filter element alone on "
+                 "the mouth, or open trumpets with no filter (the loud one). Every intake path changes."),
+            static_cast<int>(std::find(styles.begin(), styles.end(), current) - styles.begin()) };
     };
 
     // Joins the next exhaust path into `pathId`'s, a restart: a boxer six's
@@ -2221,6 +2296,7 @@ void EngineViewport::updateInspector() {
         const auto direct = config.injection.mode == InjectionMode::direct;
         title = "Injector";
         edit = injectorEdit();
+        if (edit) edit->choice = fuelSystemChoice(false);
         add("Injection", direct ? "Direct" : "Port");
         add("Window", juce::String(juce::roundToInt(config.injection.startAngleDegrees)) + utf8("° to ")
                           + juce::String(juce::roundToInt(config.injection.endAngleDegrees)) + utf8("°"));
@@ -2408,6 +2484,7 @@ void EngineViewport::updateInspector() {
         title = "Gearbox";
         const auto style = transmission.shiftStyle;
         subtitle = style == ShiftStyle::dualClutch ? juce::String("Dual clutch")
+            : style == ShiftStyle::automatedManual ? juce::String("Automated manual, one clutch")
             : style == ShiftStyle::cvt ? juce::String(transmission.centrifugalClutch
                 ? "CVT, centrifugal clutch" : "CVT, wet start clutch")
             : style == ShiftStyle::manual ? juce::String("Manual, clutch and lift")
@@ -2449,32 +2526,38 @@ void EngineViewport::updateInspector() {
                 edit->value("Gear " + juce::String(index + 1),
                             transmission.gearRatios[static_cast<std::size_t>(index)], utf8(" : 1"), 3, 0.05, 0.005,
                             0.05, 10.0);
-            edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over). "
+            edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over, an "
+                         "automated manual's torque gap). "
                          "Ignition cut: the quickshifter's, on the way up. Ratios: input over output, the final "
                          "drive multiplies each; the next gear must be taller (a smaller ratio). Clutch capacity: "
                          "the most torque the engaged clutch carries before it slips (hot, it carries less). The "
                          "running engine takes them, in the gear it is in.";
             const auto index = style == ShiftStyle::manual ? 0 : style == ShiftStyle::dualClutch ? 3
                 : style == ShiftStyle::cvt ? (transmission.centrifugalClutch ? 5 : 4)
+                : style == ShiftStyle::automatedManual ? 6
                 : transmission.autoBlipper ? 2 : 1;
             edit->choice = PartInspector::Edit::Choice {
-                { "Manual", "Quickshifter", "QS + blipper", "Dual clutch", "CVT", "CVT, scooter" },
+                { "Manual", "Quickshifter", "QS + blipper", "Dual clutch", "CVT", "CVT, scooter",
+                  "Automated manual" },
                 "How a gear change is made. Manual: the clutch dips and the throttle lifts. Quickshifter: a "
                 "sequential box, clutch left in, the ignition cut while the dogs change on the way up. "
                 "QS + blipper: the same, and the throttle blipped to the lower gear's speed on the way down. "
                 "Dual clutch: one clutch hands the drive to the other with no gap, and blips down. "
                 "CVT: a belt variator between the first and the last gear's ratios, holding the engine at a "
                 "speed set by the pedal; it starts on a wet clutch that creeps (CVT) or a centrifugal one that "
-                "idles free (CVT, scooter).",
+                "idles free (CVT, scooter). Automated manual: one clutch, worked for you (no pedal); an "
+                "upshift opens it and cuts the torque for the Clutch shift time, so the drive pauses, and "
+                "it blips down.",
                 index };
             partChoice_ = [](EngineConfig& edited, int choice) {
                 auto& box = edited.transmission;
                 box.shiftStyle = choice == 0 ? ShiftStyle::manual
                     : choice == 3 ? ShiftStyle::dualClutch
-                    : choice >= 4 ? ShiftStyle::cvt : ShiftStyle::sequential;
+                    : choice == 4 || choice == 5 ? ShiftStyle::cvt
+                    : choice == 6 ? ShiftStyle::automatedManual : ShiftStyle::sequential;
                 if (choice == 1 || choice == 2) box.quickshifter = true;
                 if (choice >= 1 && choice <= 3) box.autoBlipper = choice != 1;
-                if (choice >= 4) box.centrifugalClutch = choice == 5;
+                if (choice == 4 || choice == 5) box.centrifugalClutch = choice == 5;
             };
             partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
                 const auto shiftMs = values[0];
@@ -2522,10 +2605,21 @@ void EngineViewport::updateInspector() {
             if (const auto size = exhaustComponentSize(config, duct.pathId, duct.elementId)) {
                 edit = PartInspector::Edit {};
                 edit->key = (static_cast<std::uint64_t>(duct.pathId) << 32U) | duct.elementId;
-                edit->length("Length", size->lengthMm).editable = size->lengthEditable;
+                // A collector, splitter, crossover or outlet at 0 has no
+                // length: a junction lumped where the pipes meet, an open end.
+                const auto type = duct.componentType;
+                const auto mayHaveNone = type == ExhaustComponentType::merge || type == ExhaustComponentType::splitter
+                    || type == ExhaustComponentType::crossover || type == ExhaustComponentType::outlet;
+                edit->length("Length", size->lengthMm, 10.0, 1.0, mayHaveNone ? 0.0 : 10.0, 30'000.0).editable
+                    = size->lengthEditable;
                 edit->length("Diameter", size->diameterMm, 1.0, 0.1, 10.0, 400.0);
+                edit->note = mayHaveNone ? "Length 0: no length, the pipes meet at a point (an outlet is then the "
+                                           "open end of the pipe before it). "
+                                         : "";
+                edit->note += "The shortest element sets the time step of the whole exhaust: one under about "
+                              "50 mm can take the engine below real time.";
                 if (size->sharedByPrimaries)
-                    edit->note = "The configuration gives the primaries of a path one size: all of them change.";
+                    edit->note += " The configuration gives the primaries of a path one size: all of them change.";
                 edit->choice = turboChoice();
             }
         }
@@ -2613,7 +2707,22 @@ void EngineViewport::updateInspector() {
                             if (error = tuneCarburettor(edited, path.id, tuned); !error.empty()) return error;
                     return error;
                 };
+                // The throttle body carries the fuel system (it is the
+                // carburettor, when there is one) and what it breathes from
+                // (a pod filter or trumpets are drawn on its mouth).
+                if (part == IntakePart::throttle) {
+                    edit->choice = fuelSystemChoice(false);
+                    edit->secondChoice = intakeStyleChoice(true);
+                }
             }
+        }
+        if ((duct.kind == render::DuctKind::intakeAirbox || duct.kind == render::DuctKind::intakeInletDuct)
+            && configEditor_) {
+            edit = PartInspector::Edit {};
+            edit->key = (std::uint64_t { 14 } << 60U) | (static_cast<std::uint64_t>(duct.pathId) << 32U);
+            edit->heading = "INTAKE";
+            edit->restarts = true;
+            edit->choice = intakeStyleChoice(false);
         }
         subtitle = (exhaust ? "Exhaust path " : "Intake path ") + juce::String(duct.pathId);
         if (duct.kind == render::DuctKind::intakeRunner) subtitle = cylinderName;

@@ -677,10 +677,14 @@ on a street conversion: 0.5 bar from 10.5:1, 0.7 from 9.5:1, 0.9 below, 1.3 on
 a diesel. The engine keeps its own ignition map, so a high-compression engine
 may knock at boost. The 3-D view's inspector fits it (or takes it off) from any
 exhaust component or from the turbo, and the engine restarts. Every engine
-with a collector gets the turbine face described above, one per path. An
-engine without one (the LS3's X-pipe, the Big Twin's two pipes) falls back to
-the older outlet model, whose shaft work is overstated, and the view does not
-draw it.
+with a collector gets the turbine face described above, one per path. A path
+with no junction (a single, the Big Twin's two pipes) gets it on the face out
+of the one pipe its ports open into, and the view bolts the turbo there. An
+engine with neither (the LS3's X-pipe) falls back to the older outlet model,
+whose shaft work is overstated, and the view does not draw it. A turbine fed
+by one cylinder takes each blowdown whole, so its wastegate is sized at 3.0
+times the turbine area instead of 1.5 (a designed 0.5 L single held its gate
+fully open and read 2.2 for 1.56 at 1.5 times).
 
 ## Exhaust
 
@@ -839,6 +843,13 @@ edit, taken live.
   measured). A downshift that would land the engine above the active rev
   limit goes only as far as the lowest gear that does not; a manual or
   sequential box lets the driver over-rev.
+- `automated_manual`: one clutch the gearbox works itself (an AMT: a
+  Selespeed, an SMG, a truck's). It has the dual clutch's own launch clutch,
+  creep and over-rev protection, and no pedal, but its upshift is the manual
+  way: the torque cut and the clutch opened over `shift_duration_s`, a gap in
+  the drive, then the torque back with the slip. No ignition cut, no retard.
+  A downshift is blipped as above. The shift time is the gearbox's; the
+  truck part's 0.8 s is an estimate, not a unit's figure.
 
 Whatever the style, a shift started with the driver's clutch held out (pedal
 below half) is the driver's own: the gear changes at once and no device
@@ -846,6 +857,33 @@ below half) is the driver's own: the gear changes at once and no device
 ends the blip.
 
 There is no dog-box engagement noise and no torque converter.
+
+### Engine brake (compression release)
+
+`engine_brake` (`EngineBrakeConfig`), which the designer fits to a truck's
+four-stroke only, is a Jacobs-type brake. With its switch on (stage k of
+`stage_count` brakes the first round(k x N / stage_count) cylinders), the
+pedal under 2 % (`engineBrakeMaximumThrottle`), the ignition on and the
+starter off, it holds above `minimum_rpm` and takes hold again 100 rpm above
+it. A braking cylinder takes no fuel, and its exhaust valve gets an extra
+lift, a cos^2 bump of `valve_lift_mm` peaking `peak_after_tdc_deg` from
+firing TDC over `duration_deg`, added to the cam's in the gas solver
+(`engineBrakeLiftMm`). Real brakes open one valve: the lift is divided by the
+valve count so the curtain area is one valve's. The compressed charge blows
+down into the exhaust near TDC instead of returning its work on the
+expansion stroke. That drag and its sound are the solver's own: nothing is
+added to the torque or the audio. The runtime passes the switch through
+only with the clutch at 0.9 or more and no shift under way (a real brake's
+clutch switch, and an AMT's release for the shift). The dyno ignores it.
+
+The designer's brake has a 2.0 mm lift (production brakes: about 1-2 mm),
+peaks at TDC (published: maximum lift near TDC), lasts 80 deg (estimated),
+lets go at max(1,000 rpm, idle + 400), and has three stages (Jacobs' switch:
+a six's 2, 4, 6). `EngineLab.EngineBrake` checks a designed 13 L six's brake
+at 2,100 rpm against a production brake's ~32 kW/L (416 kW on a 13 L, Jacobs)
+within 0.5-1.5 x (journal 2026-11-09). Not modelled: the valve train's
+compliance, the brake's oil-pressure delay on engagement, and an exhaust
+brake (a throttle in the exhaust).
 
 ### Automatic shifting
 
@@ -900,7 +938,8 @@ pedals and the driveline's own devices become engine commands. Each public
 frame, `advanceVehicle()` gives the driveline the clutch the arbiter chooses
 (the driver's pedal; a dual clutch ignores it), advances it on the previous frame's engine state,
 then sets the engine throttle to `max(driver x torque cut, blip)` and passes a
-quickshifter's ignition cut through. It also records who held the throttle
+quickshifter's ignition cut through, and the engine brake's switch while the
+clutch is in and no shift is under way. It also records who held the throttle
 (`driver`, `shiftTorqueCut` or `blipper`). `EngineRuntime`, `EngineLab.ShiftStyle`
 and the shift, loaded-acceleration, afterfire and drive-scenario harnesses all
 step the vehicle through it, so they cannot drift from the product. The dyno

@@ -73,6 +73,13 @@ struct UseProfile final {
     case EngineUse::aircraft:
         return { 15.0, 700.0, 0.85, 250.0, 256.0, 108.0, 110.0, 0.25, 0.74, 0.07, 0.14, 0.0, 2, 0.11, false, false,
             98.0, 1.45, 1.7, "aircraft_manifold", "aircraft_direct", "test_stand", "continuous_manifold" };
+    case EngineUse::truck:
+        // A heavy-duty engine: 11.5 m/s at the governor (a 13 L six's
+        // 158 mm stroke at 2,200 rpm), idle 600, boost 2.8 (estimated: 2.5-3.2
+        // on Euro VI 13 L engines). A diesel takes its own cams, bore/stroke,
+        // piston density, inertia and friction whatever these say.
+        return { 11.5, 600.0, 0.85, 236.0, 240.0, 112.0, 114.0, 0.27, 0.96, 0.135, 0.16, 0.0, 2, 0.18, false, false,
+            98.0, 1.45, 2.8, "turbo_downpipe", "truck_12_speed_automated", "truck_tractor", "sequential_port" };
     }
     throw std::invalid_argument("Unknown engine use");
 }
@@ -399,6 +406,296 @@ struct ExhaustPlan final {
     return 0.5 * (low + high);
 }
 
+/** What sizing a fuel system needs to know of the engine. */
+struct FuelSizing final {
+    bool twoStroke {};
+    bool diesel {};
+    bool rotary {};
+    double litres {};
+    double count {};
+    double peakPowerRpm {};
+    double boost { 1.0 };
+    double cycleDegrees { 720.0 };
+    /** The fuel's stoichiometric ratio over petrol's 14.7: 1 in the designer. */
+    double airFuelScale { 1.0 };
+};
+
+/** What the throttle breathes from (the designer's intake style). */
+void fitIntakeStyle(IntakeConfig& intake, IntakeStyle style, bool motorcycle, bool noAirbox, double litres,
+    Derivation& derive, std::vector<DesignValue>& values) {
+    switch (style) {
+    case IntakeStyle::automatic:
+    case IntakeStyle::airbox:
+        intake.airboxVolumeLitres = derive("airbox_volume_l", "Airbox", "L",
+            noAirbox ? 0.0
+                : motorcycle ? std::clamp(2.5 * litres, 3.0, 10.0) : 4.0 + 0.5 * litres,
+            motorcycle ? "2.5 x litres, 3-10 L" : "4 L + 0.5 x litres");
+        // A car's box breathes through a snorkel: the catalogue's run
+        // 200-400 mm at 1.35 times the throttles' area (1.1-1.56), with a
+        // lip 1.17 times their bore. Without one the box breathed through
+        // a hole of the throttle's bore. A motorcycle's box opens straight
+        // under the tank: its mouth is the bores' combined area.
+        if (intake.airboxVolumeLitres > 0.0) {
+            const auto snorkel = !motorcycle;
+            const auto boresMm = intake.throttleDiameterMm
+                * std::sqrt(static_cast<double>(std::max(1U, intake.throttleCount)));
+            intake.inletDuctLengthMm = derive("inlet_duct_length_mm", "Airbox snorkel length", "mm",
+                snorkel ? 250.0 : 0.0, snorkel ? "the catalogue cars' (200-400 mm)"
+                    : "none: a motorcycle's box opens under the tank");
+            intake.inletDuctDiameterMm = derive("inlet_duct_diameter_mm", "Airbox snorkel bore", "mm",
+                snorkel ? 1.16 * boresMm : 0.0, snorkel ? "1.35 x the throttles' area, the catalogue cars'"
+                    : "none: the bores' combined area");
+            intake.bellmouthDiameterMm = derive("bellmouth_diameter_mm", "Mouth lip", "mm",
+                snorkel ? 1.17 * intake.inletDuctDiameterMm : 0.0,
+                snorkel ? "1.17 x the snorkel's bore, the catalogue cars'" : "none: the bores' combined area");
+        }
+        break;
+    case IntakeStyle::podFilter:
+        intake.airboxVolumeLitres = 0.0;
+        intake.podFilter = true;
+        values.push_back({ "intake_style", "Intake", "", 0.0, false,
+            "a pod filter on the throttle: the element with no housing", false });
+        break;
+    case IntakeStyle::velocityStacks:
+        intake.airboxVolumeLitres = 0.0;
+        // A trumpet's lip flares to about 1.5 times its bore, which is
+        // what keeps the inflow attached (Blair's bellmouth). The intake
+        // radiates through one mouth, so several trumpets are one lip of
+        // their combined area.
+        intake.bellmouthDiameterMm = derive("bellmouth_diameter_mm", "Bellmouth lip", "mm",
+            1.5 * intake.throttleDiameterMm * std::sqrt(static_cast<double>(std::max(1U, intake.throttleCount))),
+            "1.5 x the throttle bore, over all the bores' area");
+        values.push_back({ "intake_style", "Intake", "", 0.0, false,
+            "an open trumpet on the throttle: no filter", false });
+        break;
+    }
+}
+
+/** A carburettor's venturi and jets, sized for the engine's air. */
+void sizeCarburettor(IntakeConfig& intake, const EngineConfig& config, const FuelSizing& sizing,
+    Derivation& derive) {
+    const auto twoStroke = sizing.twoStroke;
+    const auto litres = sizing.litres;
+    const auto countD = sizing.count;
+    const auto peakPowerRpm = sizing.peakPowerRpm;
+    // A carburettor's jets are sized the way a tuner sizes them and
+    // not copied from one engine: from the fuel the engine needs at
+    // each end of its range, and the head available to push it through
+    // at that point. A jet's stamped number is its flow under one
+    // metre of fuel, and flow goes as the square root of the head, so
+    // a number is the fuel wanted divided by the square root of the
+    // head there.
+    //
+    // On an RD350-sized design the arithmetic returns a 287 main and a
+    // 41 pilot. The bike runs 260-290 and 30-40, which is the only
+    // check that matters: neither number was fitted to it.
+    auto& carburettor = intake.carburettor;
+    carburettor.enabled = true;
+    const auto bores = std::max(1.0, static_cast<double>(intake.throttleCount));
+    // One crankcase circuit per cylinder, so a two-stroke's bores
+    // swallow one cylinder, however they were sized; a four-stroke's
+    // share the plenum and the whole engine's air.
+    const auto displacementPerBoreM3 = twoStroke ? litres * 0.001 / std::max(1.0, countD)
+        : litres * 0.001;
+    const auto fuelDensityKgPerM3 = std::max(1.0,
+        config.fuelProperties.densityKgPerL * 1'000.0);
+    constexpr double ambientDensityKgPerM3 = 1.2;
+    constexpr double gravityMPerS2 = 9.80665;
+    // A two-stroke delivers about 0.85 of its swept volume at peak
+    // power, a four-stroke fills about 0.90 every other turn.
+    const auto wotAirKgPerSecond = twoStroke
+        ? displacementPerBoreM3 * 0.85 * (peakPowerRpm / 60.0) * ambientDensityKgPerM3
+        : displacementPerBoreM3 * 0.90 * (peakPowerRpm / 120.0) * ambientDensityKgPerM3;
+    // A slide carburettor's venturi is about 0.8 of its nominal bore.
+    // A car's is sized for its signal instead: Holley rates a
+    // carburettor's flow at 1.5 inHg (5.1 kPa) of venturi depression,
+    // and one sized to reach that at peak power still meters at low
+    // speed, where a throttle-body-sized throat (2 kPa at peak) left
+    // the main jet under its own lift up to 900 rpm, and the engine
+    // stalled on opening.
+    auto throatM = 0.80 * intake.throttleDiameterMm * 0.001;
+    if (!twoStroke) {
+        constexpr double ratedDepressionPa = 5'080.0;
+        const auto ratedVelocityMps = std::sqrt(2.0 * ratedDepressionPa / ambientDensityKgPerM3);
+        const auto venturiAreaM2 = wotAirKgPerSecond / (ambientDensityKgPerM3 * ratedVelocityMps) / bores;
+        carburettor.venturiDiameterMm = derive("carb_venturi_mm", "Venturi", "mm",
+            std::sqrt(4.0 * venturiAreaM2 / std::numbers::pi) * 1'000.0,
+            "5.1 kPa (Holley's 1.5 inHg) of depression at peak power, per bore");
+        throatM = carburettor.venturiDiameterMm * 0.001;
+        // A venturi sized for its signal is a car's fixed one, with
+        // a butterfly and no needle: a slide's taper, which holds the
+        // main jet to a quarter of its area at a fifth of the travel,
+        // left a 2-litre four at lambda 1.7-3.6 after a part-throttle
+        // opening from idle, and it stalled.
+        carburettor.fixedVenturi = true;
+        // Weber's 32/36 DGV pumps about 0.5 cc a stroke on a 2-litre.
+        carburettor.acceleratorPumpStrokeCc = derive("carb_pump_stroke_cc", "Accelerator pump", "cc",
+            0.25 * litres / bores, "0.25 cc per litre a full stroke, per bore");
+    }
+    const auto throatAreaM2 = 0.25 * std::numbers::pi * throatM * throatM * bores;
+    const auto jetNumberFor = [&](double fuelKgPerSecond, double headM) {
+        if (!(fuelKgPerSecond > 0.0) || !(headM > 0.0)) return 0.0;
+        const auto ccPerMinute = fuelKgPerSecond / fuelDensityKgPerM3
+            * 60.0 * 1.0e6;
+        return ccPerMinute / std::sqrt(headM);
+    };
+
+    // Main circuit, at peak power: the depression is the venturi's own,
+    // from the velocity the air has to have to get through the throat.
+    const auto throatVelocityMps = throatAreaM2 > 0.0
+        ? wotAirKgPerSecond / (ambientDensityKgPerM3 * throatAreaM2) : 0.0;
+    const auto wotDepressionPa = 0.5 * ambientDensityKgPerM3
+        * throatVelocityMps * throatVelocityMps;
+    const auto wotHeadM = wotDepressionPa
+        / (fuelDensityKgPerM3 * gravityMPerS2);
+    // A two-stroke runs its full load rich: the surplus fuel is what
+    // cools the piston and carries the oil. A four-stroke's best power
+    // is as rich, 12.5-13.
+    constexpr double fullLoadAirFuelRatio = 12.8;
+    // The hole a Dellorto or Keihin jet of that flow is stamped with.
+    const auto holeOf = [&carburettor](double flowNumber) {
+        return " (a " + std::to_string(static_cast<int>(std::lround(
+            jetHoleHundredthsMm(flowNumber, carburettor.jetDischargeCoefficient)))) + " hole)";
+    };
+    // Each bore has its own jets and meters its share of the air.
+    const auto mainJetFlow = std::clamp(
+        jetNumberFor(wotAirKgPerSecond / (fullLoadAirFuelRatio * sizing.airFuelScale) / bores, wotHeadM), 20.0, 20'000.0);
+    carburettor.mainJetFlowNumber = derive("carb_main_jet_flow", "Main jet", "cc/min", mainJetFlow,
+        "the fuel peak power needs at AFR 12.8, over the root of the venturi head there"
+            + holeOf(mainJetFlow));
+
+    // Pilot circuit, at idle: the depression is the whole drop from the
+    // float bowl to a crankcase pumping about 20 kPa below ambient.
+    // The air it meters for is what the idle air path passes at that
+    // drop, the closed-slide leak and the bypass at the governor's
+    // neutral opening; the pilot then follows that path as it opens.
+    // Sized instead for a delivery ratio of 0.35 at idle, about three
+    // times what a two-stroke idles on, it fed a 350 cc twin AFR ~7
+    // and the twin flooded (journal 2026-10-23).
+    // A four-stroke's manifold idles near 35 kPa, 65 below ambient,
+    // and the air across the plates is then choked (35 / 101 is under
+    // the critical 0.53): its flow is the sonic one, not the
+    // incompressible one the crankcase's mild drop allows.
+    const auto idleCrankcaseDropPa = twoStroke ? 20'000.0 : 65'000.0;
+    const auto idleAirAreaM2 = (intake.closedThrottleLeakageAreaMm2 * bores
+        + intake.idleBypassAreaMm2 * carburettorPilotSizingIdleOpening) * 1.0e-6;
+    constexpr double ambientPressurePa = 101'325.0;
+    constexpr double airGamma = 1.4;
+    const auto chokedAirKgPerSecondPerM2 = ambientDensityKgPerM3
+        * std::sqrt(airGamma * ambientPressurePa / ambientDensityKgPerM3)
+        * std::pow(2.0 / (airGamma + 1.0), (airGamma + 1.0) / (2.0 * (airGamma - 1.0)));
+    const auto idleAirKgPerSecond = intake.throttleDischargeCoefficient * idleAirAreaM2
+        * (twoStroke ? std::sqrt(2.0 * ambientDensityKgPerM3 * idleCrankcaseDropPa)
+                     : chokedAirKgPerSecondPerM2);
+    const auto idleHeadM = idleCrankcaseDropPa
+        / (fuelDensityKgPerM3 * gravityMPerS2);
+    constexpr double idleAirFuelRatio = 13.5;
+    // What reaches the engine is the jet throttled by everything after
+    // it, so the jet itself has to be the larger by that factor.
+    const auto pilotCircuitFactor = std::max(0.01,
+        carburettor.pilotCircuitFactor);
+    const auto pilotJetFlow = std::clamp(jetNumberFor(idleAirKgPerSecond / (idleAirFuelRatio * sizing.airFuelScale) / bores,
+        idleHeadM) / pilotCircuitFactor, 5.0, 5'000.0);
+    carburettor.pilotJetFlowNumber = derive("carb_pilot_jet_flow", "Pilot jet", "cc/min", pilotJetFlow,
+        std::string("the fuel the idle needs at AFR 13.5, over the root of the ")
+            + (twoStroke ? "crankcase" : "manifold") + " head, divided by the circuit's own restriction"
+            + holeOf(pilotJetFlow));
+    if (!twoStroke) {
+        // A four-stroke cranks with its start aid's extra air in, and
+        // that air into a small manifold leaves little depression for
+        // the pilot: a 750 cc four on four bores cranked at 75 kPa,
+        // lambda 1.6-7, and never fired. Its enrichener is what a
+        // real one starts on: a jet that runs the start aid's own air
+        // at AFR 8 on the pilot's head. A choke's AFR 4 flooded a
+        // warm 2-litre at AFR 6.8 once it ran with the aid still open.
+        constexpr double starterAirFuelRatio = 8.0;
+        const auto starterAirKgPerSecond = intake.throttleDischargeCoefficient
+            * intake.idleBypassAreaMm2 * 1.0e-6 * carburettorPilotSizingIdleOpening
+            * chokedAirKgPerSecondPerM2;
+        const auto starterJetFlow = std::clamp(jetNumberFor(
+            starterAirKgPerSecond / (starterAirFuelRatio * sizing.airFuelScale) / bores, idleHeadM), 0.5, 5'000.0);
+        carburettor.starterJetFlowNumber = derive("carb_starter_jet_flow", "Starter jet", "cc/min",
+            starterJetFlow, "the start aid's air at AFR 8, over the root of the manifold head"
+                + holeOf(starterJetFlow));
+    }
+}
+
+/** The injection system: the part, its window and the injectors' size. */
+void fitInjection(EngineConfig& config, FuelSystem fuelSystem, const FuelSizing& sizing, const PartsLibrary& parts,
+    const char* portPart, Derivation& derive) {
+    const auto twoStroke = sizing.twoStroke;
+    const auto diesel = sizing.diesel;
+    const auto rotary = sizing.rotary;
+    const auto litres = sizing.litres;
+    const auto countD = sizing.count;
+    const auto boost = sizing.boost;
+    const auto cycleDegrees = sizing.cycleDegrees;
+    const auto carburetted = fuelSystem == FuelSystem::carburettor;
+    if (twoStroke) {
+        auto& injection = config.injection;
+        injection.mode = InjectionMode::port;
+        injection.startAngleDegrees = 250.0;
+        injection.endAngleDegrees = 355.0;
+        injection.injectorFlowMgPerSecond = 9'000.0;
+        injection.railPressureBar = 3.0;
+        injection.referencePressureBar = 3.0;
+        injection.wallFilmFraction = 0.10;
+        injection.vaporisationTimeConstantSeconds = 0.020;
+        injection.portChargeCoolingEfficiency = 0.30;
+    } else if (diesel) {
+        config.injection = part(parts.injections, "common_rail_diesel");
+    } else if (fuelSystem == FuelSystem::directInjection) {
+        // Petrol injected into the cylinder for a homogeneous charge: on
+        // the intake stroke, from about 300 deg before firing TDC, so the
+        // spray has the intake's turbulence and the compression to mix
+        // (Zhao, Lai and Harrington 1999). The part's own window, late in
+        // compression, is the stratified lean-burn one, which needs a
+        // spray-guided cloud the zero-dimensional charge does not hold.
+        // A rotary's strokes are 270 deg: the same window, half as long
+        // again (the 16X's direct injection, into the intake stroke).
+        config.injection = part(parts.injections, "direct_injection");
+        config.injection.startAngleDegrees = derive("injection_start_deg", "Injection starts", "deg ATDC",
+            rotary ? 630.0 : 420.0, rotary ? "on the intake stroke, 450 deg before firing TDC: a homogeneous charge"
+                : "on the intake stroke, 300 deg before firing TDC: a homogeneous charge");
+        config.injection.endAngleDegrees = derive("injection_end_deg", "Injection window ends", "deg ATDC",
+            rotary ? 900.0 : 600.0, rotary ? "180 deg before firing TDC, early in compression"
+                : "120 deg before firing TDC, early in compression");
+    } else {
+        config.injection = part(parts.injections, portPart);
+        if (rotary) {
+            // Onto the closed port ahead of its opening near 543 deg,
+            // ending before it shuts: the catalogue 13B's window.
+            config.injection.startAngleDegrees = 400.0;
+            config.injection.endAngleDegrees = 860.0;
+        }
+    }
+    if (twoStroke && fuelSystem == FuelSystem::directInjection) {
+        // Into the cylinder once the piston has shut the exhaust port, so
+        // none of it short-circuits into the pipe: the reason a two-stroke
+        // is injected directly at all. The window follows the port.
+        config.injection = part(parts.injections, "direct_injection");
+        config.injection.mode = InjectionMode::direct;
+    }
+    // Rich full-load air flow at 1.1 x displacement and the boost, at the
+    // redline; each injector at most 80 % open. A direct injector meters
+    // only inside its window, which is a share of the cycle: a diesel's
+    // 94 deg sized as if open the whole cycle held a 193 L marine six to
+    // 1.7 g a stroke, lambda 3.0 at 3.0 bar (journal 2026-10-30).
+    const auto airKgPerSecond = 1.18 * litres * 1.0e-3 * config.redlineRpm / (twoStroke ? 60.0 : 120.0) * 1.1 * boost;
+    const auto fuelMgPerSecond = airKgPerSecond / ((diesel ? 18.0 : 12.0) * sizing.airFuelScale) * 1.0e6;
+    const auto directWindow = diesel || fuelSystem == FuelSystem::directInjection
+        ? (twoStroke && !diesel ? 70.0 : std::fmod(config.injection.endAngleDegrees
+            - config.injection.startAngleDegrees + cycleDegrees, cycleDegrees)) / cycleDegrees
+        : 1.0;
+    if (!(directWindow > 0.0))
+        throw std::invalid_argument("The injection window ends where it starts");
+    const auto injectorFlow = std::max(config.injection.injectorFlowMgPerSecond,
+        fuelMgPerSecond / countD / 0.8 / directWindow);
+    config.injection.injectorFlowMgPerSecond = twoStroke || carburetted ? injectorFlow
+        : derive("injector_flow_mg_s", "Injector flow", "mg/s", injectorFlow,
+            "the part's, or the full-load fuel at 80 % duty if more");
+}
+
 } // namespace
 
 const char* engineUseName(EngineUse use) noexcept {
@@ -409,6 +706,7 @@ const char* engineUseName(EngineUse use) noexcept {
     case EngineUse::sportMotorcycle: return "sport_motorcycle";
     case EngineUse::cruiserMotorcycle: return "cruiser_motorcycle";
     case EngineUse::aircraft: return "aircraft";
+    case EngineUse::truck: return "truck";
     }
     return "road_car";
 }
@@ -432,9 +730,123 @@ DesignedEngine designCatalogueEngine(const EngineSpec& spec, const std::filesyst
     return designed;
 }
 
+FuelSystem fuelSystemOf(const EngineConfig& config) noexcept {
+    const auto carburetted = config.intakePaths.empty() ? config.intake.carburettor.enabled
+        : std::any_of(config.intakePaths.begin(), config.intakePaths.end(),
+              [](const IntakePathConfig& path) { return path.geometry.carburettor.enabled; });
+    if (carburetted) return FuelSystem::carburettor;
+    return config.injection.mode == InjectionMode::direct ? FuelSystem::directInjection : FuelSystem::portInjection;
+}
+
+IntakeStyle intakeStyleOf(const EngineConfig& config) noexcept {
+    const auto& intake = config.intakePaths.empty() ? config.intake : config.intakePaths.front().geometry;
+    if (intake.airboxVolumeLitres > 0.0) return IntakeStyle::airbox;
+    if (intake.podFilter) return IntakeStyle::podFilter;
+    return IntakeStyle::velocityStacks;
+}
+
+DesignedEngine withFuelSystem(const EngineConfig& config, FuelSystem system, const PartsLibrary& parts) {
+    DesignedEngine designed;
+    try {
+        const auto diesel = config.fuel == FuelType::diesel;
+        const auto twoStroke = config.cycle == EngineCycle::twoStroke;
+        const auto rotary = config.cycle == EngineCycle::rotary;
+        if (system == FuelSystem::automatic)
+            system = diesel ? FuelSystem::directInjection
+                : twoStroke ? FuelSystem::carburettor : FuelSystem::portInjection;
+        if (diesel && system != FuelSystem::directInjection)
+            throw std::invalid_argument("A diesel's fuel is injected into the cylinder: it keeps direct injection");
+        auto edited = config;
+        // The same system is no edit: refitting it would throw away the
+        // engine's own injection part (a diesel's fuel limit is sized
+        // after it) and any jetting done by hand.
+        if (system != fuelSystemOf(config)) {
+            const std::map<std::string, double> none;
+            Derivation derive(none, designed.values);
+            const auto stoichiometric = config.fuelProperties.stoichiometricAirFuelRatio;
+            const FuelSizing sizing { twoStroke, diesel, rotary, std::max(0.01, breathingDisplacementLitres(config)),
+                static_cast<double>(std::max<std::size_t>(1, config.cylinders.size())),
+                (diesel ? 0.8 : 0.9) * config.redlineRpm,
+                config.forcedInduction.enabled ? std::max(1.0, config.forcedInduction.pressureRatio) : 1.0,
+                cycleDegreesOf(config.cycle),
+                diesel || !(stoichiometric > 0.0) ? 1.0 : stoichiometric / 14.7 };
+            // The port part the designer gives a motorcycle that revs (its
+            // high-flow injectors) or anything else (sequential).
+            const auto motorcycle = config.vehicle.massKg < 600.0;
+            fitInjection(edited, system, sizing, parts,
+                motorcycle && config.redlineRpm >= 9'000.0 ? "high_flow_port" : "sequential_port", derive);
+            if (twoStroke && system == FuelSystem::directInjection) {
+                const auto exhaustCloses = 360.0 - edited.twoStroke.exhaustPortOpenDegrees;
+                edited.injection.startAngleDegrees = derive("injection_start_deg", "Injection starts", "deg ATDC",
+                    exhaustCloses, "as the piston shuts the exhaust port: nothing short-circuits");
+                edited.injection.endAngleDegrees = derive("injection_end_deg", "Injection window ends", "deg ATDC",
+                    std::min(350.0, edited.injection.startAngleDegrees + 70.0), "70 deg later");
+            }
+            const auto carburetted = system == FuelSystem::carburettor;
+            const auto refit = [&](IntakeConfig& intake, Derivation& settle) {
+                intake.carburettor = CarburettorConfig {};
+                if (carburetted) sizeCarburettor(intake, edited, sizing, settle);
+            };
+            refit(edited.intake, derive);
+            std::vector<DesignValue> paths;
+            Derivation quiet(none, paths);
+            for (auto& path : edited.intakePaths) refit(path.geometry, quiet);
+        }
+        normaliseEngineConfig(edited);
+        if (auto error = validateEngineConfig(edited)) throw std::invalid_argument(*error);
+        designed.config = std::move(edited);
+    } catch (const std::exception& error) {
+        designed.config.reset();
+        designed.error = error.what();
+    }
+    return designed;
+}
+
+DesignedEngine withFuelSystem(const EngineConfig& config, FuelSystem system,
+                              const std::filesystem::path& catalogRoot) {
+    try {
+        return withFuelSystem(config, system, loadPartsLibrary(catalogRoot));
+    } catch (const std::exception& error) {
+        DesignedEngine designed;
+        designed.error = std::string("The parts library did not load: ") + error.what();
+        return designed;
+    }
+}
+
+DesignedEngine withIntakeStyle(const EngineConfig& config, IntakeStyle style) {
+    DesignedEngine designed;
+    try {
+        auto edited = config;
+        if (style == IntakeStyle::automatic) style = IntakeStyle::airbox;
+        const std::map<std::string, double> none;
+        const auto motorcycle = config.vehicle.massKg < 600.0;
+        const auto litres = std::max(0.01, breathingDisplacementLitres(config));
+        const auto refit = [&](IntakeConfig& intake, Derivation& settle, std::vector<DesignValue>& values) {
+            intake.airboxVolumeLitres = 0.0;
+            intake.podFilter = false;
+            intake.inletDuctLengthMm = 0.0;
+            intake.inletDuctDiameterMm = 0.0;
+            intake.bellmouthDiameterMm = 0.0;
+            fitIntakeStyle(intake, style, motorcycle, false, litres, settle, values);
+        };
+        Derivation derive(none, designed.values);
+        refit(edited.intake, derive, designed.values);
+        std::vector<DesignValue> paths;
+        Derivation quiet(none, paths);
+        for (auto& path : edited.intakePaths) refit(path.geometry, quiet, paths);
+        normaliseEngineConfig(edited);
+        if (auto error = validateEngineConfig(edited)) throw std::invalid_argument(*error);
+        designed.config = std::move(edited);
+    } catch (const std::exception& error) {
+        designed.config.reset();
+        designed.error = error.what();
+    }
+    return designed;
+}
+
 std::optional<EngineUse> parseEngineUse(std::string_view name) noexcept {
     for (const auto use : { EngineUse::roadCar, EngineUse::sportCar, EngineUse::roadMotorcycle,
-             EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle, EngineUse::aircraft })
+             EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle, EngineUse::aircraft, EngineUse::truck })
         if (name == engineUseName(use)) return use;
     return std::nullopt;
 }
@@ -655,7 +1067,8 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         // Boost first: the compression ratio follows it.
         const auto boost = !boosted ? 1.0
             : derive("boost_pressure_ratio", "Boost pressure ratio", "",
-                spec.boostPressureRatio > 0.0 ? spec.boostPressureRatio : diesel ? 2.3 : profile.boostPressureRatio,
+                spec.boostPressureRatio > 0.0 ? spec.boostPressureRatio
+                    : diesel && spec.use != EngineUse::truck ? 2.3 : profile.boostPressureRatio,
                 spec.boostPressureRatio > 0.0 ? "given" : "the use's");
         auto compressionDerived = diesel ? 16.5
             : spec.use == EngineUse::aircraft ? 7.0
@@ -1017,195 +1430,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         // What the throttle breathes from. An airbox is the filter's housing;
         // a pod filter is the element alone on the mouth; an open trumpet is
         // the bare bellmouth, no element at all, which is the loud one.
-        switch (spec.intakeStyle) {
-        case IntakeStyle::automatic:
-        case IntakeStyle::airbox:
-            intake.airboxVolumeLitres = derive("airbox_volume_l", "Airbox", "L",
-                spec.use == EngineUse::aircraft && spec.intakeStyle == IntakeStyle::automatic ? 0.0
-                    : profile.motorcycle ? std::clamp(2.5 * litres, 3.0, 10.0) : 4.0 + 0.5 * litres,
-                profile.motorcycle ? "2.5 x litres, 3-10 L" : "4 L + 0.5 x litres");
-            // A car's box breathes through a snorkel: the catalogue's run
-            // 200-400 mm at 1.35 times the throttles' area (1.1-1.56), with a
-            // lip 1.17 times their bore. Without one the box breathed through
-            // a hole of the throttle's bore. A motorcycle's box opens straight
-            // under the tank: its mouth is the bores' combined area.
-            if (intake.airboxVolumeLitres > 0.0) {
-                const auto snorkel = !profile.motorcycle;
-                const auto boresMm = intake.throttleDiameterMm
-                    * std::sqrt(static_cast<double>(std::max(1U, intake.throttleCount)));
-                intake.inletDuctLengthMm = derive("inlet_duct_length_mm", "Airbox snorkel length", "mm",
-                    snorkel ? 250.0 : 0.0, snorkel ? "the catalogue cars' (200-400 mm)"
-                        : "none: a motorcycle's box opens under the tank");
-                intake.inletDuctDiameterMm = derive("inlet_duct_diameter_mm", "Airbox snorkel bore", "mm",
-                    snorkel ? 1.16 * boresMm : 0.0, snorkel ? "1.35 x the throttles' area, the catalogue cars'"
-                        : "none: the bores' combined area");
-                intake.bellmouthDiameterMm = derive("bellmouth_diameter_mm", "Mouth lip", "mm",
-                    snorkel ? 1.17 * intake.inletDuctDiameterMm : 0.0,
-                    snorkel ? "1.17 x the snorkel's bore, the catalogue cars'" : "none: the bores' combined area");
-            }
-            break;
-        case IntakeStyle::podFilter:
-            intake.airboxVolumeLitres = 0.0;
-            intake.podFilter = true;
-            designed.values.push_back({ "intake_style", "Intake", "", 0.0, false,
-                "a pod filter on the throttle: the element with no housing", false });
-            break;
-        case IntakeStyle::velocityStacks:
-            intake.airboxVolumeLitres = 0.0;
-            // A trumpet's lip flares to about 1.5 times its bore, which is
-            // what keeps the inflow attached (Blair's bellmouth). The intake
-            // radiates through one mouth, so several trumpets are one lip of
-            // their combined area.
-            intake.bellmouthDiameterMm = derive("bellmouth_diameter_mm", "Bellmouth lip", "mm",
-                1.5 * intake.throttleDiameterMm * std::sqrt(static_cast<double>(std::max(1U, intake.throttleCount))),
-                "1.5 x the throttle bore, over all the bores' area");
-            designed.values.push_back({ "intake_style", "Intake", "", 0.0, false,
-                "an open trumpet on the throttle: no filter", false });
-            break;
-        }
+        fitIntakeStyle(intake, spec.intakeStyle, profile.motorcycle,
+            spec.use == EngineUse::aircraft && spec.intakeStyle == IntakeStyle::automatic, litres, derive,
+            designed.values);
         intake.throttleGamma = profile.throttleGamma;
-        if (carburetted) {
-            // A carburettor's jets are sized the way a tuner sizes them and
-            // not copied from one engine: from the fuel the engine needs at
-            // each end of its range, and the head available to push it through
-            // at that point. A jet's stamped number is its flow under one
-            // metre of fuel, and flow goes as the square root of the head, so
-            // a number is the fuel wanted divided by the square root of the
-            // head there.
-            //
-            // On an RD350-sized design the arithmetic returns a 287 main and a
-            // 41 pilot. The bike runs 260-290 and 30-40, which is the only
-            // check that matters: neither number was fitted to it.
-            auto& carburettor = intake.carburettor;
-            carburettor.enabled = true;
-            const auto bores = std::max(1.0, static_cast<double>(intake.throttleCount));
-            // One crankcase circuit per cylinder, so a two-stroke's bores
-            // swallow one cylinder, however they were sized; a four-stroke's
-            // share the plenum and the whole engine's air.
-            const auto displacementPerBoreM3 = twoStroke ? litres * 0.001 / std::max(1.0, countD)
-                : litres * 0.001;
-            const auto fuelDensityKgPerM3 = std::max(1.0,
-                config.fuelProperties.densityKgPerL * 1'000.0);
-            constexpr double ambientDensityKgPerM3 = 1.2;
-            constexpr double gravityMPerS2 = 9.80665;
-            // A two-stroke delivers about 0.85 of its swept volume at peak
-            // power, a four-stroke fills about 0.90 every other turn.
-            const auto wotAirKgPerSecond = twoStroke
-                ? displacementPerBoreM3 * 0.85 * (peakPowerRpm / 60.0) * ambientDensityKgPerM3
-                : displacementPerBoreM3 * 0.90 * (peakPowerRpm / 120.0) * ambientDensityKgPerM3;
-            // A slide carburettor's venturi is about 0.8 of its nominal bore.
-            // A car's is sized for its signal instead: Holley rates a
-            // carburettor's flow at 1.5 inHg (5.1 kPa) of venturi depression,
-            // and one sized to reach that at peak power still meters at low
-            // speed, where a throttle-body-sized throat (2 kPa at peak) left
-            // the main jet under its own lift up to 900 rpm, and the engine
-            // stalled on opening.
-            auto throatM = 0.80 * intake.throttleDiameterMm * 0.001;
-            if (!twoStroke) {
-                constexpr double ratedDepressionPa = 5'080.0;
-                const auto ratedVelocityMps = std::sqrt(2.0 * ratedDepressionPa / ambientDensityKgPerM3);
-                const auto venturiAreaM2 = wotAirKgPerSecond / (ambientDensityKgPerM3 * ratedVelocityMps) / bores;
-                carburettor.venturiDiameterMm = derive("carb_venturi_mm", "Venturi", "mm",
-                    std::sqrt(4.0 * venturiAreaM2 / std::numbers::pi) * 1'000.0,
-                    "5.1 kPa (Holley's 1.5 inHg) of depression at peak power, per bore");
-                throatM = carburettor.venturiDiameterMm * 0.001;
-                // A venturi sized for its signal is a car's fixed one, with
-                // a butterfly and no needle: a slide's taper, which holds the
-                // main jet to a quarter of its area at a fifth of the travel,
-                // left a 2-litre four at lambda 1.7-3.6 after a part-throttle
-                // opening from idle, and it stalled.
-                carburettor.fixedVenturi = true;
-                // Weber's 32/36 DGV pumps about 0.5 cc a stroke on a 2-litre.
-                carburettor.acceleratorPumpStrokeCc = derive("carb_pump_stroke_cc", "Accelerator pump", "cc",
-                    0.25 * litres / bores, "0.25 cc per litre a full stroke, per bore");
-            }
-            const auto throatAreaM2 = 0.25 * std::numbers::pi * throatM * throatM * bores;
-            const auto jetNumberFor = [&](double fuelKgPerSecond, double headM) {
-                if (!(fuelKgPerSecond > 0.0) || !(headM > 0.0)) return 0.0;
-                const auto ccPerMinute = fuelKgPerSecond / fuelDensityKgPerM3
-                    * 60.0 * 1.0e6;
-                return ccPerMinute / std::sqrt(headM);
-            };
-
-            // Main circuit, at peak power: the depression is the venturi's own,
-            // from the velocity the air has to have to get through the throat.
-            const auto throatVelocityMps = throatAreaM2 > 0.0
-                ? wotAirKgPerSecond / (ambientDensityKgPerM3 * throatAreaM2) : 0.0;
-            const auto wotDepressionPa = 0.5 * ambientDensityKgPerM3
-                * throatVelocityMps * throatVelocityMps;
-            const auto wotHeadM = wotDepressionPa
-                / (fuelDensityKgPerM3 * gravityMPerS2);
-            // A two-stroke runs its full load rich: the surplus fuel is what
-            // cools the piston and carries the oil. A four-stroke's best power
-            // is as rich, 12.5-13.
-            constexpr double fullLoadAirFuelRatio = 12.8;
-            // The hole a Dellorto or Keihin jet of that flow is stamped with.
-            const auto holeOf = [&carburettor](double flowNumber) {
-                return " (a " + std::to_string(static_cast<int>(std::lround(
-                    jetHoleHundredthsMm(flowNumber, carburettor.jetDischargeCoefficient)))) + " hole)";
-            };
-            // Each bore has its own jets and meters its share of the air.
-            const auto mainJetFlow = std::clamp(
-                jetNumberFor(wotAirKgPerSecond / fullLoadAirFuelRatio / bores, wotHeadM), 20.0, 20'000.0);
-            carburettor.mainJetFlowNumber = derive("carb_main_jet_flow", "Main jet", "cc/min", mainJetFlow,
-                "the fuel peak power needs at AFR 12.8, over the root of the venturi head there"
-                    + holeOf(mainJetFlow));
-
-            // Pilot circuit, at idle: the depression is the whole drop from the
-            // float bowl to a crankcase pumping about 20 kPa below ambient.
-            // The air it meters for is what the idle air path passes at that
-            // drop, the closed-slide leak and the bypass at the governor's
-            // neutral opening; the pilot then follows that path as it opens.
-            // Sized instead for a delivery ratio of 0.35 at idle, about three
-            // times what a two-stroke idles on, it fed a 350 cc twin AFR ~7
-            // and the twin flooded (journal 2026-10-23).
-            // A four-stroke's manifold idles near 35 kPa, 65 below ambient,
-            // and the air across the plates is then choked (35 / 101 is under
-            // the critical 0.53): its flow is the sonic one, not the
-            // incompressible one the crankcase's mild drop allows.
-            const auto idleCrankcaseDropPa = twoStroke ? 20'000.0 : 65'000.0;
-            const auto idleAirAreaM2 = (intake.closedThrottleLeakageAreaMm2 * bores
-                + intake.idleBypassAreaMm2 * carburettorPilotSizingIdleOpening) * 1.0e-6;
-            constexpr double ambientPressurePa = 101'325.0;
-            constexpr double airGamma = 1.4;
-            const auto chokedAirKgPerSecondPerM2 = ambientDensityKgPerM3
-                * std::sqrt(airGamma * ambientPressurePa / ambientDensityKgPerM3)
-                * std::pow(2.0 / (airGamma + 1.0), (airGamma + 1.0) / (2.0 * (airGamma - 1.0)));
-            const auto idleAirKgPerSecond = intake.throttleDischargeCoefficient * idleAirAreaM2
-                * (twoStroke ? std::sqrt(2.0 * ambientDensityKgPerM3 * idleCrankcaseDropPa)
-                             : chokedAirKgPerSecondPerM2);
-            const auto idleHeadM = idleCrankcaseDropPa
-                / (fuelDensityKgPerM3 * gravityMPerS2);
-            constexpr double idleAirFuelRatio = 13.5;
-            // What reaches the engine is the jet throttled by everything after
-            // it, so the jet itself has to be the larger by that factor.
-            const auto pilotCircuitFactor = std::max(0.01,
-                carburettor.pilotCircuitFactor);
-            const auto pilotJetFlow = std::clamp(jetNumberFor(idleAirKgPerSecond / idleAirFuelRatio / bores,
-                idleHeadM) / pilotCircuitFactor, 5.0, 5'000.0);
-            carburettor.pilotJetFlowNumber = derive("carb_pilot_jet_flow", "Pilot jet", "cc/min", pilotJetFlow,
-                std::string("the fuel the idle needs at AFR 13.5, over the root of the ")
-                    + (twoStroke ? "crankcase" : "manifold") + " head, divided by the circuit's own restriction"
-                    + holeOf(pilotJetFlow));
-            if (!twoStroke) {
-                // A four-stroke cranks with its start aid's extra air in, and
-                // that air into a small manifold leaves little depression for
-                // the pilot: a 750 cc four on four bores cranked at 75 kPa,
-                // lambda 1.6-7, and never fired. Its enrichener is what a
-                // real one starts on: a jet that runs the start aid's own air
-                // at AFR 8 on the pilot's head. A choke's AFR 4 flooded a
-                // warm 2-litre at AFR 6.8 once it ran with the aid still open.
-                constexpr double starterAirFuelRatio = 8.0;
-                const auto starterAirKgPerSecond = intake.throttleDischargeCoefficient
-                    * intake.idleBypassAreaMm2 * 1.0e-6 * carburettorPilotSizingIdleOpening
-                    * chokedAirKgPerSecondPerM2;
-                const auto starterJetFlow = std::clamp(jetNumberFor(
-                    starterAirKgPerSecond / starterAirFuelRatio / bores, idleHeadM), 0.5, 5'000.0);
-                carburettor.starterJetFlowNumber = derive("carb_starter_jet_flow", "Starter jet", "cc/min",
-                    starterJetFlow, "the start aid's air at AFR 8, over the root of the manifold head"
-                        + holeOf(starterJetFlow));
-            }
-        }
+        const FuelSizing sizing { twoStroke, diesel, rotary, litres, countD, peakPowerRpm, boost, cycleDegrees,
+            1.0 };
+        if (carburetted) sizeCarburettor(intake, config, sizing, derive);
         if (diesel) intake.throttleDischargeCoefficient = 0.86;
         config.plenumVolumeLitres = intake.plenumVolumeLitres;
         config.throttleDiameterMm = intake.throttleDiameterMm;
@@ -1421,69 +1652,7 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
 
         // Fuel, injection, ignition.
         if (diesel) config.fuelProperties = part(parts.fuels, "road_diesel_en590");
-        if (twoStroke) {
-            auto& injection = config.injection;
-            injection.mode = InjectionMode::port;
-            injection.startAngleDegrees = 250.0;
-            injection.endAngleDegrees = 355.0;
-            injection.injectorFlowMgPerSecond = 9'000.0;
-            injection.railPressureBar = 3.0;
-            injection.referencePressureBar = 3.0;
-            injection.wallFilmFraction = 0.10;
-            injection.vaporisationTimeConstantSeconds = 0.020;
-            injection.portChargeCoolingEfficiency = 0.30;
-        } else if (diesel) {
-            config.injection = part(parts.injections, "common_rail_diesel");
-        } else if (fuelSystem == FuelSystem::directInjection) {
-            // Petrol injected into the cylinder for a homogeneous charge: on
-            // the intake stroke, from about 300 deg before firing TDC, so the
-            // spray has the intake's turbulence and the compression to mix
-            // (Zhao, Lai and Harrington 1999). The part's own window, late in
-            // compression, is the stratified lean-burn one, which needs a
-            // spray-guided cloud the zero-dimensional charge does not hold.
-            // A rotary's strokes are 270 deg: the same window, half as long
-            // again (the 16X's direct injection, into the intake stroke).
-            config.injection = part(parts.injections, "direct_injection");
-            config.injection.startAngleDegrees = derive("injection_start_deg", "Injection starts", "deg ATDC",
-                rotary ? 630.0 : 420.0, rotary ? "on the intake stroke, 450 deg before firing TDC: a homogeneous charge"
-                    : "on the intake stroke, 300 deg before firing TDC: a homogeneous charge");
-            config.injection.endAngleDegrees = derive("injection_end_deg", "Injection window ends", "deg ATDC",
-                rotary ? 900.0 : 600.0, rotary ? "180 deg before firing TDC, early in compression"
-                    : "120 deg before firing TDC, early in compression");
-        } else {
-            config.injection = part(parts.injections, profile.injectionPart);
-            if (rotary) {
-                // Onto the closed port ahead of its opening near 543 deg,
-                // ending before it shuts: the catalogue 13B's window.
-                config.injection.startAngleDegrees = 400.0;
-                config.injection.endAngleDegrees = 860.0;
-            }
-        }
-        if (twoStroke && fuelSystem == FuelSystem::directInjection) {
-            // Into the cylinder once the piston has shut the exhaust port, so
-            // none of it short-circuits into the pipe: the reason a two-stroke
-            // is injected directly at all. The window follows the port.
-            config.injection = part(parts.injections, "direct_injection");
-            config.injection.mode = InjectionMode::direct;
-        }
-        // Rich full-load air flow at 1.1 x displacement and the boost, at the
-        // redline; each injector at most 80 % open. A direct injector meters
-        // only inside its window, which is a share of the cycle: a diesel's
-        // 94 deg sized as if open the whole cycle held a 193 L marine six to
-        // 1.7 g a stroke, lambda 3.0 at 3.0 bar (journal 2026-10-30).
-        const auto airKgPerSecond = 1.18 * litres * 1.0e-3 * config.redlineRpm / (twoStroke ? 60.0 : 120.0) * 1.1 * boost;
-        const auto fuelMgPerSecond = airKgPerSecond / (diesel ? 18.0 : 12.0) * 1.0e6;
-        const auto directWindow = diesel || fuelSystem == FuelSystem::directInjection
-            ? (twoStroke && !diesel ? 70.0 : std::fmod(config.injection.endAngleDegrees
-                - config.injection.startAngleDegrees + cycleDegrees, cycleDegrees)) / cycleDegrees
-            : 1.0;
-        if (!(directWindow > 0.0))
-            throw std::invalid_argument("The injection window ends where it starts");
-        const auto injectorFlow = std::max(config.injection.injectorFlowMgPerSecond,
-            fuelMgPerSecond / countD / 0.8 / directWindow);
-        config.injection.injectorFlowMgPerSecond = twoStroke || carburetted ? injectorFlow
-            : derive("injector_flow_mg_s", "Injector flow", "mg/s", injectorFlow,
-                "the part's, or the full-load fuel at 80 % duty if more");
+        fitInjection(config, fuelSystem, sizing, parts, profile.injectionPart, derive);
         if (diesel) {
             // The part's limit is the EA288's, rated at 4,000 rpm: its speeds
             // follow the design's peak power, so a marine six rated at 750 rpm
@@ -1680,8 +1849,9 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         // Drivetrain: the family's gearbox and vehicle, the final drive set
         // for the top speed the estimated power reaches in top gear.
         config.transmission = part(parts.transmissions, profile.transmissionPart);
+        const auto truck = spec.use == EngineUse::truck;
         config.vehicle = part(parts.vehicles, diesel && !profile.motorcycle && spec.use != EngineUse::aircraft
-            ? "diesel_hatch" : profile.vehiclePart);
+            && !truck ? "diesel_hatch" : profile.vehiclePart);
         const auto bmepAtPeakPowerPa = 1.0e5 * (diesel ? 7.8 * boost : twoStroke ? 7.0
             : spec.use == EngineUse::aircraft ? 9.5 * boost : 11.5 * (boosted ? 0.8 * boost : 1.0));
         const auto estimatedPowerW = bmepAtPeakPowerPa * litres * 1.0e-3 * peakPowerRpm / 60.0
@@ -1692,7 +1862,18 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             "a family BMEP at peak power, for the gearing (not a result)", false });
         config.transmission.maxClutchTorqueNm = derive("clutch_capacity_nm", "Clutch capacity", "N m",
             std::max(60.0, 1.6 * estimatedTorqueNm), "1.6 x the estimated peak torque");
-        if (spec.use != EngineUse::aircraft && !config.transmission.gearRatios.empty()) {
+        if (truck && !config.transmission.gearRatios.empty()) {
+            // A truck's speed is governed, not drag-limited: a European
+            // tractor cruises its 85 km/h limit in top gear near 1,200 rpm on
+            // a 2,100-2,300 rpm governor (a Volvo D13 or a Scania 13 L).
+            const auto cruiseMps = 85.0 / 3.6;
+            const auto engineRadPerS = 0.55 * config.redlineRpm * 2.0 * std::numbers::pi / 60.0;
+            const auto finalDrive = engineRadPerS * config.vehicle.tireRadiusM
+                / (cruiseMps * config.transmission.gearRatios.back());
+            config.transmission.finalDriveRatio = derive("final_drive_ratio", "Final drive", "",
+                std::clamp(finalDrive, 1.0, maximumFinalDriveRatio),
+                "top gear at 0.55 x redline at 85 km/h, a tractor's cruise");
+        } else if (spec.use != EngineUse::aircraft && !config.transmission.gearRatios.empty()) {
             const auto speed = topSpeedMps(estimatedPowerW * config.transmission.drivelineEfficiency, config.vehicle);
             const auto engineRadPerS = 1.05 * peakPowerRpm * 2.0 * std::numbers::pi / 60.0;
             const auto wheelRadPerS = speed / config.vehicle.tireRadiusM;
@@ -1704,6 +1885,24 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 std::clamp(finalDrive, 1.0, maximumFinalDriveRatio),
                 finalDrive > maximumFinalDriveRatio || finalDrive < 1.0
                     ? rule + " gives " + format(finalDrive) + ", held at the simulator's limit" : rule);
+        }
+
+        // A truck's compression-release brake: one exhaust valve opened about
+        // 2 mm at the top of compression (published brakes: 1-2 mm, the event
+        // near TDC), a three-stage switch as Jacobs' (a six: 2, 4, 6
+        // cylinders), letting go near idle. The event's 80 deg is estimated.
+        if (truck && !twoStroke && !rotary) {
+            auto& brake = config.engineBrake;
+            brake.fitted = true;
+            brake.valveLiftMm = derive("engine_brake_lift_mm", "Engine brake valve lift", "mm", 2.0,
+                "a production brake's 1-2 mm, on one exhaust valve");
+            brake.peakAfterTdcDegrees = derive("engine_brake_peak_deg", "Engine brake lift peaks", "deg ATDC", 0.0,
+                "at the top of compression");
+            brake.durationDegrees = derive("engine_brake_duration_deg", "Engine brake event", "deg", 80.0,
+                "estimated: about 30 deg either side of TDC with a useful lift");
+            brake.minimumRpm = derive("engine_brake_minimum_rpm", "Engine brake lets go below", "rpm",
+                std::max(1'000.0, config.idleRpm + 400.0), "1,000 rpm, or 400 above idle");
+            brake.stageCount = 3;
         }
 
         config.thermal.liquidCooled = derive("liquid_cooled", "Liquid cooled", "", radial ? 0.0 : 1.0,

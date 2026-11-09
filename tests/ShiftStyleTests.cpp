@@ -217,8 +217,9 @@ struct DownshiftResult final {
 };
 
 /** Third gear at part throttle, closed throttle, then down to second. */
-DownshiftResult measureDownshift(enginelab::EngineConfig config, bool blipper) {
-    config.transmission.shiftStyle = enginelab::ShiftStyle::sequential;
+DownshiftResult measureDownshift(enginelab::EngineConfig config, bool blipper,
+                                 enginelab::ShiftStyle style = enginelab::ShiftStyle::sequential) {
+    config.transmission.shiftStyle = style;
     config.transmission.autoBlipper = blipper;
     auto rig = std::make_unique<Rig>(config);
     rig->launchTo(config.redlineRpm * 0.55);
@@ -277,10 +278,12 @@ void checkClutchHeldDownshift(enginelab::EngineConfig config) {
     require(framesToEngage == 1, "with the clutch held out the gear changes at once");
 }
 
-/** A dual clutch ignores the pedal: in first at idle, foot off everything,
- * it creeps; on the brake it stops; it never stalls. */
-void checkDualClutchCreep(enginelab::EngineConfig config) {
-    config.transmission.shiftStyle = enginelab::ShiftStyle::dualClutch;
+/** A dual clutch (or an automated manual) ignores the pedal: in first at
+ * idle, the pedal down and nothing else, it creeps; on the brake it stops;
+ * it never stalls. */
+void checkDualClutchCreep(enginelab::EngineConfig config,
+                          enginelab::ShiftStyle style = enginelab::ShiftStyle::dualClutch) {
+    config.transmission.shiftStyle = style;
     config.transmission.automaticShifting = false;
     auto rig = std::make_unique<Rig>(config);
     rig->driveline().requestGear(-1);
@@ -356,6 +359,10 @@ void checkSerialisation() {
     }
     require(enginelab::parseShiftStyle("dual_clutch") == enginelab::ShiftStyle::dualClutch,
         "dual_clutch must name the dual-clutch style");
+    require(enginelab::parseShiftStyle("automated_manual") == enginelab::ShiftStyle::automatedManual
+            && std::string_view(enginelab::shiftStyleName(enginelab::ShiftStyle::automatedManual))
+                == "automated_manual",
+        "automated_manual must name the single-clutch automated style");
 }
 } // namespace
 
@@ -458,6 +465,23 @@ int main() {
             "a dual clutch must refuse a downshift that over-revs the engine");
         require(overRevDownshift(jz, enginelab::ShiftStyle::manual) == 0,
             "a manual box lets the driver over-rev on a downshift");
+
+        // An automated manual: one clutch, worked by the gearbox. It
+        // ignores the pedal and starts on its own clutch, as a dual clutch
+        // does; its upshift opens that clutch, so the drive has a manual's
+        // gap; it blips down and refuses an over-revving downshift.
+        std::printf("automated manual (one clutch, no pedal)\n");
+        const auto jzAutomated = measureUpshift(jz, enginelab::ShiftStyle::automatedManual);
+        require(jzAutomated.syncSeconds > 0.0 && jzAutomated.syncErrorShare < 0.03,
+            "an automated-manual 2JZ must end in second, at its speed");
+        require(jzAutomated.gapSeconds > 0.05 && jzAutomated.cutSeconds == 0.0,
+            "an automated manual's upshift has a clutch shift's torque gap, no ignition cut");
+        checkDualClutchCreep(jz, enginelab::ShiftStyle::automatedManual);
+        const auto automatedDown = measureDownshift(cp2, true, enginelab::ShiftStyle::automatedManual);
+        require(automatedDown.peakBlip > 0.2 && automatedDown.engagedRpmShare > 0.95,
+            "an automated manual blips its downshift to the new gear's speed");
+        require(overRevDownshift(jz, enginelab::ShiftStyle::automatedManual) == 1,
+            "an automated manual must refuse a downshift that over-revs the engine");
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return EXIT_FAILURE;
