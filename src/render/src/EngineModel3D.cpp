@@ -1262,10 +1262,16 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
             high ? cams.highIntakeDurationDegrees : cams.intakeDurationDegrees,
             high ? cams.highIntakeLiftMm : cams.intakeLiftMm,
             high && !cams.highIntakeLiftProfile.empty() ? cams.highIntakeLiftProfile : cams.intakeLiftProfile);
-        const auto exhaustLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 - cams.exhaustCenterlineDegrees,
+        const auto camExhaustLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 - cams.exhaustCenterlineDegrees,
             high ? cams.highExhaustDurationDegrees : cams.exhaustDurationDegrees,
             high ? cams.highExhaustLiftMm : cams.exhaustLiftMm,
             high && !cams.highExhaustLiftProfile.empty() ? cams.highExhaustLiftProfile : cams.exhaustLiftProfile);
+        // The engine brake cracks the valve open around firing TDC, as the
+        // simulator does (EngineSimulator): the drawn valve is the one it
+        // opens, so its full lift.
+        const auto braking = valves && i < input.engineBrakeCylinders && config_.engineBrake.fitted;
+        const auto exhaustLift = braking
+            ? std::max(camExhaustLift, engineBrakeLiftMm(config_.engineBrake, phase, 1U)) : camExhaustLift;
         out[cylinder.intakeValvePart].transform = Mat4::translation(cylinder.intakeValveAxis * -static_cast<float>(intakeLift));
         out[cylinder.exhaustValvePart].transform = Mat4::translation(cylinder.exhaustValveAxis * -static_cast<float>(exhaustLift));
 

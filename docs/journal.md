@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-09 — the automated manual's upshift; a truck's shift point
+
+- Owner report: an AMT upshift locks the clutch with the throttle open and hits the limiter. `EngineLab.TruckDrive` (designed 12.8 L truck six, AMT, automatic, 40 s from rest): before, flat out it changed up at 1,600 rpm (0.73 x limit), the clutch open with the throttle at 1 - `shift_torque_cut_fraction` flared the engine ~+400 rpm, 0.05-0.275 s on the limiter per shift.
+- An AMT now cuts the torque fully over the first 20 % of the shift, gives it back only once the clutch has pulled the engine to the new gear, and starts the shift ahead by 0.35 x shift time x rpm rate. A designed truck changes up flat out at min(1.05 x peak power, 0.90 x redline) = 1,850 rpm.
+- After, pedal 1.0: clutch opens at 1,723-1,820 rpm, no limiter, lands at 1,433-1,593, 77 km/h at 40 s. Pedal 0.5: opens at 1,488-1,598 (the light-foot rule), lands 1,195-1,404. A 10-30 rpm rise remains while the clutch is open (test bound 2 % of limit).
+- The engine brake no longer acts in neutral (arbiter: forward or reverse gear only); its 18.4 kW/L in gear is unchanged. `EngineLab.EngineModel3D`: the drawn exhaust valve opens 2.0 mm more on braking cylinders, 0 on the others.
+- Not measured: a real AMT's timings (0.8 s still unsourced), the Vehicle tab, the brake menu and the gear-count choice by hand in the app.
+
 ## 2026-11-09 — a truck's engine brake; the refit and the automated manual
 
 - Compression release on the exhaust valve (2 mm, cos2 over 80 deg peaking at firing TDC), fuel cut, three stages (2/4/6 of six), only on a designed `truck` four-stroke. `EngineLab.EngineBrake`, 12.78 L six (131 x 158, turbo) motored at 2,100 rpm by a PI on the shaft: drag 183 N.m off, 1,253 on, 235 kW = 18.4 kW/L; a standard Jacobs brake gives 416 kW on a 13 L at 2,100 (~32 kW/L). 0.57 x, inside the test's 0.5-1.5.

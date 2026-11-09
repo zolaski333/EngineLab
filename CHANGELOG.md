@@ -22,18 +22,34 @@ file formats, always with an in-memory migration).
   2.8) in a 40 t tractor with a 12-speed automated gearbox, geared to cruise
   85 km/h near 1,200 rpm. A truck's four-stroke gets a compression-release
   engine brake (a "jake brake"), the only use that does. Its switch appears
-  under Cruise (key 0): each press brakes more cylinders (a six: 2, 4, 6),
-  the last turns it off. It holds with your foot off the pedal and the
-  clutch in, cuts those cylinders' fuel and opens one exhaust valve 2 mm at
-  the top of their compression, so the air they compressed blows into the
-  exhaust instead of pushing the piston back. It lets go below 1,000 rpm and
-  during a shift. Its bark is the gas dynamics' own: no sound was added. A
-  saved engine keeps it (`engine_brake` in the file).
+  under Cruise: a click lists its stages (a six: 2, 4 or 6 cylinders) and
+  Off; key 0 steps through them. It holds in gear with your foot off the
+  pedal and the clutch in, cuts those cylinders' fuel and opens one exhaust
+  valve 2 mm at the top of their compression, so the air they compressed
+  blows into the exhaust instead of pushing the piston back; the 3-D view
+  shows that valve opening. It lets go below 1,000 rpm, in neutral (a blip
+  at rest no longer ends in its bark) and during a shift. Its bark is the
+  gas dynamics' own: no sound was added. A saved engine keeps it
+  (`engine_brake` in the file). Flat out a truck changes up just past its
+  peak power (1.05 x, the designer's `automatic_upshift_rpm`), not at
+  1,600 rpm.
+- **A Vehicle tab.** The side column has a Vehicle tab: mass, drag, frontal
+  area, tyre radius, rolling resistance, grip, axle load, wheelbase, centre
+  of gravity, brake force, the driven axles and the tyre grip limit, each
+  typed in and taken by the running engine, with the road load at the
+  present speed.
+- **The number of gears is a choice.** The gearbox inspector offers 1 to 16
+  gears: first and top keep their ratios and the ones between are spread
+  with an equal step; the engine restarts. A gear's ratio can now be set up
+  to 25 : 1 (it stopped at 10, under a truck's first gear).
 - **Automated manual gearbox.** A sixth gearbox style, one clutch the
   gearbox works itself (Selespeed, SMG, Easytronic, a truck's AMT): no
-  pedal, it creeps and launches as a dual clutch does, but an upshift opens
-  the clutch and the drive pauses for the shift, and a downshift is
-  blipped. Pick it in the gearbox inspector ("Automated manual") or
+  pedal, it creeps and launches as a dual clutch does, but an upshift takes
+  the engine's torque away, opens the clutch, and gives the torque back as
+  the clutch locks in the new gear (the drive pauses; a foot left flat on
+  the pedal no longer flares the engine onto its limiter), and a downshift
+  is blipped. It starts an upshift early enough to open its clutch at the
+  shift point. Pick it in the gearbox inspector ("Automated manual") or
   `shift_style: automated_manual`. The shift time is the gearbox's
   `shift_duration_s` (an estimate, not a unit's figure).
 - **The injection and the intake are picked by clicking them.** On the 3-D
@@ -42,7 +58,8 @@ file formats, always with an in-memory migration).
   throttle body offers an airbox, a pod filter or open trumpets. Each is
   fitted as the designer fits it, sized for the engine (injector flow,
   carburettor jets and venturi, airbox volume, bellmouths), and the engine
-  restarts with it. A diesel stays direct-injected.
+  restarts with it. A diesel stays direct-injected: its injector says so
+  instead of offering a choice.
 
 ### Changed
 

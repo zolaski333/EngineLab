@@ -1873,6 +1873,14 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             config.transmission.finalDriveRatio = derive("final_drive_ratio", "Final drive", "",
                 std::clamp(finalDrive, 1.0, maximumFinalDriveRatio),
                 "top gear at 0.55 x redline at 85 km/h, a tractor's cruise");
+            // Flat out it changes up just past peak power, so each step of
+            // the twelve (about 1.29) lands back near peak torque; the part's
+            // 1,600 rpm changed a 2,200 rpm engine up at its plateau's start
+            // (owner 2026-11-09: "far too early"). A light foot still changes
+            // up early (ShiftSchedule).
+            config.transmission.automaticUpshiftRpm = derive("automatic_upshift_rpm", "Flat-out upshift", "rpm",
+                std::min(0.90 * config.redlineRpm, 1.05 * peakPowerRpm),
+                "1.05 x peak power speed, at most 0.90 x redline");
         } else if (spec.use != EngineUse::aircraft && !config.transmission.gearRatios.empty()) {
             const auto speed = topSpeedMps(estimatedPowerW * config.transmission.drivelineEfficiency, config.vehicle);
             const auto engineRadPerS = 1.05 * peakPowerRpm * 2.0 * std::numbers::pi / 60.0;

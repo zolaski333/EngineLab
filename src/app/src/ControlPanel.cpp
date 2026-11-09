@@ -57,9 +57,10 @@ ControlPanel::ControlPanel() {
                               "near the limiter flat out, and kicks down. A gear key takes it back to manual"));
     for (auto* button : { &gearDown, &gearUp, &brake, &clutch, &cruise, &resetTrip, &automatic })
         addAndMakeVisible(*button);
-    engineBrake.setTooltip(utf8("Engine brake (compression release): each press brakes more cylinders, "
-                                "the last press turns it off. It holds with your foot off the pedal and the "
-                                "clutch in, cuts their fuel, and lets go near idle"));
+    engineBrake.setTooltip(utf8("Engine brake (compression release): pick how many cylinders brake (its key "
+                                "steps through them). It holds in gear with your foot off the pedal and the "
+                                "clutch in, cuts their fuel, and lets go near idle and in neutral"));
+    engineBrake.onClick = [this] { openEngineBrakeMenu(); };
     addChildComponent(engineBrake);
 
     prepareSlider(afrTrim.slider, -3.0, 3.0, 0.1, 0.0);
@@ -92,8 +93,32 @@ void ControlPanel::setKeyCaps(const ActionMap& actions) {
     engineBrake.setKeyCap(cap(AppAction::engineBrake));
 }
 
-void ControlPanel::setEngineBrake(std::uint32_t stages) {
+void ControlPanel::openEngineBrakeMenu() {
+    if (engineBrakeStages_ == 0) return;
+    juce::PopupMenu menu;
+    menu.addItem(1, "Off", true, engineBrakeStage_ == 0);
+    for (std::uint32_t stage = 1; stage <= engineBrakeStages_; ++stage) {
+        // As the simulator rounds it (EngineSimulator, the brake's stage).
+        const auto braking = std::lround(static_cast<double>(engineBrakeCylinders_) * stage / engineBrakeStages_);
+        menu.addItem(static_cast<int>(stage) + 1,
+                     "Stage " + juce::String(stage) + " of " + juce::String(engineBrakeStages_)
+                         + (engineBrakeCylinders_ > 0 ? ": " + juce::String(braking) + " of "
+                                                            + juce::String(engineBrakeCylinders_) + " cylinders"
+                                                      : juce::String()),
+                     true, engineBrakeStage_ == stage);
+    }
+    menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&engineBrake)
+                           .withMinimumWidth(engineBrake.getWidth()),
+        [safe = juce::Component::SafePointer<ControlPanel>(this)](int result) {
+            if (safe == nullptr || result <= 0) return;
+            const auto stage = static_cast<std::uint32_t>(result - 1);
+            if (safe->onEngineBrakeStage) safe->onEngineBrakeStage(stage);
+        });
+}
+
+void ControlPanel::setEngineBrake(std::uint32_t stages, std::uint32_t cylinders) {
     engineBrakeStages_ = stages;
+    engineBrakeCylinders_ = cylinders;
     engineBrake.setVisible(stages > 0);
     setEngineBrakeStage(0);
     resized();

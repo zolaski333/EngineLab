@@ -230,6 +230,12 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     const auto engineDriveTorque = (engineOmega > 0.0 ? crankTorque : std::max(0.0, crankTorque))
         + engineState.starterTorqueNm;
     secondsSinceShift_ += dt;
+    // The engine's rate of climb over about 0.1 s.
+    if (dt > 0.0 && previousEngineRpm_ >= 0.0 && std::isfinite(engineState.rpm)) {
+        const auto rate = (engineState.rpm - previousEngineRpm_) / dt;
+        engineRpmRate_ += (rate - engineRpmRate_) * std::clamp(dt / 0.1, 0.0, 1.0);
+    }
+    previousEngineRpm_ = std::isfinite(engineState.rpm) ? engineState.rpm : previousEngineRpm_;
     // An automatic gearbox picks its gear from the driver's pedal, never
     // right after a shift, and never while the driver holds the clutch.
     constexpr double scheduleHoldSeconds = 0.8;
@@ -241,6 +247,12 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         for (std::size_t gear = 0; gear < count; ++gear) overall[gear] = ratioForGear(static_cast<int>(gear));
         ShiftScheduleInput schedule;
         schedule.engineRpm = engineState.rpm;
+        // An automated manual's controller changes up on the speed the engine
+        // will have reached when its clutch is open, a third of the way
+        // through the shift: a loaded truck in first climbs 1,000 rpm/s, and
+        // changing up at the point itself took it into its governor's cut.
+        if (transmission.shiftStyle == ShiftStyle::automatedManual)
+            schedule.engineRpm += std::max(0.0, engineRpmRate_) * 0.35 * transmission.shiftDurationSeconds;
         schedule.driverThrottle = driverThrottle_ >= 0.0 ? driverThrottle_ : engineState.throttle;
         schedule.engagedGear = engagedGear_;
         schedule.overallRatios = std::span<const double>(overall.data(), count);
@@ -381,10 +393,21 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                 std::abs(lastClutchSlipRpm_);
         }
 
-        const auto cutDepth = std::clamp(
+        // An automated manual's controller takes the engine's torque away
+        // whole before its clutch is half open, and gives it back only as the
+        // clutch locks in the new gear: a driver's foot left flat on the pedal
+        // flared the engine onto its limiter while the clutch was open (owner
+        // 2026-11-09, a designed truck: +400 rpm, 0.28 s on the limiter).
+        const auto automated = transmission.shiftStyle == ShiftStyle::automatedManual;
+        const auto cutDepth = automated ? 1.0 : std::clamp(
             transmission.shiftTorqueCutFraction, 0.0, 1.0);
         const auto cutFloor = 1.0 - cutDepth;
-        if (forwardUpshift && shiftProgress > 0.50
+        constexpr double automatedTorqueOffProgress = 0.20;
+        if (automated && forwardUpshift && !(shiftProgress > 0.50 && resyncReferenceSlipRpm_ > lockBandRpm)) {
+            output.torqueCutMultiplier = shiftProgress < 0.50
+                ? std::clamp(1.0 - shiftProgress / automatedTorqueOffProgress, 0.0, 1.0)
+                : cutFloor;
+        } else if (forwardUpshift && shiftProgress > 0.50
             && resyncReferenceSlipRpm_ > lockBandRpm) {
             // Do not restore engine torque merely because a wall-clock shift
             // timer is ending. Release it with the actual clutch slip instead:
@@ -428,7 +451,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                         resyncReferenceSlipRpm_ - lockBandRpm),
                 0.0, 1.0);
             const auto release = 1.0 - remainingSlip;
-            const auto cutDepth = std::clamp(
+            const auto cutDepth = transmission.shiftStyle == ShiftStyle::automatedManual ? 1.0 : std::clamp(
                 transmission.shiftTorqueCutFraction, 0.0, 1.0);
             output.torqueCutMultiplier =
                 1.0 - cutDepth

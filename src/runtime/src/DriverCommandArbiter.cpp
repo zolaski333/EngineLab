@@ -27,7 +27,9 @@ void DriverCommandArbiter::arbitrate(const DriverInputs& inputs, VehicleStep& st
     step.shiftIgnitionCut = step.drive.ignitionCut;
     step.shiftSparkRetardDegrees = step.drive.sparkRetardDegrees;
     step.shiftCylinderCutFraction = step.drive.cylinderCutFraction;
-    step.engineBrakeStage = step.drive.clutchPressure >= engineBrakeMinimumClutch
+    // Neutral is -1: a forward gear or reverse is engaged.
+    const auto inGear = step.drive.engagedGear >= 0 || step.drive.engagedGear == -2;
+    step.engineBrakeStage = inGear && step.drive.clutchPressure >= engineBrakeMinimumClutch
         && !step.drive.shiftInProgress ? inputs.engineBrakeStage : 0U;
 }
 

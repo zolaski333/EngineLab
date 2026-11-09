@@ -1423,7 +1423,50 @@ void checkHPipeDrawing() {
     require(crossing > lanes - 2.0F * bore, "the balance pipe crosses from one side to the other");
 }
 
+/** A truck's engine brake cracks the drawn exhaust valve open around firing
+    TDC on the cylinders it holds (owner's report 2026-11-09: the valves did
+    not move), and leaves the others on their cam. */
+void checkEngineBrakeValves() {
+    EngineSpec spec;
+    spec.name = "Designed truck six";
+    spec.fuel = FuelType::diesel;
+    spec.use = EngineUse::truck;
+    spec.cylinderCount = 6;
+    spec.boreMm = 131.0;
+    spec.strokeMm = 158.0;
+    spec.induction = Induction::turbocharged;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value() && designed.config->engineBrake.fitted,
+            "a truck six designs with an engine brake: " + designed.error);
+    const EngineModel3D model(*designed.config);
+    const auto exhaustValveOffset = [&model](const ScenePoseInput& pose, std::size_t cylinder) {
+        std::vector<SceneInstance> instances;
+        model.pose(pose, instances);
+        const auto part = model.exhaustValvePart(cylinder);
+        for (const auto& instance : instances)
+            if (instance.part == part) return length(instance.transform.transformPoint({}));
+        return -1.0F;
+    };
+    // The most the brake moves each cylinder's valve over a cycle.
+    std::array<float, 6> moved {};
+    for (int degree = 0; degree < 720; ++degree) {
+        ScenePoseInput plain;
+        plain.crankAngleDegrees = degree;
+        auto braking = plain;
+        braking.engineBrakeCylinders = 2;
+        for (std::size_t c = 0; c < 6; ++c)
+            moved[c] = std::max(moved[c], exhaustValveOffset(braking, c) - exhaustValveOffset(plain, c));
+    }
+    std::cout << "  engine brake: exhaust valve opened " << moved[0] << " / " << moved[1] << " mm more on the two "
+              << "braking cylinders, " << moved[2] << " on the third\n";
+    const auto lift = static_cast<float>(designed.config->engineBrake.valveLiftMm);
+    require(std::abs(moved[0] - lift) < 0.05F && std::abs(moved[1] - lift) < 0.05F,
+            "a braking cylinder's drawn exhaust valve opens by the brake's lift");
+    for (std::size_t c = 2; c < 6; ++c) require(moved[c] < 1.0e-4F, "the others stay on their cam");
+}
+
 int main() {
+    checkEngineBrakeValves();
     checkHPipeDrawing();
     checkSingleCylinderTurbo();
     checkTubeContact();

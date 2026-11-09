@@ -110,7 +110,7 @@ constructor.
 | `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key), trims |
 | `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
 | `ReadoutStrip` | tachometer and six live readouts |
-| `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs |
+| `SidePanel` | Dyno, Telemetry, Vehicle (`VehiclePanel`: the vehicle's figures typed in, taken live), Audio and Diagnostics tabs |
 | `StatusBar` | fault summary, real-time factor, simulation speed, counters |
 
 `Theme` holds the colour tokens, fonts and the `ui::LookAndFeel` installed for

@@ -5,6 +5,7 @@
 #include <enginelab/app/DynoPanel.hpp>
 #include <enginelab/app/Widgets.hpp>
 #include <functional>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -47,6 +48,41 @@ private:
     std::vector<juce::String> keyCaps_;
 };
 
+/** The vehicle the engine drives: its figures, each typed in and taken by
+    the running engine (Enter or leaving the field), and what it does now. */
+class VehiclePanel final : public juce::Component {
+public:
+    explicit VehiclePanel(const DashboardModel&);
+    ~VehiclePanel() override;
+    [[nodiscard]] int preferredHeight() const;
+    /** Shows the running vehicle's figures in every field not being typed in. */
+    void refresh();
+    /** Called with the vehicle as edited: empty when the engine took it, else
+        why not. */
+    std::function<juce::String(const VehicleConfig&)> onEdit;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+    struct Field final {
+        const char* label;
+        const char* unit;
+        double VehicleConfig::*member;
+        int decimals;
+        const char* tooltip;
+    };
+
+private:
+    void commit(std::size_t field);
+    void send(const VehicleConfig&);
+    const DashboardModel& model_;
+    std::vector<std::unique_ptr<juce::TextEditor>> editors_;
+    juce::ComboBox drivenAxles_;
+    juce::ToggleButton tyreGrip_ { "Tyres can spin (grip limit)" };
+    juce::String status_;
+    VehicleConfig shown_;
+    bool shownOnce_ { false };
+};
+
 /** Active faults, then every physics and real-time counter. */
 class DiagnosticsPanel final : public juce::Component {
 public:
@@ -59,10 +95,10 @@ private:
     const DashboardModel& model_;
 };
 
-/** Right column: Dyno, Telemetry, Audio and Diagnostics tabs. */
+/** Right column: Dyno, Telemetry, Vehicle, Audio and Diagnostics tabs. */
 class SidePanel final : public juce::Component {
 public:
-    enum Tab { dynoTab, telemetryTab, audioTab, diagnosticsTab, tabCount };
+    enum Tab { dynoTab, telemetryTab, vehicleTab, audioTab, diagnosticsTab, tabCount };
 
     SidePanel(const DashboardModel&, std::function<bool()> wheelModifierActive);
     void showTab(int tab);
@@ -72,6 +108,7 @@ public:
     void refresh();
 
     DynoPanel dyno;
+    VehiclePanel vehicle;
     AudioPanel audio;
     /** The Telemetry tab asks to show the injectors in the 3-D view. */
     std::function<void()> onShowInjectors;
@@ -86,11 +123,12 @@ private:
     void fitContent(ScrollPane&, juce::Component& content, int height);
     // No `model_` here on purpose: every tab below holds its own reference,
     // and the panel itself never reads one.
-    SegmentedControl tabs_ { { "Dyno", "Telemetry", "Audio", "Diagnostics" },
+    SegmentedControl tabs_ { { "Dyno", "Telemetry", "Vehicle", "Audio", "Diagnostics" },
                              SegmentedControl::Style::tabs };
     TelemetryPanel telemetry_;
     DiagnosticsPanel diagnostics_;
     ScrollPane telemetryPane_;
+    ScrollPane vehiclePane_;
     ScrollPane audioPane_;
     ScrollPane diagnosticsPane_;
 };

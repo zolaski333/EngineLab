@@ -151,12 +151,25 @@ void SegmentedControl::setOptionTooltip(int index, const juce::String& tooltip) 
 }
 
 float SegmentedControl::optionWidth(int index) const {
-    return textWidth(segmentFont(style_), options_[index]) + (style_ == Style::tabs ? 24.0F : 20.0F);
+    const auto natural = style_ == Style::tabs ? 24.0F : 20.0F;
+    // Laid out narrower than its ideal (five tabs in the side column), the
+    // padding around each label gives way first, down to 8 px.
+    auto padding = natural;
+    if (const auto width = static_cast<float>(getWidth()); width > 0.0F && options_.size() > 0) {
+        auto text = style_ == Style::tabs ? 0.0F : 6.0F;
+        for (int option = 0; option < options_.size(); ++option)
+            text += textWidth(segmentFont(style_), options_[option]) + 2.0F;
+        const auto fitting = (width - text) / static_cast<float>(options_.size());
+        padding = std::clamp(fitting, 8.0F, natural);
+    }
+    return textWidth(segmentFont(style_), options_[index]) + padding;
 }
 
 int SegmentedControl::idealWidth() const {
+    // The natural width, whatever width it was last given.
     auto width = style_ == Style::tabs ? 0.0F : 6.0F;
-    for (int index = 0; index < options_.size(); ++index) width += optionWidth(index) + 2.0F;
+    for (int index = 0; index < options_.size(); ++index)
+        width += textWidth(segmentFont(style_), options_[index]) + (style_ == Style::tabs ? 24.0F : 20.0F) + 2.0F;
     return static_cast<int>(std::ceil(width));
 }
 

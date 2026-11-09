@@ -18,9 +18,9 @@ public:
     void setKeyCaps(const ActionMap&);
     void setDiesel(bool diesel);
     /** Shows the engine brake's switch (stages > 0) or hides it (0), and sets
-     * it off. */
-    void setEngineBrake(std::uint32_t stages);
-    /** The switch's next stage after a press: up one, off after the last. */
+     * it off. `cylinders` names how many each stage brakes. */
+    void setEngineBrake(std::uint32_t stages, std::uint32_t cylinders);
+    /** The switch's next stage after a key press: up one, off after the last. */
     [[nodiscard]] std::uint32_t nextEngineBrakeStage() const noexcept;
     /** The stage the switch shows. */
     void setEngineBrakeStage(std::uint32_t stage);
@@ -28,6 +28,8 @@ public:
 
     /** Called with a throttle fraction (0.01, 0.10, 0.20 or 1.0). */
     std::function<void(double)> onThrottlePreset;
+    /** Called with the stage picked from the engine brake's menu. */
+    std::function<void(std::uint32_t)> onEngineBrakeStage;
 
     ActionButton ignition { "Ignition" };
     ActionButton starter { "Starter" };
@@ -47,8 +49,8 @@ public:
     /** Lit when the gearbox shifts by itself; a gear key goes back to manual. */
     ActionButton automatic { "Auto", ActionButton::Style::compact };
     ActionButton resetTrip { "Reset trip", ActionButton::Style::compact };
-    /** A truck's engine brake switch, shown only when the engine has one:
-     * each click takes it a stage up, and off after the last. */
+    /** A truck's engine brake switch, shown only when the engine has one: a
+     * click opens the list of its stages; its key steps through them. */
     ActionButton engineBrake { "Engine brake off", ActionButton::Style::compact };
     SliderRow afrTrim { "AFR trim" };
     SliderRow sparkTrim { "Spark trim" };
@@ -75,6 +77,8 @@ private:
     bool trimsOpen_ { false };
     std::uint32_t engineBrakeStages_ { 0 };
     std::uint32_t engineBrakeStage_ { 0 };
+    std::uint32_t engineBrakeCylinders_ { 0 };
+    void openEngineBrakeMenu();
 };
 
 } // namespace enginelab::ui

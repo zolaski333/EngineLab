@@ -143,6 +143,11 @@ private:
     // Time since the last shift began: an automatic gearbox waits before
     // choosing again.
     double secondsSinceShift_ { 1.0e9 };
+    // The engine's speed a frame ago and its smoothed rate of climb, rpm/s:
+    // an automated manual changes up on the speed it will have when its
+    // clutch is open.
+    double previousEngineRpm_ { -1.0 };
+    double engineRpmRate_ { 0.0 };
     int requestedGear_ { -1 };
     int engagedGear_ { -1 };
     int shiftTargetGear_ { -1 };

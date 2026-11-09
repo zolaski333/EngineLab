@@ -302,6 +302,15 @@ target_compile_definitions(EngineLabEngineBrakeTests PRIVATE
 enginelab_set_warnings(EngineLabEngineBrakeTests)
 add_test(NAME EngineLab.EngineBrake COMMAND EngineLabEngineBrakeTests)
 
+add_executable(EngineLabTruckDriveTests TruckDriveTests.cpp)
+target_link_libraries(EngineLabTruckDriveTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Runtime)
+target_compile_definitions(EngineLabTruckDriveTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabTruckDriveTests)
+add_test(NAME EngineLab.TruckDrive COMMAND EngineLabTruckDriveTests)
+
 add_executable(EngineLabDynoHoldTests DynoHoldTests.cpp)
 target_link_libraries(EngineLabDynoHoldTests PRIVATE
     EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu

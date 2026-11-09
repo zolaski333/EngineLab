@@ -819,6 +819,16 @@ void fuelSystemsAreRefitted() {
             && near(back.config->injection.injectorFlowMgPerSecond, port.injection.injectorFlowMgPerSecond)
             && near(back.config->injection.startAngleDegrees, port.injection.startAngleDegrees),
         "and back to port injection, as designed");
+    // From direct injection, to either of the others.
+    for (const auto system : { FuelSystem::portInjection, FuelSystem::carburettor }) {
+        const auto fromDirect = withFuelSystem(direct, system, parts());
+        require(fromDirect.config.has_value() && fuelSystemOf(*fromDirect.config) == system,
+            "a direct-injected four takes another fuel system: " + fromDirect.error);
+    }
+    const auto directToPort = *withFuelSystem(direct, FuelSystem::portInjection, parts()).config;
+    require(near(directToPort.injection.injectorFlowMgPerSecond, port.injection.injectorFlowMgPerSecond)
+            && near(directToPort.injection.startAngleDegrees, port.injection.startAngleDegrees),
+        "direct to port injection gives the designer's port injection");
 
     auto dieselSpec = sportFour();
     dieselSpec.fuel = FuelType::diesel;

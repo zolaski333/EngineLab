@@ -145,8 +145,12 @@ int main() {
     driver.engineBrakeStage = 2;
     VehicleStep step;
     step.drive.clutchPressure = 1.0;
+    step.drive.engagedGear = -1;
     DriverCommandArbiter::arbitrate(driver, step);
-    require(step.engineBrakeStage == 2, "the switch passes with the clutch in");
+    require(step.engineBrakeStage == 0, "neutral releases it: a blip at rest does not end in its bark");
+    step.drive.engagedGear = 3;
+    DriverCommandArbiter::arbitrate(driver, step);
+    require(step.engineBrakeStage == 2, "the switch passes in gear with the clutch in");
     step.drive.clutchPressure = 0.3;
     DriverCommandArbiter::arbitrate(driver, step);
     require(step.engineBrakeStage == 0, "the clutch out releases it");

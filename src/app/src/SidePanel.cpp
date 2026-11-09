@@ -348,6 +348,164 @@ void AudioPanel::resized() {
     exhaustPreset_.setBounds(padding, padding + sectionHeight, getWidth() - 2 * padding, 32);
 }
 
+namespace {
+// The vehicle's figures in the order shown; their bounds are
+// validateEngineConfig's, which says why an edit is refused.
+const std::array<VehiclePanel::Field, 10> vehicleFields { {
+    { "Mass", "kg", &VehicleConfig::massKg, 0, "With the driver and any load: a tractor and its trailer weigh up to 40 t" },
+    { "Drag coefficient", "", &VehicleConfig::dragCoefficient, 3, "Cd: about 0.30 a saloon, 0.6 a truck, 0.6-0.9 a motorcycle" },
+    { "Frontal area", "m\xc2\xb2", &VehicleConfig::frontalAreaM2, 2, "Seen from the front: about 2.2 a car, 10 a truck" },
+    { "Tyre radius", "m", &VehicleConfig::tireRadiusM, 3, "Rolling radius of the driven tyre" },
+    { "Rolling resistance", "", &VehicleConfig::rollingResistanceCoefficient, 4, "Crr: 0.006 a truck tyre, 0.010-0.014 a car's" },
+    { "Tyre friction", "", &VehicleConfig::tireFrictionCoefficient, 2, "Peak grip, used when the tyres can spin: about 1.0 on dry tarmac" },
+    { "Driven axle load", "", &VehicleConfig::drivenAxleWeightFraction, 2, "Share of the weight on the driven axle at rest (0-1)" },
+    { "Wheelbase", "m", &VehicleConfig::wheelbaseM, 2, "For the load transfer under acceleration and braking" },
+    { "Centre of gravity height", "m", &VehicleConfig::centerOfGravityHeightM, 2, "Above the road, below the wheelbase" },
+    { "Brake force", "N", &VehicleConfig::maximumBrakeForceN, 0, "At full brake pedal, all axles together" },
+} };
+constexpr int vehicleRowHeight = 32;
+} // namespace
+
+VehiclePanel::VehiclePanel(const DashboardModel& model) : model_(model) {
+    for (std::size_t index = 0; index < vehicleFields.size(); ++index) {
+        auto editor = std::make_unique<juce::TextEditor>();
+        editor->setJustification(juce::Justification::centredRight);
+        editor->setInputRestrictions(12, "0123456789.");
+        editor->setSelectAllWhenFocused(true);
+        editor->setTooltip(juce::String::fromUTF8(vehicleFields[index].tooltip));
+        editor->onReturnKey = [this, index] { commit(index); };
+        editor->onFocusLost = [this, index] { commit(index); };
+        editor->onEscapeKey = [this] { shownOnce_ = false; refresh(); };
+        addAndMakeVisible(*editor);
+        editors_.push_back(std::move(editor));
+    }
+    drivenAxles_.addItem("Front-wheel drive", 1);
+    drivenAxles_.addItem("Rear-wheel drive", 2);
+    drivenAxles_.addItem("All-wheel drive", 3);
+    drivenAxles_.onChange = [this] {
+        auto edited = model_.config.vehicle;
+        const auto id = drivenAxles_.getSelectedId();
+        edited.drivenAxleLayout = id == 1 ? DrivenAxleLayout::front : id == 3 ? DrivenAxleLayout::all
+                                                                              : DrivenAxleLayout::rear;
+        if (edited.drivenAxleLayout != model_.config.vehicle.drivenAxleLayout) send(edited);
+    };
+    addAndMakeVisible(drivenAxles_);
+    tyreGrip_.setTooltip(utf8("Off, the tyres pass whatever the driveline asks (a rolling road). On, they break "
+                              "traction past their friction, with the load moving between axles"));
+    tyreGrip_.onClick = [this] {
+        auto edited = model_.config.vehicle;
+        edited.tyreGripLimitEnabled = tyreGrip_.getToggleState();
+        if (edited.tyreGripLimitEnabled != model_.config.vehicle.tyreGripLimitEnabled) send(edited);
+    };
+    addAndMakeVisible(tyreGrip_);
+}
+
+VehiclePanel::~VehiclePanel() = default;
+
+int VehiclePanel::preferredHeight() const {
+    return padding + sectionHeight + static_cast<int>(vehicleFields.size()) * vehicleRowHeight + 8 + 32 + 8 + 28
+        + 12 + 44 + sectionHeight + 5 * rowHeight + padding;
+}
+
+void VehiclePanel::commit(std::size_t field) {
+    if (field >= editors_.size()) return;
+    const auto text = editors_[field]->getText().trim();
+    auto edited = model_.config.vehicle;
+    const auto& member = vehicleFields[field].member;
+    const auto value = text.getDoubleValue();
+    if (text.isEmpty() || value == edited.*member) {
+        shownOnce_ = false;
+        refresh();
+        return;
+    }
+    edited.*member = value;
+    send(edited);
+}
+
+void VehiclePanel::send(const VehicleConfig& edited) {
+    status_ = onEdit ? onEdit(edited) : juce::String("Nothing takes the edit.");
+    // The fields show what the engine runs now: the edit, or the figures
+    // it kept.
+    shownOnce_ = false;
+    refresh();
+    repaint();
+}
+
+void VehiclePanel::refresh() {
+    const auto& vehicle = model_.config.vehicle;
+    auto same = shownOnce_ && shown_.drivenAxleLayout == vehicle.drivenAxleLayout
+        && shown_.tyreGripLimitEnabled == vehicle.tyreGripLimitEnabled;
+    for (const auto& field : vehicleFields) same = same && shown_.*(field.member) == vehicle.*(field.member);
+    if (!same) {
+        for (std::size_t index = 0; index < editors_.size(); ++index) {
+            if (editors_[index]->hasKeyboardFocus(true)) continue;
+            const auto& field = vehicleFields[index];
+            editors_[index]->setText(juce::String(vehicle.*(field.member), field.decimals), false);
+        }
+        drivenAxles_.setSelectedId(vehicle.drivenAxleLayout == DrivenAxleLayout::front ? 1
+                                   : vehicle.drivenAxleLayout == DrivenAxleLayout::all ? 3 : 2,
+                                   juce::dontSendNotification);
+        tyreGrip_.setToggleState(vehicle.tyreGripLimitEnabled, juce::dontSendNotification);
+        shown_ = vehicle;
+        shownOnce_ = true;
+    }
+    repaint();
+}
+
+void VehiclePanel::paint(juce::Graphics& g) {
+    auto area = getLocalBounds().toFloat().reduced(padding, padding);
+    drawSectionLabel(g, area.removeFromTop(sectionHeight), "Vehicle");
+    for (const auto& field : vehicleFields) {
+        auto row = area.removeFromTop(static_cast<float>(vehicleRowHeight));
+        g.setColour(colours::grid);
+        g.fillRect(row.removeFromBottom(1.0F));
+        g.setColour(colours::muted);
+        g.setFont(uiFont(14.0F));
+        g.drawText(juce::String::fromUTF8(field.label), row.removeFromLeft(170.0F), juce::Justification::centredLeft,
+                   true);
+        g.setFont(uiFont(13.0F));
+        g.drawText(juce::String::fromUTF8(field.unit), row.removeFromRight(34.0F), juce::Justification::centredLeft,
+                   true);
+    }
+    area.removeFromTop(8.0F + 32.0F + 8.0F + 28.0F + 12.0F);
+    auto note = area.removeFromTop(44.0F);
+    g.setFont(uiFont(13.5F));
+    g.setColour(status_.isNotEmpty() ? colours::accent : colours::faint);
+    g.drawFittedText(status_.isNotEmpty() ? status_
+                         : utf8("Type a figure and press Enter: the running engine takes it, in the gear it is in."),
+                     note.toNearestInt(), juce::Justification::topLeft, 3, 0.9F);
+    drawSectionLabel(g, area.removeFromTop(sectionHeight), "Now");
+    const auto& state = model_.state;
+    const auto& unit = model_.units;
+    using units::Quantity;
+    const auto speed = std::abs(state.vehicleSpeedMps);
+    const auto& vehicle = model_.config.vehicle;
+    // Road load at this speed: air drag and rolling resistance.
+    const auto dragN = 0.5 * 1.204 * vehicle.dragCoefficient * vehicle.frontalAreaM2 * speed * speed;
+    const auto rollingN = vehicle.rollingResistanceCoefficient * vehicle.massKg * 9.80665;
+    drawRows(g, area, {
+        { "Speed", unit.text(Quantity::speed, state.vehicleSpeedMps, 1) },
+        { "Gear", gearName(state.gear) + " / " + juce::String(state.gearCount) },
+        { "Air drag / rolling", fixed(dragN, 0) + " / " + fixed(rollingN, 0) + " N" },
+        { "Road load power", unit.text(Quantity::power, (dragN + rollingN) * speed * 1.0e-3, 1) },
+        { "Wheel torque", unit.text(Quantity::torque, state.wheelTorqueNm, 0) },
+    });
+}
+
+void VehiclePanel::resized() {
+    auto area = getLocalBounds().reduced(padding, padding);
+    area.removeFromTop(sectionHeight);
+    for (auto& editor : editors_) {
+        auto row = area.removeFromTop(vehicleRowHeight).reduced(0, 4);
+        row.removeFromRight(34);
+        editor->setBounds(row.removeFromRight(110));
+    }
+    area.removeFromTop(8);
+    drivenAxles_.setBounds(area.removeFromTop(32));
+    area.removeFromTop(8);
+    tyreGrip_.setBounds(area.removeFromTop(28));
+}
+
 DiagnosticsPanel::DiagnosticsPanel(const DashboardModel& model) : model_(model) {}
 
 int DiagnosticsPanel::preferredHeight() const {
@@ -533,7 +691,7 @@ std::vector<std::pair<juce::String, juce::String>> DiagnosticsPanel::debugRows()
 }
 
 SidePanel::SidePanel(const DashboardModel& model, std::function<bool()> wheelModifierActive)
-    : dyno(model, wheelModifierActive), audio(model), telemetry_(model), diagnostics_(model) {
+    : dyno(model, wheelModifierActive), vehicle(model), audio(model), telemetry_(model), diagnostics_(model) {
     tabs_.onChange = [this](int tab) { showTab(tab); };
     telemetry_.onShowInjectors = [this] {
         if (onShowInjectors) onShowInjectors();
@@ -543,11 +701,12 @@ SidePanel::SidePanel(const DashboardModel& model, std::function<bool()> wheelMod
     };
     addAndMakeVisible(tabs_);
     addAndMakeVisible(dyno);
-    for (auto* pane : { &telemetryPane_, &audioPane_, &diagnosticsPane_ }) {
+    for (auto* pane : { &telemetryPane_, &vehiclePane_, &audioPane_, &diagnosticsPane_ }) {
         pane->forwardWheel = wheelModifierActive;
         addChildComponent(*pane);
     }
     telemetryPane_.setViewedComponent(&telemetry_, false);
+    vehiclePane_.setViewedComponent(&vehicle, false);
     audioPane_.setViewedComponent(&audio, false);
     diagnosticsPane_.setViewedComponent(&diagnostics_, false);
 }
@@ -557,6 +716,7 @@ void SidePanel::showTab(int tab) {
     tabs_.setSelected(tab);
     dyno.setVisible(tab == dynoTab);
     telemetryPane_.setVisible(tab == telemetryTab);
+    vehiclePane_.setVisible(tab == vehicleTab);
     audioPane_.setVisible(tab == audioTab);
     diagnosticsPane_.setVisible(tab == diagnosticsTab);
     refresh();
@@ -575,6 +735,10 @@ void SidePanel::refresh() {
     case telemetryTab:
         fitContent(telemetryPane_, telemetry_, telemetry_.preferredHeight());
         telemetry_.repaint();
+        break;
+    case vehicleTab:
+        fitContent(vehiclePane_, vehicle, vehicle.preferredHeight());
+        vehicle.refresh();
         break;
     case audioTab:
         fitContent(audioPane_, audio, audio.preferredHeight());
@@ -598,11 +762,13 @@ void SidePanel::paint(juce::Graphics& g) {
 void SidePanel::resized() {
     auto area = getLocalBounds().withTrimmedLeft(1);
     auto tabRow = area.removeFromTop(48);
-    tabs_.setBounds(tabRow.withTrimmedLeft(12).withTrimmedTop(10).withWidth(tabs_.idealWidth()));
+    const auto tabRoom = tabRow.getWidth() - 24;
+    tabs_.setBounds(tabRow.withTrimmedLeft(12).withTrimmedTop(10).withWidth(std::min(tabs_.idealWidth(), tabRoom)));
     area.removeFromTop(1);
     dyno.setBounds(area);
-    for (auto* pane : { &telemetryPane_, &audioPane_, &diagnosticsPane_ }) pane->setBounds(area);
+    for (auto* pane : { &telemetryPane_, &vehiclePane_, &audioPane_, &diagnosticsPane_ }) pane->setBounds(area);
     fitContent(telemetryPane_, telemetry_, telemetry_.preferredHeight());
+    fitContent(vehiclePane_, vehicle, vehicle.preferredHeight());
     fitContent(audioPane_, audio, audio.preferredHeight());
     fitContent(diagnosticsPane_, diagnostics_, diagnostics_.preferredHeight());
 }

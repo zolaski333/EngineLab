@@ -846,8 +846,14 @@ edit, taken live.
 - `automated_manual`: one clutch the gearbox works itself (an AMT: a
   Selespeed, an SMG, a truck's). It has the dual clutch's own launch clutch,
   creep and over-rev protection, and no pedal, but its upshift is the manual
-  way: the torque cut and the clutch opened over `shift_duration_s`, a gap in
-  the drive, then the torque back with the slip. No ignition cut, no retard.
+  way: the engine's torque taken fully away over the first 20 % of
+  `shift_duration_s` (whatever `shift_torque_cut_fraction` says: the
+  driver's foot stays down, and a part cut flared the engine onto its
+  limiter while the clutch was open), the clutch opened, a gap in the drive,
+  then the torque back only once the clutch has pulled the engine down to the
+  new gear's speed. It starts the upshift ahead of the point by 0.35 x the
+  shift time's worth of the engine's present acceleration, so the clutch
+  opens near the point instead of after it. No ignition cut, no retard.
   A downshift is blipped as above. The shift time is the gearbox's; the
   truck part's 0.8 s is an estimate, not a unit's figure.
 
@@ -873,8 +879,11 @@ valve count so the curtain area is one valve's. The compressed charge blows
 down into the exhaust near TDC instead of returning its work on the
 expansion stroke. That drag and its sound are the solver's own: nothing is
 added to the torque or the audio. The runtime passes the switch through
-only with the clutch at 0.9 or more and no shift under way (a real brake's
-clutch switch, and an AMT's release for the shift). The dyno ignores it.
+only in a gear (forward or reverse, not neutral), with the clutch at 0.9 or
+more and no shift under way (a real brake's clutch switch, and an AMT's
+release for the shift); in neutral a blip at rest would end in the brake's
+bark. The 3-D view draws the braking cylinders' extra exhaust lift
+(`ScenePoseInput::engineBrakeCylinders`). The dyno ignores it.
 
 The designer's brake has a 2.0 mm lift (production brakes: about 1-2 mm),
 peaks at TDC (published: maximum lift near TDC), lasts 80 deg (estimated),
@@ -892,7 +901,8 @@ button or `8`), `ShiftSchedule` chooses the gear from the driver's pedal, not
 the engine's throttle, so a blip or a torque cut does not move the points.
 The upshift point runs from max(2.2 × idle, 0.3 × limit) foot-light to
 0.94 × the active rev limit flat out (`automatic_upshift_rpm` replaces the
-latter when set), along pedal^1.5; the downshift point from 1.3 × idle
+latter when set; a designed truck sets it at 1.05 x its peak power speed,
+at most 0.90 x redline), along pedal^1.5; the downshift point from 1.3 × idle
 (`automatic_downshift_rpm`) to 0.55 × the full-throttle upshift, which is the
 kickdown. An upshift must land above 1.15 × the downshift point and a
 downshift under 0.9 × the upshift point, so a gear it lands in is kept; a
@@ -938,8 +948,8 @@ pedals and the driveline's own devices become engine commands. Each public
 frame, `advanceVehicle()` gives the driveline the clutch the arbiter chooses
 (the driver's pedal; a dual clutch ignores it), advances it on the previous frame's engine state,
 then sets the engine throttle to `max(driver x torque cut, blip)` and passes a
-quickshifter's ignition cut through, and the engine brake's switch while the
-clutch is in and no shift is under way. It also records who held the throttle
+quickshifter's ignition cut through, and the engine brake's switch while a
+gear is engaged, the clutch is in and no shift is under way. It also records who held the throttle
 (`driver`, `shiftTorqueCut` or `blipper`). `EngineRuntime`, `EngineLab.ShiftStyle`
 and the shift, loaded-acceleration, afterfire and drive-scenario harnesses all
 step the vehicle through it, so they cannot drift from the product. The dyno

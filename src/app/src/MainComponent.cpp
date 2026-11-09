@@ -122,7 +122,11 @@ MainComponent::MainComponent() {
     controls_.gearDown.onClick = [this] { if (runtime_) runtime_->shiftDown(); };
     controls_.gearUp.onClick = [this] { if (runtime_) runtime_->shiftUp(); };
     controls_.cruise.onClick = [this] { if (runtime_) runtime_->toggleCruise(); };
-    controls_.engineBrake.onClick = [this] { stepEngineBrake(); };
+    controls_.onEngineBrakeStage = [this](std::uint32_t stage) {
+        if (!runtime_) return;
+        runtime_->setEngineBrakeStage(stage);
+        controls_.setEngineBrakeStage(stage);
+    };
     controls_.automatic.onClick = [this] {
         if (runtime_) runtime_->setAutomaticShifting(!model_.state.automaticShifting);
     };
@@ -178,6 +182,15 @@ MainComponent::MainComponent() {
     side_.audio.onExhaustPreset = [this](int presetIndex) { applyExhaustPreset(presetIndex); };
     side_.onShowInjectors = [this] { (void)viewport_.showInjectors(); };
     side_.onShowFuel = [this] { showFuelWindow(); };
+    // The Vehicle tab's edits: live, as the gearbox inspector's are.
+    side_.vehicle.onEdit = [this](const VehicleConfig& vehicle) -> juce::String {
+        auto edited = config_;
+        edited.vehicle = vehicle;
+        if (const auto invalid = validateEngineConfig(edited)) return juce::String::fromUTF8(invalid->c_str());
+        if (runtime_ && runtime_->dynoRunning()) return "Stop the dyno first: the bench holds the engine.";
+        if (!applyEngineEdit(edited)) return "The engine did not take the edit.";
+        return {};
+    };
     try {
         fuelPresets_ = loadFuelPresets(catalogRoot_);
     } catch (const std::exception&) {
@@ -428,7 +441,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     controls_.setDiesel(diesel);
     // The new runtime starts with the engine brake off.
     controls_.setEngineBrake(config_.engineBrake.fitted && config_.cycle == EngineCycle::fourStroke
-        ? config_.engineBrake.stageCount : 0U);
+        ? config_.engineBrake.stageCount : 0U, static_cast<std::uint32_t>(config_.cylinders.size()));
     adoptAudioVoicing(config_.audioVoicing);
     voicingRevision_ = audioVoicingRevision(catalogRoot_);
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);

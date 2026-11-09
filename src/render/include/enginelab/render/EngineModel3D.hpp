@@ -77,6 +77,9 @@ struct ScenePoseInput final {
     int engagedGear { -1 };
     /** A two-stroke's power valve, 0 shut to 1 open. */
     double powerValveOpening { 1.0 };
+    /** How many cylinders the engine brake holds (EngineState): the first
+        ones, their exhaust valve cracked open around firing TDC. */
+    std::uint32_t engineBrakeCylinders { 0 };
 };
 
 struct SceneBounds final {
@@ -184,6 +187,10 @@ public:
     /** Cylinder `index`'s combustion chamber (its flame); 0xFFFF past the end. */
     [[nodiscard]] std::uint16_t flamePart(std::size_t index) const noexcept {
         return index < cylinders_.size() ? cylinders_[index].flamePart : std::uint16_t { 0xFFFFU };
+    }
+    /** Cylinder `index`'s exhaust valve; 0xFFFF past the end. */
+    [[nodiscard]] std::uint16_t exhaustValvePart(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].exhaustValvePart : std::uint16_t { 0xFFFFU };
     }
     [[nodiscard]] std::uint16_t injectorPart(std::size_t index) const noexcept {
         return index < cylinders_.size() ? cylinders_[index].injectorPart : std::uint16_t { 0xFFFFU };

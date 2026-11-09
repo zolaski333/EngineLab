@@ -58,9 +58,10 @@ struct VehicleStep final {
  *  2. a clutch shift scales the driver's throttle by its torque cut;
  *  3. an auto-blipper may open the throttle past that, never close it;
  *  4. a quickshifter's ignition cut passes through to the ECU;
- *  5. the engine brake's switch passes through only while the clutch is
- *     engaged and no shift is under way (a real one's clutch switch, and an
- *     automated gearbox's release for the shift).
+ *  5. the engine brake's switch passes through only while a gear is
+ *     engaged, the clutch is closed and no shift is under way (a real one's
+ *     clutch switch, an automated gearbox's release for the shift; in
+ *     neutral a blip of the throttle would end in its bark, owner 2026-11-09).
  * The dyno bypasses all of it: the bench, not a driver, holds the engine. */
 class DriverCommandArbiter final {
 public:

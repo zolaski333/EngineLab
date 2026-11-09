@@ -2297,6 +2297,11 @@ void EngineViewport::updateInspector() {
         title = "Injector";
         edit = injectorEdit();
         if (edit) edit->choice = fuelSystemChoice(false);
+        // A diesel has no other system to offer: say so where the choice
+        // would be.
+        if (edit && config.fuel == FuelType::diesel)
+            edit->note += " A diesel's fuel is injected into the cylinder at compression: it keeps direct injection "
+                          "(no port injection or carburettor to choose).";
         add("Injection", direct ? "Direct" : "Port");
         add("Window", juce::String(juce::roundToInt(config.injection.startAngleDegrees)) + utf8("° to ")
                           + juce::String(juce::roundToInt(config.injection.endAngleDegrees)) + utf8("°"));
@@ -2522,10 +2527,39 @@ void EngineViewport::updateInspector() {
             edit->value("Final drive", transmission.finalDriveRatio, utf8(" : 1"), 3, 0.1, 0.01, 0.5, 20.0);
             edit->value("Clutch capacity", std::round(transmission.maxClutchTorqueNm), utf8(" N\xc2\xb7m"), 0, 10.0, 1.0,
                         10.0, 10'000.0);
+            // validateEngineConfig's bounds: a truck's first gear is 16.7.
             for (int index = 0; index < gears; ++index)
                 edit->value("Gear " + juce::String(index + 1),
                             transmission.gearRatios[static_cast<std::size_t>(index)], utf8(" : 1"), 3, 0.05, 0.005,
-                            0.05, 10.0);
+                            0.05, 25.0);
+            // How many gears, a restart: first and top keep their ratios
+            // and the ones between are spread evenly in proportion, as a
+            // gearbox's steps are. A CVT's are its variator's two ends.
+            if (style != ShiftStyle::cvt) {
+                static constexpr int mostGears = 16;  // DrivelineModel's schedule holds 16
+                std::vector<juce::String> counts;
+                for (int count = 1; count <= mostGears; ++count)
+                    counts.push_back(juce::String(count) + (count == 1 ? " gear" : " gears"));
+                edit->secondChoice = PartInspector::Edit::Choice { std::move(counts),
+                    "How many forward gears, and the engine restarts: first and top keep their ratios, and the "
+                    "gears between are spread with an equal step from one to the next (a 12-speed truck box's "
+                    "is about 1.29). Ratios set by hand in between are lost; a single gear is first.",
+                    std::clamp(gears, 1, mostGears) - 1 };
+                partSecondChoice_ = [this](EngineConfig& edited, int index) {
+                    auto& ratios = edited.transmission.gearRatios;
+                    if (ratios.empty()) throw std::runtime_error("The gearbox has no gears to spread.");
+                    const auto count = static_cast<std::size_t>(std::clamp(index + 1, 1, mostGears));
+                    const auto first = ratios.front();
+                    const auto top = ratios.size() > 1U ? ratios.back() : first;
+                    std::vector<double> spread(count);
+                    for (std::size_t gear = 0; gear < count; ++gear)
+                        spread[gear] = count == 1U ? first
+                            : first * std::pow(top / first, static_cast<double>(gear) / static_cast<double>(count - 1));
+                    ratios = std::move(spread);
+                    // The gearbox stays the one selected.
+                    partChoiceSelects_ = render::PartRole::gearbox;
+                };
+            }
             edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over, an "
                          "automated manual's torque gap). "
                          "Ignition cut: the quickshifter's, on the way up. Ratios: input over output, the final "
@@ -2927,6 +2961,7 @@ void EngineViewport::refresh() {
         shared_.pose.rpm = state.rpm;
         shared_.pose.throttle = state.throttle;
         shared_.pose.powerValveOpening = state.powerValveOpening;
+        shared_.pose.engineBrakeCylinders = state.engineBrakeCylinders;
         shared_.turboShaftRpm = state.forcedInductionShaftSpeedRpm;
         // In gear the input shaft runs at the clutch's driven side; in
         // neutral the engaged clutch spins it with the crank.
