@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-09 — a slide carburettor's throat is its slide
+
+- Owner report: the designed V4-2S stalls at the 1/10/20 % throttle buttons, lean, clip 1. `PhysicsPerfHarness --saved-engine --freerev`: lambda 1.7 (1 %), 4-6.8 (10 %), 2.1-2.3 (20 %), stalled within 4 s; the designed 250 single too (5-6.8 at 10 %). The catalogue RD350 is injected: no catalogue engine had a two-stroke carburettor at part throttle.
+- One factor each, at 10 %: the designer's 29.6 mm bore instead of the owner's 38 still stalls (not the bore); the jet's lift at 0 gives 5x the fuel, lambda 2.2, still stalls. Cause: the main circuit read the whole venturi's depression (46 Pa at 10 %, lift 36 Pa); the slide's gap, the real throat, was never used.
+- Fix: the throat is min(venturi, the bore's effective open area); the needle's annulus follows the slide's open area over the venturi's, x(1 + 0.08 (3 - clip)). Full throttle is untouched (the venturi stays the throat at 0.72 > 0.64); a fixed venturi too.
+- After: V4-2S free-revs at 1 % (2,550 rpm, lambda 0.48, its own rich pilot; it was rich at idle before too), 10/20/50 % to the limiter at lambda 0.65-0.74 (clip 1); the single 0.92-0.94. `EngineLab.TwoStroke`'s rig: AFR 13.8/13.3/13.1/13.1 at 10/20/40/60 % against 13.05 wide open.
+- Not measured: a loaded part-throttle cruise, a real carburettor's mixture curve, the four-stroke fixed venturi's part throttle, the app by hand.
+
 ## 2026-11-08 — an alcohol's metering: injectors resized, the trim's bounds in lambda
 
 - Injectors resized by the stoichiometric ratio (x2.27 on methanol): EJ25 lambda 0.86/0.86/0.84 at 2,000/4,000/6,000 rpm (petrol 0.87/0.86/0.84), RD350 0.89-0.93 (was 0.50-1.53); no more flat fuel flow. Jets take the same ratio times the root of the density ratio (no catalogue carburettor to measure it on).

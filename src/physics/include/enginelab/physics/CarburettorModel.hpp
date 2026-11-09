@@ -39,9 +39,9 @@ struct CarburettorMetering final {
  *
  * The two circuits never need blending, because each is driven by a
  * depression the other does not see. The main circuit is driven by the
- * venturi's own depression, which goes as the square of the throat velocity
- * and is worth tens of pascals at idle -- less than the lift of the jet above
- * the bowl, so it passes nothing at all. The pilot circuit is driven by the
+ * throat's depression -- the slide's gap part-way open, the venturi wide
+ * open -- and its needle follows the slide, so with the slide down it passes
+ * nothing at all. The pilot circuit is driven by the
  * drop from the bowl to the crankcase, which is largest with the slide shut
  * and collapses at full throttle, where a two-stroke's crankcase pumps at
  * about ambient. Each fades where the other takes over, with no crossover
@@ -77,22 +77,30 @@ public:
     [[nodiscard]] static double jetAreaM2(double flowNumber,
                                           double dischargeCoefficient) noexcept;
 
-    /** How far the needle has withdrawn from the needle jet, 0 to 1.
+    /** How far the needle has withdrawn from the needle jet, 0 to 1, given
+     *  the slide's open area over the venturi's.
      *
-     * On a slide carburettor the needle rides with the slide, so over roughly
-     * the first three quarters of the opening it is the needle taper and not
-     * the main jet that meters. The clip position shifts the whole curve: a
-     * lower clip holds the needle higher and richens everything below full
-     * throttle without touching the top.
+     * The needle rides with the slide, and its taper is cut so the needle
+     * jet's annulus follows the slide's gap: with the gap as the throat, the
+     * main circuit's mixture then holds what full throttle gives from where
+     * the slide lifts to where the venturi takes over. The clip moves it
+     * richer (a lower clip) or leaner below full throttle; wide open the
+     * needle is clear and the main jet alone meters.
      */
     [[nodiscard]] static double needleOpenFraction(const CarburettorConfig& carburettor,
-                                                   double throttleFraction) noexcept;
+                                                   double slideToThroatAreaRatio) noexcept;
 
     /** Meter the fuel for one solver sub-step.
      *
      * `airMassFlowKgPerSecond` is the air actually crossing the bore, and the
      * fuel follows from the depression that moved it, so this is an amount per
      * step and never a gain on a flow it goes on to change.
+     *
+     * `throttleOpenAreaM2` is every effective area the air crosses the bore
+     * by (slide gap, idle passages, leak) and `slideOpenAreaM2` the slide's
+     * own share: on a slide carburettor the smaller of the first and the
+     * venturi is the throat the main circuit reads, and the needle follows
+     * the second. A fixed venturi ignores both.
      *
      * `idleCircuitOpening` is the idle air path's opening against its
      * neutral one. Opening a slide's idle stop uncovers progression holes
@@ -108,6 +116,8 @@ public:
                                                    double crankcasePressureKpa,
                                                    double throttleDiameterMm,
                                                    double throttleFraction,
+                                                   double throttleOpenAreaM2,
+                                                   double slideOpenAreaM2,
                                                    double dtSeconds,
                                                    double idleCircuitOpening = 1.0,
                                                    double starterCircuitOpening = 0.0) noexcept;

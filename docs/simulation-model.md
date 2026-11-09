@@ -216,15 +216,23 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   command's guess at it.
 
   Two circuits run in parallel and are never blended, because each is driven by
-  a depression the other does not see. The main circuit has the venturi's own,
-  which goes as the square of the throat velocity and is worth tens of pascals
-  at idle -- less than the lift of the jet above the bowl, so it passes nothing
-  there at all. The pilot circuit has the whole drop from the bowl to the
-  crankcase, largest with the slide shut and gone at full throttle, where the
-  crankcase pumps at about ambient. Each fades out where the other takes over
-  and no crossover term is written anywhere. Between them the needle taper
-  meters, riding with the slide over the first three quarters of the opening,
-  which is what the clip position moves.
+  a depression the other does not see. The main circuit has the throat's: the
+  narrowest section the air crosses, which is the slide's own gap part-way
+  open (with the idle passages and the leak beside it) and the venturi wide
+  open. Its needle rides with the slide, cut so the needle jet's annulus
+  follows the slide's open area over the venturi's: the main circuit then
+  holds the full-throttle mixture from where the slide lifts to where the
+  venturi takes over, and carries only the slide's share of the air. The
+  clip scales that annulus by 8 % a notch (1 richest), and does not touch
+  full throttle. With the slide down the needle shuts and the main passes
+  nothing. Read off the whole venturi instead, the main drew a few tens of
+  pascals at 10 % -- under the jet's lift -- and every designed two-stroke
+  stalled lean at small openings (journal 2026-11-09). The pilot circuit has
+  the whole drop from the bowl to the crankcase, largest with the slide shut
+  and gone at full throttle, where the crankcase pumps at about ambient. Each
+  fades out where the other takes over and no crossover term is written
+  anywhere. A fixed venturi (a four-stroke's) keeps the venturi's depression
+  and no needle.
 
   Jets carry the number stamped on them: cc/min of test fluid under one metre
   of head, so flow is the number times the root of the head available. The

@@ -2349,7 +2349,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         carburettorStates_[pathIndex],
                         plenumInflowKg / subDt / bores, boundaryDensityKgPerM3,
                         intakeSourcePressureKpa, pilotPressureKpa,
-                        intake.throttleDiameterMm, state_.throttle, subDt,
+                        intake.throttleDiameterMm, state_.throttle,
+                        throttleAreaM2 / bores * intake.throttleDischargeCoefficient,
+                        throttlePlateAreaM2 / bores * std::pow(state_.throttle, intake.throttleGamma)
+                            * intake.throttleDischargeCoefficient,
+                        subDt,
                         carburettorIdleCircuitOpening(intake, starterFitted
                             ? std::min(ecuCommand.idleAirOpening, screwOpening) : ecuCommand.idleAirOpening),
                         starterFitted ? std::max(0.0, ecuCommand.idleAirOpening - screwOpening)

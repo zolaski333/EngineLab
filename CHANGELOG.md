@@ -20,6 +20,13 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- **A two-stroke's carburettor holds its mixture at part throttle.** The
+  slide part-way open is now the carburettor's throat, and the needle
+  follows it: a designed two-stroke no longer leans out and stalls at small
+  openings (the 1, 10 and 20 % throttle buttons stalled a designed V4 and a
+  250 single). Full throttle is unchanged; the needle clip richens or leans
+  part throttle by about 8 % a notch. No catalogue engine has a two-stroke
+  carburettor, so the catalogue is unchanged.
 - **A new octane is taken at once.** Changing only the octane (Fuel window
   or the combustion chamber) no longer restarts the engine, pauses it, or
   measures the knock-limited spark again: the running engine's knock model

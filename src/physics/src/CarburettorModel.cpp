@@ -12,18 +12,9 @@ constexpr double gravityMPerS2 = 9.80665;
 const double jetReferenceVelocityMps = std::sqrt(2.0 * gravityMPerS2);
 /** Nominal air-screw setting the pilot's flow number is taken to belong to. */
 constexpr double nominalAirScrewTurns = 1.5;
-/** Opening by which the needle has fully withdrawn and the main jet meters. */
-constexpr double needleFullyLiftedThrottle = 0.75;
-/** Needle-jet area still open with the slide shut. */
-constexpr double needleShutFraction = 0.18;
-/** Throttle shift per clip position away from the middle one. */
-constexpr double throttleShiftPerClip = 0.06;
-
-[[nodiscard]] double smoothStep(double t) noexcept {
-    if (!(t > 0.0)) return 0.0;
-    if (t >= 1.0) return 1.0;
-    return t * t * (3.0 - 2.0 * t);
-}
+/** Needle-jet area per clip position away from the middle one, as a share:
+ *  one notch raises the needle about a millimetre up its taper (estimated). */
+constexpr double needleAreaPerClip = 0.08;
 
 [[nodiscard]] double orificeMassFlowKgPerSecond(double areaM2,
                                                 double dischargeCoefficient,
@@ -56,15 +47,11 @@ double CarburettorModel::jetAreaM2(double flowNumber,
 }
 
 double CarburettorModel::needleOpenFraction(const CarburettorConfig& carburettor,
-                                            double throttleFraction) noexcept {
+                                            double slideToThroatAreaRatio) noexcept {
     const auto clip = std::clamp(carburettor.needleClipPosition, 1.0, 5.0);
-    // A lower clip number holds the needle higher, which is the same thing as
-    // the slide already being further open as far as the taper is concerned.
-    const auto shifted = std::clamp(throttleFraction, 0.0, 1.0)
-        + (3.0 - clip) * throttleShiftPerClip;
-    const auto open = smoothStep(std::clamp(shifted, 0.0, 1.0)
-        / needleFullyLiftedThrottle);
-    return needleShutFraction + (1.0 - needleShutFraction) * open;
+    // A lower clip holds the needle higher: more annulus at every opening.
+    const auto ratio = std::isfinite(slideToThroatAreaRatio) ? std::max(0.0, slideToThroatAreaRatio) : 0.0;
+    return std::clamp(ratio * (1.0 + (3.0 - clip) * needleAreaPerClip), 0.0, 1.0);
 }
 
 CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor,
@@ -76,6 +63,8 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
                                              double crankcasePressureKpa,
                                              double throttleDiameterMm,
                                              double throttleFraction,
+                                             double throttleOpenAreaM2,
+                                             double slideOpenAreaM2,
                                              double dtSeconds,
                                              double idleCircuitOpening,
                                              double starterCircuitOpening) noexcept {
@@ -92,9 +81,16 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
     const auto liftPressurePa = fuelDensityKgPerM3 * gravityMPerS2
         * std::max(0.0, carburettor.jetLiftMm) * 0.001;
 
-    // Main circuit: the venturi's own depression, from the velocity the air
-    // crossing the throat must have.
-    const auto throatAreaM2 = venturiAreaM2(carburettor, throttleDiameterMm);
+    // Main circuit: the depression at the narrowest section the air crosses.
+    // Wide open it is the venturi; a slide part-way down is itself the throat,
+    // its gap far narrower than the venturi, and the needle jet sits in it.
+    // Read off the whole venturi, a 38 mm bore at 10 % drew 46 Pa against the
+    // jet's 36 Pa of lift and a designed two-stroke stalled lean at every part
+    // opening (lambda 2-7; journal 2026-11-09).
+    const auto venturiM2 = venturiAreaM2(carburettor, throttleDiameterMm);
+    const auto slide = !carburettor.fixedVenturi;
+    const auto throatAreaM2 = slide && throttleOpenAreaM2 > 0.0
+        ? std::min(venturiM2, throttleOpenAreaM2) : venturiM2;
     if (throatAreaM2 > 0.0 && airDensityKgPerM3 > 0.0
         && airMassFlowKgPerSecond > 0.0) {
         result.venturiVelocityMps =
@@ -103,7 +99,8 @@ CarburettorMetering CarburettorModel::meter(const CarburettorConfig& carburettor
             * result.venturiVelocityMps * result.venturiVelocityMps;
         result.venturiDepressionKpa = depressionPa * 0.001;
         const auto mainAreaM2 = jetAreaM2(carburettor.mainJetFlowNumber, coefficient)
-            * (carburettor.fixedVenturi ? 1.0 : needleOpenFraction(carburettor, throttleFraction));
+            * (slide ? needleOpenFraction(carburettor, venturiM2 > 0.0
+                ? std::max(0.0, slideOpenAreaM2) / venturiM2 : 0.0) : 1.0);
         const auto mainFlowKgPerSecond = orificeMassFlowKgPerSecond(
             mainAreaM2, coefficient, fuelDensityKgPerM3,
             depressionPa - liftPressurePa);

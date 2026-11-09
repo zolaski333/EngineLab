@@ -790,7 +790,25 @@ struct CarburettorRig final {
                                           double dtSeconds) const {
         return CarburettorModel::meter(carburettor, fuel, state, airFlowKgPerSecond,
             airDensityKgPerM3, 101.325, crankcaseKpa, throttleDiameterMm,
-            throttleFraction, dtSeconds);
+            throttleFraction, openAreaM2(throttleFraction), slideAreaM2(throttleFraction), dtSeconds);
+    }
+
+    // The bore as the simulator opens it: the slide on a 1.3 law, the idle
+    // passages' 3 mm2 and the 0.26 mm2 leak beside it, at 0.72.
+    static constexpr double dischargeCoefficient { 0.72 };
+    [[nodiscard]] double slideAreaM2(double throttleFraction) const {
+        const auto radiusM = throttleDiameterMm * 0.0005;
+        return dischargeCoefficient * 3.14159265358979323846 * radiusM * radiusM
+            * std::pow(std::clamp(throttleFraction, 0.0, 1.0), 1.3);
+    }
+    [[nodiscard]] double openAreaM2(double throttleFraction) const {
+        return slideAreaM2(throttleFraction) + dischargeCoefficient * (3.0 + 0.26) * 1.0e-6;
+    }
+    /** Air an orifice of the bore's open area passes into a crankcase at
+     *  `crankcaseKpa`. */
+    [[nodiscard]] double orificeAirKgPerSecond(double throttleFraction, double crankcaseKpa) const {
+        return openAreaM2(throttleFraction)
+            * std::sqrt(2.0 * airDensityKgPerM3 * (101.325 - crankcaseKpa) * 1'000.0);
     }
 
     /** Air-fuel ratio from the fuel a settled carburettor delivers. */
@@ -920,20 +938,41 @@ void theNeedleClipMovesTheMiddleAndNotTheTop() {
     CarburettorConfig lean;
     rich.needleClipPosition = 2.0;
     lean.needleClipPosition = 4.0;
+    // The slide's gap at 40 % of the venturi's area: part throttle.
     const auto richMid = CarburettorModel::needleOpenFraction(rich, 0.4);
     const auto leanMid = CarburettorModel::needleOpenFraction(lean, 0.4);
     require(richMid > leanMid, "a lower clip holds the needle higher and richens mid-throttle");
-    require(CarburettorModel::needleOpenFraction(rich, 1.0) == 1.0
-        && CarburettorModel::needleOpenFraction(lean, 1.0) == 1.0,
+    // Wide open the slide's gap is wider than the venturi (0.72 over 0.64).
+    require(CarburettorModel::needleOpenFraction(rich, 1.125) == 1.0
+        && CarburettorModel::needleOpenFraction(lean, 1.125) == 1.0,
         "the clip position does not touch full throttle, where the main jet meters");
     CarburettorConfig middle;
-    require(CarburettorModel::needleOpenFraction(middle, 0.0) < 0.25,
-        "the needle nearly shuts the needle jet with the slide down");
+    require(CarburettorModel::needleOpenFraction(middle, 0.0) == 0.0,
+        "the needle shuts the needle jet with the slide down");
     auto previous = -1.0;
-    for (const auto throttle : { 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 }) {
-        const auto open = CarburettorModel::needleOpenFraction(middle, throttle);
+    for (const auto ratio : { 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2 }) {
+        const auto open = CarburettorModel::needleOpenFraction(middle, ratio);
         require(open >= previous, "the needle jet opens monotonically with the slide");
         previous = open;
+    }
+}
+
+void thePartThrottleMixtureHoldsWhatFullThrottleGives() {
+    // The slide part-way down is the throat, and the needle jet sits in its
+    // gap. Read off the whole venturi instead, the main circuit drew a few
+    // tens of pascals at 10 % -- under the jet's lift -- and a designed
+    // two-stroke stalled lean at 1, 10 and 20 % (lambda 2-7; journal
+    // 2026-11-09). The crankcase stands at 95 kPa so the pilot barely draws:
+    // this is the main circuit's mixture.
+    const CarburettorRig rig;
+    const auto wideOpenAfr = rig.settledAirFuelRatio(
+        rig.airFlowKgPerSecond(8'000.0, 0.9), 101.325, 1.0);
+    for (const auto throttle : { 0.10, 0.20, 0.40, 0.60 }) {
+        const auto afr = rig.settledAirFuelRatio(rig.orificeAirKgPerSecond(throttle, 95.0), 95.0, throttle);
+        std::cout << "  " << throttle * 100.0 << " % throttle, 95 kPa crankcase: AFR " << afr
+                  << " (full throttle " << wideOpenAfr << ")\n";
+        require(afr > 0.75 * wideOpenAfr && afr < 1.25 * wideOpenAfr,
+            "the main circuit holds the full-throttle mixture at part throttle");
     }
 }
 
@@ -1009,6 +1048,7 @@ int main(int argc, char** argv) {
     aPlainJetRichensAsTheEngineBreathesHarder();
     theJetsAndTheScrewsDoWhatTheyAreFor();
     theNeedleClipMovesTheMiddleAndNotTheTop();
+    thePartThrottleMixtureHoldsWhatFullThrottleGives();
     theWallFilmKeepsEveryMoleItTakes();
     std::cout << "two-stroke: ok\n";
     return EXIT_SUCCESS;
