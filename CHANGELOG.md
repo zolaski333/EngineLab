@@ -7,6 +7,12 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-11-10
+
+The first published release of 0.9: the v0.9.0 tag did not compile on Linux
+(three GCC warnings, errors there) and was never released, so 0.9.1 carries
+everything listed under 0.9.0 below; nothing else changed.
+
 ## [0.9.0] — 2026-11-10
 
 ### Added

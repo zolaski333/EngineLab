@@ -556,8 +556,8 @@ int main() {
         for (auto* child : tuner.getChildren())
             if (auto* cell = dynamic_cast<juce::TextEditor*>(child)) cells.push_back(cell);
         const auto stored = [&store] {
-            const auto snapshot = store->snapshot();
-            const auto* entry = snapshot->find(enginelab::calibration::keys::targetAirFuelRatio);
+            const auto published = store->snapshot();
+            const auto* entry = published->find(enginelab::calibration::keys::targetAirFuelRatio);
             const auto* table = entry != nullptr
                 ? std::get_if<enginelab::calibration::CalibrationTable2D>(entry) : nullptr;
             return table != nullptr && !table->values.empty() ? table->values.front() : -1.0;
@@ -570,9 +570,12 @@ int main() {
         require(std::abs(stored() - 5.80 / scale) < 1.0e-9, "a methanol AFR typed is stored as petrol AFR");
         tuner.setFuel("Premium gasoline 98 RON", 14.7, false);
         require(std::abs(stored() * 1.0 - 5.80 / scale) < 1.0e-9 && std::abs(
-                    [&tuner] { for (auto* child : tuner.getChildren())
-                        if (auto* cell = dynamic_cast<juce::TextEditor*>(child)) return cell->getText().getDoubleValue();
-                        return -1.0; }() - 5.80 / scale) < 0.01,
+                    [&tuner] {
+                        for (auto* child : tuner.getChildren())
+                            if (auto* cell = dynamic_cast<juce::TextEditor*>(child))
+                                return cell->getText().getDoubleValue();
+                        return -1.0;
+                    }() - 5.80 / scale) < 0.01,
                 "on petrol the same map reads in petrol AFR");
     }
 

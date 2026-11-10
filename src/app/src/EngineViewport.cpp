@@ -2552,9 +2552,9 @@ void EngineViewport::updateInspector() {
                     const auto first = ratios.front();
                     const auto top = ratios.size() > 1U ? ratios.back() : first;
                     std::vector<double> spread(count);
-                    for (std::size_t gear = 0; gear < count; ++gear)
-                        spread[gear] = count == 1U ? first
-                            : first * std::pow(top / first, static_cast<double>(gear) / static_cast<double>(count - 1));
+                    for (std::size_t step = 0; step < count; ++step)
+                        spread[step] = count == 1U ? first
+                            : first * std::pow(top / first, static_cast<double>(step) / static_cast<double>(count - 1));
                     ratios = std::move(spread);
                     // The gearbox stays the one selected.
                     partChoiceSelects_ = render::PartRole::gearbox;
