@@ -691,7 +691,7 @@ std::vector<std::pair<juce::String, juce::String>> DiagnosticsPanel::debugRows()
 }
 
 SidePanel::SidePanel(const DashboardModel& model, std::function<bool()> wheelModifierActive)
-    : dyno(model, wheelModifierActive), vehicle(model), audio(model), telemetry_(model), diagnostics_(model) {
+    : dyno(model, wheelModifierActive), audio(model), telemetry_(model), diagnostics_(model) {
     tabs_.onChange = [this](int tab) { showTab(tab); };
     telemetry_.onShowInjectors = [this] {
         if (onShowInjectors) onShowInjectors();
@@ -701,12 +701,11 @@ SidePanel::SidePanel(const DashboardModel& model, std::function<bool()> wheelMod
     };
     addAndMakeVisible(tabs_);
     addAndMakeVisible(dyno);
-    for (auto* pane : { &telemetryPane_, &vehiclePane_, &audioPane_, &diagnosticsPane_ }) {
+    for (auto* pane : { &telemetryPane_, &audioPane_, &diagnosticsPane_ }) {
         pane->forwardWheel = wheelModifierActive;
         addChildComponent(*pane);
     }
     telemetryPane_.setViewedComponent(&telemetry_, false);
-    vehiclePane_.setViewedComponent(&vehicle, false);
     audioPane_.setViewedComponent(&audio, false);
     diagnosticsPane_.setViewedComponent(&diagnostics_, false);
 }
@@ -716,7 +715,6 @@ void SidePanel::showTab(int tab) {
     tabs_.setSelected(tab);
     dyno.setVisible(tab == dynoTab);
     telemetryPane_.setVisible(tab == telemetryTab);
-    vehiclePane_.setVisible(tab == vehicleTab);
     audioPane_.setVisible(tab == audioTab);
     diagnosticsPane_.setVisible(tab == diagnosticsTab);
     refresh();
@@ -735,10 +733,6 @@ void SidePanel::refresh() {
     case telemetryTab:
         fitContent(telemetryPane_, telemetry_, telemetry_.preferredHeight());
         telemetry_.repaint();
-        break;
-    case vehicleTab:
-        fitContent(vehiclePane_, vehicle, vehicle.preferredHeight());
-        vehicle.refresh();
         break;
     case audioTab:
         fitContent(audioPane_, audio, audio.preferredHeight());
@@ -766,9 +760,8 @@ void SidePanel::resized() {
     tabs_.setBounds(tabRow.withTrimmedLeft(12).withTrimmedTop(10).withWidth(std::min(tabs_.idealWidth(), tabRoom)));
     area.removeFromTop(1);
     dyno.setBounds(area);
-    for (auto* pane : { &telemetryPane_, &vehiclePane_, &audioPane_, &diagnosticsPane_ }) pane->setBounds(area);
+    for (auto* pane : { &telemetryPane_, &audioPane_, &diagnosticsPane_ }) pane->setBounds(area);
     fitContent(telemetryPane_, telemetry_, telemetry_.preferredHeight());
-    fitContent(vehiclePane_, vehicle, vehicle.preferredHeight());
     fitContent(audioPane_, audio, audio.preferredHeight());
     fitContent(diagnosticsPane_, diagnostics_, diagnostics_.preferredHeight());
 }

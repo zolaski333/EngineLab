@@ -49,7 +49,8 @@ private:
 };
 
 /** The vehicle the engine drives: its figures, each typed in and taken by
-    the running engine (Enter or leaving the field), and what it does now. */
+    the running engine (Enter or leaving the field), and what it does now.
+    Shown in its own window, from the top bar's Vehicle button. */
 class VehiclePanel final : public juce::Component {
 public:
     explicit VehiclePanel(const DashboardModel&);
@@ -95,10 +96,10 @@ private:
     const DashboardModel& model_;
 };
 
-/** Right column: Dyno, Telemetry, Vehicle, Audio and Diagnostics tabs. */
+/** Right column: Dyno, Telemetry, Audio and Diagnostics tabs. */
 class SidePanel final : public juce::Component {
 public:
-    enum Tab { dynoTab, telemetryTab, vehicleTab, audioTab, diagnosticsTab, tabCount };
+    enum Tab { dynoTab, telemetryTab, audioTab, diagnosticsTab, tabCount };
 
     SidePanel(const DashboardModel&, std::function<bool()> wheelModifierActive);
     void showTab(int tab);
@@ -108,7 +109,6 @@ public:
     void refresh();
 
     DynoPanel dyno;
-    VehiclePanel vehicle;
     AudioPanel audio;
     /** The Telemetry tab asks to show the injectors in the 3-D view. */
     std::function<void()> onShowInjectors;
@@ -123,12 +123,11 @@ private:
     void fitContent(ScrollPane&, juce::Component& content, int height);
     // No `model_` here on purpose: every tab below holds its own reference,
     // and the panel itself never reads one.
-    SegmentedControl tabs_ { { "Dyno", "Telemetry", "Vehicle", "Audio", "Diagnostics" },
+    SegmentedControl tabs_ { { "Dyno", "Telemetry", "Audio", "Diagnostics" },
                              SegmentedControl::Style::tabs };
     TelemetryPanel telemetry_;
     DiagnosticsPanel diagnostics_;
     ScrollPane telemetryPane_;
-    ScrollPane vehiclePane_;
     ScrollPane audioPane_;
     ScrollPane diagnosticsPane_;
 };

@@ -42,6 +42,7 @@ public:
     ActionButton abButton { "A", ActionButton::Style::tool };
     ActionButton exhaustButton { "Exhaust", ActionButton::Style::tool };
     ActionButton fuelButton { "Fuel", ActionButton::Style::tool };
+    ActionButton vehicleButton { "Vehicle", ActionButton::Style::tool };
     ActionButton ecuButton { "ECU", ActionButton::Style::tool };
     /** Lit while the datalogger records. */
     ActionButton logButton { "Log", ActionButton::Style::tool };

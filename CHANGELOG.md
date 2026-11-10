@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-10
+
 ### Added
 
 - **The DSG fart.** On a loaded upshift a dual-clutch gearbox no longer
@@ -33,7 +35,7 @@ file formats, always with an in-memory migration).
   (`engine_brake` in the file). Flat out a truck changes up just past its
   peak power (1.05 x, the designer's `automatic_upshift_rpm`), not at
   1,600 rpm.
-- **A Vehicle tab.** The side column has a Vehicle tab: mass, drag, frontal
+- **A Vehicle window.** The top bar's Vehicle button, beside Fuel, opens the vehicle: mass, drag, frontal
   area, tyre radius, rolling resistance, grip, axle load, wheelbase, centre
   of gravity, brake force, the driven axles and the tyre grip limit, each
   typed in and taken by the running engine, with the road load at the

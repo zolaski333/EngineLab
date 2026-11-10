@@ -157,6 +157,8 @@ private:
     void showEcuTuner();
     void showExhaustDesigner();
     void showFuelWindow();
+    /** The vehicle's figures, in their own window. */
+    void showVehicleWindow();
     /** A line in the 3-D view's inspector and in the Fuel window. */
     void setEditStatus(const juce::String&);
     void showMoreMenu();
@@ -282,6 +284,8 @@ private:
     std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
     std::unique_ptr<FuelWindow> fuelWindow_;
+    /** Shows `vehiclePanel_` (not owned: reset before it in the destructor). */
+    std::unique_ptr<juce::DocumentWindow> vehicleWindow_;
     std::vector<FuelPreset> fuelPresets_;
     std::unique_ptr<AudioWorkshopWindow> audioWorkshopWindow_;
     std::unique_ptr<scripting::EngineScriptHotReloader> scriptReloader_;
@@ -299,6 +303,7 @@ private:
     ui::ReadoutStrip readouts_ { model_ };
     ui::SidePanel side_ { model_, [this] { return wheelModifierDown(); } };
     ui::StatusBar status_ { model_ };
+    ui::VehiclePanel vehiclePanel_ { model_ };
     juce::TooltipWindow tooltipWindow_ { this, 650 };
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

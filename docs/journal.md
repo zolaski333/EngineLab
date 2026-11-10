@@ -5,13 +5,21 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-09 — what the intake style and the carburettor change on a four
+
+- Owner question: does airbox -> trumpets change anything but the sound? Code: the physics reads only `airbox_volume_l`, and only to keep fuel pushed back past the throttle (`throttleFlowKeepingReversedFuel`); the throttle draws from ambient whatever the style. `pod_filter`, `bellmouth_diameter_mm` and the snorkel reach the sound (`AcousticIntakeNetwork`) and the 3-D view only: no filter loss, no box resonance, no bellmouth entry loss.
+- `DynoSweepHarness --step 1000`, CP4 airbox 9 L vs 0 (trumpets): every row within 0.4 % torque. Designed 998 cc crossplane four (`sport_motorcycle`): port injection airbox vs stacks within 0.4 %.
+- Same four on carburettors: -2 to -7 % torque against injection (delivered VE -1.5 to -2 %, lambda 0.82-0.85). Airbox vs stacks moves it: stacks leaner (lambda 0.85-0.99 vs 0.82-0.85, the box returns pushed-back fuel) and +0.4 to +1.7 % torque.
+- Layout: a CP4 (catalogue or designed) has a shared 1.4 L plenum behind its four bores, not one runner per throttle; four carburettors are four alike, meter a quarter of the total air each and pour into that plenum. A real bike's carburettors each feed one cylinder. `individual_throttles` exists (CP2 not switched: -5 to -10 %), but its carburettor still meters into the shared volume.
+- Not measured: a real airbox's or filter's loss, the sound of each style.
+
 ## 2026-11-09 — the automated manual's upshift; a truck's shift point
 
 - Owner report: an AMT upshift locks the clutch with the throttle open and hits the limiter. `EngineLab.TruckDrive` (designed 12.8 L truck six, AMT, automatic, 40 s from rest): before, flat out it changed up at 1,600 rpm (0.73 x limit), the clutch open with the throttle at 1 - `shift_torque_cut_fraction` flared the engine ~+400 rpm, 0.05-0.275 s on the limiter per shift.
 - An AMT now cuts the torque fully over the first 20 % of the shift, gives it back only once the clutch has pulled the engine to the new gear, and starts the shift ahead by 0.35 x shift time x rpm rate. A designed truck changes up flat out at min(1.05 x peak power, 0.90 x redline) = 1,850 rpm.
 - After, pedal 1.0: clutch opens at 1,723-1,820 rpm, no limiter, lands at 1,433-1,593, 77 km/h at 40 s. Pedal 0.5: opens at 1,488-1,598 (the light-foot rule), lands 1,195-1,404. A 10-30 rpm rise remains while the clutch is open (test bound 2 % of limit).
 - The engine brake no longer acts in neutral (arbiter: forward or reverse gear only); its 18.4 kW/L in gear is unchanged. `EngineLab.EngineModel3D`: the drawn exhaust valve opens 2.0 mm more on braking cylinders, 0 on the others.
-- Not measured: a real AMT's timings (0.8 s still unsourced), the Vehicle tab, the brake menu and the gear-count choice by hand in the app.
+- Not measured: a real AMT's timings (0.8 s still unsourced), the Vehicle window, the brake menu and the gear-count choice by hand in the app.
 
 ## 2026-11-09 — a truck's engine brake; the refit and the automated manual
 

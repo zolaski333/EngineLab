@@ -17,6 +17,17 @@
 
 namespace enginelab {
 namespace {
+
+/** The Vehicle window: hides on close, as the Fuel window does. */
+class VehicleWindow final : public juce::DocumentWindow {
+public:
+    VehicleWindow() : juce::DocumentWindow("EngineLab - Vehicle", ui::colours::background,
+                                           juce::DocumentWindow::closeButton, true) {
+        setUsingNativeTitleBar(true);
+        setResizable(false, false);
+    }
+    void closeButtonPressed() override { setVisible(false); }
+};
 constexpr std::array<std::uint32_t, 8> curveColours {
     0xfff26b38, 0xff40c4ff, 0xff9ccc65, 0xffffca28, 0xffab76ff, 0xffff6e9d, 0xff26d7ae, 0xffef5350
 };
@@ -107,6 +118,7 @@ MainComponent::MainComponent() {
     topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
     topBar_.fuelButton.onClick = [this] { showFuelWindow(); };
+    topBar_.vehicleButton.onClick = [this] { showVehicleWindow(); };
     topBar_.audioButton.onClick = [this] { showAudioWorkshop(); };
     topBar_.moreButton.onClick = [this] { showMoreMenu(); };
     topBar_.logButton.onClick = [this] { toggleDatalog(); };
@@ -182,8 +194,8 @@ MainComponent::MainComponent() {
     side_.audio.onExhaustPreset = [this](int presetIndex) { applyExhaustPreset(presetIndex); };
     side_.onShowInjectors = [this] { (void)viewport_.showInjectors(); };
     side_.onShowFuel = [this] { showFuelWindow(); };
-    // The Vehicle tab's edits: live, as the gearbox inspector's are.
-    side_.vehicle.onEdit = [this](const VehicleConfig& vehicle) -> juce::String {
+    // The Vehicle window's edits: live, as the gearbox inspector's are.
+    vehiclePanel_.onEdit = [this](const VehicleConfig& vehicle) -> juce::String {
         auto edited = config_;
         edited.vehicle = vehicle;
         if (const auto invalid = validateEngineConfig(edited)) return juce::String::fromUTF8(invalid->c_str());
@@ -247,6 +259,7 @@ MainComponent::~MainComponent() {
     audioWorkshopWindow_.reset();
     exhaustDesignerWindow_.reset();
     fuelWindow_.reset();
+    vehicleWindow_.reset();
     ecuTunerWindow_.reset();
     shutdownAudio();
     if (runtime_) runtime_->stop();
@@ -1066,6 +1079,18 @@ void MainComponent::showFuelWindow() {
     fuelWindow_->setLocked(runtime_->dynoRunning());
     fuelWindow_->setVisible(true);
     fuelWindow_->toFront(true);
+}
+
+void MainComponent::showVehicleWindow() {
+    if (!vehicleWindow_) {
+        vehiclePanel_.setSize(400, vehiclePanel_.preferredHeight());
+        vehicleWindow_ = std::make_unique<VehicleWindow>();
+        vehicleWindow_->setContentNonOwned(&vehiclePanel_, true);
+        vehicleWindow_->centreWithSize(vehicleWindow_->getWidth(), vehicleWindow_->getHeight());
+    }
+    vehiclePanel_.refresh();
+    vehicleWindow_->setVisible(true);
+    vehicleWindow_->toFront(true);
 }
 
 void MainComponent::setEditStatus(const juce::String& status) {
@@ -1918,6 +1943,7 @@ void MainComponent::timerCallback() {
     pushCameraMicrophones();
     readouts_.repaint();
     side_.refresh();
+    if (vehicleWindow_ && vehicleWindow_->isVisible()) vehiclePanel_.refresh();
     status_.refresh();
 }
 
