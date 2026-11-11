@@ -1,4 +1,5 @@
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
+#include <enginelab/app/Theme.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
@@ -1967,7 +1968,7 @@ private:
         }
         if (const auto error = validateEngineConfig(working_)) {
             setStatus("Configuration rejected: " + utf8(*error), true);
-            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+            ui::showMessage(this, juce::MessageBoxIconType::WarningIcon,
                 "Invalid exhaust network", utf8(*error));
             return;
         }

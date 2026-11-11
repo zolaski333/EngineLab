@@ -782,12 +782,12 @@ private:
         status_.setColour(juce::Label::textColourId, ui::colours::critical);
         status_.setText(message, juce::dontSendNotification);
         auto safe = juce::Component::SafePointer<DesignerContent>(this);
-        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon,
+        ui::showOkCancel(this, juce::MessageBoxIconType::WarningIcon,
             utf8(capacity.error.empty() ? "Not real time" : "Real time not checked"), message,
-            utf8("Build anyway"), utf8("Back"), this,
-            juce::ModalCallbackFunction::create([safe, config = std::move(config)](int result) {
-                if (safe && result == 1 && safe->buildCallback_(config)) safe->close_();
-            }));
+            utf8("Build anyway"), utf8("Back"),
+            [safe, config = std::move(config)](bool accepted) {
+                if (safe && accepted && safe->buildCallback_(config)) safe->close_();
+            });
     }
 
     static constexpr const char* utf8Times = "\xc3\x97";

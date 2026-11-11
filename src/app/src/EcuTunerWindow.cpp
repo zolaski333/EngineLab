@@ -1,4 +1,5 @@
 #include <enginelab/app/EcuTunerWindow.hpp>
+#include <enginelab/app/Theme.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 
 #include <algorithm>
@@ -352,7 +353,7 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
     double value = 0.0;
     if (!parseFinite(text, value)) {
         valueEditors_[valueIndex]->setText(committedTexts_[valueIndex], false);
-        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+        ui::showMessage(this, juce::MessageBoxIconType::WarningIcon,
             "Invalid ECU value", "Enter a finite number.");
         return;
     }
@@ -504,7 +505,7 @@ void EcuTunerComponent::showIssues(const calibration::PublishResult& result,
         message << utf8(issue.path) << ": " << utf8(issue.message);
     }
     if (message.isEmpty()) message = "The transaction was not published.";
-    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, title, message);
+    ui::showMessage(this, juce::MessageBoxIconType::WarningIcon, title, message);
 }
 
 void EcuTunerComponent::setTableCompletion(calibration::DraftCompletion complete) {
@@ -532,7 +533,7 @@ void EcuTunerComponent::chooseCalibrationToLoad() {
                 safe->reloadFromSnapshot();
             } else safe->showIssues(result, "ECU load rejected");
         } else if (file != juce::File {}) {
-            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+            ui::showMessage(safe.getComponent(), juce::MessageBoxIconType::WarningIcon,
                 "ECU load failed", "File missing or larger than 2 MiB.");
         }
         safe->fileChooser_.reset();
@@ -552,7 +553,7 @@ void EcuTunerComponent::chooseCalibrationToSave() {
             if (!file.hasFileExtension("json")) file = file.withFileExtension("ecu.json");
             const auto encoded = calibration::CalibrationJson::serialize(*safe->store_->snapshot());
             if (!file.replaceWithText(juce::String::fromUTF8(encoded.data(), static_cast<int>(encoded.size()))))
-                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                ui::showMessage(safe.getComponent(), juce::MessageBoxIconType::WarningIcon,
                     "ECU save failed", "The file could not be written.");
             else {
                 safe->hotReloader_->watch(file.getFullPathName().toStdString());
@@ -569,7 +570,7 @@ void EcuTunerComponent::timerCallback() {
     if (reload.changed) {
         if (reload.published()) reloadFromSnapshot();
         else if (!reload.error.empty())
-            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+            ui::showMessage(this, juce::MessageBoxIconType::WarningIcon,
                 "ECU hot reload rejected", utf8(reload.error));
     } else if (store_->snapshot()->revision() != baseRevision_
                && std::none_of(valueEditors_.begin(), valueEditors_.end(), [](const auto& editor) {

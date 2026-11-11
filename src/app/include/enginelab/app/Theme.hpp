@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+
 /** Visual identity of the desktop application: colour tokens, fonts and the
     look-and-feel every window shares. Panels draw with these tokens only, so a
     palette change happens here and nowhere else. */
@@ -61,6 +63,24 @@ void fillCard(juce::Graphics&, juce::Rectangle<float> area, float radius = 9.0F,
 void drawSectionLabel(juce::Graphics&, juce::Rectangle<float> area, const juce::String& text,
                       juce::Justification = juce::Justification::centredLeft);
 
+/** The window `component` is drawn in (its top-level component), or null
+    while it is in no window on screen. Menus, alert boxes and dialogs are
+    drawn inside it rather than as desktop windows of their own, so a capture
+    of that one window (a screen recorder's window capture) shows them; with
+    no window they are desktop windows, as before. */
+[[nodiscard]] juce::Component* windowOf(juce::Component* component);
+/** An alert box with an OK button, drawn inside the window of `host`. */
+void showMessage(juce::Component* host, juce::MessageBoxIconType, const juce::String& title,
+                 const juce::String& message);
+/** Two buttons, drawn inside the window of `host`; `onResult` gets true for
+    the first (`accept`). */
+void showOkCancel(juce::Component* host, juce::MessageBoxIconType, const juce::String& title,
+                  const juce::String& message, const juce::String& accept, const juce::String& cancel,
+                  std::function<void(bool)> onResult);
+/** Moves a dialog built by hand (an AlertWindow with editors) inside the
+    window of `host`, centred, before it enters its modal state. */
+void placeInWindow(juce::Component& dialog, juce::Component& host);
+
 /** Look-and-feel installed as the application default, so the secondary
     windows (ECU tuner, EXHAUST PRO, AUDIO HQ) and the alert boxes share it. */
 class LookAndFeel final : public juce::LookAndFeel_V4 {
@@ -96,6 +116,9 @@ public:
     juce::Typeface::Ptr getTypefaceForFont(const juce::Font&) override;
     juce::Rectangle<int> getTooltipBounds(const juce::String& tipText, juce::Point<int> screenPos,
                                           juce::Rectangle<int> parentArea) override;
+    /** Every menu (a combo box's list included) inside the window it opens
+        from: its target's, or the window under the mouse (windowOf). */
+    juce::Component* getParentComponentForMenuOptions(const juce::PopupMenu::Options&) override;
     void drawTooltip(juce::Graphics&, const juce::String& text, int width, int height) override;
 };
 

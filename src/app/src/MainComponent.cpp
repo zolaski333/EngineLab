@@ -28,6 +28,10 @@ public:
         setResizable(false, false);
     }
     void closeButtonPressed() override { setVisible(false); }
+private:
+    /** Its own tooltips: a tooltip window parented to another window shows
+        none over this one. */
+    juce::TooltipWindow tooltips_ { this, 650 };
 };
 constexpr std::array<std::uint32_t, 8> curveColours {
     0xfff26b38, 0xff40c4ff, 0xff9ccc65, 0xffffca28, 0xffab76ff, 0xffff6e9d, 0xff26d7ae, 0xffef5350
@@ -848,7 +852,7 @@ void MainComponent::configureImpulseResponse() {
 }
 
 void MainComponent::showError(const juce::String& title, const juce::String& message) {
-    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, title, message);
+    ui::showMessage(this, juce::MessageBoxIconType::WarningIcon, title, message);
 }
 
 void MainComponent::showConfigEditor() {
@@ -870,6 +874,7 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
     }
     configEditor_->addButton(utf8("APPLY"), 1, juce::KeyPress(juce::KeyPress::returnKey));
     configEditor_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    ui::placeInWindow(*configEditor_, *this);
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     configEditor_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
         if (!safe) return;
@@ -910,6 +915,7 @@ void MainComponent::showKeyBindingsEditor() {
     keyBindingsEditor_->addButton("APPLY", 1, juce::KeyPress(juce::KeyPress::returnKey,
         juce::ModifierKeys::ctrlModifier, 0));
     keyBindingsEditor_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    ui::placeInWindow(*keyBindingsEditor_, *this);
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     keyBindingsEditor_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
         if (!safe) return;
@@ -1311,16 +1317,16 @@ void MainComponent::confirmReplacing(const juce::String& lost, std::function<voi
     if (replaceDialogOpen_) return;
     replaceDialogOpen_ = true;
     auto safe = juce::Component::SafePointer<MainComponent>(this);
-    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, utf8("Replace without saving?"),
+    ui::showOkCancel(this, juce::MessageBoxIconType::WarningIcon, utf8("Replace without saving?"),
         utf8("Edits not saved: ") + lost
             + utf8(". They are lost if this file replaces them; Save engine (Ctrl+S) keeps them."),
-        utf8("Replace"), utf8("Cancel"), nullptr,
-        juce::ModalCallbackFunction::create([safe, then = std::move(then)](int result) {
+        utf8("Replace"), utf8("Cancel"),
+        [safe, then = std::move(then)](bool accepted) {
             if (!safe) return;
             safe->replaceDialogOpen_ = false;
-            if (result == 1) then();
+            if (accepted) then();
             safe->grabKeyboardFocus();
-        }));
+        });
 }
 
 void MainComponent::openEngineFile(const juce::File& file) {
@@ -1531,16 +1537,16 @@ void MainComponent::requestQuit() {
     }
     quitDialogOpen_ = true;
     auto safe = juce::Component::SafePointer<MainComponent>(this);
-    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, utf8("Quit without saving?"),
+    ui::showOkCancel(this, juce::MessageBoxIconType::WarningIcon, utf8("Quit without saving?"),
         utf8("Edits not saved: ") + names.joinIntoString(utf8(", "))
             + utf8(". They are lost if you quit now; Save engine (Ctrl+S) keeps them."),
-        utf8("Quit"), utf8("Cancel"), nullptr,
-        juce::ModalCallbackFunction::create([safe](int result) {
+        utf8("Quit"), utf8("Cancel"),
+        [safe](bool accepted) {
             if (!safe) return;
             safe->quitDialogOpen_ = false;
-            if (result == 1) juce::JUCEApplicationBase::quit();
+            if (accepted) juce::JUCEApplicationBase::quit();
             else safe->grabKeyboardFocus();
-        }));
+        });
 }
 
 void MainComponent::saveEngine() {
@@ -1565,6 +1571,7 @@ void MainComponent::saveEngineAs() {
     saveDialog_->addTextEditor("name", suggested, utf8("Name"));
     saveDialog_->addButton(utf8("SAVE"), 1, juce::KeyPress(juce::KeyPress::returnKey));
     saveDialog_->addButton(utf8("CANCEL"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    ui::placeInWindow(*saveDialog_, *this);
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     saveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
         if (!safe) return;
@@ -1595,13 +1602,13 @@ void MainComponent::confirmSaveAs(const juce::String& typedName) {
         return;
     }
     auto safe = juce::Component::SafePointer<MainComponent>(this);
-    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, utf8("Replace the saved engine?"),
+    ui::showOkCancel(this, juce::MessageBoxIconType::QuestionIcon, utf8("Replace the saved engine?"),
         utf8("\"") + fileOf(file).getFileNameWithoutExtension()
             + utf8("\" is already saved. Replace it with the running engine?"),
-        utf8("Replace"), utf8("Cancel"), nullptr,
-        juce::ModalCallbackFunction::create([safe, name, file](int result) {
-            if (safe && result == 1) safe->writeSavedEngine(name, file);
-        }));
+        utf8("Replace"), utf8("Cancel"),
+        [safe, name, file](bool accepted) {
+            if (safe && accepted) safe->writeSavedEngine(name, file);
+        });
 }
 
 void MainComponent::showEngineDesigner() {
@@ -1671,14 +1678,14 @@ void MainComponent::deleteSavedEngine() {
     const auto& preset = presets_[static_cast<std::size_t>(selectedPresetIndex_)];
     if (preset.file.empty()) return;
     auto safe = juce::Component::SafePointer<MainComponent>(this);
-    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, utf8("Delete the saved engine?"),
+    ui::showOkCancel(this, juce::MessageBoxIconType::QuestionIcon, utf8("Delete the saved engine?"),
         utf8("\"") + utf8(preset.config.name)
             + utf8("\" goes to the recycle bin with its ECU tables. The running engine keeps running: "
                    "Save engine as… saves it again."),
-        utf8("Delete"), utf8("Cancel"), nullptr,
-        juce::ModalCallbackFunction::create([safe, file = preset.file](int result) {
-            if (safe && result == 1) safe->removeSavedEngine(file);
-        }));
+        utf8("Delete"), utf8("Cancel"),
+        [safe, file = preset.file](bool accepted) {
+            if (safe && accepted) safe->removeSavedEngine(file);
+        });
 }
 
 void MainComponent::removeSavedEngine(const std::filesystem::path& file) {

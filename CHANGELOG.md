@@ -49,8 +49,18 @@ file formats, always with an in-memory migration).
   it. EngineLab asks first when the running engine or its maps have edits
   not saved that the file would replace.
 
+### Changed
+
+- **Menus, message boxes and dialogs open inside their window**, so a
+  screen recorder capturing one EngineLab window films them too (the
+  engine picker, every list, Save as, the JSON editor, the confirmations).
+  The file pickers stay the system's own.
+
 ### Fixed
 
+- **Tooltips show in the tool windows** (ECU, Exhaust designer, Audio,
+  Fuel, Vehicle, New engine): only the main window had a tooltip window, and
+  it shows none over another window.
 - **A YAML export keeps the ECU maps and the engine's voice.** It used to
   write the engine alone, without the voicing it names, so tuned tables were
   lost on the way and an imported copy spoke with the default voice.

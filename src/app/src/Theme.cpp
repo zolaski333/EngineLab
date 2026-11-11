@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
+#include <utility>
 
 namespace enginelab::ui {
 namespace {
@@ -97,6 +98,63 @@ void drawSectionLabel(juce::Graphics& g, juce::Rectangle<float> area, const juce
     g.setColour(colours::faint);
     g.setFont(sectionFont());
     g.drawText(text.toUpperCase(), area, justification, true);
+}
+
+juce::Component* windowOf(juce::Component* component) {
+    if (component == nullptr) return nullptr;
+    // Not yet in a window (an error while the app starts, a test): a box
+    // centred on a component of no size would be modal and out of sight.
+    auto* window = component->getTopLevelComponent();
+    return window->isOnDesktop() && !window->getLocalBounds().isEmpty() ? window : nullptr;
+}
+
+namespace {
+/** The box JUCE's AlertWindow::showAsync builds, built now rather than on
+    the next message, and put in `host`'s window. Its result: 1 for the first
+    of two buttons, 0 otherwise. */
+void showBox(juce::Component* host, juce::MessageBoxIconType icon, const juce::String& title,
+             const juce::String& message, const juce::String& first, const juce::String& second,
+             std::function<void(int)> done) {
+    auto* box = juce::LookAndFeel::getDefaultLookAndFeel().createAlertWindow(
+        title, message, first.isEmpty() ? juce::String("OK") : first, second, {}, icon, second.isEmpty() ? 1 : 2,
+        nullptr);
+    if (box == nullptr) return;
+    if (host != nullptr) placeInWindow(*box, *host);
+    box->enterModalState(true, juce::ModalCallbackFunction::create([done = std::move(done)](int result) {
+        if (done) done(result);
+    }), true);
+}
+} // namespace
+
+void showMessage(juce::Component* host, juce::MessageBoxIconType icon, const juce::String& title,
+                 const juce::String& message) {
+    showBox(host, icon, title, message, {}, {}, {});
+}
+
+void showOkCancel(juce::Component* host, juce::MessageBoxIconType icon, const juce::String& title,
+                  const juce::String& message, const juce::String& accept, const juce::String& cancel,
+                  std::function<void(bool)> onResult) {
+    showBox(host, icon, title, message, accept, cancel.isEmpty() ? juce::String("Cancel") : cancel,
+            [onResult = std::move(onResult)](int result) {
+                if (onResult) onResult(result == 1);
+            });
+}
+
+void placeInWindow(juce::Component& dialog, juce::Component& host) {
+    auto* window = windowOf(&host);
+    if (window == nullptr || window == &dialog) return;
+    window->addAndMakeVisible(dialog);
+    dialog.setBounds(dialog.getBounds()
+                         .withCentre(window->getLocalBounds().getCentre())
+                         .constrainedWithin(window->getLocalBounds()));
+}
+
+juce::Component* LookAndFeel::getParentComponentForMenuOptions(const juce::PopupMenu::Options& options) {
+    if (auto* parent = options.getParentComponent()) return parent;
+    auto* anchor = options.getTargetComponent();
+    // A menu at the mouse (a right-click) opens over what was clicked.
+    if (anchor == nullptr) anchor = juce::Desktop::getInstance().getMainMouseSource().getComponentUnderMouse();
+    return windowOf(anchor);
 }
 
 LookAndFeel::LookAndFeel()

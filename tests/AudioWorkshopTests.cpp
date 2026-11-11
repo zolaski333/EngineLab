@@ -6,6 +6,7 @@
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
 #include <enginelab/app/FuelEditing.hpp>
 #include <enginelab/app/FuelWindow.hpp>
+#include <enginelab/app/Theme.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
@@ -17,6 +18,7 @@
 #include <cstdlib>
 #include <optional>
 #include <iostream>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -785,8 +787,90 @@ int main() {
         require(vtec() == 1.0, "a locked tuner (a dyno run) leaves VTEC alone");
     }
 
+    {
+        // Everything a window shows is inside it, so a screen recorder's
+        // window capture films it whole: menus, alert boxes, dialogs and
+        // each tool window's tooltips.
+        enginelab::ui::LookAndFeel lookAndFeel;
+        juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
+        auto& theDesktop = juce::Desktop::getInstance();
+        {
+            juce::ComboBox menuBox;
+            menuBox.addItem("one", 1);
+            menuBox.addItem("two", 2);
+            juce::DocumentWindow captureWindow("Capture", juce::Colours::black, juce::DocumentWindow::closeButton, true);
+            auto* captureContent = new juce::Component();
+            captureContent->setSize(900, 700);
+            captureContent->addAndMakeVisible(menuBox);
+            menuBox.setBounds(20, 20, 200, 28);
+            captureWindow.setContentOwned(captureContent, true);
+            require(captureWindow.isOnDesktop(), "the window is on the desktop");
+            require(enginelab::ui::windowOf(&menuBox) == &captureWindow, "a component's window is its top-level window");
+            require(lookAndFeel.getParentComponentForMenuOptions(juce::PopupMenu::Options {}.withTargetComponent(&menuBox))
+                        == &captureWindow,
+                    "a menu (a combo box's list) opens inside its target's window");
+            const auto childOfWindow = [&captureWindow]<typename Child>(Child*) {
+                for (auto* child : captureWindow.getChildren())
+                    if (auto* found = dynamic_cast<Child*>(child)) return found;
+                return static_cast<Child*>(nullptr);
+            };
+            const auto desktopCount = theDesktop.getNumComponents();
+            enginelab::ui::showMessage(&menuBox, juce::MessageBoxIconType::WarningIcon, "Title", "Message");
+            auto* alert = childOfWindow(static_cast<juce::AlertWindow*>(nullptr));
+            require(theDesktop.getNumComponents() == desktopCount && alert != nullptr && !alert->isOnDesktop()
+                        && captureWindow.getLocalBounds().contains(alert->getBounds()),
+                    "an alert box is drawn inside the window, not as a desktop window");
+            delete alert;
+            enginelab::ui::showOkCancel(&menuBox, juce::MessageBoxIconType::QuestionIcon, "Title", "Message", "Yes",
+                                        "No", [](bool) {});
+            alert = childOfWindow(static_cast<juce::AlertWindow*>(nullptr));
+            require(theDesktop.getNumComponents() == desktopCount && alert != nullptr && !alert->isOnDesktop(),
+                    "an OK/Cancel box too");
+            delete alert;
+            juce::AlertWindow dialog("Save engine", "Name", juce::MessageBoxIconType::NoIcon);
+            dialog.addTextEditor("name", "My engine");
+            require(dialog.isOnDesktop(), "a dialog built by hand starts as a desktop window");
+            const auto withDialog = theDesktop.getNumComponents();
+            enginelab::ui::placeInWindow(dialog, menuBox);
+            require(dialog.getParentComponent() == &captureWindow && !dialog.isOnDesktop()
+                        && theDesktop.getNumComponents() == withDialog - 1
+                        && captureWindow.getLocalBounds().contains(dialog.getBounds()),
+                    "and is moved inside the window, centred");
+        }
+        {
+            // A component in no window on screen keeps a desktop box: one
+            // centred on a component of no size would be modal and unseen.
+            juce::Component loose;
+            require(enginelab::ui::windowOf(&loose) == nullptr, "a component in no window has none");
+            const auto desktopCount = theDesktop.getNumComponents();
+            enginelab::ui::showMessage(&loose, juce::MessageBoxIconType::WarningIcon, "Loose", "Message");
+            juce::AlertWindow* looseBox = nullptr;
+            for (int index = 0; index < theDesktop.getNumComponents(); ++index)
+                if (auto* found = dynamic_cast<juce::AlertWindow*>(theDesktop.getComponent(index));
+                    found != nullptr && found->getName() == "Loose")
+                    looseBox = found;
+            require(theDesktop.getNumComponents() == desktopCount + 1 && looseBox != nullptr, "its alert box is a desktop window");
+            delete looseBox;
+        }
+        {
+            const auto hasTooltips = [](juce::Component& toolWindow) {
+                return std::any_of(toolWindow.getChildren().begin(), toolWindow.getChildren().end(),
+                                   [](juce::Component* child) { return dynamic_cast<juce::TooltipWindow*>(child) != nullptr; });
+            };
+            auto toolStore = std::make_shared<enginelab::calibration::CalibrationStore>();
+            require(toolStore->publish(enginelab::calibration::makeDefaultEcuCalibration(engine)).published,
+                    "the engine's default tables publish");
+            enginelab::EcuTunerWindow toolTuner(toolStore);
+            enginelab::FuelWindow toolFuel(engine, enginelab::loadFuelPresets(ENGINELAB_CATALOG_ROOT), {});
+            enginelab::ExhaustDesignerWindow toolExhaust(engine, {});
+            require(hasTooltips(toolTuner) && hasTooltips(toolFuel) && hasTooltips(toolExhaust),
+                    "each tool window shows its own tooltips");
+        }
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    }
+
     std::cout
         << "Audio workshop: layout, truthful availability, physical A/B, "
-           "live telemetry, mute/solo routing and HQ export controls PASS\n";
+           "live telemetry, mute/solo routing, HQ export controls and in-window menus PASS\n";
     return 0;
 }

@@ -37,6 +37,9 @@ public:
 private:
     class DesignerContent;
     DesignerContent* content_ {};
+    /** Its own tooltips: a tooltip window parented to another window shows
+        none over this one. */
+    juce::TooltipWindow tooltips_ { this, 650 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EngineDesignerWindow)
 };

@@ -1,4 +1,5 @@
 #include <enginelab/app/AudioWorkshopWindow.hpp>
+#include <enginelab/app/Theme.hpp>
 
 #include <algorithm>
 #include <array>
@@ -1038,8 +1039,8 @@ private:
                             fileSystemPath(file);
                         safe->updateScenarioLabel();
                     } else {
-                        juce::AlertWindow::
-                            showMessageBoxAsync(
+                        ui::showMessage(
+                                safe.getComponent(),
                                 juce::MessageBoxIconType::
                                     WarningIcon,
                                 "Invalid scenario",
@@ -1093,7 +1094,7 @@ private:
             std::string error;
             if (!loadOfflineAudioScenario(
                     scenarioPath_, scenario, error)) {
-                juce::AlertWindow::showMessageBoxAsync(
+                ui::showMessage(this,
                     juce::MessageBoxIconType::WarningIcon,
                     "Invalid scenario", utf8(error));
                 return;
@@ -1256,7 +1257,7 @@ private:
                 message << "\n\nWarnings: "
                         << static_cast<int>(
                                result.warnings.size());
-            juce::AlertWindow::showMessageBoxAsync(
+            ui::showMessage(this,
                 juce::MessageBoxIconType::InfoIcon,
                 "HQ audio render", message);
         } else if (result.cancelled) {
@@ -1269,7 +1270,7 @@ private:
             statusLabel_.setText(
                 "EXPORT FAILED",
                 juce::dontSendNotification);
-            juce::AlertWindow::showMessageBoxAsync(
+            ui::showMessage(this,
                 juce::MessageBoxIconType::WarningIcon,
                 "HQ audio render failed",
                 utf8(result.error));

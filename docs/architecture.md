@@ -117,6 +117,17 @@ constructor.
 the whole application, so the tool windows and alerts share it. `Widgets` holds
 the buttons, segmented controls and slider rows the panels are built from.
 
+**Everything a window shows is inside it**, so a screen recorder's window
+capture films it whole. Every menu (a combo box's list included) is a child of
+the window it opens from (`LookAndFeel::getParentComponentForMenuOptions`: its
+target's window, or for a right-click menu the window under the mouse); alert
+boxes go through `ui::showMessage` and `ui::showOkCancel`, and the hand-built
+dialogs (save as, JSON editor, key bindings) through `ui::placeInWindow`.
+Each tool window has its own tooltip window (one parented to the main window
+shows nothing over another). A component in no window on screen yet (an error
+while the app starts, a test) still gets a desktop window, never a modal box
+out of sight. The file choosers stay the system's own dialogs.
+
 **Display units.** The simulation keeps one internal unit per quantity (m/s,
 kPa absolute, N m, kW, °C, mm, cm³, kg, g/s, L/100 km). `units::` in
 `foundation/Units.hpp` lists the units offered for each quantity (exact

@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-11 — menus and dialogs inside their window
+
+- Owner request: everything "filmable" with a window capture; no live OBS test, no README section.
+- Was: every menu (combo box lists included), alert box and hand-built dialog was a desktop window of its own, so a window capture missed it; tooltips showed only in the main window (JUCE's `TooltipWindow` parented to one window skips components of another peer).
+- Now `LookAndFeel::getParentComponentForMenuOptions` puts a menu in its target's window (a right-click menu in the window under the mouse); `ui::showMessage` / `ui::showOkCancel` build the box at once (JUCE 8's `showAsync` builds it on the next message) inside the host's window; `ui::placeInWindow` moves Save as, the JSON editor and key bindings in; each tool window has its own tooltip window. A host in no window on screen keeps a desktop box (one centred on a component of no size would be modal and unseen).
+- `EngineLab.AudioWorkshop`: a combo box's menu parent, an alert, an OK/Cancel box and a hand-built dialog are children of the window, none a desktop window; a host in no window gets a desktop box; the ECU, Fuel and Exhaust designer windows have a tooltip window.
+- Not checked: a real capture (owner: none), a menu taller than a small window (JUCE scrolls it), the file pickers (the system's, still separate windows).
+
 ## 2026-11-11 — one engine file with its ECU maps, drag and drop
 
 - Owner plan: the engine and its ECU maps in one file, old saves still loading, a file dropped on the window opening it, asking first before losing edits.
