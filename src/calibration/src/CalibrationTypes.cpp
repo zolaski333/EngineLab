@@ -268,6 +268,17 @@ void validateKnownEcuEntry(std::string_view id, const CalibrationEntry& entry,
         validateRpmCurveEcuEntry(entry, CalibrationUnit::kilopascal,
             ecuLimits::minimumBoostTargetGaugeKpa,
             ecuLimits::maximumBoostTargetGaugeKpa, path, issues);
+    } else if (id == keys::overboostCut) {
+        const auto& metadata = metadataOf(entry);
+        if (metadata.unit != CalibrationUnit::kilopascal) {
+            addIssue(issues, CalibrationErrorCode::incompatibleUnit, std::string(path) + ".unit",
+                     "The overboost cut must be expressed in kPa.");
+        }
+        validateCanonicalLimits(metadata, 0.0, ecuLimits::maximumOverboostCutMarginKpa, path, issues);
+        if (!std::holds_alternative<ScalarCalibration>(entry)) {
+            addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
+                     "The overboost cut must be a scalar calibration.");
+        }
     } else if (id == keys::knockRetardGain) {
         const auto& metadata = metadataOf(entry);
         if (metadata.unit != CalibrationUnit::degreeCrankshaft) {

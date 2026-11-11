@@ -725,6 +725,12 @@ target_link_libraries(EngineLabLaunchControlTests PRIVATE
 enginelab_set_warnings(EngineLabLaunchControlTests)
 add_test(NAME EngineLab.LaunchControl COMMAND EngineLabLaunchControlTests)
 
+add_executable(EngineLabOverboostCutTests OverboostCutTests.cpp)
+target_link_libraries(EngineLabOverboostCutTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)
+enginelab_set_warnings(EngineLabOverboostCutTests)
+add_test(NAME EngineLab.OverboostCut COMMAND EngineLabOverboostCutTests)
+
 add_executable(EngineLabDataLoggerTests DataLoggerTests.cpp)
 target_link_libraries(EngineLabDataLoggerTests PRIVATE EngineLab::Foundation EngineLab::Runtime)
 enginelab_set_warnings(EngineLabDataLoggerTests)

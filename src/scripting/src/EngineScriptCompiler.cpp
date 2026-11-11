@@ -462,6 +462,7 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "forced_induction.compressor_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.compressorEfficiency = v; } },
         { "forced_induction.charge_temperature_rise_c", Dimension::temperature, [](auto& c, double v) { c.forcedInduction.chargeTemperatureRiseC = v; } },
         { "forced_induction.intercooler_effectiveness", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.intercoolerEffectiveness = v; } },
+        { "forced_induction.maximum_shaft_speed_rpm", Dimension::engineSpeed, [](auto& c, double v) { c.forcedInduction.maximumShaftSpeedRpm = v; } },
         { "two_stroke.exhaust_port_open_deg", Dimension::angle, [](auto& c, double v) { c.twoStroke.exhaustPortOpenDegrees = v; } },
         { "two_stroke.transfer_port_open_deg", Dimension::angle, [](auto& c, double v) { c.twoStroke.transferPortOpenDegrees = v; } },
         { "two_stroke.exhaust_port_width_mm", Dimension::length, [](auto& c, double v) { c.twoStroke.exhaustPortWidthMm = v; } },

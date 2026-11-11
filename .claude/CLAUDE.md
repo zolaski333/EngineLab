@@ -17,29 +17,26 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**The owner's requests of 2026-10-29** (an autonomous mandate, reported at
-the end). Released in 0.6.0: the designer's exhaust and H-pipe, the fuel
-system on either cycle, Roots and centrifugal superchargers, compressor surge
-(off by default), trumpets and pod filters, the ECU's redline on the
-tachometer, a split turbo's spool, no size cap. Released in 0.7.0: the rotary
-(VISION.md amended; a 13B at +10 % torque, -8 % power; Mazda's port timing, port areas estimated).
-Both were published as 0.7.1: their tags failed a GCC test (journal 2026-10-30).
-0.7.2: a big designed engine's turbo reaches its boost (a 193 L six 2.96 of
-3.0 bar) and the airbox is an expansion chamber, not a point volume.
-0.7.3: the diesel's premix follows its ignition delay; the dyno holds a light
-shaft. 0.7.4: the intake layer goes to 4; 0.7.5 closes the dyno start race on Linux;
-0.7.6 lets a rotary stage its intake ports (a switched profile on 1,080 deg);
-0.7.7: owner reports (rotary crash, launch control, saving, H-pipe) and a
-designed rotary's exhaust (one a rotor) and sizing (litres or rotor);
-0.7.8: launch control in first gear, a rotary's exhaust designer opens.
-0.8.0 (owner's go of 2026-11-05): the thermally perfect gas with measured
-LS3/2JZ heads, tumble and Sandoval's friction (the Fireblade goal stopped at
--12 %, journal 2026-11-04); fuel presets and the ECU in lambda; a bad value
-is corrected on load; inspector lists. 13B power is a named exception; so is
-the flat-6's early-blip dip (0.70 x idle, chaotic in the start, journal 2026-11-05).
-0.8.1: 0.8.0's first release (its tag failed that gate on Linux), the cruise
-control no longer hunts.
-A two-stroke diesel was never asked for (it needs a VISION.md amendment).
+**The owner's plan of 2026-11-11** (validated in full, autonomous, reported
+at the end), in this order: (1) the turbo boost that runs away when the
+stoichiometric AFR is lowered (fuel energy per kg of oxygen, a turbo speed
+limit, an ECU overboost cut); (2) the exhaust designer: deleting a path or
+moving a cylinder, a cylinder feeding any part, drag-to-connect, undo;
+(3) VTEC (that name, no coolant condition) fitted, tuned and switched live
+from EngineLab, made robust, no sound or curve measured; (4) one engine file
+with its ECU maps, and drag-and-drop; (5) menus and dialogs inside their
+window, so a capture sees everything; (6) a loop-pack export for BeamNG
+(loops only); (7) an active exhaust valve; (8) a trackside pass-by
+microphone; (9) a nitrous kit, hidden until fitted, unlimited if wanted;
+(10) physical turbo anti-lag. Every new feature is off by default. Refused:
+macOS, automatic spark calibration, performance timers. Open: a lean dyno
+(crank/wheel, maker points), gamepad and wheel input. Owner: run a full
+build or `ctest` only when it is really needed.
+
+Released before it, up to 0.9.1: the history is in `CHANGELOG.md`. 13B power
+is a named exception; so is the flat-6's early-blip dip (0.70 x idle, chaotic
+in the start, journal 2026-11-05). A two-stroke diesel was never asked for
+(it needs a VISION.md amendment).
 Standing rule: no limit on what a user
 may build; an engine that needs a faster PC than the reference one is allowed.
 

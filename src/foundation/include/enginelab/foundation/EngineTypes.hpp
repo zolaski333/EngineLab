@@ -722,7 +722,12 @@ enum class ActiveLimit : std::uint32_t {
     /** The injectors are open for the whole of their window. */
     injectorSaturated = 1U << 6,
     /** Launch control holds the engine at its launch speed. */
-    launchControl = 1U << 7
+    launchControl = 1U << 7,
+    /** The boost ran past its target by the overboost margin: the ECU cuts
+     *  the fuel until it falls back. */
+    overboostCut = 1U << 8,
+    /** A turbocharger runs past its top speed line (or its wheel burst). */
+    turboOverspeed = 1U << 9
 };
 [[nodiscard]] constexpr bool hasActiveLimit(std::uint32_t mask, ActiveLimit bit) noexcept {
     return (mask & static_cast<std::uint32_t>(bit)) != 0U;
@@ -1023,7 +1028,24 @@ struct ForcedInductionConfig final {
      * The catalogue engines have none authored: with a real one their
      * torque rises 19-29 % above their makers' figures (journal 2026-10-15). */
     double intercoolerEffectiveness { 0.0 };
+    /** A turbocharger's top speed line, one unit, rpm: past it the wheel
+     * loses its efficiency fast and is damaged, until it bursts. 0: 1.3 x
+     * the design speed (turboMaximumShaftSpeedRpm). */
+    double maximumShaftSpeedRpm { 0.0 };
 };
+
+/** A compressor map's top speed line over the centre of its map: a map's
+ *  peak-efficiency island sits at 75-80 % of its highest speed line. The
+ *  catalogue's turbochargers run at most 1.07 x their design speed at full
+ *  load (journal 2026-11-11). */
+inline constexpr double turboDefaultMaximumSpeedOverDesign = 1.3;
+
+/** One turbocharger's top speed line, rpm: the authored one, else 1.3 x its
+ *  design speed. */
+[[nodiscard]] inline double turboMaximumShaftSpeedRpm(const ForcedInductionConfig& turbo) noexcept {
+    return turbo.maximumShaftSpeedRpm > 0.0 ? turbo.maximumShaftSpeedRpm
+        : turboDefaultMaximumSpeedOverDesign * turbo.designShaftSpeedRpm;
+}
 
 /** Engine temperatures; the realistic (unregulated) model is
  * EngineThermalModel. A zero capacity or conductance is sized from the
@@ -1980,6 +2002,10 @@ struct EngineState final {
          * from 1.5 it chokes. */
         double compressorFlowCoefficientRatio { 0.0 };
         double compressorEfficiency { 0.0 };
+        /** Damage from running past the top speed line, 0-1; at 1 the
+         * wheel has burst: the shaft stops and the compressor makes no
+         * boost until the engine is reset. */
+        double wheelDamage { 0.0 };
     };
     std::uint32_t turbochargerCount { 0 };
     std::array<Turbocharger, maximumTurbochargers> turbochargers {};

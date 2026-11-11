@@ -98,6 +98,8 @@ EngineConfig withTurbochargerCount(EngineConfig config, std::uint32_t count) {
     turbo.compressorInducerDiameterMm *= size;
     turbo.turbineExducerDiameterMm *= size;
     turbo.designShaftSpeedRpm /= size;
+    // The same tip speed: an authored top speed line moves with the wheel.
+    turbo.maximumShaftSpeedRpm /= size;
     turbo.shaftInertiaKgM2 *= share * share * size;
     // Journal bearings: friction torque as the speed and the cube of the
     // shaft's size, so the loss at the design speed goes as the root of the

@@ -7,6 +7,31 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **A turbocharger's top speed line.** Past it (1.3 times the design speed
+  by default, editable in the turbo's inspector as "Top speed line") the
+  compressor's efficiency collapses, so the shaft can no longer run away;
+  a wheel held past it is damaged and finally bursts, and the engine then
+  runs without boost until it is reset. The inspector shows the damage. No
+  catalogue turbocharger comes near it (1.07 at most).
+- **An overboost cut** in the ECU (`limits.overboost_kpa`, in the tuner,
+  off by default): set to a margin such as 40 kPa, the fuel is cut while
+  the boost runs that far past its target, and comes back at half of it.
+- **The Fuel window shows the energy per kilogram of oxygen** (about 13 MJ
+  for every real fuel), marked when it is past 14.
+
+### Fixed
+
+- **The boost no longer runs away when the stoichiometric ratio is
+  lowered.** The Fuel window kept the heating value when the ratio
+  changed, so a lower ratio burnt more energy in each kilogram of air
+  (petrol's heat at methanol's ratio: 2.2 times), and nothing bounded the
+  turbocharger's speed: a 2JZ on such a fuel reached ten bar. The heating
+  value now follows the ratio unless you set it yourself (one you set is
+  kept, however far from a real fuel), and the top speed line holds the
+  shaft.
+
 ## [0.9.1] — 2026-11-10
 
 The first published release of 0.9: the v0.9.0 tag did not compile on Linux

@@ -420,6 +420,28 @@ template <std::size_t N>
         / std::max(0.35, config.compressorEfficiency);
 }
 
+/** Past its top speed line a compressor's efficiency falls as
+ *  (line / speed)^8: the inducer runs supersonic, its shock losses grow fast,
+ *  and maps stop there (a modelling choice; no published curve goes past a
+ *  map's last line). Half the efficiency 9 % over the line, a quarter 19 %
+ *  over: the wheel absorbs that much more shaft power for the same head and
+ *  heats its charge as much, so a turbine fed without limit (a wastegate too
+ *  small, a fuel with more energy per kilogram of oxygen than any real one)
+ *  holds the shaft a little past its line instead of spinning it to three
+ *  times its design speed and ten bar (journal 2026-11-11). Exactly 1 up to
+ *  the line. */
+inline constexpr double turboOverspeedEfficiencyExponent = 8.0;
+/** Wheel damage per second past the line: 2 x (overspeed share)^2, so 10 %
+ *  over bursts the wheel in about 50 s, 20 % in 13 s, 30 % in 6 s. */
+inline constexpr double turboOverspeedDamagePerSecond = 2.0;
+
+[[nodiscard]] inline double compressorOverspeedEfficiencyScale(
+    const ForcedInductionConfig& config, double angularSpeedRadPerSecond) noexcept {
+    const auto topOmega = turboMaximumShaftSpeedRpm(config) * 2.0 * std::numbers::pi / 60.0;
+    if (!(topOmega > 0.0) || !(angularSpeedRadPerSecond > topOmega)) return 1.0;
+    return std::pow(angularSpeedRadPerSecond / topOmega, -turboOverspeedEfficiencyExponent);
+}
+
 /** Advance kinetic shaft energy without an undocumented speed sink.
  *
  * The update is exact in energy for zero-order-held powers:
@@ -445,10 +467,12 @@ template <std::size_t N>
     const auto designOmega = config.designShaftSpeedRpm
         * 2.0 * std::numbers::pi / 60.0;
     const auto speedRatio = omega / std::max(1.0, designOmega);
+    // Past the top speed line the same head costs more work.
     const auto requestedCompressorPowerWatts =
         compressorPowerForPressureRatioWatts(
             config, compressorMassFlowKgPerSecond, inletTemperatureK,
-            measuredPressureRatio);
+            measuredPressureRatio)
+        / compressorOverspeedEfficiencyScale(config, omega);
     const auto requestedBearingPowerWatts = std::max(0.0,
         config.bearingFrictionPowerWatts) * speedRatio * speedRatio;
     result.energyBeforeJoules = 0.5 * inertia * omega * omega;

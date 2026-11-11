@@ -677,6 +677,7 @@ template <typename T>
     assignIfPresent(node, "turbocharger_count", value.turbochargerCount);
     assignIfPresent(node, "compressor_design_mass_flow_kg_s", value.compressorDesignMassFlowKgPerSecond);
     assignIfPresent(node, "intercooler_effectiveness", value.intercoolerEffectiveness);
+    assignIfPresent(node, "maximum_shaft_speed_rpm", value.maximumShaftSpeedRpm);
     return value;
 }
 

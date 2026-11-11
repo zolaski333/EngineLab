@@ -105,6 +105,10 @@ struct Rig final {
 struct HeldRun final {
     double boostRatio { 0.0 };
     double boostStdDev { 0.0 };
+    double boostMax { 0.0 };
+    double shaftRpmMax { 0.0 };
+    double wheelDamage { 0.0 };
+    bool overboostCut { false };
     double torqueNm { 0.0 };
     double lambdaMin { 1.0e9 };
     double lambdaMax { 0.0 };
@@ -123,14 +127,27 @@ void publishBoostTable(SimpleEcuModel& ecu, double gaugeKpa) {
     require(ecu.calibrationStore()->publish(draft).published, "a boost table must publish");
 }
 
+/** The ECU's overboost cut at `marginKpa` past the target (0: off). */
+void publishOverboostMargin(SimpleEcuModel& ecu, double marginKpa) {
+    auto draft = calibration::makeDraft(*ecu.calibrationStore()->snapshot());
+    const auto* found = draft.find(calibration::keys::overboostCut);
+    require(found != nullptr, "a turbocharged engine's tables carry an overboost cut");
+    auto entry = *found;
+    std::get<calibration::ScalarCalibration>(entry).value = marginKpa;
+    draft.set(std::move(entry));
+    require(ecu.calibrationStore()->publish(draft).published, "an overboost margin must publish");
+}
+
 /** Cranked, then full throttle against a dyno holding `heldRpm` (0.7 x
- *  redline by default); means over the last 3 s. A non-negative
- *  `boostTableGaugeKpa` replaces the ECU's boost table. */
+ *  redline by default); means over the last 3 s, peaks over the whole run. A
+ *  non-negative `boostTableGaugeKpa` replaces the ECU's boost table, a
+ *  non-negative `overboostMarginKpa` its overboost cut. */
 [[nodiscard]] HeldRun heldFullLoad(const EngineConfig& config, double seconds, double boostTableGaugeKpa = -1.0,
-                                   double heldRpm = 0.0) {
+                                   double heldRpm = 0.0, double overboostMarginKpa = -1.0) {
     if (heldRpm <= 0.0) heldRpm = 0.7 * config.redlineRpm;
     auto rig = std::make_unique<Rig>(config);
     if (boostTableGaugeKpa >= 0.0) publishBoostTable(rig->ecu, boostTableGaugeKpa);
+    if (overboostMarginKpa >= 0.0) publishOverboostMargin(rig->ecu, overboostMarginKpa);
     const auto frames = static_cast<int>(seconds * 240.0);
     const auto firstMeasured = frames - 3 * 240;
     const auto weight = 1.0 / static_cast<double>(frames - firstMeasured);
@@ -145,6 +162,12 @@ void publishBoostTable(SimpleEcuModel& ecu, double gaugeKpa) {
         if (t >= 2.0) controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (rpm - heldRpm));
         const auto state = rig->simulator->step(frameSeconds, controls).state;
         rpm = state.rpm;
+        run.boostMax = std::max(run.boostMax, state.boostPressureRatio);
+        for (std::size_t index = 0; index < state.turbochargerCount; ++index) {
+            run.shaftRpmMax = std::max(run.shaftRpmMax, state.turbochargers[index].shaftSpeedRpm);
+            run.wheelDamage = std::max(run.wheelDamage, state.turbochargers[index].wheelDamage);
+        }
+        run.overboostCut = run.overboostCut || hasActiveLimit(state.activeLimits, ActiveLimit::overboostCut);
         if (frame < firstMeasured) continue;
         run.boostRatio += state.boostPressureRatio * weight;
         run.boostStdDev += state.boostPressureRatio * state.boostPressureRatio * weight;
@@ -445,6 +468,65 @@ void liftOffSurgesWithoutBlowOff() {
     require(vented.reversals == 0, "a blow-off valve vents the charge: no surge");
 }
 
+/** Up to its top speed line a compressor's efficiency is the authored one,
+ *  exactly; past it it falls fast. */
+void topSpeedLineCostsEfficiency() {
+    ForcedInductionConfig turbo;
+    turbo.designShaftSpeedRpm = 120'000.0;
+    require(turboMaximumShaftSpeedRpm(turbo) == 156'000.0, "the line defaults to 1.3 x the design speed");
+    const auto line = radiansPerSecond(156'000.0);
+    require(compressorOverspeedEfficiencyScale(turbo, 0.0) == 1.0
+            && compressorOverspeedEfficiencyScale(turbo, line) == 1.0,
+        "up to the line the efficiency is untouched, bit for bit");
+    const auto over = compressorOverspeedEfficiencyScale(turbo, 1.09 * line);
+    require(over > 0.45 && over < 0.55, "9 % past the line the wheel has about half its efficiency");
+    turbo.maximumShaftSpeedRpm = 200'000.0;
+    require(turboMaximumShaftSpeedRpm(turbo) == 200'000.0, "an authored line is kept");
+    require(compressorOverspeedEfficiencyScale(turbo, line) == 1.0, "and moves the collapse with it");
+}
+
+/** A petrol 2JZ given a methanol ratio at 60 MJ/kg -- 32 MJ per kilogram of
+ *  oxygen, 2.5 times any real fuel, as an owner's Fuel edit made it -- ran
+ *  its turbocharger to 3.5 x its design speed and ten bar at 6,000 rpm
+ *  (journal 2026-11-11). Without a top speed line or an overboost cut it
+ *  still runs away (3.85 bar, 1.8 x design, at 5,000 rpm); with the line the shaft is held near it (and the wheel takes
+ *  damage); with the ECU's cut set to 40 kPa (it is off by default) the
+ *  boost stays by its target. */
+void runawayFuelIsHeld() {
+    auto config = catalogueEngine("2JZ");
+    auto& fuel = config.fuelProperties;
+    const auto petrolRatio = fuel.stoichiometricAirFuelRatio;
+    fuel.name = "Methanol at a petrol heat";
+    fuel.lowerHeatingValueMjPerKg = 60.0;
+    fuel.densityKgPerL = 0.792;
+    fuel.stoichiometricAirFuelRatio = 8.0;
+    fuel.molarMassGramsPerMole = 32.04;
+    fuel.oxygenMolesPerFuelMole = 8.0 * 0.232 * fuel.molarMassGramsPerMole / 31.9988;
+    fuel.productMolesPerFuelMole = 3.0;
+    config.injection.injectorFlowMgPerSecond *= petrolRatio / fuel.stoichiometricAirFuelRatio;
+    config.injection.latentHeatKjPerKg = 1'103.0;
+    require(!validateEngineConfig(config), "valid fixture");
+    const auto topRpm = turboMaximumShaftSpeedRpm(config.forcedInduction);
+    const auto targetRatio = config.forcedInduction.wastegatePressureRatio;
+
+    auto unlined = config;
+    unlined.forcedInduction.maximumShaftSpeedRpm = 1.0e9;
+    const auto free = heldFullLoad(unlined, 9.0, -1.0, 5'000.0, 0.0);
+    const auto lined = heldFullLoad(config, 9.0, -1.0, 5'000.0, 0.0);
+    const auto guarded = heldFullLoad(config, 9.0, -1.0, 5'000.0, 40.0);
+    std::cout << "  2JZ at 32 MJ/kg of oxygen, 5,000 rpm: no line, no cut: boost " << free.boostMax << ", shaft "
+              << free.shaftRpmMax << " rpm; line " << topRpm << " rpm: boost " << lined.boostMax << ", shaft "
+              << lined.shaftRpmMax << " rpm, wheel damage " << lined.wheelDamage << "; with the overboost cut: boost "
+              << guarded.boostMax << ", shaft " << guarded.shaftRpmMax << " rpm, cut "
+              << (guarded.overboostCut ? "yes" : "no") << '\n';
+    require(free.boostMax > 3.6, "without the line or the cut the fixture runs away (else this proves nothing)");
+    require(lined.boostMax < 3.0 && lined.shaftRpmMax < 1.3 * topRpm,
+        "the top speed line holds the shaft near it and the boost under 3.0");
+    require(lined.wheelDamage > 0.0, "and a wheel held past its line is damaged");
+    require(guarded.overboostCut && guarded.boostMax < targetRatio + 0.55,
+        "the overboost cut holds the boost near its target");
+}
+
 } // namespace
 
 int main() {
@@ -464,5 +546,9 @@ int main() {
     std::cout << "high boost holds steady: ok\n";
     liftOffSurgesWithoutBlowOff();
     std::cout << "lift-off surge: ok\n";
+    topSpeedLineCostsEfficiency();
+    std::cout << "top speed line: ok\n";
+    runawayFuelIsHeld();
+    std::cout << "runaway fuel held: ok\n";
     return 0;
 }

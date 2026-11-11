@@ -442,6 +442,15 @@ private:
         constexpr double saturatedInjectorUtilisation = 0.99;
         auto bits = state_.wastegateOpening > regulatingWastegateOpening
             ? static_cast<std::uint32_t>(ActiveLimit::boostAtTarget) : 0U;
+        if (config_.forcedInduction.enabled && config_.forcedInduction.type == ForcedInductionType::turbocharger) {
+            const auto topRpm = turboMaximumShaftSpeedRpm(config_.forcedInduction);
+            const auto units = std::min<std::size_t>(state_.turbochargerCount, state_.turbochargers.size());
+            for (std::size_t index = 0; index < units; ++index) {
+                const auto& unit = state_.turbochargers[index];
+                if (unit.shaftSpeedRpm > topRpm || unit.wheelDamage >= 1.0)
+                    bits |= static_cast<std::uint32_t>(ActiveLimit::turboOverspeed);
+            }
+        }
         const auto cylinders = std::min<std::size_t>(config_.cylinders.size(), dieselFuelLimitBits_.size());
         for (std::size_t index = 0; index < cylinders; ++index) {
             bits |= dieselFuelLimitBits_[index];

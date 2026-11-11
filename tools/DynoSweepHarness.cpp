@@ -54,7 +54,7 @@ bool pipeTemperatureReport = false;
 // --exhaust-port-plateau: the exhaust port's effective area as a fraction of
 // the valve head area (production 0.51), to read a measured flow bench against.
 std::optional<double> exhaustPortPlateauOverride;
-constexpr std::array<std::string_view, 37> dynoColumnNames {
+constexpr std::array<std::string_view, 40> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
     "egt_c", "map_kpa", "air_mg", "fuel_g_s", "pmep_bar",
@@ -64,7 +64,7 @@ constexpr std::array<std::string_view, 37> dynoColumnNames {
     "held_rpm_min", "held_rpm_max", "held_rpm_stddev", "held_rpm_drift",
     "brake_nm_mean", "brake_nm_min", "brake_nm_max",
     "knock_mean", "knock_peak", "heavy_knock_share", "advance_deg",
-    "end_gas_k",
+    "end_gas_k", "boost_ratio", "turbo_speed_ratio", "turbo_speed_ratio_max",
 };
 
 struct Sample final {
@@ -84,7 +84,7 @@ struct Sample final {
     double egtC {};
     double mapKpa {};
     double exhaustKpa {};
-    /** Compressor pressure ratio, window mean; not a CSV column. */
+    /** Compressor pressure ratio, window mean. */
     double boostPressureRatio {};
     double airMgPerCycle {};
     double fuelGramsPerSecond {};
@@ -110,6 +110,12 @@ struct Sample final {
     double advanceDegrees {};
     /** The end gas's peak temperature per cycle, over cylinders and window. */
     double endGasPeakTemperatureK {};
+    /** The turbocharger shaft's speed over its design speed: window mean and
+     *  peak (0 without a turbocharger). */
+    double turboSpeedRatio {};
+    double peakTurboSpeedRatio {};
+    /** Seconds the ECU's overboost cut held, settling included. */
+    double overboostCutSeconds {};
 };
 
 [[nodiscard]] std::array<double, dynoColumnNames.size() - 1U> numericColumns(
@@ -131,6 +137,7 @@ struct Sample final {
         sample.maximumBrakeTorqueNm,
         sample.meanKnock, sample.peakKnock, sample.heavyKnockShare,
         sample.advanceDegrees, sample.endGasPeakTemperatureK,
+        sample.boostPressureRatio, sample.turboSpeedRatio, sample.peakTurboSpeedRatio,
     };
 }
 
@@ -236,7 +243,7 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     Sample acc {};
     auto peak = 0.0;
     auto veAcc = 0.0, lambdaAcc = 0.0, imepAcc = 0.0, egtAcc = 0.0, mapAcc = 0.0;
-    auto boostAcc = 0.0;
+    auto boostAcc = 0.0, turboSpeedAcc = 0.0, peakTurboSpeed = 0.0;
     auto airAcc = 0.0, fuelAcc = 0.0, rpmAcc = 0.0;
     auto brakeWorkJoules = 0.0;
     auto brakeCrankRadians = 0.0;
@@ -285,6 +292,8 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
         if (step == settleSteps)
             sampleStartTimeSeconds = simulator.state().simulationTimeSeconds;
         const auto frame = simulator.step(dt, controls);
+        if (enginelab::hasActiveLimit(frame.state.activeLimits, enginelab::ActiveLimit::overboostCut))
+            acc.overboostCutSeconds += dt;
         if (step >= settleSteps) {
             const auto sampleIndex = step - settleSteps;
             n += 1.0;
@@ -342,6 +351,8 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             egtAcc += frame.state.exhaustTemperatureC;
             mapAcc += frame.state.manifoldPressureKpa;
             boostAcc += frame.state.boostPressureRatio;
+            turboSpeedAcc += frame.state.forcedInductionShaftSpeedRatio;
+            peakTurboSpeed = std::max(peakTurboSpeed, frame.state.forcedInductionShaftSpeedRatio);
             exhaustAcc += frame.state.exhaustPressureKpa;
             airAcc += frame.state.airMassMgPerCycle;
             fuelAcc += frame.state.fuelFlowGramsPerSecond;
@@ -410,6 +421,8 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     acc.egtC = egtAcc / d;
     acc.mapKpa = mapAcc / d;
     acc.boostPressureRatio = boostAcc / d;
+    acc.turboSpeedRatio = turboSpeedAcc / d;
+    acc.peakTurboSpeedRatio = peakTurboSpeed;
     acc.exhaustKpa = exhaustAcc / d;
     acc.airMgPerCycle = airAcc / d;
     acc.fuelGramsPerSecond = fuelAcc / d;
@@ -445,6 +458,10 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
 struct SweepSummary final {
     /** The highest held compressor pressure ratio. */
     double highestBoostPressureRatio {};
+    /** The highest turbocharger shaft speed over its design speed. */
+    double highestTurboSpeedRatio {};
+    /** Seconds the ECU's overboost cut held over the sweep. */
+    double overboostCutSeconds {};
     /** The widest held brake torque swing, (max - min) / mean. */
     double widestBrakeSwing {};
 };
@@ -530,6 +547,9 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
         writeRow(std::cout, config, target, sample);
         summary.highestBoostPressureRatio = std::max(
             summary.highestBoostPressureRatio, sample.boostPressureRatio);
+        summary.highestTurboSpeedRatio = std::max(
+            summary.highestTurboSpeedRatio, sample.peakTurboSpeedRatio);
+        summary.overboostCutSeconds += sample.overboostCutSeconds;
         if (sample.meanBrakeTorqueNm > 1.0)
             summary.widestBrakeSwing = std::max(summary.widestBrakeSwing,
                 (sample.maximumBrakeTorqueNm - sample.minimumBrakeTorqueNm)
@@ -846,7 +866,9 @@ int main(int argc, char** argv) {
                   << summary.highestBoostPressureRatio << ", limit " << limit
                   << (held ? " PASS" : " FAIL") << "; widest brake swing "
                   << summary.widestBrakeSwing * 100.0 << " %, limit 15 %"
-                  << (steady ? " PASS" : " FAIL") << '\n';
+                  << (steady ? " PASS" : " FAIL") << "; highest shaft speed "
+                  << summary.highestTurboSpeedRatio << " x design; overboost cut "
+                  << summary.overboostCutSeconds << " s\n";
     }
     return boostHeld ? EXIT_SUCCESS : EXIT_FAILURE;
 }

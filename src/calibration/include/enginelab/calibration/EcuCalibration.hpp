@@ -8,6 +8,11 @@ namespace enginelab::calibration {
 /** Build the live-editable baseline maps used by SimpleEcuModel. */
 [[nodiscard]] CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config);
 
+/** Adds to tables saved before them the settings whose absence already meant
+ *  their default, so the engine runs exactly as before and the tuner shows
+ *  them: the overboost cut of a turbocharged engine. */
+void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config);
+
 /** Create a mutable transaction from an immutable realtime snapshot. */
 [[nodiscard]] CalibrationDraft makeDraft(const CalibrationSnapshot& snapshot);
 

@@ -363,6 +363,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "turbocharger_count" << YAML::Value << config.forcedInduction.turbochargerCount
         << YAML::Key << "compressor_design_mass_flow_kg_s" << YAML::Value << config.forcedInduction.compressorDesignMassFlowKgPerSecond
         << YAML::Key << "intercooler_effectiveness" << YAML::Value << config.forcedInduction.intercoolerEffectiveness
+        << YAML::Key << "maximum_shaft_speed_rpm" << YAML::Value << config.forcedInduction.maximumShaftSpeedRpm
         << YAML::EndMap
         << YAML::Key << "thermal" << YAML::Value << YAML::BeginMap
         << YAML::Key << "regulated" << YAML::Value << config.thermal.regulated
@@ -950,6 +951,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.turbochargerCount = forced["turbocharger_count"].as<std::uint32_t>(config.forcedInduction.turbochargerCount);
             config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced["compressor_design_mass_flow_kg_s"].as<double>(config.forcedInduction.compressorDesignMassFlowKgPerSecond);
             config.forcedInduction.intercoolerEffectiveness = forced["intercooler_effectiveness"].as<double>(config.forcedInduction.intercoolerEffectiveness);
+            config.forcedInduction.maximumShaftSpeedRpm = forced["maximum_shaft_speed_rpm"].as<double>(config.forcedInduction.maximumShaftSpeedRpm);
         }
         if (const auto thermal = engine["thermal"]) {
             config.thermal.regulated = thermal["regulated"].as<bool>(config.thermal.regulated);

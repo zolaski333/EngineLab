@@ -493,6 +493,32 @@ int main() {
                     && applied->fuelProperties.name == other->properties.name + " (edited)",
                 "an edited fuel value is applied and renames the fuel");
 
+        // A new stoichiometric ratio takes the heating value with it, the
+        // same energy per kilogram of oxygen, unless the heating value is set
+        // too. Kept alone, a methanol ratio at a petrol heat ran a turbo to
+        // ten bar (journal 2026-11-11).
+        fuelWindow.setConfig(*applied);
+        const auto heatBefore = applied->fuelProperties.lowerHeatingValueMjPerKg;
+        const auto ratioBefore = applied->fuelProperties.stoichiometricAirFuelRatio;
+        const auto energyBefore = enginelab::fuel_editing::energyPerOxygenMjPerKg(applied->fuelProperties);
+        require(energyBefore > 12.0 && energyBefore < 14.0, "a listed petrol releases about 13 MJ per kg of oxygen");
+        fuelFields[2]->setValue(9.81, juce::sendNotificationSync);
+        require(std::abs(fuelFields[1]->getValue() - heatBefore * 9.81 / ratioBefore) <= 0.051,
+                "the heating value field follows the ratio");
+        applyButton->onClick();
+        require(std::abs(applied->fuelProperties.lowerHeatingValueMjPerKg - heatBefore * 9.81 / ratioBefore) < 1.0e-9
+                    && std::abs(enginelab::fuel_editing::energyPerOxygenMjPerKg(applied->fuelProperties)
+                                - energyBefore) < 1.0e-9,
+                "applied, the fuel keeps its energy per kilogram of oxygen");
+        fuelWindow.setConfig(*applied);
+        fuelFields[1]->setValue(43.0, juce::sendNotificationSync);
+        fuelFields[2]->setValue(8.0, juce::sendNotificationSync);
+        require(near(fuelFields[1]->getValue(), 43.0), "a heating value set by hand no longer follows");
+        applyButton->onClick();
+        require(near(applied->fuelProperties.lowerHeatingValueMjPerKg, 43.0)
+                    && near(applied->fuelProperties.stoichiometricAirFuelRatio, 8.0),
+                "and is applied as set, whatever the energy per kilogram of oxygen");
+
         // An alcohol in the tank refits the metering for the same mixture:
         // the injectors flow the stoichiometric ratio's share more mass, a
         // carburettor's jets also the root of the density's.

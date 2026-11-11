@@ -730,7 +730,10 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 - the fuel, on the combustion (`PartRole::combustion`): a `choice` among
   `parts/fuels.yaml` of the engine's kind (`loadFuelPresets`: properties,
   octane, latent heat) and the octane (cetane on a diesel), heating value,
-  stoichiometric ratio (the oxygen a mole needs follows it), latent heat
+  stoichiometric ratio (the oxygen a mole needs follows it, and so does
+  the heating value unless it was edited too: `followingHeatingValue()`
+  keeps the energy per kilogram of oxygen, about 13 MJ for any real fuel,
+  which the *Fuel* window shows and marks past 14), latent heat
   and laminar flame speed; a restart, and an edited fuel is named
   "(edited)". The octane alone is the engine's, not the fuel's: it is a
   live setting (`EngineEditScope::settings`, the knock model reads it every

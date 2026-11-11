@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-11 — the boost that ran away on a lowered stoichiometric ratio
+
+- Owner report: lowering the stoichiometric AFR in Fuel on a turbo engine sometimes ran the boost to 8-12 bar. Owner's 2JZ file (fuel AFR 8.0, heating value 60 MJ/kg: 32 MJ per kg of oxygen, real fuels ~13 by Thornton's rule), `DynoSweepHarness --saved-engine`: MAP 553/957/1,018 kPa at 4,000/5,000/6,000 rpm, 2,390 N.m. Two causes: the Fuel edit scaled the oxygen and the injectors with the ratio but kept the heating value; nothing bounds a turbo's shaft speed (the map's head grows as N^2).
+- Fix 1: the heating value follows the ratio (constant energy per kg of oxygen) unless the user set it; the Fuel window shows that energy, marked past 14. Fix 2: a top speed line (`maximum_shaft_speed_rpm`, default 1.3 x design; the catalogue peaks at 1.074, `CatalogBoostHold`): past it efficiency x (N/Nmax)^-8, damage 2 x^2 per s, a burst at 1. Exponent and damage rate are choices, not a fitted map.
+- `EngineLab.Turbocharger`, catalogue 2JZ on that fuel at 5,000 rpm, 9 s: no line 3.85 bar, shaft 1.8 x design; line 2.69 bar, 1.36 x, damage 0.02; with a 40 kPa overboost cut 2.38 bar. Owner's file with the defaults: MAP 331/314/292 kPa at 4,000-6,000, shaft 1.34-1.40 x (the wheel slowly dies there), 1,272 N.m peak.
+- Refuted as a default: the overboost cut on at 40 kPa. The catalogue 2JZ's dyno spool-up overshoots by more than that (cut held 1.05 s of the sweep; 3,000 rpm torque +3 %, peak cylinder pressure +5 bar after it). It ships off (0); 40 kPa is the suggested value.
+- Catalogue unchanged: `DynoSweepHarness --step 1000 --boost-hold-margin 0.05` CSV byte-identical to before the change (2JZ, EJ25, I5, TDI). `DriveScenarioHarness pull` and `downshift-clutch` on EJ25, TDI, Merlin: no overboost or overspeed second (2JZ and I5 still stall on the launch, as before).
+- Not measured: a real compressor map past its last speed line, a real overboost cut's margin, the sound of an overspeeding wheel.
+
 ## 2026-11-09 — what the intake style and the carburettor change on a four
 
 - Owner question: does airbox -> trumpets change anything but the sound? Code: the physics reads only `airbox_volume_l`, and only to keep fuel pushed back past the throttle (`throttleFlowKeepingReversedFuel`); the throttle draws from ambient whatever the style. `pod_filter`, `bellmouth_diameter_mm` and the snorkel reach the sound (`AcousticIntakeNetwork`) and the 3-D view only: no filter loss, no box resonance, no bellmouth entry loss.

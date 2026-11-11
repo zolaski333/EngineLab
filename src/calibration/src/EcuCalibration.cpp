@@ -181,6 +181,12 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
                      ecuLimits::maximumBoostTargetGaugeKpa, 1),
             speed, std::vector<double>(speed.breakpoints.size(), gaugeKpa)
         });
+        draft.set(ScalarCalibration {
+            metadata(std::string(keys::overboostCut), "Overboost cut",
+                     "Cuts the fuel while the manifold pressure runs this far past the boost target (a wastegate too small, a boost run away), and gives it back at half of it. Zero, the default, turns it off: the boost is then free to run past its target. 40 kPa is a production ECU's kind of margin.",
+                     CalibrationUnit::kilopascal, 0.0, ecuLimits::maximumOverboostCutMarginKpa, 0),
+            ecuLimits::defaultOverboostCutMarginKpa
+        });
     }
     if (!diesel) {
         draft.set(ScalarCalibration {
@@ -192,6 +198,12 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         });
     }
     return draft;
+}
+
+void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config) {
+    if (draft.find(keys::overboostCut) != nullptr) return;
+    const auto defaults = makeDefaultEcuCalibration(config);
+    if (const auto* cut = defaults.find(keys::overboostCut)) draft.set(*cut);
 }
 
 CalibrationDraft makeDraft(const CalibrationSnapshot& snapshot) {

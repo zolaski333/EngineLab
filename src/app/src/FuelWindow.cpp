@@ -18,6 +18,10 @@ constexpr int margin = 20;
 constexpr int rowHeight = 30;
 constexpr int rowGap = 8;
 constexpr int labelWidth = 170;
+constexpr int energyHeight = 22;
+/** The fields' rows: fuel_editing::fields' order. */
+constexpr std::size_t heatingRow = 1;
+constexpr std::size_t ratioRow = 2;
 
 /** What the window shows of an engine: another engine, another fuel kind or
     another value means the fields are rebuilt. */
@@ -47,6 +51,13 @@ public:
         }
         note_.setColour(juce::Label::textColourId, ui::colours::muted);
         status_.setColour(juce::Label::textColourId, ui::colours::warn);
+        energy_.setJustificationType(juce::Justification::centredLeft);
+        energy_.setTooltip(utf8("The heat the fuel releases per kilogram of the air's oxygen it burns. Every real "
+                                "fuel that takes its oxygen from the air is near 13 MJ/kg (petrol 12.6, ethanol "
+                                "12.8, methanol 13.3, diesel 12.7): above it the engine makes more power from the "
+                                "same air than such a fuel can. The heating value follows the stoichiometric ratio "
+                                "to keep it, unless you set the heating value yourself."));
+        addAndMakeVisible(energy_);
         applyButton_.setTooltip(utf8("Puts this fuel in the tank. A new octane alone is taken at once; another "
                                      "fuel or value restarts the engine. Another stoichiometric ratio resizes the "
                                      "injectors and carburettor jets for the same mixture. No spark map is changed."));
@@ -112,6 +123,7 @@ public:
             row->slider.setBounds(line);
             area.removeFromTop(rowGap);
         }
+        energy_.setBounds(area.removeFromTop(energyHeight));
         area.removeFromTop(6);
         auto buttons = area.removeFromTop(34);
         const auto applyWidth = applyButton_.idealWidth();
@@ -126,8 +138,8 @@ public:
 
     [[nodiscard]] static int preferredHeight(bool diesel) {
         const auto fieldCount = static_cast<int>(fuel_editing::fields(diesel).size());
-        return 14 + 18 + 26 + 18 + 8 + rowHeight + rowGap + 6 + fieldCount * (rowHeight + rowGap) + 6 + 34 + 12
-            + 40 + 90 + 14;
+        return 14 + 18 + 26 + 18 + 8 + rowHeight + rowGap + 6 + fieldCount * (rowHeight + rowGap) + energyHeight
+            + 6 + 34 + 12 + 40 + 90 + 14;
     }
 
 private:
@@ -180,6 +192,7 @@ private:
                 row->slider.onValueChange = [this, raw = row.get()] {
                     if (loading_) return;
                     raw->touched = true;
+                    if (rows_.size() > ratioRow && raw == rows_[ratioRow].get()) followHeatingValue();
                     valuesEdited();
                 };
                 row->slider.setEnabled(!locked_);
@@ -206,6 +219,7 @@ private:
             rows_[index]->touched = false;
         }
         loading_ = false;
+        showEnergy();
     }
 
     /** The running engine with the chosen listed fuel, before the fields' values. */
@@ -228,6 +242,34 @@ private:
         if (loading_) return;
         pending_ = true;
         updateButtons();
+        showEnergy();
+    }
+
+    /** A new stoichiometric ratio moves the heating value with it (the same
+        energy per kilogram of oxygen) until the heating value is set by hand. */
+    void followHeatingValue() {
+        if (rows_.size() <= ratioRow || rows_[heatingRow]->touched) return;
+        const auto base = draft();
+        loading_ = true;
+        rows_[heatingRow]->slider.setValue(fuel_editing::followingHeatingValue(base.fuelProperties,
+            rows_[ratioRow]->slider.getValue()), juce::dontSendNotification);
+        loading_ = false;
+    }
+
+    /** The energy per kilogram of oxygen of the fuel the fields describe. */
+    void showEnergy() {
+        auto preview = draft();
+        if (!fuel_editing::apply(preview, fieldValues(preview)).empty()) return;
+        const auto energy = fuel_editing::energyPerOxygenMjPerKg(preview.fuelProperties);
+        // Real fuels: 12.5-13.5 MJ/kg.
+        constexpr double realFuelCeilingMjPerKg = 14.0;
+        energy_.setColour(juce::Label::textColourId,
+                          energy > realFuelCeilingMjPerKg ? ui::colours::warn : ui::colours::muted);
+        energy_.setText(utf8("Energy per kg of oxygen: ") + juce::String(energy, 1)
+                            + utf8(energy > realFuelCeilingMjPerKg
+                                       ? " MJ/kg, more than any real fuel (about 13)"
+                                       : " MJ/kg (real fuels about 13)"),
+                        juce::dontSendNotification);
     }
 
     /** The fields' values on `base`: a field not edited keeps base's value. */
@@ -272,6 +314,7 @@ private:
     std::vector<std::unique_ptr<Row>> rows_;
     juce::Label note_;
     juce::Label status_;
+    juce::Label energy_;
     ui::ActionButton applyButton_ { "Apply", ui::ActionButton::Style::primary };
     ui::ActionButton revertButton_ { "Revert", ui::ActionButton::Style::standard };
 };

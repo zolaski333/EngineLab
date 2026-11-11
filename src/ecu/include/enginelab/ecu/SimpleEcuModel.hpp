@@ -30,6 +30,9 @@ namespace enginelab {
 [[nodiscard]] double knockRetardGainDegrees(const calibration::CalibrationSnapshot& calibration) noexcept;
 /** Launch control's rev limit (calibration `limits.launch_rpm`); 0 = off. */
 [[nodiscard]] double launchControlRpm(const calibration::CalibrationSnapshot& calibration) noexcept;
+/** The overboost cut's margin over the boost target, gauge kPa (calibration
+ *  `limits.overboost_kpa`, 0 when the calibration has none); 0 = off. */
+[[nodiscard]] double overboostCutMarginKpa(const calibration::CalibrationSnapshot& calibration) noexcept;
 /** Launch control lets go above this road speed (5 km/h). */
 inline constexpr double launchControlReleaseSpeedMps = 5.0 / 3.6;
 /** Configured ignition curve plus live AFR/advance trims, transient enrichment and latched limiter. */
@@ -55,6 +58,7 @@ public:
     }
     void reset() noexcept override {
         limiterLatched_.store(false, std::memory_order_relaxed);
+        overboostLatched_.store(false, std::memory_order_relaxed);
         decelerationFuelCutLatched_.store(false, std::memory_order_relaxed);
         decelerationFuelResume_.store(1.0, std::memory_order_relaxed);
         lambdaLearningHoldSeconds_.store(0.0, std::memory_order_relaxed);
@@ -120,6 +124,7 @@ private:
     std::atomic<double> afrTrim_ { 0.0 };
     std::atomic<double> ignitionTrimDegrees_ { 0.0 };
     mutable std::atomic<bool> limiterLatched_ { false };
+    mutable std::atomic<bool> overboostLatched_ { false };
     mutable std::atomic<bool> decelerationFuelCutLatched_ { false };
     mutable std::atomic<double> decelerationFuelResume_ { 1.0 };
     /** The knock control's retard as a share of its authority, 0-1. */

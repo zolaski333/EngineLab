@@ -20,6 +20,7 @@ The set created with each engine contains:
 | `limits.launch_rpm` | scalar | launch control (two-step) rev limit; 0 = off |
 | `knock.retard_deg_per_intensity` | scalar | knock control gain (spark-ignition only) |
 | `boost.target_gauge_kpa` | curve by engine speed | boost the wastegate controller holds (turbocharged only) |
+| `limits.overboost_kpa` | scalar | overboost cut: margin past the boost target where the fuel is cut; 0 = off, the default (turbocharged only) |
 
 Load is currently `MAP / ambient_pressure`, clamped between 0 and 4. The
 default tables cover 0 to 400 %, with extra points above 100 % for
@@ -70,6 +71,19 @@ step. Where the turbo cannot make the target (low engine speed), the table is
 a ceiling it does not reach. Saved tables without this entry and
 superchargers fall back on the configuration's ratio.
 
+The overboost cut (`limits.overboost_kpa`, 0 to 1,000 kPa) is a production
+ECU's protection: while the manifold's gauge pressure runs that margin past
+the boost target at the engine's speed, the fuel is cut, and it comes back
+once the boost falls under half the margin. Zero, the default, turns it off:
+the boost then goes wherever the turbocharger takes it. 40 kPa catches a
+runaway (a fuel whose energy per kilogram of oxygen is far past a real
+one's, a wastegate that cannot hold) and never a held boost, which the
+wastegate keeps within 6 kPa; but the catalogue 2JZ's spool-up on the dyno
+overshoots by more than 40 kPa for about a second, so a cut on by default
+would have changed it (journal 2026-11-11). Saved tables older than it get
+it at its default when they load (`addMissingDefaultSettings`), so the
+tuner lists it.
+
 The canonical bounds are shared by validation, the generated metadata and the
 ECU: 9 to 18 for AFR (petrol AFR, lambda 0.61 to 1.22; a generated map
 stays at 10.5 or leaner), -10° to 55° for advance, 150 to 25,000 rpm for the
@@ -87,8 +101,10 @@ same domain after the trims are applied.
 next to `activeLimits`, a bitmask of `ActiveLimit` saying what holds the engine
 back this frame: the rev limiter, knock retard (at least 0.5°), coolant
 protection (above 108 °C), a diesel's smoke or quantity ceiling, an open
-wastegate (boost held at its target) and a saturated injector (open for at
-least 99 % of its window). It is telemetry: nothing reads it back.
+wastegate (boost held at its target), a saturated injector (open for at
+least 99 % of its window), launch control, the overboost cut, and a
+turbocharger past its top speed line (or burst). It is telemetry: nothing
+reads it back.
 
 Two things follow the active rev limit rather than the authored one. The
 dyno's sweep stops at 0.95 of it (and 300 rpm under it); an untuned engine

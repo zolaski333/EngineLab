@@ -32,7 +32,9 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
 
 /** What holds the engine back now, in words ("none" when nothing does). */
 [[nodiscard]] juce::String activeLimitsText(std::uint32_t limits) {
-    constexpr std::array<std::pair<ActiveLimit, const char*>, 8> names { {
+    constexpr std::array<std::pair<ActiveLimit, const char*>, 10> names { {
+        { ActiveLimit::overboostCut, "overboost cut" },
+        { ActiveLimit::turboOverspeed, "turbo overspeed" },
         { ActiveLimit::launchControl, "launch control" },
         { ActiveLimit::revLimiter, "rev limiter" },
         { ActiveLimit::knockRetard, "knock retard" },

@@ -160,6 +160,7 @@ SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
             return result;
         }
         engine.calibration = parsed.takeValue();
+        calibration::addMissingDefaultSettings(*engine.calibration, engine.config);
     }
     result.engine = std::move(engine);
     for (auto& repair : repairs) result.warnings.push_back(nameOf(engineFile) + ": " + std::move(repair));

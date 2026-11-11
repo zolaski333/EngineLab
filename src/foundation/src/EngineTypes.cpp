@@ -814,7 +814,9 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
             && config.injection.mode != InjectionMode::direct)
         return "Compression-ignition diesel engines require direct injection";
     if (config.fuelProperties.name.empty() || config.fuelProperties.name.size() > 128
-        || !inRange(config.fuelProperties.lowerHeatingValueMjPerKg, 10.0, 60.0)
+        // Up to hydrogen's 120 MJ/kg and past it: the Fuel window's heating
+        // value follows a raised stoichiometric ratio (25 from petrol: 73).
+        || !inRange(config.fuelProperties.lowerHeatingValueMjPerKg, 10.0, 150.0)
         || !inRange(config.fuelProperties.densityKgPerL, 0.30, 1.50)
         || !inRange(config.fuelProperties.stoichiometricAirFuelRatio, 5.0, 25.0)
         || !inRange(config.fuelProperties.molarMassGramsPerMole, 20.0, 300.0)
@@ -872,6 +874,10 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         || !(config.forcedInduction.compressorDesignMassFlowKgPerSecond == 0.0
             || inRange(config.forcedInduction.compressorDesignMassFlowKgPerSecond, 0.0001, 500.0))
         || outOfRange("forcedInduction.intercoolerEffectiveness", config.forcedInduction.intercoolerEffectiveness, 0.0, 0.95)
+        // Zero: 1.3 x the design speed. No ceiling: a user may build a wheel
+        // that never meets its line.
+        || !(config.forcedInduction.maximumShaftSpeedRpm == 0.0
+            || inRange(config.forcedInduction.maximumShaftSpeedRpm, 1'000.0, 1.0e9))
         || outOfRange("thermal.regulatedCoolantTemperatureC", config.thermal.regulatedCoolantTemperatureC, 40.0, 130.0)
         || outOfRange("thermal.regulatedOilTemperatureC", config.thermal.regulatedOilTemperatureC, 40.0, 150.0)
         || !(config.thermal.coolantMassKjPerC == 0.0 || inRange(config.thermal.coolantMassKjPerC, 0.05, 500'000.0))

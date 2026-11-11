@@ -61,9 +61,10 @@ namespace {
 constexpr double stepSeconds = 1.0 / 240.0;
 using Json = nlohmann::json;
 /** `ActiveLimit` bits, in bit order. */
-constexpr std::array<const char*, 7> activeLimitNames {
+constexpr std::array<const char*, 10> activeLimitNames {
     "rev_limiter", "knock_retard", "coolant_protection", "diesel_smoke",
-    "diesel_quantity", "boost_at_target", "injector_saturated" };
+    "diesel_quantity", "boost_at_target", "injector_saturated", "launch_control",
+    "overboost_cut", "turbo_overspeed" };
 
 struct ScenarioEvent final {
     double timeSeconds { 0.0 };
@@ -381,6 +382,7 @@ int run(const Options& options) {
     std::size_t softLimiterTicks = 0;
     std::size_t hardLimiterTicks = 0;
     std::array<std::size_t, activeLimitNames.size()> activeLimitTicks {};
+    double highestTurboSpeedRatio { 0.0 };
     double motionStart = -1.0;
     double time100Kmh = -1.0;
     double time60Mph = -1.0;
@@ -466,6 +468,7 @@ int run(const Options& options) {
         roadSpeedMps = speed;
         topSpeedMps = std::max(topSpeedMps, speed);
         maximumRpm = std::max(maximumRpm, state.rpm);
+        highestTurboSpeedRatio = std::max(highestTurboSpeedRatio, state.forcedInductionShaftSpeedRatio);
         if (motionStart < 0.0 && speed > 0.1) motionStart = now;
         if (motionStart >= 0.0 && time100Kmh < 0.0 && speed >= 100.0 / 3.6) time100Kmh = now - motionStart;
         if (motionStart >= 0.0 && time60Mph < 0.0 && speed >= 60.0 * 0.44704) time60Mph = now - motionStart;
@@ -578,6 +581,8 @@ int run(const Options& options) {
     for (std::size_t bit = 0; bit < activeLimitNames.size(); ++bit)
         std::printf(" %s %.2f", activeLimitNames[bit], static_cast<double>(activeLimitTicks[bit]) * stepSeconds);
     std::printf("\n");
+    if (highestTurboSpeedRatio > 0.0)
+        std::printf("highest turbocharger shaft speed: %.3f x design\n", highestTurboSpeedRatio);
     return EXIT_SUCCESS;
 }
 } // namespace

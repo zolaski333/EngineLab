@@ -12,11 +12,29 @@ std::vector<Field> fields(bool diesel) {
         result.push_back({ "Cetane number", "", 0, 1.0, 0.5, 30.0, 80.0 });
     else
         result.push_back({ "Octane (RON)", "", 1, 1.0, 0.5, 70.0, 130.0 });
-    result.push_back({ "Heating value", " MJ/kg", 1, 0.5, 0.1, 10.0, 60.0 });
+    result.push_back({ "Heating value", " MJ/kg", 1, 0.5, 0.1, 10.0, 150.0 });
     result.push_back({ "Stoichiometric AFR", "", 2, 0.1, 0.01, 5.0, 25.0 });
     result.push_back({ "Latent heat", " kJ/kg", 0, 10.0, 1.0, 10.0, 1'200.0 });
     if (!diesel) result.push_back({ "Laminar flame speed", " m/s", 3, 0.01, 0.002, 0.05, 2.0 });
     return result;
+}
+
+double oxygenMassPerFuelMass(const FuelConfig& fuel) {
+    return fuel.molarMassGramsPerMole > 0.0
+        ? fuel.oxygenMolesPerFuelMole * 31.9988 / fuel.molarMassGramsPerMole : 0.0;
+}
+
+double energyPerOxygenMjPerKg(const FuelConfig& fuel) {
+    const auto oxygen = oxygenMassPerFuelMass(fuel);
+    return oxygen > 0.0 ? fuel.lowerHeatingValueMjPerKg / oxygen : 0.0;
+}
+
+double followingHeatingValue(const FuelConfig& fuel, double stoichiometricAirFuelRatio) {
+    if (!(fuel.stoichiometricAirFuelRatio > 0.0) || !(stoichiometricAirFuelRatio > 0.0))
+        return fuel.lowerHeatingValueMjPerKg;
+    const auto field = fields(false)[1];
+    return std::clamp(fuel.lowerHeatingValueMjPerKg * stoichiometricAirFuelRatio / fuel.stoichiometricAirFuelRatio,
+                      field.minimum, field.maximum);
 }
 
 std::vector<double> values(const EngineConfig& config) {
@@ -65,8 +83,17 @@ std::string apply(EngineConfig& edited, const std::vector<double>& values) {
     fuel.lowerHeatingValueMjPerKg = values[1];
     // The oxygen a mole of fuel needs is what sets its stoichiometric
     // ratio: they move together, or the engine refuses the fuel.
-    if (values[2] != fuel.stoichiometricAirFuelRatio && fuel.stoichiometricAirFuelRatio > 0.0)
+    if (values[2] != fuel.stoichiometricAirFuelRatio && fuel.stoichiometricAirFuelRatio > 0.0) {
         fuel.oxygenMolesPerFuelMole *= values[2] / fuel.stoichiometricAirFuelRatio;
+        // And the heat it releases, unless it was set too: a real fuel
+        // releases about 13 MJ per kilogram of the air's oxygen it burns
+        // (Thornton's rule), whatever its ratio. Kept, a lower ratio burnt
+        // more fuel of the same heat in the same air -- a methanol ratio at
+        // a petrol heating value, 2.3 times the energy per kilogram of air,
+        // which ran a turbocharger past ten bar (journal 2026-11-11).
+        if (values[1] == before.lowerHeatingValueMjPerKg)
+            fuel.lowerHeatingValueMjPerKg = followingHeatingValue(before, values[2]);
+    }
     fuel.stoichiometricAirFuelRatio = values[2];
     edited.injection.latentHeatKjPerKg = values[3];
     refitFuelMetering(edited, before);
@@ -109,8 +136,9 @@ const char* note(bool diesel) {
         : "The knock model reads the octane: lower knocks sooner, and the knock control pulls the spark back. "
           "A new octane is taken at once and changes no spark map: the advance is yours to tune (ECU). "
           "The ECU's mixture map is in lambda, so another stoichiometric ratio (E85, methanol) is metered "
-          "right; the oxygen the fuel needs follows it, and the injectors and carburettor jets are resized "
-          "to deliver it (methanol takes 2.3 times the fuel mass). The other values restart the engine.";
+          "right; the oxygen the fuel needs follows it, the heating value too unless you set it, and the "
+          "injectors and carburettor jets are resized to deliver it (methanol takes 2.3 times the fuel mass). "
+          "The other values restart the engine.";
 }
 
 } // namespace enginelab::fuel_editing

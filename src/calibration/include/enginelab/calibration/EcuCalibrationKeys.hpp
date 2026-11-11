@@ -19,6 +19,10 @@ inline constexpr std::string_view revLimit = "limits.rev_rpm";
 // Launch control (two-step): the rev limit while the vehicle stands in gear
 // under throttle. Zero: off.
 inline constexpr std::string_view launchLimit = "limits.launch_rpm";
+// Turbocharged engines: the fuel is cut while the manifold's gauge pressure
+// runs this far past the boost target, and given back at half of it. Zero:
+// off. Absent (saved tables from before it): the default margin.
+inline constexpr std::string_view overboostCut = "limits.overboost_kpa";
 inline constexpr std::string_view knockRetardGain = "knock.retard_deg_per_intensity";
 // The speed the idle governor holds with the throttle shut. Absent (a
 // carburettor, whose idle stop screw sets it, or saved tables without it):
@@ -58,6 +62,12 @@ inline constexpr double defaultKnockRetardGainDegrees = 12.0;
 // Gauge boost: the configuration's pressure ratio stops at 6 (507 kPa).
 inline constexpr double minimumBoostTargetGaugeKpa = 0.0;
 inline constexpr double maximumBoostTargetGaugeKpa = 510.0;
+// The overboost cut's margin over the target, off by default: a held boost
+// overshoots its target by at most 6 kPa (EngineLab.CatalogBoostHold), but the
+// catalogue 2JZ's spool-up on the dyno runs more than 40 kPa past it for 1 s
+// of a sweep (journal 2026-11-11), so a cut on by default would change it.
+inline constexpr double defaultOverboostCutMarginKpa = 0.0;
+inline constexpr double maximumOverboostCutMarginKpa = 1'000.0;
 inline constexpr double minimumNormalizedLoad = 0.0;
 inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;

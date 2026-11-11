@@ -532,7 +532,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient},
                                {"turbocharger_count", config.forcedInduction.turbochargerCount},
                                {"compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond},
-                               {"intercooler_effectiveness", config.forcedInduction.intercoolerEffectiveness}}},
+                               {"intercooler_effectiveness", config.forcedInduction.intercoolerEffectiveness},
+                               {"maximum_shaft_speed_rpm", config.forcedInduction.maximumShaftSpeedRpm}}},
         {"thermal", {{"regulated", config.thermal.regulated},
                       {"regulated_coolant_c", config.thermal.regulatedCoolantTemperatureC},
                       {"regulated_oil_c", config.thermal.regulatedOilTemperatureC},
@@ -831,6 +832,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
             config.forcedInduction.turbochargerCount = forced.value("turbocharger_count", config.forcedInduction.turbochargerCount);
             config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced.value("compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond);
             config.forcedInduction.intercoolerEffectiveness = forced.value("intercooler_effectiveness", config.forcedInduction.intercoolerEffectiveness);
+            config.forcedInduction.maximumShaftSpeedRpm = forced.value("maximum_shaft_speed_rpm", config.forcedInduction.maximumShaftSpeedRpm);
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");

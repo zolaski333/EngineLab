@@ -140,6 +140,12 @@ double launchControlRpm(const calibration::CalibrationSnapshot& calibration) noe
         0.0, calibration::ecuLimits::maximumRevLimitRpm);
 }
 
+double overboostCutMarginKpa(const calibration::CalibrationSnapshot& calibration) noexcept {
+    return std::clamp(calibration.scalarOr(calibration::keys::overboostCut,
+                                           calibration::ecuLimits::defaultOverboostCutMarginKpa),
+        0.0, calibration::ecuLimits::maximumOverboostCutMarginKpa);
+}
+
 double knockRetardGainDegrees(const calibration::CalibrationSnapshot& calibration) noexcept {
     return std::clamp(calibration.scalarOr(calibration::keys::knockRetardGain,
                                            calibration::ecuLimits::defaultKnockRetardGainDegrees),
@@ -196,6 +202,30 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         limiterActive = false;
     }
     limiterLatched_.store(limiterActive, std::memory_order_relaxed);
+
+    // Overboost cut: the fuel is cut while the manifold pressure runs the
+    // margin past the boost target, given back at half of it (a real ECU's
+    // boost fuel cut). The target is the one the wastegate controller holds:
+    // the boost table at this speed, else the configuration's sea-level
+    // wastegate ratio as a gauge boost.
+    auto overboostActive = false;
+    if (config.forcedInduction.enabled
+            && config.forcedInduction.type == ForcedInductionType::turbocharger) {
+        const auto marginKpa = overboostCutMarginKpa(*calibrationSnapshot);
+        if (marginKpa > 0.0) {
+            constexpr double seaLevelPressureKpa = 101.325;
+            const auto table = calibrationSnapshot->sampleCurve(calibration::keys::boostTargetGauge, rpmCoordinate);
+            const auto targetGaugeKpa = table
+                ? std::clamp(*table, calibration::ecuLimits::minimumBoostTargetGaugeKpa,
+                      calibration::ecuLimits::maximumBoostTargetGaugeKpa)
+                : (config.forcedInduction.wastegatePressureRatio - 1.0) * seaLevelPressureKpa;
+            const auto gaugeKpa = state.manifoldPressureKpa - config.ambientPressureKpa;
+            overboostActive = overboostLatched_.load(std::memory_order_relaxed);
+            if (gaugeKpa > targetGaugeKpa + marginKpa) overboostActive = true;
+            else if (gaugeKpa < targetGaugeKpa + 0.5 * marginKpa) overboostActive = false;
+        }
+    }
+    overboostLatched_.store(overboostActive, std::memory_order_relaxed);
 
     // The driver's throttle and the idle-air actuator are separate physical
     // controls.  The former must be able to close completely; using a minimum
@@ -548,7 +578,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // unless the limiter keeps it, so a wet cut sends the charge unburnt to
     // the exhaust.
     const auto shiftCut = controls.shiftIgnitionCut;
-    const auto fuelEnabled = controls.ignitionEnabled
+    const auto fuelEnabled = controls.ignitionEnabled && !overboostActive
         && (!(limiterActive || shiftCut) || config.ignition.limiterKeepsFuel);
     const auto sparkEnabled = controls.ignitionEnabled && !limiterActive && !shiftCut;
     auto decelerationFuelCut = decelerationFuelCutLatched_.load(
@@ -822,7 +852,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         | (state.coolantTemperatureC > 108.0
             ? static_cast<std::uint32_t>(ActiveLimit::coolantProtection) : 0U)
         | (launchActive && (softLimit || limiterActive)
-            ? static_cast<std::uint32_t>(ActiveLimit::launchControl) : 0U);
+            ? static_cast<std::uint32_t>(ActiveLimit::launchControl) : 0U)
+        | (overboostActive ? static_cast<std::uint32_t>(ActiveLimit::overboostCut) : 0U);
     return command;
 }
 } // namespace enginelab

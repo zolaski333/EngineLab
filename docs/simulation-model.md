@@ -610,6 +610,19 @@ wastegate holds the boost, the map only shows while the turbo spools. The
 compressor efficiency stays the authored constant: an efficiency island was
 measured further from the makers' torque figures (journal 2026-10-15).
 
+Past its top speed line (`maximum_shaft_speed_rpm`, by default 1.3 times
+the design speed; the catalogue peaks at 1.07) a wheel's tips go
+transonic: its efficiency falls as `(N / N_max)^-8`, half at 9 % past it,
+on the shaft's work and on the charge's heating alike, so the shaft is held
+near the line however much energy the turbine brings. Under the line the
+efficiency is the authored one, bit for bit. A wheel held past it is
+damaged (`wheelDamage`, `2 x^2` per second, `x` the share past the line);
+at 1 it bursts: the shaft stops and the engine runs without boost until it
+is reset. Both show as `ActiveLimit::turboOverspeed`, and the 3-D view's
+turbo inspector shows the line (editable) and the damage. The shape of the
+collapse is a choice, not a fitted map (journal 2026-11-11): a real
+compressor map's speed lines bunch up towards choke there.
+
 `turbocharger_count` (1 to 4) fits identical turbochargers, each with the
 areas, inertia and design flow authored for one. Each exhaust path's turbine
 face drives the one its `turbocharger` index names (by default the path's

@@ -2179,6 +2179,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 std::array<double, maximumTurbochargers> shaftOmega {};
                 for (std::size_t index = 0; index < turbochargerCount; ++index)
                     shaftOmega[index] = state_.turbochargers[index].shaftSpeedRpm * 2.0 * std::numbers::pi / 60.0;
+                // A burst wheel: its shaft stands, its turbine is only a
+                // restriction in the gas, its compressor makes no head.
+                for (std::size_t index = 0; index < turbochargerCount; ++index)
+                    if (state_.turbochargers[index].wheelDamage >= 1.0) {
+                        shaftOmega[index] = 0.0;
+                        turbochargerTurbinePowerW[index] = 0.0;
+                    }
                 if (turbochargerCount > 1U) {
                     parallelCompressorSolveAgeSeconds_ += subDt;
                     if (parallelCompressorSolveAgeSeconds_ >= 2.5e-4
@@ -2239,6 +2246,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         turbochargerTurbinePowerW[index], unitFlowKgPerSecond, ambientTemperatureK,
                         state_.boostPressureRatio, subDt);
                     shaftOmega[index] = shaftAdvance.angularSpeedRadPerSecond;
+                    // Past the top speed line the wheel is overstressed.
+                    const auto topOmega = turboMaximumShaftSpeedRpm(turbo) * 2.0 * std::numbers::pi / 60.0;
+                    if (topOmega > 0.0 && shaftOmega[index] > topOmega && unit.wheelDamage < 1.0) {
+                        const auto overspeed = shaftOmega[index] / topOmega - 1.0;
+                        unit.wheelDamage = std::min(1.0, unit.wheelDamage
+                            + turboOverspeedDamagePerSecond * overspeed * overspeed * subDt);
+                        if (unit.wheelDamage >= 1.0) shaftOmega[index] = 0.0;
+                    }
                     compressorPowerW += shaftAdvance.compressorPowerWatts;
                     turbinePowerW += turbochargerTurbinePowerW[index];
                     state_.turboBearingPowerKw += shaftAdvance.bearingPowerWatts * 0.001;
@@ -2263,7 +2278,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         compressorMassFlowKgPerSecond, ambientTemperatureK, config_.ambientPressureKpa);
                     pressureRatioTarget = point.pressureRatio;
                     state_.turbochargers[0].compressorFlowCoefficientRatio = point.flowCoefficientRatio;
-                    state_.turbochargers[0].compressorEfficiency = turbo.compressorEfficiency;
+                    state_.turbochargers[0].compressorEfficiency = turbo.compressorEfficiency
+                        * compressorOverspeedEfficiencyScale(turbo, shaftOmega[0]);
                 } else {
                     pressureRatioTarget = parallelCompressorPressureRatio_;
                     for (std::size_t index = 0; index < turbochargerCount; ++index) {
@@ -2271,7 +2287,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             state_.turbochargers[index].compressorMassFlowKgPerSecond, ambientTemperatureK,
                             config_.ambientPressureKpa);
                         state_.turbochargers[index].compressorFlowCoefficientRatio = point.flowCoefficientRatio;
-                        state_.turbochargers[index].compressorEfficiency = turbo.compressorEfficiency;
+                        state_.turbochargers[index].compressorEfficiency = turbo.compressorEfficiency
+                            * compressorOverspeedEfficiencyScale(turbo, shaftOmega[index]);
                     }
                 }
                 if (chargeResolved) pressureRatioTarget = chargePressureKpa_ / config_.ambientPressureKpa;
@@ -2288,6 +2305,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // A Roots heats its charge by the work it does on it: its
             // efficiency is the isentropic work over that.
             auto chargeCompressionEfficiency = config_.forcedInduction.compressorEfficiency;
+            // Past its top speed line a turbocharger's wheel heats the charge
+            // as much as the work it loses (exactly 1 up to the line).
+            if (config_.forcedInduction.enabled
+                    && config_.forcedInduction.type == ForcedInductionType::turbocharger)
+                chargeCompressionEfficiency *= compressorOverspeedEfficiencyScale(config_.forcedInduction,
+                    state_.forcedInductionShaftSpeedRpm * 2.0 * std::numbers::pi / 60.0);
             if (rootsPowerW >= 0.0) {
                 chargeCompressionEfficiency = rootsPowerW > 0.0
                     ? std::clamp(compressorPowerW * config_.forcedInduction.compressorEfficiency
@@ -6367,7 +6390,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     constexpr auto ecuLimitBits = static_cast<std::uint32_t>(ActiveLimit::revLimiter)
         | static_cast<std::uint32_t>(ActiveLimit::knockRetard)
         | static_cast<std::uint32_t>(ActiveLimit::coolantProtection)
-        | static_cast<std::uint32_t>(ActiveLimit::launchControl);
+        | static_cast<std::uint32_t>(ActiveLimit::launchControl)
+        | static_cast<std::uint32_t>(ActiveLimit::overboostCut);
     state_.activeLimits = (state_.activeLimits & ecuLimitBits) | publishedSimulatorLimits();
     state_.powerValveOpening = powerValveOpening_;
     state_.frameAveragedRpm = frameIntegratedSeconds > 0.0

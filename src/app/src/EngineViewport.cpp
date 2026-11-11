@@ -2379,6 +2379,19 @@ void EngineViewport::updateInspector() {
         add("Turbine / compressor", model_.units.value(units::Quantity::power, state.turbinePowerKw) + " / "
                                         + model_.units.text(units::Quantity::power, state.compressorPowerKw));
         add("Design shaft speed", krpm(forced.designShaftSpeedRpm));
+        {
+            const auto topRpm = turboMaximumShaftSpeedRpm(forced);
+            auto worstDamage = 0.0;
+            auto overspeed = false;
+            for (std::size_t index = 0; index < units; ++index) {
+                worstDamage = std::max(worstDamage, state.turbochargers[index].wheelDamage);
+                overspeed = overspeed || state.turbochargers[index].shaftSpeedRpm > topRpm;
+            }
+            add("Top speed line", krpm(topRpm) + (overspeed ? ", OVERSPEED" : ""));
+            if (worstDamage > 0.0)
+                add("Wheel damage", worstDamage >= 1.0 ? juce::String("burst: no boost until reset")
+                                                       : juce::String(juce::roundToInt(100.0 * worstDamage)) + " %");
+        }
         add("Turbine flow area", area(forced.turbineFlowAreaMm2));
         add("Wastegate flow area", area(forced.wastegateFlowAreaMm2));
         add("Blades (compressor / turbine)", forced.compressorBladeCount > 0U && forced.turbineBladeCount > 0U
@@ -2403,6 +2416,8 @@ void EngineViewport::updateInspector() {
             edit->value("Surge (flutter): 1 on", forced.compressorSurge ? 1.0 : 0.0, "", 0, 1.0, 1.0, 0.0, 1.0);
             edit->value("Turbochargers", static_cast<double>(forced.turbochargerCount), "", 0, 1.0, 1.0, 1.0,
                         static_cast<double>(maximumTurbochargers));
+            const auto shownTopKrpm = turboMaximumShaftSpeedRpm(forced) / 1'000.0;
+            edit->value("Top speed line", shownTopKrpm, " krpm", 0, 5.0, 1.0, 1.0, 1'000'000.0);
             // Which turbocharger this path's turbine drives, when there is a choice.
             const auto pathId = clicked.pathId;
             const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
@@ -2421,8 +2436,10 @@ void EngineViewport::updateInspector() {
                               "throttle shut on boost without one blows the charge back through the wheel in bursts "
                               "(off by default). The running engine takes these. Another turbocharger count "
                               "shares the same total turbo out between identical units, and a path given another "
-                              "turbo: both restart the engine.");
-            partEditor_ = [choosesUnit, pathIndex](EngineConfig& edited, const std::vector<double>& values) {
+                              "turbo: both restart the engine. Past its top speed line (1.3 x the design speed "
+                              "unless set) the wheel loses its efficiency fast and is damaged until it bursts; "
+                              "the ECU's overboost cut (ECU tuner) cuts the fuel first unless it is off.");
+            partEditor_ = [choosesUnit, pathIndex, shownTopKrpm](EngineConfig& edited, const std::vector<double>& values) {
                 const auto wastegate = values[0];
                 const auto turbineAreaMm2 = values[1];
                 const auto intercoolerPercent = values[2];
@@ -2437,14 +2454,17 @@ void EngineViewport::updateInspector() {
                 turbo.intercoolerEffectiveness = std::clamp(intercoolerPercent / 100.0, 0.0, 0.95);
                 turbo.blowOffValveFlowAreaMm2 = std::max(0.0, blowOffAreaMm2);
                 turbo.compressorSurge = surge;
-                if (choosesUnit && values.size() > 6U && pathIndex < edited.exhaustPaths.size()
+                // Written only when moved: the line shown is rounded to a krpm.
+                if (values.size() > 6U && std::abs(values[6] - shownTopKrpm) >= 0.5)
+                    turbo.maximumShaftSpeedRpm = values[6] * 1'000.0;
+                if (choosesUnit && values.size() > 7U && pathIndex < edited.exhaustPaths.size()
                     && count == turbo.turbochargerCount) {
                     // Written only when it changes: an authored index equal to
                     // the default is still another config, and a restart.
                     auto& editedPath = edited.exhaustPaths[pathIndex];
                     const auto now = editedPath.turbocharger >= 0
                         ? editedPath.turbocharger : static_cast<std::int32_t>(pathIndex % turbo.turbochargerCount);
-                    const auto wanted = static_cast<std::int32_t>(std::lround(values[6])) - 1;
+                    const auto wanted = static_cast<std::int32_t>(std::lround(values[7])) - 1;
                     if (wanted != now) editedPath.turbocharger = wanted;
                 }
                 if (count != turbo.turbochargerCount) edited = withTurbochargerCount(std::move(edited), count);
