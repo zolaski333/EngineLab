@@ -1,10 +1,9 @@
 # Recording protocol
 
 Goal: a **sound target** for one real engine, to judge the simulation against
-(`VISION.md`, success criterion). It was first written for a Yamaha MT-07 with
-an Arrow exhaust, and works for any engine. Without a
-known engine speed, a recording only serves the ear; with a known engine speed,
-it serves to measure the simulation/reality gap band by band. Everything below
+(`VISION.md`, success criterion). It works for any engine. Without a known
+engine speed, a recording only serves the ear; with a known engine speed, it
+serves to measure the simulation/reality gap band by band. Everything below
 aims at that second use.
 
 ## Before starting: write down

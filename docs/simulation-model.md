@@ -746,7 +746,7 @@ By default the thermal model is **regulated** (`thermal.regulated`): coolant
 and oil sit at `regulated_coolant_c` (90 degC) and `regulated_oil_c`
 (100 degC) from the start and never move, as a dyno cell's conditioning unit
 holds them. Every run, A/B switch and harness measurement is then made on a
-warm engine at one temperature, the state the CP2 recording protocol asks
+warm engine at one temperature, the state the recording protocol asks
 for. Unregulated (realistic, `EngineThermalModel`), both start at the
 ambient temperature. The coolant capacity stands for what a closed thermostat
 circulates (the water jacket and the metal around it), the oil exchanges heat

@@ -518,7 +518,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - One factor, the bound at 1 MPa (above an isochoric stoichiometric explosion): 18 pops with or without the crack; 16.6 dB over the median (bike 667592: 15.8), rise 0.53 ms (0.5), decay 0.54 (1.12), intervals p10/p50 48/96 ms (38/143); 120-500 Hz +4.5 (+7.4), 500-2k +23 (+8). reactLimit 0; the crack run's one render over-budget block came from four harnesses sharing the CPU.
 - MT-07 Full System at 4,400 rpm (profile flags, crack on): 2 -> 17 pops, 13.5 dB, p50 125 ms, valid. Lab at 6,200 rpm: 0 -> 1 pop.
 - A 300 kPa pulse now radiates 7.4 dB over a 100 kPa one, 0 with the old bound (the outlet edge's vortex loss keeps 2 of the linear 9.5; `strongReactionPositionRegression`); `aFiredExhaustLightsTheSlugInItsOwnPipe` fails with the lighting stubbed out.
-- Solo, crack on: the same WAV, every counter valid, physics step 26.5 % of its budget (max 37 %). Not reached: high rpm, the Hayabusa, the K20A, the decay and low band. Not measured: a CP2 overrun recording.
+- Solo, crack on: the same WAV, every counter valid, physics step 26.5 % of its budget (max 37 %). Not reached: high rpm, the Hayabusa, the K20A, the decay and low band. Not measured: a real overrun recording.
 
 ## 2026-10-25 — Backfires: the lines' amplitude warp deleted the pops
 
@@ -528,7 +528,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Recipe (experiment flags): 70 % of overrun cycles misfire (fuel kept), +10 deg on the others, 800 K, a 0.5 ms reaction, 40 ms pockets lit by the next fired cycle's exhaust, no crack. On the Lab Twin at 3,400 rpm the heat peaks go -37.0 -> -30.6 dBFS (8.2 -> 12.9 dB over the median). On the MT-07 at 4,400 rpm, -37.0 -> -33.2 and 1 -> 7 pops; on the Lab at 6,200 rpm, -34.1 -> -32.0.
 - Lab Twin at 3,400 rpm against the bike (667592): 15 pops in 2.2 s; 13.5 / 15.8 dB over the median; rise 0.6 / 0.5 ms; decay 0.88 / 1.12 ms; intervals p50 131 / 143 ms; 120-500 Hz +4.6 / +7.4; 500-2k +24 / +8 (the model's background is thin there).
 - One factor each: 10 ms mixing gives 0 pops (the slug must survive about a cycle); 2 ms reaction 7; spark -30 11, weak; misfires 0.5 12, 0.3 6. The production profile (-30, 10 ms, 2 ms, no misfires) gives 0, on the Lab and the MT-07.
-- No pop: the Hayabusa at 6,800 rpm (a continuous 10 kW burn) and the K20A (its overrun ends within 0.3 s). Every pop reaches the 100 kPa bound, so the harness calls each such run INVALID. Not measured: a CP2 overrun recording.
+- No pop: the Hayabusa at 6,800 rpm (a continuous 10 kW burn) and the K20A (its overrun ends within 0.3 s). Every pop reaches the 100 kPa bound, so the harness calls each such run INVALID. Not measured: a real overrun recording.
 
 ## 2026-10-24 — Backfires: no volume holds a pop's fuel
 
@@ -1066,7 +1066,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - A private mesh ablation of the other simulator (owner's captures, kept out of the repo) found its default mesh not converged in the 1-2 kHz band, and no sign that a finer mesh is what the owner hears. The 4 cm lockstep prototype is not pursued.
 - Same analysis on EngineLab CP2 at 3,148 rpm, steady part only (a render starts with a ~5,500 rpm transient 15 dB louder: skip the first 4 s): energy above 2 kHz -50 dB of total, tilt -9.8 dB/oct, crest 10.8 dB, cycle-synchronous share 93.7 %.
 - Merlin spike: `EngineLab.AudioRender` (runtime wiring) failed 4 times in ~17 runs on this branch: Merlin at 3,106 instead of 3,040 rpm, observer up to 4,092 Pa. On `main` (c423400) its 2nd run failed the same way (3,090 rpm, preLimiter 1.53). Pre-existing; cause found 2026-10-17.
-- Not measured: anything against a real CP2 recording, which remains the arbiter.
+- Not measured: anything against a real recording, which remains the arbiter.
 
 ## 2026-10-13 — Valve turbulence noise, and the first IR clips
 
@@ -1081,20 +1081,20 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Owner-approved sound change: the outlets now radiate with the live ambient air density (p / R T from the runtime's ambient state); `setOutletFarFieldDensity(0)` restores the duct medium. Catalogue at 88 % of redline: +2.5 to +11.7 dB, the CP2 least (coolest gas).
 - At the old 134 dB full scale the CP3 (~210 Pa peak) and the Merlin drove the safety limiter. Full scale moved to 140 dB (282.8 Pa peak): every catalogue engine stays under the 0.82 knee except the Aircooled, whose spikes (crest ~24 dB) were there before (29 soft-limited samples and 1 clamp at 7,166 rpm, against 377 / 32 before the change). The CP2 keeps roughly its old on-screen level.
 - `EngineLab.AudioRuntimeDiscontinuity` (Merlin, 80 ms stall) failed in 2 of ~26 runs: the engine took another trajectory (3,116 instead of 3,040 rpm) and the observer peaked at 454 Pa (preLimiter 1.63; 117 Pa and 0.35 otherwise). Physics does not read the audio, and the duct density is at most 4.9 dB under ambient there (measured, Merlin 3,000 rpm), so the old calibration would have put that peak at ~1.85: a pre-existing intermittent spike, not caused by this change; cause found 2026-10-17.
-- Not measured: absolute SPL against a calibrated CP2 recording (the MT-07's stationary-noise homologation figure is the cheapest check).
+- Not measured: absolute SPL against a calibrated recording (a stationary-noise homologation figure is the cheapest check).
 
 ## 2026-10-13 — Pressure-release outlet versus the Levine-Schwinger load
 
 - The other simulator terminates its pipes with an imposed pressure and no radiation load (R = -1 at every frequency). New switch `setOutletPressureRelease`, off by default (renders byte-identical); `GeometrySensitivityHarness --pressure-release-ab`, same seven points.
 - Level: -0.04 to +0.42 dB. Shape 0.47-3.45 dB. Worst band: +7 to +10 dB at 5-10 kHz on CP2 Full System, K20 and LS3; +1.5 to +2.5 dB at 1.25-2 kHz on CP2, Hayabusa and 2JZ. The tailpipe keeps the resonances that the load would radiate away. Crest -0.1 to +0.9 dB, tilt up to +0.9 dB/oct, periodicity unchanged except the 2JZ (0.77 -> 0.72).
-- Verdict: it moves the sound away from the other simulator's character (crest rises), and only above the plane-mode cutoff, where a 1-D pipe means nothing physical. Kept off; only a real CP2 recording could argue otherwise.
+- Verdict: it moves the sound away from the other simulator's character (crest rises), and only above the plane-mode cutoff, where a 1-D pipe means nothing physical. Kept off; only a real recording could argue otherwise.
 
 ## 2026-10-13 — Outlet far field: duct density versus ambient air
 
 - The outlet monopole is p = rho dQ/dt / (4 pi r) with rho = the path's duct medium (hot gas). Outside the mouth the field is in ambient air and Q is continuous across the interface, so the textbook rho is the ambient one. New switch `setOutletFarFieldDensity`, off by default (renders byte-identical); `GeometrySensitivityHarness --radiation-density-ab 1.2`.
 - Same seven points as the output-stage entry, same render otherwise. Exhaust level: CP2 Full System +4.0 dB at 4,000 rpm and +4.5 at 7,000; CP2 +4.4; K20 +8.2; 2JZ +9.4; LS3 +9.9; Hayabusa +10.0. That implies a duct density of 0.4-0.75 kg/m3, i.e. a mean path medium of ~490 K on the CP2 and 740-930 K on the others. Leveler never engaged.
 - Shape 0.9-4.1 dB, but not from the physics of the main band: on the CP2 at 6,000 rpm, 50 Hz-1.6 kHz moves as one block (+-1 dB), and above 2 kHz it rises 1.5-4.4 dB less. That is the outlet jet noise (own jet density, not switched) taking a smaller share. Crest, periodicity and tilt are unchanged within 0.6 dB, 0.01 and 0.35 dB/oct.
-- At equal loudness, then, this is mostly a balance change against the jet noise, plus a level that grows with gas temperature. It does not explain the other simulator's character. Not changed by default: it is a sound change and needs the owner's go-ahead. The absolute SPL is still unchecked against any calibrated CP2 recording.
+- At equal loudness, then, this is mostly a balance change against the jet noise, plus a level that grows with gas temperature. It does not explain the other simulator's character. Not changed by default: it is a sound change and needs the owner's go-ahead. The absolute SPL is still unchecked against any calibrated recording.
 
 ## 2026-10-13 — How much character an output stage alone gives
 
@@ -1102,7 +1102,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Step 0, today's EngineLab at steady wide-open throttle (`GeometrySensitivityHarness`): periodicity 0.77-0.98, crest 7.8-14.5 dB, tilt -4.9 to +2.3 dB/oct. The August EngineLab figures (crest 18-25, periodicity 0.38-0.50) are stale.
 - Step 1, `--output-stage-ab`, same render with the stage at +40 dB drive (at 0 dB the gain sits on the x10 cap, so the stage is just a gain; shape 0.09-1.72 dB). Crest raw -> staged: CP2 Full System 4,000 rpm 11.2 -> 6.2, 7,000 rpm 14.5 -> 7.0; CP2 6,000 11.3 -> 6.3; K20 6,000 9.5 -> 6.1; LS3 4,500 11.3 -> 6.3; Hayabusa 7,000 7.8 -> 5.4; 2JZ 4,500 11.1 -> 6.4. Band shape moves 1.3-3.4 dB; periodicity and tilt are almost unchanged.
 - So the other simulator's low crest factor can come from its output stage alone, not from its gas dynamics. Blind clips: `EngineLabAbClipRenderer --output-stage "Full System"`.
-- Not measured: any listening result, either simulator against the owner's CP2 recordings, transients (idle, rev) beyond the clips, or the other steps of that spec (room response, outlet radiation, fine mesh).
+- Not measured: any listening result, either simulator against a real recording, transients (idle, rev) beyond the clips, or the other steps of that spec (room response, outlet radiation, fine mesh).
 
 ## 2026-10-13 — A turbo fitted to any engine
 
@@ -1269,7 +1269,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Null (same plan at x1.001): interaction RMS 0.7 dB (3,500) and 1.1 dB (7,000). Primary x silencer: 5.2 / 5.6 dB on the mix, 6.0 / 6.9 dB on the exhaust bus; long-both +13 to +18 dB at 250 Hz where neither alone does it. Midpipe x silencer: 2.1 / 4.3 dB. So the model is non-additive, mostly below 1 kHz; the header length matters more than the midpipe. Caveat: the brake holds each cell within ±130 rpm, the null within ±10.
 - At 3,500 rpm the mechanical layer is 20-44 dB above the exhaust from 1 kHz up (12 of 28 bands): the mix does not move there whatever the geometry (pipe x2 changes the exhaust bus by +8 dB at 1.6 kHz, the mix by 0.0). At 7,000 rpm only 4 bands are masked.
 - Removing the silencer changes the unweighted RMS by +0.07 dB (3,500) and +0.29 dB (7,000); the exhaust bus rises up to +9 dB at 1.6 kHz. Not compared with a measured insertion loss (none in hand, and the RMS is dominated by < 200 Hz).
-- Not measured: whether the real CP2's mechanical noise sits that high over an Arrow can; it decides between "mechanical too loud" and "exhaust too dull above 1 kHz".
+- Not measured: whether a real CP2's mechanical noise sits that high over an aftermarket can; it decides between "mechanical too loud" and "exhaust too dull above 1 kHz".
 
 ## 2026-10-11 — Gas networks on the worker pool, bit-identical
 
@@ -1342,7 +1342,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
   the spool (90 % of the step at 3,000 rpm) 1.30 -> 1.72 s (2JZ), 2.47 -> 3.53 s (I5), EJ25 and TDI alike;
   the 2JZ no longer reached its shift point. 2JZ, EJ25, I5 and TDI keep their old length.
 - AudioRenderHarness: level -1.2 dB (LS3) to +2.5 dB (flat-six); the share below 250 Hz falls (CP2 64 -> 47 %,
-  Arrow 64 -> 41 %, Lab 53 -> 23 %). Not judged by ear yet.
+  Full System 64 -> 41 %, Lab 53 -> 23 %). Not judged by ear yet.
 - Open: the CP3 and CP4 misfire once on the DFCO resume (first charge, CP3 AFR 9.05); the CP2's live remesh
   lands 37 % short of a fine-built engine, already before this change.
 
@@ -1665,10 +1665,9 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
   the timbre resembles no specific engine.
 - The afterfire does not sound like a backfire, despite a dozen commits.
 - The `references/real-engine-audio/` corpus cannot measure the gap: 10 of 10
-  recordings have an unknown engine speed, 7 are proxies, and none is a CP2.
+  recordings have an unknown engine speed and 7 are proxies.
   There has never been a measurable sound target.
-- New direction: see `VISION.md`. Pilot engine CP2 (MT-07, Arrow), recorded by
-  the owner.
+- New direction: see `VISION.md`.
 
 ## 2026-09-22 — Commit of the 27 August audit work
 

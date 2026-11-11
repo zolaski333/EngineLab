@@ -18,7 +18,7 @@ bound flattened the 320 kPa jump of a lit slug. Not reached: the Lab at
 6,200 rpm (1 pop), the Hayabusa (a continuous burn), the K20A (too short an
 overrun), a pop's 1.1 ms decay (0.5-0.6) and its 120-500 Hz weight (+4.5 dB
 against +7.4). These are known limits, not work in progress: reopening them
-needs a measured lead, ideally a CP2 overrun recording.
+needs a measured lead: a real overrun recording at a known engine speed.
 
 ## Backfires are a listening switch, not an engine property
 

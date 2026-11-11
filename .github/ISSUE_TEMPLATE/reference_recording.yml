@@ -18,7 +18,7 @@ body:
     attributes:
       label: Engine and vehicle
       description: Make, model, year, engine code if you know it.
-      placeholder: Yamaha MT-07 2019, CP2 689 cc
+      placeholder: Honda CB500F 2019, 471 cc parallel twin
     validations:
       required: true
   - type: textarea
