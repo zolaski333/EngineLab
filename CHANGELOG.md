@@ -39,8 +39,23 @@ file formats, always with an in-memory migration).
   engine; the switch always lands on a base circle. A VTEC light beside the
   tachometer shows when the high cam runs, and the side panel on how many
   cylinders. Engines without VTEC cams are unchanged.
+- **One engine file, its ECU maps inside.** A saved or exported engine is a
+  single file (JSON or YAML) that carries its tables, so a copy opens
+  anywhere with its maps. Saves from 0.9.1 and earlier, with their tables
+  in a `.ecu.json` beside them, still load, and the next save puts the
+  tables inside.
+- **Drag and drop.** Drop an engine file (`.json`, `.yaml`), an engine
+  script (`.els`) or ECU maps alone (`.ecu.json`) on the window to open
+  it. EngineLab asks first when the running engine or its maps have edits
+  not saved that the file would replace.
 
 ### Fixed
+
+- **A YAML export keeps the ECU maps and the engine's voice.** It used to
+  write the engine alone, without the voicing it names, so tuned tables were
+  lost on the way and an imported copy spoke with the default voice.
+- **ECU maps saved before a setting existed load with its default** in the
+  tuner's LOAD and its file watcher, as a saved engine's always did.
 
 - **Removing an exhaust path no longer wires its cylinders anyhow.** Each
   cylinder used to get a default primary and a new merge spliced after the

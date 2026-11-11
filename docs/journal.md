@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-11 — one engine file with its ECU maps, drag and drop
+
+- Owner plan: the engine and its ECU maps in one file, old saves still loading, a file dropped on the window opening it, asking first before losing edits.
+- Was: a saved engine was `<name>.json` + `<name>.ecu.json`; *Export engine* in YAML wrote the engine alone (the maps lost) and, the new test found, without `audio_voicing` (every catalogue engine's only YAML-vs-JSON difference, 18 of 18; now written); the tuner's LOAD published an old `.ecu.json` without the settings added since (VTEC, knock limit), which a saved engine's read always completed.
+- Now `ecu_calibration` in the engine file (JSON: the tuner's tree; YAML: the same tree as a map, numbers as JSON writes them). The engine decoders ignore it, so the engine half is unchanged.
+- `EngineLab.SavedEngine` `checkOneFile` (CP2, tables retarded 3 deg): JSON, YAML and YML round trips with nothing beside the file, config and tables read back equal; tables inside win over a stale sidecar; a 0.9.1 two-file save loads, and its next save folds the tables in; an old YAML export loads without tables; damaged tables inside JSON or YAML fail the read.
+- Not exercised by a test: the drop itself and the "Replace without saving?" dialog (app only; the rule is: the edits of a menu engine left for another are kept as before, so only a running unlisted engine, the same engine's file, a script or maps over edited maps ask).
+
 ## 2026-11-11 — VTEC from EngineLab, made robust
 
 - Owner request: VTEC (that name), fitted, tuned and switched from EngineLab, no file to edit, no sound or curve measured, "make sure it works whatever happens". Tables: `vtec.enabled/engage_rpm/hysteresis_rpm/min_throttle_percent`, only with VTEC cams; the tuner's switch, FIT VTEC CAMS and the valve inspector fit, edit and remove them live.

@@ -820,6 +820,13 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "exhaust_valve_diameter_mm" << YAML::Value << cylinder.exhaustValveDiameterMm
         << YAML::EndMap;
     out << YAML::EndSeq;
+    // As in JSON: the voicing lives in the catalogue's voicing files, and an
+    // engine names the one it speaks with, so a copy keeps its voice.
+    if (!config.audioVoicingKey.empty())
+        out << YAML::Key << "audio_voicing" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "family" << YAML::Value << config.audioVoicingFamily
+            << YAML::Key << "key" << YAML::Value << config.audioVoicingKey
+            << YAML::EndMap;
     // Written for a rotary only, so a piston engine's file is unchanged.
     if (config.cycle == EngineCycle::rotary)
         out << YAML::Key << "rotary" << YAML::Value << YAML::BeginMap
@@ -965,6 +972,10 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilCoolingPowerKwPerC = thermal["oil_cooling_power_kw_per_c"].as<double>(config.thermal.oilCoolingPowerKwPerC);
             config.thermal.liquidCooled = thermal["liquid_cooled"].as<bool>(config.thermal.liquidCooled);
             config.thermal.engineDrivenFan = thermal["engine_driven_fan"].as<bool>(config.thermal.engineDrivenFan);
+        }
+        if (const auto voicing = engine["audio_voicing"]) {
+            config.audioVoicingFamily = voicing["family"].as<std::string>(std::string {});
+            config.audioVoicingKey = voicing["key"].as<std::string>(std::string {});
         }
         if (const auto rotary = engine["rotary"]) {
             config.rotary.generatingRadiusMm = rotary["generating_radius_mm"].as<double>(config.rotary.generatingRadiusMm);

@@ -4,7 +4,11 @@
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
+#include <enginelab/serialization/YamlEngineSerializer.hpp>
+#include <nlohmann/json.hpp>
+#include <yaml-cpp/yaml.h>
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -12,9 +16,72 @@
 
 namespace enginelab {
 namespace {
+using Json = nlohmann::json;
 constexpr std::size_t maximumNameLength = 80;
 constexpr std::uintmax_t maximumFileBytes = 2U * 1024U * 1024U;
 constexpr std::string_view calibrationSuffix = ".ecu.json";
+/** The engine file's member that holds its ECU calibration. */
+constexpr const char* calibrationKey = "ecu_calibration";
+
+/** The calibration's JSON tree in YAML: strings quoted, numbers as JSON
+    writes them (the shortest text that reads back to the same double), so
+    jsonOf() gives the same tree back. */
+void emitYaml(YAML::Emitter& out, const Json& value) {
+    if (value.is_object()) {
+        out << YAML::BeginMap;
+        for (const auto& [key, item] : value.items()) {
+            out << YAML::Key << key << YAML::Value;
+            emitYaml(out, item);
+        }
+        out << YAML::EndMap;
+    } else if (value.is_array()) {
+        // A row of numbers on one line keeps a table readable.
+        if (std::all_of(value.begin(), value.end(), [](const Json& item) { return item.is_primitive(); }))
+            out << YAML::Flow;
+        out << YAML::BeginSeq;
+        for (const auto& item : value) emitYaml(out, item);
+        out << YAML::EndSeq;
+    } else if (value.is_string()) {
+        out << YAML::DoubleQuoted << value.get<std::string>();
+    } else if (value.is_null()) {
+        out << YAML::Null;
+    } else {
+        out << value.dump();
+    }
+}
+
+[[nodiscard]] Json jsonOf(const YAML::Node& node) {
+    switch (node.Type()) {
+    case YAML::NodeType::Map: {
+        auto object = Json::object();
+        for (const auto& item : node) object[item.first.as<std::string>()] = jsonOf(item.second);
+        return object;
+    }
+    case YAML::NodeType::Sequence: {
+        auto array = Json::array();
+        for (const auto& item : node) array.push_back(jsonOf(item));
+        return array;
+    }
+    case YAML::NodeType::Scalar: {
+        const auto& text = node.Scalar();
+        // A quoted scalar is a string whatever it holds.
+        if (node.Tag() == "!") return text;
+        if (text == "true") return true;
+        if (text == "false") return false;
+        if (text == "~" || text == "null") return nullptr;
+        auto number = Json::parse(text, nullptr, false);
+        if (!number.is_discarded() && number.is_number()) return number;
+        return text;
+    }
+    default:
+        return nullptr;
+    }
+}
+
+[[nodiscard]] std::string lowercase(std::string text) {
+    for (auto& character : text) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    return text;
+}
 
 [[nodiscard]] bool endsWith(std::string_view text, std::string_view suffix) noexcept {
     return text.size() >= suffix.size() && text.substr(text.size() - suffix.size()) == suffix;
@@ -109,61 +176,128 @@ std::optional<std::string> savedEngineNameError(std::string_view name,
     return std::nullopt;
 }
 
-std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, const EngineConfig& config,
-                                      const calibration::CalibrationSnapshot* calibration) {
-    std::error_code error;
-    std::filesystem::create_directories(engineFile.parent_path(), error);
-    if (error) return "cannot create the folder of " + nameOf(engineFile);
-    const auto calibrationFile = savedCalibrationFile(engineFile);
-    // The calibration first: an engine file never points at tables from
-    // another save.
-    if (calibration != nullptr) {
-        if (auto failed = writeReplacing(calibrationFile, calibration::CalibrationJson::serialize(*calibration)))
-            return failed;
-    } else {
-        std::filesystem::remove(calibrationFile, error);
-    }
-    auto saved = config;
-    disableBackfires(saved);
-    return writeReplacing(engineFile, JsonEngineSerializer {}.encode(saved));
+EngineFileFormat engineFileFormatOf(const std::filesystem::path& file) {
+    const auto extension = lowercase(nameOf(file.extension()));
+    return extension == ".yaml" || extension == ".yml" ? EngineFileFormat::yaml : EngineFileFormat::json;
 }
 
-SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
-    SavedEngineRead result;
-    std::string text;
-    if (auto failed = readText(engineFile, text)) {
-        result.error = *failed;
-        return result;
+DroppedFileKind droppedFileKind(const std::filesystem::path& file) {
+    const auto name = lowercase(nameOf(file));
+    if (endsWith(name, calibrationSuffix)) return DroppedFileKind::calibration;
+    if (endsWith(name, ".json") || endsWith(name, ".yaml") || endsWith(name, ".yml")) return DroppedFileKind::engine;
+    if (endsWith(name, ".els") || endsWith(name, ".engine")) return DroppedFileKind::engineScript;
+    return DroppedFileKind::none;
+}
+
+std::string encodeEngineFile(const EngineConfig& config, const calibration::CalibrationSnapshot* calibration,
+                             EngineFileFormat format) {
+    if (format == EngineFileFormat::yaml) {
+        auto text = YamlEngineSerializer {}.encode(config);
+        if (calibration == nullptr) return text;
+        YAML::Emitter out;
+        out << YAML::BeginMap << YAML::Key << calibrationKey << YAML::Value;
+        emitYaml(out, Json::parse(calibration::CalibrationJson::serialize(*calibration)));
+        out << YAML::EndMap;
+        if (!text.empty() && text.back() != '\n') text += '\n';
+        return text + out.c_str() + '\n';
     }
+    auto text = JsonEngineSerializer {}.encode(config);
+    if (calibration == nullptr) return text;
+    auto document = Json::parse(text);
+    document[calibrationKey] = Json::parse(calibration::CalibrationJson::serialize(*calibration));
+    return document.dump(2);
+}
+
+SavedEngineRead decodeEngineFile(std::string_view text, EngineFileFormat format, const std::filesystem::path& file) {
+    SavedEngineRead result;
     // A hand-edited value outside its range is clamped, not a reason to
     // drop the engine from the menu.
     std::vector<std::string> repairs;
-    auto decoded = JsonEngineSerializer {}.decode(text, &repairs);
+    EngineDecodeResult decoded;
+    std::optional<std::string> calibrationText;
+    try {
+        if (format == EngineFileFormat::yaml) {
+            decoded = YamlEngineSerializer {}.decode(text);
+            if (decoded) {
+                const auto document = YAML::Load(std::string(text));
+                if (const auto node = document[calibrationKey]; node && !node.IsNull())
+                    calibrationText = jsonOf(node).dump();
+            }
+        } else {
+            decoded = JsonEngineSerializer {}.decode(text, &repairs);
+            if (decoded) {
+                const auto document = Json::parse(text, nullptr, false);
+                if (document.is_object() && document.contains(calibrationKey))
+                    calibrationText = document.at(calibrationKey).dump();
+            }
+        }
+    } catch (const std::exception& error) {
+        result.error = nameOf(file) + ": " + error.what();
+        return result;
+    }
     if (!decoded) {
-        result.error = nameOf(engineFile) + ": " + decoded.error;
+        result.error = nameOf(file) + ": " + decoded.error;
         return result;
     }
     SavedEngine engine;
     engine.config = std::move(*decoded.config);
     disableBackfires(engine.config);
-    engine.file = engineFile;
-    const auto calibrationFile = savedCalibrationFile(engineFile);
-    std::error_code error;
-    if (std::filesystem::exists(calibrationFile, error)) {
-        if (auto failed = readText(calibrationFile, text)) {
-            result.error = *failed;
-            return result;
-        }
-        auto parsed = calibration::CalibrationJson::parse(text);
+    engine.file = file;
+    if (calibrationText) {
+        auto parsed = calibration::CalibrationJson::parse(*calibrationText);
         if (!parsed) {
-            result.error = nameOf(calibrationFile) + ": " + issuesText(parsed.issues());
+            result.error = nameOf(file) + " (ECU calibration): " + issuesText(parsed.issues());
             return result;
         }
         engine.calibration = parsed.takeValue();
         calibration::addMissingDefaultSettings(*engine.calibration, engine.config);
     }
     result.engine = std::move(engine);
-    for (auto& repair : repairs) result.warnings.push_back(nameOf(engineFile) + ": " + std::move(repair));
+    for (auto& repair : repairs) result.warnings.push_back(nameOf(file) + ": " + std::move(repair));
+    return result;
+}
+
+std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, const EngineConfig& config,
+                                      const calibration::CalibrationSnapshot* calibration) {
+    std::error_code error;
+    std::filesystem::create_directories(engineFile.parent_path(), error);
+    if (error) return "cannot create the folder of " + nameOf(engineFile);
+    auto saved = config;
+    disableBackfires(saved);
+    if (auto failed = writeReplacing(engineFile, encodeEngineFile(saved, calibration, engineFileFormatOf(engineFile))))
+        return failed;
+    // An older save's tables beside it would outlive the ones now inside.
+    std::filesystem::remove(savedCalibrationFile(engineFile), error);
+    return std::nullopt;
+}
+
+SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
+    std::string text;
+    if (auto failed = readText(engineFile, text)) {
+        SavedEngineRead result;
+        result.error = *failed;
+        return result;
+    }
+    auto result = decodeEngineFile(text, engineFileFormatOf(engineFile), engineFile);
+    if (!result.engine || result.engine->calibration) return result;
+    // A save made by 0.9.1 or earlier: its tables beside it.
+    const auto calibrationFile = savedCalibrationFile(engineFile);
+    std::error_code error;
+    if (std::filesystem::exists(calibrationFile, error)) {
+        if (auto failed = readText(calibrationFile, text)) {
+            result.engine.reset();
+            result.error = *failed;
+            return result;
+        }
+        auto parsed = calibration::CalibrationJson::parse(text);
+        if (!parsed) {
+            result.engine.reset();
+            result.error = nameOf(calibrationFile) + ": " + issuesText(parsed.issues());
+            return result;
+        }
+        result.engine->calibration = parsed.takeValue();
+        calibration::addMissingDefaultSettings(*result.engine->calibration, result.engine->config);
+    }
     return result;
 }
 

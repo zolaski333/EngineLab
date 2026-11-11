@@ -14,10 +14,12 @@ namespace enginelab {
  * An engine the user saved as it was: its whole configuration (exhaust,
  * intake, cylinders, forced induction...) and its ECU calibration.
  *
- * On disk, two files share a stem: `<name>.json`, the engine as "Export
- * engine" writes it (so any copy imports anywhere), and `<name>.ecu.json`, the
- * calibration as the ECU window saves it. Without the second file the engine
- * runs on the calibration its configuration implies.
+ * On disk, one file: `<name>.json` (or a `.yaml` export), the engine as
+ * "Export engine" writes it, its ECU calibration inside it under
+ * `ecu_calibration`, so any copy imports anywhere with its maps. A save made
+ * by 0.9.1 or earlier kept the calibration beside it in `<name>.ecu.json`: such a
+ * file is still read, and the next save folds it in. Without either the
+ * engine runs on the calibration its configuration implies.
  */
 struct SavedEngine final {
     EngineConfig config;
@@ -43,8 +45,25 @@ struct SavedEngineLoad final {
 
 /** `<folder>/<name>.json`, the name made safe for a file system. */
 [[nodiscard]] std::filesystem::path savedEngineFile(const std::filesystem::path& folder, std::string_view name);
-/** The calibration file that goes with an engine file. */
+/** The calibration file a save made by 0.9.1 or earlier kept beside an engine file. */
 [[nodiscard]] std::filesystem::path savedCalibrationFile(const std::filesystem::path& engineFile);
+
+enum class EngineFileFormat { json, yaml };
+/** YAML for `.yaml` and `.yml`, JSON otherwise. */
+[[nodiscard]] EngineFileFormat engineFileFormatOf(const std::filesystem::path& file);
+/** An engine file's text: the engine and, when given, its calibration under
+    `ecu_calibration` (the ECU window's JSON, or the same tree in YAML). */
+[[nodiscard]] std::string encodeEngineFile(const EngineConfig&, const calibration::CalibrationSnapshot* calibration,
+                                           EngineFileFormat);
+/** Reads an engine file's text; `file` names it in messages and in the result.
+    A calibration inside it that does not parse fails the read. */
+[[nodiscard]] SavedEngineRead decodeEngineFile(std::string_view text, EngineFileFormat,
+                                               const std::filesystem::path& file);
+
+/** What a file dropped on the window is. */
+enum class DroppedFileKind { none, engine, calibration, engineScript };
+/** By its name: `.ecu.json` maps, `.json`/`.yaml`/`.yml` engines, `.els`/`.engine` scripts. */
+[[nodiscard]] DroppedFileKind droppedFileKind(const std::filesystem::path& file);
 
 /** Why a name cannot be used for a saved engine, or none. A catalogue name
     is refused: the engine list tells engines apart by name. */
@@ -52,14 +71,16 @@ struct SavedEngineLoad final {
                                                                const std::vector<std::string>& catalogueNames);
 
 /**
- * Writes the engine and its calibration, each to a temporary file renamed
- * over the old one, so a failure never leaves half a file. Without a
- * calibration, a stale calibration file is removed. Returns why it failed.
+ * Writes the engine with its calibration inside, in the format of the file's
+ * extension, to a temporary file renamed over the old one, so a failure never
+ * leaves half a file. A calibration file left beside it by an older save is
+ * removed. Returns why it failed.
  */
 [[nodiscard]] std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, const EngineConfig&,
                                                     const calibration::CalibrationSnapshot* calibration);
 
-/** Reads one saved engine and, if present, its calibration. A calibration
+/** Reads one saved engine (JSON or YAML) and, if present, its calibration:
+    the one inside it, or else an older save's file beside it. A calibration
     that does not parse makes the whole read fail: running the engine on other
     tables than the saved ones would not be the engine as it was saved. */
 [[nodiscard]] SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile);

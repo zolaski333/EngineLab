@@ -23,9 +23,9 @@
 #include <enginelab/scripting/EngineScriptHotReloader.hpp>
 #include <enginelab/serialization/EngineEditScope.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
-#include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_extra/juce_gui_extra.h>
+#include <functional>
 #include <memory>
 #include <array>
 #include <atomic>
@@ -42,7 +42,8 @@ namespace enginelab {
     controls and refreshes the panels from one snapshot per UI frame. The panels
     (top bar, controls, engine view, readouts, side tabs, status bar) only read
     the shared DashboardModel. */
-class MainComponent final : public juce::AudioAppComponent, private juce::Timer {
+class MainComponent final : public juce::AudioAppComponent, public juce::FileDragAndDropTarget,
+                            private juce::Timer {
 public:
     MainComponent();
     ~MainComponent() override;
@@ -58,6 +59,10 @@ public:
     /** Quits, after asking when an engine has edits not saved (the window's
         close button, Escape, the system). */
     void requestQuit();
+    /** One engine file (JSON or YAML, its ECU maps inside), ECU maps alone
+        (`.ecu.json`) or an engine script dropped on the window. */
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
 private:
     /** An engine of the menu: from the catalogue, or saved by the user. */
     struct Preset final {
@@ -177,6 +182,15 @@ private:
     void pollAudioVoicing();
     void adoptAudioVoicing(const AudioVoicingConfig&);
     void importEngine();
+    /** Runs an engine file or script, from Import or a drop. */
+    void openEngineFile(const juce::File&);
+    /** Loads ECU maps into the running engine, from a drop. */
+    void openCalibrationFile(const juce::File&);
+    /** Whether the running engine differs from the engine as it was loaded. */
+    [[nodiscard]] bool runningEngineModified() const;
+    /** Runs `then` now when `lost` is empty, otherwise once the user agrees
+        to lose the edits `lost` names. */
+    void confirmReplacing(const juce::String& lost, std::function<void()> then);
     void exportEngine();
     void exportDynoCsv();
     void showError(const juce::String& title, const juce::String& message);
@@ -233,7 +247,6 @@ private:
     EngineDiagnostics diagnostics_;
     ActionMap actionMap_;
     JsonEngineSerializer jsonSerializer_;
-    YamlEngineSerializer yamlSerializer_;
     DashboardModel model_ { config_ };
     std::unique_ptr<RenderSnapshotBuilder> renderSnapshotBuilder_;
     RenderSnapshotInterpolator renderSnapshotInterpolator_;
@@ -247,6 +260,7 @@ private:
         crank until released. */
     bool starterChord_ { false };
     bool quitDialogOpen_ { false };
+    bool replaceDialogOpen_ { false };
     /** The engines whose edits are not saved: the running one and those kept
         from earlier in the session. */
     [[nodiscard]] juce::StringArray unsavedEngineNames() const;

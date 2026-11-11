@@ -167,11 +167,14 @@ importing another engine creates its default set.
 
 The engine menu lists the catalogue, then *My engines*: the files of
 `%APPDATA%/EngineLab/engines` (`loadSavedEngines`, `SavedEngines.hpp`). A saved
-engine is two files sharing a stem: `<name>.json`, the configuration as
-*Export engine* writes it, and `<name>.ecu.json`, its ECU tables. Each is
-written to a temporary file renamed over the old one, the tables first. A
-damaged table file fails the whole read: the engine never runs on other tables
-than its own. The JSON names the voicing the engine speaks with
+engine is one file, `<name>.json`: the configuration as *Export engine* writes
+it, its ECU tables inside under `ecu_calibration` (the ECU window's JSON;
+`encodeEngineFile`). It is written to a temporary file renamed over the old
+one. A save made by 0.9.1 or earlier kept the tables beside it in
+`<name>.ecu.json`: that file is still read when the engine file holds none,
+and the next save folds it in and removes it. Damaged tables fail the whole
+read: the engine never runs on other tables than its own. The file (JSON or YAML) names the
+voicing the engine speaks with
 (`audio_voicing`: family and key); the voicing itself is read back from the
 catalogue's voicing files (`restoreAudioVoicing`).
 
@@ -187,10 +190,23 @@ on the engine picker shows it; the menu marks the engines that hold edits.
 asks for a name (*Save engine as…*). A catalogue name is refused, since the
 menu tells engines apart by name. Saving does not restart the engine:
 `EngineRuntime::renameEngine` gives the running engine its new name, which a
-dyno run reads when it starts. *Delete saved engine…* moves both files to the
-recycle bin; the running engine carries on, unsaved. *Export engine* in JSON
-writes the tables beside the engine the same way, and *Import engine* reads
-them back when they are there.
+dyno run reads when it starts. *Delete saved engine…* moves its file (and an
+older save's table file) to the recycle bin; the running engine carries on,
+unsaved. *Export engine* writes the same single file, in JSON or YAML (the
+same tables as a YAML map, numbers as JSON writes them, so they read back to
+the same doubles); *Import engine* reads either with its tables. An engine
+decoder alone ignores `ecu_calibration`, so an older EngineLab still reads the
+engine.
+
+Dropping a file on the main window opens it (`MainComponent::filesDropped`,
+`droppedFileKind`): an engine file (`.json`, `.yaml`, `.yml`) as *Import
+engine* does, an engine script (`.els`, `.engine`) watched as the import
+watches it, or ECU tables alone (`.ecu.json`) published to the running engine,
+completed with the settings the file predates (`addMissingDefaultSettings`).
+When the replacement would lose edits not saved (the running engine's, or for
+tables its tables'), EngineLab asks first; the edits of an engine of the menu
+left for another one are kept for the session as usual, so it does not ask
+then. A drop during a dyno run is refused.
 
 ### New engine
 

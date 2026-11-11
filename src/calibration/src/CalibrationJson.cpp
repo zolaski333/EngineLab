@@ -308,12 +308,20 @@ std::string CalibrationJson::serialize(const CalibrationSnapshot& snapshot, int 
 }
 
 PublishResult publishJson(CalibrationStore& store, std::string_view jsonText, const PublishOptions& options) {
+    return publishJson(store, jsonText, options, {});
+}
+
+PublishResult publishJson(CalibrationStore& store, std::string_view jsonText, const PublishOptions& options,
+                          const DraftCompletion& complete) {
     auto parsed = CalibrationJson::parse(jsonText);
     if (!parsed) {
         const auto active = store.snapshot();
         return { false, active->revision(), active->revision(), parsed.issues() };
     }
-    return store.publish(parsed.value(), options);
+    if (!complete) return store.publish(parsed.value(), options);
+    auto draft = parsed.value();
+    complete(draft);
+    return store.publish(draft, options);
 }
 
 } // namespace enginelab::calibration

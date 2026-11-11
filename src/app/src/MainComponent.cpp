@@ -3,6 +3,7 @@
 #include <enginelab/foundation/ThreadScheduling.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
+#include <enginelab/calibration/CalibrationJson.hpp>
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
@@ -929,8 +930,15 @@ void MainComponent::showKeyBindingsEditor() {
 
 void MainComponent::showEcuTuner() {
     if (!runtime_) return;
-    if (!ecuTunerWindow_)
+    if (!ecuTunerWindow_) {
         ecuTunerWindow_ = std::make_unique<EcuTunerWindow>(runtime_->calibrationStore());
+        // Tables saved before a setting existed load with its default for
+        // the engine running, as a saved engine's do.
+        if (auto* tuner = ecuTunerWindow_->tuner(); tuner != nullptr)
+            tuner->setTableCompletion([this](calibration::CalibrationDraft& draft) {
+                calibration::addMissingDefaultSettings(draft, config_);
+            });
+    }
     ecuTunerWindow_->setFuel(config_.fuelProperties.name, config_.fuelProperties.stoichiometricAirFuelRatio,
                              config_.fuel == FuelType::diesel);
     ecuTunerWindow_->setSessionLocked(runtime_->dynoRunning());
@@ -1271,45 +1279,117 @@ void MainComponent::importEngine() {
         [safe](const juce::FileChooser& chooser) {
             if (!safe) return;
             const auto file = chooser.getResult();
-            if (file.existsAsFile()) {
-                if (file.getSize() > 2 * 1024 * 1024) {
-                    safe->showError(utf8("Import failed"), utf8("The file exceeds the 2 MiB limit."));
-                    safe->fileChooser_.reset();
-                    return;
-                }
-                if (file.hasFileExtension("els;engine")) {
-                    safe->startEngineScriptWatcher(file.getFullPathName().toStdString());
-                    safe->fileChooser_.reset();
-                    return;
-                }
-                std::optional<SavedEngine> engine;
-                if (file.hasFileExtension("yaml;yml")) {
-                    const auto text = file.loadFileAsString();
-                    auto decoded = safe->yamlSerializer_.decode(text.toRawUTF8());
-                    if (decoded) engine = SavedEngine { std::move(*decoded.config), std::nullopt, pathOf(file) };
-                    else safe->showError(utf8("Import failed"), utf8(decoded.error));
-                } else {
-                    // An engine exported with its ECU tables brings them along.
-                    auto read = readSavedEngine(pathOf(file));
-                    if (read.engine) engine = std::move(read.engine);
-                    else safe->showError(utf8("Import failed"), utf8(read.error));
-                }
-                if (engine) {
-                    // A file named like an engine of the menu is not that engine
-                    // (unless it is that saved engine's own file): running under
-                    // its name, Save would write over it.
-                    if (const auto index = safe->presetIndexOf(engine->config.name);
-                        index >= 0 && safe->presets_[static_cast<std::size_t>(index)].file != engine->file)
-                        engine->config.name = safe->freeEngineName(engine->config.name + " (imported)");
-                    if (const auto error = restoreAudioVoicing(engine->config, safe->catalogRoot_))
-                        safe->showError(utf8("Voicing not found"), utf8(*error));
-                    auto store = safe->storeFor(Preset { engine->config, engine->calibration, engine->file });
-                    if (!store) engine->calibration.reset();
-                    (void)safe->switchEngine(engine->config, std::move(store), engine->calibration);
-                }
-            }
+            if (file.existsAsFile()) safe->openEngineFile(file);
             safe->fileChooser_.reset();
         });
+}
+
+bool MainComponent::isInterestedInFileDrag(const juce::StringArray& files) {
+    return files.size() == 1 && droppedFileKind(pathOf(juce::File(files[0]))) != DroppedFileKind::none;
+}
+
+void MainComponent::filesDropped(const juce::StringArray& files, int, int) {
+    if (files.size() != 1) return;
+    const juce::File file(files[0]);
+    if (!file.existsAsFile()) return;
+    // Over the engine view, not a window of its own: its keys work again.
+    grabKeyboardFocus();
+    if (droppedFileKind(pathOf(file)) == DroppedFileKind::calibration) openCalibrationFile(file);
+    else openEngineFile(file);
+}
+
+bool MainComponent::runningEngineModified() const {
+    return runtime_ && (baseline_.configDiffers(config_)
+                        || baseline_.calibrationDiffers(*runtime_->calibrationStore()->snapshot()));
+}
+
+void MainComponent::confirmReplacing(const juce::String& lost, std::function<void()> then) {
+    if (lost.isEmpty()) {
+        then();
+        return;
+    }
+    if (replaceDialogOpen_) return;
+    replaceDialogOpen_ = true;
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, utf8("Replace without saving?"),
+        utf8("Edits not saved: ") + lost
+            + utf8(". They are lost if this file replaces them; Save engine (Ctrl+S) keeps them."),
+        utf8("Replace"), utf8("Cancel"), nullptr,
+        juce::ModalCallbackFunction::create([safe, then = std::move(then)](int result) {
+            if (!safe) return;
+            safe->replaceDialogOpen_ = false;
+            if (result == 1) then();
+            safe->grabKeyboardFocus();
+        }));
+}
+
+void MainComponent::openEngineFile(const juce::File& file) {
+    if (file.getSize() > 2 * 1024 * 1024) {
+        showError(utf8("Import failed"), utf8("The file exceeds the 2 MiB limit."));
+        return;
+    }
+    if (runtime_ && runtime_->dynoRunning()) {
+        showError(utf8("Change rejected"), utf8("Stop the dyno before replacing the engine configuration."));
+        return;
+    }
+    const auto path = pathOf(file);
+    if (droppedFileKind(path) == DroppedFileKind::engineScript) {
+        // A script replaces the running engine as it is.
+        confirmReplacing(runningEngineModified() ? utf8(config_.name) : juce::String {},
+                         [this, path] { startEngineScriptWatcher(path); });
+        return;
+    }
+    // JSON or YAML, its ECU tables inside it (or beside it, from 0.9.1 or earlier).
+    auto read = readSavedEngine(path);
+    if (!read.engine) {
+        showError(utf8("Import failed"), utf8(read.error));
+        return;
+    }
+    auto engine = std::move(*read.engine);
+    // A file named like an engine of the menu is not that engine (unless it is
+    // that saved engine's own file): running under its name, Save would write
+    // over it.
+    if (const auto index = presetIndexOf(engine.config.name);
+        index >= 0 && presets_[static_cast<std::size_t>(index)].file != engine.file)
+        engine.config.name = freeEngineName(engine.config.name + " (imported)");
+    // The edits of an engine of the menu wait for it, unless the file is that
+    // engine; anything else running is replaced as it is.
+    const auto kept = unsavedEdit();
+    const auto lost = kept ? kept->first == engine.config.name : runningEngineModified();
+    confirmReplacing(lost ? utf8(config_.name) : juce::String {}, [this, engine = std::move(engine)]() mutable {
+        if (const auto error = restoreAudioVoicing(engine.config, catalogRoot_))
+            showError(utf8("Voicing not found"), utf8(*error));
+        auto store = storeFor(Preset { engine.config, engine.calibration, engine.file });
+        if (!store) engine.calibration.reset();
+        (void)switchEngine(engine.config, std::move(store), engine.calibration);
+    });
+}
+
+void MainComponent::openCalibrationFile(const juce::File& file) {
+    if (!runtime_) return;
+    if (runtime_->dynoRunning()) {
+        showError(utf8("Change rejected"), utf8("Stop the dyno before loading ECU tables."));
+        return;
+    }
+    if (file.getSize() > 2 * 1024 * 1024) {
+        showError(utf8("ECU load failed"), utf8("The file exceeds the 2 MiB limit."));
+        return;
+    }
+    auto parsed = calibration::CalibrationJson::parse(file.loadFileAsString().toStdString());
+    if (!parsed) {
+        showError(utf8("ECU load rejected"), issuesText(parsed.issues()));
+        return;
+    }
+    auto draft = parsed.value();
+    calibration::addMissingDefaultSettings(draft, config_);
+    const auto lost = baseline_.calibrationDiffers(*runtime_->calibrationStore()->snapshot())
+        ? utf8("the ECU tables of ") + utf8(config_.name) : juce::String {};
+    const auto source = pathOf(file).string();
+    confirmReplacing(lost, [this, draft = std::move(draft), source] {
+        if (!runtime_ || runtime_->dynoRunning()) return;
+        const auto published = runtime_->calibrationStore()->publish(draft, { {}, source });
+        if (!published.published) showError(utf8("ECU load rejected"), issuesText(published.issues));
+    });
 }
 
 void MainComponent::exportEngine() {
@@ -1324,12 +1404,8 @@ void MainComponent::exportEngine() {
             auto file = chooser.getResult();
             if (file != juce::File {}) {
                 if (!file.hasFileExtension("json;yaml;yml")) file = file.withFileExtension("json");
-                if (file.hasFileExtension("yaml;yml")) {
-                    const auto encoded = safe->yamlSerializer_.encode(safe->config_);
-                    if (!file.replaceWithText(juce::String::fromUTF8(encoded.data(), static_cast<int>(encoded.size()))))
-                        safe->showError(utf8("Export failed"), utf8("The file could not be written."));
-                } else if (safe->runtime_) {
-                    // The ECU tables go beside it, as a saved engine's do.
+                if (safe->runtime_) {
+                    // One file, JSON or YAML, its ECU tables inside it.
                     const auto snapshot = safe->runtime_->calibrationStore()->snapshot();
                     if (const auto error = enginelab::saveEngine(pathOf(file), safe->config_, snapshot.get()))
                         safe->showError(utf8("Export failed"), utf8(*error));

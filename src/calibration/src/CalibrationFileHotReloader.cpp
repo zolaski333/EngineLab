@@ -65,7 +65,7 @@ CalibrationReloadResult CalibrationFileHotReloader::poll() noexcept {
             return reportError("The calibration cannot be opened.");
         }
         const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-        result.publication = publishJson(store_, json, { {}, path_.string() });
+        result.publication = publishJson(store_, json, { {}, path_.string() }, complete_);
         if (!result.publication.published && !result.publication.issues.empty()) {
             result.error = result.publication.issues.front().path + ": "
                          + result.publication.issues.front().message;

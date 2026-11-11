@@ -507,6 +507,11 @@ void EcuTunerComponent::showIssues(const calibration::PublishResult& result,
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, title, message);
 }
 
+void EcuTunerComponent::setTableCompletion(calibration::DraftCompletion complete) {
+    completeTables_ = complete;
+    hotReloader_->setCompletion(std::move(complete));
+}
+
 void EcuTunerComponent::chooseCalibrationToLoad() {
     if (sessionLocked_) return;
     fileChooser_ = std::make_unique<juce::FileChooser>("Load an ECU calibration",
@@ -521,7 +526,7 @@ void EcuTunerComponent::chooseCalibrationToLoad() {
             const auto json = text.toStdString();
             const auto result = calibration::publishJson(*safe->store_,
                 json,
-                { {}, file.getFullPathName().toStdString() });
+                { {}, file.getFullPathName().toStdString() }, safe->completeTables_);
             if (result.published) {
                 safe->hotReloader_->watch(file.getFullPathName().toStdString());
                 safe->reloadFromSnapshot();

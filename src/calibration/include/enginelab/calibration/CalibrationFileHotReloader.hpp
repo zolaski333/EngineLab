@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace enginelab::calibration {
 
@@ -29,12 +30,15 @@ public:
 
     void watch(std::filesystem::path path);
     void stop() noexcept;
+    /** Run on every draft read from the file before it is published. */
+    void setCompletion(DraftCompletion complete) { complete_ = std::move(complete); }
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
     [[nodiscard]] bool watching() const noexcept { return !path_.empty(); }
     [[nodiscard]] CalibrationReloadResult poll() noexcept;
 
 private:
     CalibrationStore& store_;
+    DraftCompletion complete_;
     std::filesystem::path path_;
     std::filesystem::file_time_type lastWriteTime_ {};
     std::uintmax_t lastSize_ {};

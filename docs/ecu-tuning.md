@@ -244,7 +244,11 @@ combustion cycle, fuel film and transmission carry on without a reset.
 
 **LOAD** accepts a `.ecu.json` or `.json` file of at most 2 MiB, validates it
 and publishes it in one transaction. **SAVE** writes the current snapshot. In
-both cases, that path becomes watched.
+both cases, that path becomes watched. Tables saved before a setting existed
+(VTEC, the knock limit...) load with that setting's default for the engine
+running, on LOAD and on every reload of the watched file. A `.ecu.json` dropped
+on the main window loads the same way, asking first when the running tables
+hold edits not saved.
 
 As long as the tuner window exists, its timer checks the file ten times per
 second. A valid external save publishes a new revision; malformed or
@@ -256,8 +260,9 @@ reloads triggered by the live script, the JSON editor or the exhaust designer
 keep the same store, the window and its watcher. Explicitly choosing or
 importing another engine closes the window and creates that engine's default
 set, unless that engine brings its own: a saved engine, an engine left with
-unsaved edits this session, or an imported JSON engine with a `.ecu.json` file
-beside it (see "Saved engines and session edits" in `architecture.md`).
+unsaved edits this session, or an imported engine file with its tables inside
+(or, from 0.9.1 or earlier, a `.ecu.json` file beside it; see "Saved engines
+and session edits" in `architecture.md`).
 
 ## Calibration JSON format
 

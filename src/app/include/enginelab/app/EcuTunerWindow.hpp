@@ -45,6 +45,9 @@ public:
     [[nodiscard]] bool vtecButtonVisible() const { return vtecButton_.isVisible(); }
     /** Presses the VTEC button, as a click does. */
     void pressVtecButton();
+    /** Completes tables loaded from a file (LOAD and its hot reload) with
+        the settings the file predates. */
+    void setTableCompletion(calibration::DraftCompletion complete);
 
 private:
     void timerCallback() override;
@@ -66,6 +69,7 @@ private:
     std::shared_ptr<calibration::CalibrationStore> store_;
     calibration::CalibrationDraft draft_;
     std::unique_ptr<calibration::CalibrationFileHotReloader> hotReloader_;
+    calibration::DraftCompletion completeTables_;
     std::uint64_t baseRevision_ {};
     double operatingRpm_ {};
     double operatingLoad_ {};

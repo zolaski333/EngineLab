@@ -134,7 +134,7 @@ void checkCatalogueRoundTrip(const EngineCatalogLoadResult& catalogue) {
         require(!saveEngine(file, config, store->snapshot().get()), config.name + ": the engine saves");
         auto read = readSavedEngine(file);
         require(read.engine.has_value(), config.name + ": the saved engine reads back (" + read.error + ")");
-        require(read.engine->calibration.has_value(), config.name + ": its calibration is saved beside it");
+        require(read.engine->calibration.has_value(), config.name + ": its calibration is saved inside it");
         const auto reloaded = canonical(read.engine->config);
         require(json.encode(reloaded) == json.encode(config), config.name + ": the configuration reads back unchanged");
 
@@ -234,11 +234,137 @@ void checkCalibrationSaved(const EngineConfig& source) {
     require(!std::filesystem::exists(savedCalibrationFile(file)), "a stale calibration file is removed");
     require(!readSavedEngine(file).engine->calibration, "an engine without a calibration file has none");
 
-    // A damaged calibration fails the read instead of running other tables.
-    require(!saveEngine(file, config, store->snapshot().get()), "the tuned engine saves again");
+    // A damaged calibration beside an older save fails the read instead of
+    // running other tables.
+    require(!saveEngine(file, config, nullptr), "the engine saves without a calibration again");
     std::ofstream(savedCalibrationFile(file), std::ios::trunc) << "{ \"schema_version\": 1, \"entries\": [ ";
     const auto damaged = readSavedEngine(file);
     require(!damaged.engine && !damaged.error.empty(), "a damaged calibration fails the read with a reason");
+}
+
+[[nodiscard]] std::string textOf(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    return { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+}
+
+void writeText(const std::filesystem::path& file, const std::string& text) {
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << text;
+}
+
+/** One file holds the engine and its ECU tables, JSON or YAML; a save made
+    by 0.9.1 or earlier (tables beside it) still loads, and its next save
+    folds them in. Before, a YAML export lost the tables altogether. */
+void checkOneFile(const EngineConfig& source) {
+    Folder folder;
+    const JsonEngineSerializer json;
+    const YamlEngineSerializer yaml;
+    const auto config = canonical(source);
+    const auto store = defaultStore(config);
+    auto draft = calibration::makeDraft(*store->snapshot());
+    const auto* entry = draft.find(calibration::keys::ignitionAdvance);
+    require(entry != nullptr, config.name + ": an ignition advance table exists");
+    auto advance = *entry;
+    const auto retard = [](double& value) {
+        value = std::max(value - 3.0, calibration::ecuLimits::minimumIgnitionAdvanceDegrees);
+    };
+    std::visit([&](auto& item) {
+        if constexpr (requires { item.values; }) {
+            for (auto& value : item.values) retard(value);
+        } else {
+            retard(item.value);
+        }
+    }, advance);
+    draft.set(advance);
+    require(store->publish(draft, { store->snapshot()->revision(), "tuned" }).published, "the tuned tables publish");
+    const auto tuned = store->snapshot();
+    const EngineBaseline asSaved(config, calibration::makeDraft(*tuned));
+    require(asSaved.calibrationDiffers(*defaultStore(config)->snapshot()), "the tuned tables differ from the default");
+
+    for (const auto* extension : { ".json", ".yaml", ".yml" }) {
+        const auto file = folder.path / (std::string("One file") + extension);
+        require(droppedFileKind(file) == DroppedFileKind::engine, std::string(extension) + " drops as an engine");
+        require(!saveEngine(file, config, tuned.get()), std::string(extension) + ": the engine saves");
+        require(!std::filesystem::exists(savedCalibrationFile(file)), std::string(extension) + ": one file, nothing beside it");
+        require(textOf(file).find("ecu_calibration") != std::string::npos,
+                std::string(extension) + ": the tables are inside it");
+        const auto read = readSavedEngine(file);
+        require(read.engine && read.engine->calibration,
+                std::string(extension) + ": the engine reads back with its tables (" + read.error + ")");
+        const auto back = json.encode(canonical(read.engine->config));
+        const auto expected = json.encode(config);
+        const auto at = std::mismatch(back.begin(), back.end(), expected.begin(), expected.end()).first - back.begin();
+        const auto from = static_cast<std::size_t>(std::max<std::ptrdiff_t>(at - 120, 0));
+        require(back == expected, std::string(extension) + ": the configuration reads back unchanged (read "
+                                      + back.substr(from, 200) + " | saved " + expected.substr(from, 200) + ")");
+        require(!EngineBaseline(config, *read.engine->calibration).calibrationDiffers(*tuned),
+                std::string(extension) + ": the tables read back as saved");
+        // The engine half is what the plain encoder writes: an older
+        // EngineLab, which ignores the tables, reads it as before.
+        const auto plain = engineFileFormatOf(file) == EngineFileFormat::yaml
+            ? yaml.decode(textOf(file)) : json.decode(textOf(file));
+        require(static_cast<bool>(plain) && json.encode(canonical(*plain.config)) == json.encode(config),
+                std::string(extension) + ": the engine decoder alone reads the file");
+    }
+
+    // The tables inside win over a stale file beside it.
+    const auto single = folder.path / "Single.json";
+    require(!saveEngine(single, config, tuned.get()), "the single file saves");
+    writeText(savedCalibrationFile(single), calibration::CalibrationJson::serialize(*defaultStore(config)->snapshot()));
+    const auto preferred = readSavedEngine(single);
+    require(preferred.engine && preferred.engine->calibration
+                && !EngineBaseline(config, *preferred.engine->calibration).calibrationDiffers(*tuned),
+            "the tables inside the file are the ones read");
+
+    // A save made by 0.9.1: the engine alone, its tables beside it.
+    const auto old = folder.path / "Old save.json";
+    writeText(old, json.encode(config));
+    writeText(savedCalibrationFile(old), calibration::CalibrationJson::serialize(*tuned));
+    const auto oldRead = readSavedEngine(old);
+    require(oldRead.engine && oldRead.engine->calibration
+                && !EngineBaseline(config, *oldRead.engine->calibration).calibrationDiffers(*tuned),
+            "an old two-file save loads with its tables (" + oldRead.error + ")");
+    const auto folded = storeFrom(*oldRead.engine->calibration);
+    require(!saveEngine(old, oldRead.engine->config, folded->snapshot().get()), "the old save saves again");
+    require(!std::filesystem::exists(savedCalibrationFile(old)), "its tables are folded into the engine file");
+    const auto foldedRead = readSavedEngine(old);
+    require(foldedRead.engine && foldedRead.engine->calibration
+                && !EngineBaseline(config, *foldedRead.engine->calibration).calibrationDiffers(*tuned),
+            "and read back from inside it");
+    // A damaged file beside an old save still fails the read.
+    writeText(old, json.encode(config));
+    writeText(savedCalibrationFile(old), "{ \"schema_version\": 1, \"calibrations\": [ ");
+    require(!readSavedEngine(old).engine, "a damaged calibration beside an old save fails the read");
+
+    // An older YAML export carried no tables: it runs on the default ones.
+    const auto oldYaml = folder.path / "Old export.yaml";
+    writeText(oldYaml, yaml.encode(config));
+    const auto oldYamlRead = readSavedEngine(oldYaml);
+    require(oldYamlRead.engine && !oldYamlRead.engine->calibration,
+            "an old YAML export loads without tables (" + oldYamlRead.error + ")");
+
+    // Damaged tables inside the file fail the read, with a reason.
+    const auto damagedJson = folder.path / "Damaged.json";
+    auto text = json.encode(config);
+    text.insert(text.find('{') + 1, "\n  \"ecu_calibration\": { \"schema_version\": 1, \"calibrations\": 7 },");
+    writeText(damagedJson, text);
+    const auto damagedJsonRead = readSavedEngine(damagedJson);
+    require(!damagedJsonRead.engine && damagedJsonRead.error.find("ECU calibration") != std::string::npos,
+            "damaged tables inside a JSON file fail the read (" + damagedJsonRead.error + ")");
+    const auto damagedYaml = folder.path / "Damaged.yaml";
+    writeText(damagedYaml, yaml.encode(config) + "\necu_calibration:\n  schema_version: 1\n  calibrations: 7\n");
+    const auto damagedYamlRead = readSavedEngine(damagedYaml);
+    require(!damagedYamlRead.engine && damagedYamlRead.error.find("ECU calibration") != std::string::npos,
+            "damaged tables inside a YAML file fail the read (" + damagedYamlRead.error + ")");
+
+    // What a drop on the window opens.
+    require(droppedFileKind("maps.ecu.json") == DroppedFileKind::calibration, "a .ecu.json drops as ECU tables");
+    require(droppedFileKind("MAPS.ECU.JSON") == DroppedFileKind::calibration, "whatever its case");
+    require(droppedFileKind("V8.ELS") == DroppedFileKind::engineScript
+                && droppedFileKind("v8.engine") == DroppedFileKind::engineScript,
+            ".els and .engine drop as scripts");
+    require(droppedFileKind("notes.txt") == DroppedFileKind::none && droppedFileKind("engine") == DroppedFileKind::none,
+            "anything else is not taken");
+    std::cout << "SavedEngine: one file (JSON, YAML) holds the engine and its tables; old saves load\n";
 }
 
 /** Master level of a short start and rev through the shipping audio path,
@@ -497,6 +623,7 @@ int main(int argc, char** argv) {
     checkNamesAndFolder(cp2->config);
     checkOutOfRangeEdits(cp2->config);
     checkCalibrationSaved(cp2->config);
+    checkOneFile(cp2->config);
     checkRunningEngineRenamed(cp2->config);
     checkSavedSound(catalogue);
     checkCatalogueRoundTrip(catalogue);
