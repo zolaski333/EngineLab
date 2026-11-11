@@ -23,6 +23,7 @@ public:
     ~ExhaustDesignerWindow() override;
 
     void closeButtonPressed() override;
+    bool keyPressed(const juce::KeyPress& key) override;
     void setConfig(const EngineConfig& config);
 
 private:

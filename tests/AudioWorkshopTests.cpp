@@ -7,6 +7,8 @@
 #include <enginelab/app/FuelEditing.hpp>
 #include <enginelab/app/FuelWindow.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
+#include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -424,6 +426,138 @@ int main() {
     const auto snapshot = designerContent->createComponentSnapshot(
         designerContent->getLocalBounds());
     require(snapshot.isValid(), "exhaust designer paints a rotary");
+
+    // Owner report 2026-11-11: with a cylinder's default pipe deleted,
+    // nothing else could be put in its place. A cylinder is a source in From.
+    {
+        auto config = enginelab::makeDefaultInlineFour();
+        auto& path = config.exhaustPaths.front();
+        path.network = enginelab::makeEditableExhaustNetwork(path);
+        // Shown as 763.3: selecting it then another part must not round it.
+        const auto tail = std::find_if(path.network->components.begin(), path.network->components.end(),
+            [](const auto& item) { return item.type == enginelab::ExhaustComponentType::outlet; });
+        require(tail != path.network->components.end(), "the editable network has an outlet");
+        tail->lengthMm = 763.27;
+        const auto tailId = tail->id;
+        const auto tailRow = static_cast<int>(tail - path.network->components.begin());
+        const auto original = *path.network;
+        const auto cylinderId = path.cylinderIds.front();
+        const auto mapping = std::find_if(original.cylinderConnections.begin(), original.cylinderConnections.end(),
+            [cylinderId](const auto& item) { return item.cylinderId == cylinderId; });
+        require(mapping != original.cylinderConnections.end(), "the editable network maps the first cylinder");
+        const auto primaryId = mapping->componentId;
+        const auto out = std::find_if(original.connections.begin(), original.connections.end(),
+            [primaryId](const auto& edge) { return edge.fromComponentId == primaryId; });
+        require(out != original.connections.end(), "the first cylinder's primary leads on");
+        const auto downstreamId = out->toComponentId;
+
+        std::optional<enginelab::EngineConfig> applied;
+        enginelab::ExhaustDesignerWindow designer(config, [&applied](const enginelab::EngineConfig& edited) {
+            applied = edited;
+            return true;
+        });
+        auto* designerView = designer.getContentComponent();
+        require(designerView != nullptr, "the exhaust designer has designerView");
+        const auto child = [designerView](juce::StringRef id) {
+            for (auto* item : designerView->getChildren())
+                if (item->getComponentID() == id) return item;
+            return static_cast<juce::Component*>(nullptr);
+        };
+        auto* list = dynamic_cast<juce::ListBox*>(child("exhaust-components"));
+        auto* addType = dynamic_cast<juce::ComboBox*>(child("exhaust-add-type"));
+        auto* add = dynamic_cast<juce::Button*>(child("exhaust-add"));
+        auto* remove = dynamic_cast<juce::Button*>(child("exhaust-delete-component"));
+        auto* from = dynamic_cast<juce::ComboBox*>(child("exhaust-from"));
+        auto* to = dynamic_cast<juce::ComboBox*>(child("exhaust-to"));
+        auto* connect = dynamic_cast<juce::Button*>(child("exhaust-connect"));
+        auto* undo = dynamic_cast<juce::Button*>(child("exhaust-undo"));
+        auto* redo = dynamic_cast<juce::Button*>(child("exhaust-redo"));
+        auto* applyDesign = dynamic_cast<juce::Button*>(child("exhaust-apply"));
+        require(list && addType && add && remove && from && to && connect && undo && redo && applyDesign,
+                "the exhaust designer shows its editing controls");
+        require(!undo->isEnabled() && !redo->isEnabled(), "nothing to undo before an edit");
+
+        // The working copy's component order: the deleted pipe goes, the
+        // added one comes last.
+        std::vector<std::uint32_t> order;
+        for (const auto& component : original.components)
+            if (component.id != primaryId) order.push_back(component.id);
+        const auto rowOf = [&order](std::uint32_t id) {
+            return static_cast<int>(std::find(order.begin(), order.end(), id) - order.begin());
+        };
+        const auto primaryRow = static_cast<int>(std::find_if(original.components.begin(), original.components.end(),
+            [primaryId](const auto& item) { return item.id == primaryId; }) - original.components.begin());
+        list->selectRow(tailRow);
+        list->selectRow(primaryRow);
+        remove->onClick();
+        addType->setSelectedItemIndex(static_cast<int>(enginelab::ExhaustComponentType::resonator), juce::dontSendNotification);
+        add->onClick();
+        const auto newPart = enginelab::ExhaustNetworkEditor::nextComponentId([&] {
+            auto shown = original;
+            std::erase_if(shown.components, [primaryId](const auto& item) { return item.id == primaryId; });
+            return shown;
+        }());
+        order.push_back(newPart);
+        from->setSelectedItemIndex(rowOf(newPart), juce::dontSendNotification);
+        to->setSelectedItemIndex(rowOf(downstreamId), juce::dontSendNotification);
+        connect->onClick();
+        auto cylinderItem = -1;
+        for (int index = 0; index < from->getNumItems(); ++index)
+            if (from->getItemText(index) == "Cylinder " + juce::String(cylinderId)) cylinderItem = index;
+        require(cylinderItem >= 0, "From lists the path's cylinders");
+        from->setSelectedItemIndex(cylinderItem, juce::dontSendNotification);
+        to->setSelectedItemIndex(rowOf(newPart), juce::dontSendNotification);
+        connect->onClick();
+        applyDesign->onClick();
+        require(applied.has_value() && !enginelab::validateEngineConfig(*applied).has_value(),
+                "a cylinder feeding a resonator in its pipe's place applies");
+        const auto& network = *applied->exhaustPaths.front().network;
+        require(std::any_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+                    [cylinderId, newPart](const auto& item) { return item.cylinderId == cylinderId && item.componentId == newPart; })
+                    && std::any_of(network.connections.begin(), network.connections.end(),
+                        [newPart, downstreamId](const auto& edge) { return edge.fromComponentId == newPart && edge.toComponentId == downstreamId; }),
+                "the cylinder feeds the resonator, and the resonator the old pipe's collector");
+        require(std::any_of(network.components.begin(), network.components.end(),
+                    [tailId](const auto& item) { return item.id == tailId && item.lengthMm == 763.27; }),
+                "selecting a part, then another, kept its length to the hundredth");
+
+        // What the cylinder feeds, by type.
+        const auto feeds = [cylinderId](const enginelab::EngineConfig& engine, enginelab::ExhaustComponentType type) {
+            const auto& graph = *engine.exhaustPaths.front().network;
+            const auto root = std::find_if(graph.cylinderConnections.begin(), graph.cylinderConnections.end(),
+                [cylinderId](const auto& item) { return item.cylinderId == cylinderId; });
+            if (root == graph.cylinderConnections.end()) return false;
+            return std::any_of(graph.components.begin(), graph.components.end(),
+                [&root, type](const auto& item) { return item.id == root->componentId && item.type == type; });
+        };
+        // Ctrl+Z, Ctrl+Y, then every step undone gives the engine back.
+        require(undo->isEnabled() && !redo->isEnabled(), "the edits can be undone");
+        require(designerView->keyPressed(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)) && redo->isEnabled(),
+                "Ctrl+Z undoes an edit");
+        require(designerView->keyPressed(juce::KeyPress('y', juce::ModifierKeys::commandModifier, 0)) && !redo->isEnabled(),
+                "Ctrl+Y redoes it");
+        for (auto guard = 0; undo->isEnabled() && guard < 50; ++guard) undo->onClick();
+        applied.reset();
+        applyDesign->onClick();
+        require(applied.has_value() && applied->exhaustPaths.front().network
+                    && applied->exhaustPaths.front().network->components.size() == original.components.size()
+                    && feeds(*applied, enginelab::ExhaustComponentType::pipe),
+                "undoing every edit gives the original exhaust back");
+        for (auto guard = 0; redo->isEnabled() && guard < 50; ++guard) redo->onClick();
+        applied.reset();
+        applyDesign->onClick();
+        require(applied.has_value() && feeds(*applied, enginelab::ExhaustComponentType::resonator),
+                "redoing every edit gives the edited exhaust back");
+        require(designerView->createComponentSnapshot(designerView->getLocalBounds()).isValid(), "the edited designer paints");
+        const auto exhaustSnapshot = juce::SystemStats::getEnvironmentVariable("ENGINELAB_EXHAUST_SNAPSHOT", {});
+        if (exhaustSnapshot.isNotEmpty()) {
+            juce::FileOutputStream stream { juce::File(exhaustSnapshot) };
+            stream.setPosition(0);
+            stream.truncate();
+            juce::PNGImageFormat().writeImageToStream(
+                designerView->createComponentSnapshot(designerView->getLocalBounds()), stream);
+        }
+    }
 
     // The Fuel window (top bar): a listed fuel goes in the tank as listed,
     // an edited value renames it, and a diesel shows a cetane number.

@@ -20,8 +20,28 @@ file formats, always with an in-memory migration).
   the boost runs that far past its target, and comes back at half of it.
 - **The Fuel window shows the energy per kilogram of oxygen** (about 13 MJ
   for every real fuel), marked when it is past 14.
+- **Exhaust designer: a cylinder can feed any part.** The cylinders are
+  listed in From after the components, and on the flow view a cylinder or a
+  part is dragged onto another part to connect them. Right-click a part to
+  replace it with another type (its connections, bore and length kept) or
+  delete it; right-click a cylinder to disconnect it.
+- **Exhaust designer: undo and redo** (UNDO, REDO, Ctrl+Z, Ctrl+Y) over the
+  last 100 edits of the working copy.
+- **- PATH asks how the cylinders join**: a Y junction keeping both
+  collectors (the pipe after them gives the legs their length), or one
+  N-into-1 rebuilt with a primary like the destination's for every cylinder.
 
 ### Fixed
+
+- **Removing an exhaust path no longer wires its cylinders anyhow.** Each
+  cylinder used to get a default primary and a new merge spliced after the
+  same pipe: a V8's dual 4-into-1 merged into one side became a chain of
+  five merges and lost the removed side's collector. A cylinder moved
+  between paths now joins its neighbours' collector with a primary like
+  theirs (a 4-into-1 becomes a 5-into-1).
+- **The exhaust designer no longer rounds a part's values when you only
+  select it.** Selecting another part re-read the shown values, so a
+  763.27 mm pipe became 763.3 mm; an untouched field now keeps its value.
 
 - **The boost no longer runs away when the stoichiometric ratio is
   lowered.** The Fuel window kept the heating value when the ratio

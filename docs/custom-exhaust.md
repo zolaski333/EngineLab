@@ -20,22 +20,43 @@ The window loads a working copy: adding, removing or editing a component does
 not touch the running engine until the copy is applied.
 
 1. Pick a path in the list. **+ PATH** extracts the chosen cylinder with its
-   graph branch; **- PATH** moves its cylinders to a destination before
-   deletion. The **MOVE** selector reassigns a cylinder between two paths
-   without creating a duplicate. The IR stays in the engine file.
+   graph branch. **- PATH** asks how its cylinders join the destination:
+   - **Join with a Y junction** keeps both collectors. A leg from each runs
+     into a new Y, which takes the destination collector's way on. The legs are
+     a fifth of the pipe after it (150 to 400 mm), and that pipe gives up their
+     length, so every cylinder's length to the silencer is unchanged. The
+     removed path's pipes past its collector go.
+   - **Rebuild as one N-into-1** gives every cylinder a primary like the
+     destination's first, all into the destination's collector.
+
+   When a path's cylinders never meet in one junction (an H or an X inside it,
+   twin outlets), each cylinder instead joins the collector its nearest
+   neighbour feeds, and the status line says so. **MOVE** reassigns a cylinder
+   between two paths: it gets a copy of its nearest neighbour's primary into
+   the same collector (a 4-into-1 becomes a 5-into-1), or a new collector after
+   the destination's pipe when it has none. The IR stays in the engine file.
 2. If the path has no graph yet, select **GENERATE FROM LEGACY**. One primary
    per cylinder, a junction, a mid pipe (when `midpipe_length_mm` is set), a
    muffler and an outlet are created from `geometry`.
 3. Add the components, then edit their type, ID, dimensions, restriction,
    resonance, gain and discharge coefficient. The canvas uses automatic layout,
-   and clicking a node selects the matching component.
-4. Create the directed connections in flow order and assign each cylinder to
-   its first component. On an X-pipe, the designer assigns the first free port
-   `0`, then `1`, and shows that port in the list. Deleting then recreating both
-   links swaps the pairing.
-5. Select **VALIDATE AND APPLY**. The complete validation described below runs
+   and clicking a node selects the matching component. Right-click a node to
+   **Replace with** another type (it keeps its id, its connections, its bore,
+   and its length when both types have one) or to **Delete** it.
+4. Connect the parts in flow order. A cylinder is a source like any part: it
+   can feed any part but an X-pipe, picked in **From** (the cylinders follow
+   the components) or dragged on the canvas. Drag from a node or a cylinder
+   onto another node to connect them; right-click a cylinder to disconnect it.
+   A rotor's faces open onto one port, so a rotor is dropped on a collector.
+   On an X-pipe, the designer assigns the first free port `0`, then `1`, and
+   shows that port in the list. Deleting then recreating both links swaps the
+   pairing.
+5. **UNDO** and **REDO** (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z) step through the
+   working copy's last 100 edits. An apply keeps the history; loading another
+   engine clears it. A text field being typed in keeps its own Ctrl+Z.
+6. Select **VALIDATE AND APPLY**. The complete validation described below runs
    before any change to the engine.
-6. Use **EXPORT** in the main window to save the applied configuration as JSON
+7. Use **EXPORT** in the main window to save the applied configuration as JSON
    or YAML.
 
 An error keeps the copy for correction and leaves the current runtime

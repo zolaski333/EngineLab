@@ -25,7 +25,6 @@ namespace enginelab {
 namespace {
 
 constexpr std::size_t maximumComponents = 256;
-constexpr std::size_t maximumConnections = 1'024;
 
 [[nodiscard]] juce::String utf8(std::string_view value) {
     return juce::String::fromUTF8(value.data(), static_cast<int>(value.size()));
@@ -114,71 +113,6 @@ constexpr std::size_t maximumConnections = 1'024;
     }
 }
 
-[[nodiscard]] ExhaustComponentConfig defaultComponent(ExhaustComponentType type,
-                                                        std::uint32_t id) noexcept {
-    ExhaustComponentConfig result;
-    result.id = id;
-    result.type = type;
-    switch (type) {
-    case ExhaustComponentType::pipe:
-        result.lengthMm = 450.0;
-        result.diameterMm = 42.0;
-        break;
-    case ExhaustComponentType::merge:
-        result.lengthMm = 0.0;
-        result.diameterMm = 58.0;
-        result.volumeLitres = 1.5;
-        break;
-    case ExhaustComponentType::splitter:
-        result.lengthMm = 0.0;
-        result.diameterMm = 58.0;
-        break;
-    case ExhaustComponentType::resonator:
-        // The most useful neutral starting point is a closed quarter-wave
-        // branch. One incoming connection and no output gives it that meaning;
-        // adding an output keeps the historical inline-duct behaviour.
-        result.lengthMm = 535.0;
-        result.diameterMm = 28.0;
-        result.volumeLitres = 0.0;
-        result.resonanceHz = 0.0;
-        break;
-    case ExhaustComponentType::muffler:
-        result.lengthMm = 480.0;
-        result.diameterMm = 62.0;
-        result.volumeLitres = 8.0;
-        result.restriction = 0.28;
-        result.acousticGain = 0.72;
-        break;
-    case ExhaustComponentType::catalyst:
-        result.lengthMm = 180.0;
-        result.diameterMm = 56.0;
-        result.volumeLitres = 0.0;
-        result.restriction = 0.18;
-        result.dischargeCoefficient = 0.68;
-        result.catalystCellDensityCpsi = 400.0;
-        result.catalystOpenAreaRatio = 0.80;
-        result.catalystSubstrateVolumetricHeatCapacityJPerM3K = 2'000'000.0;
-        break;
-    case ExhaustComponentType::outlet:
-        // A tailpipe is a pipe. Zero here used to mean "the system ends", but
-        // the layout has to mesh it anyway, and a length it has to invent is
-        // the length that then sets the CFL limit for the whole network. Give
-        // it the real thing instead; the user can still shorten it.
-        result.lengthMm = 300.0;
-        result.diameterMm = 65.0;
-        break;
-    case ExhaustComponentType::crossover:
-        result.lengthMm = 0.0;
-        result.diameterMm = 80.0;
-        result.volumeLitres = 0.0;
-        result.restriction = 0.06;
-        // Estimated neutral starting point, not a measured calibration.
-        result.crossoverCoupling = 0.30;
-        break;
-    }
-    return result;
-}
-
 class CallbackListModel final : public juce::ListBoxModel {
 public:
     using Count = std::function<int()>;
@@ -209,7 +143,7 @@ private:
     Select select_;
 };
 
-class ExhaustGraphCanvas final : public juce::Component {
+class ExhaustGraphCanvas final : public juce::Component, public juce::SettableTooltipClient {
 public:
     using PathProvider = std::function<const ExhaustPathConfig*()>;
     using SelectionProvider = std::function<std::uint32_t()>;
@@ -220,13 +154,24 @@ public:
     ExhaustGraphCanvas(PathProvider pathProvider, SelectionProvider selectionProvider,
                        SelectionCallback selectionCallback, RotorOf rotorOf)
         : pathProvider_(std::move(pathProvider)), selectionProvider_(std::move(selectionProvider)),
-          selectionCallback_(std::move(selectionCallback)), rotorOf_(std::move(rotorOf)) {}
+          selectionCallback_(std::move(selectionCallback)), rotorOf_(std::move(rotorOf)) {
+        setWantsKeyboardFocus(true);
+    }
+
+    /** A node dragged onto another: connect them. */
+    std::function<void(std::uint32_t, std::uint32_t)> onConnectComponents;
+    /** A source (a cylinder, or a rotor's faces) dragged onto a node. */
+    std::function<void(const std::vector<std::uint32_t>&, std::uint32_t)> onConnectCylinders;
+    /** Right-click on a node, or on a source. */
+    std::function<void(std::uint32_t)> onComponentMenu;
+    std::function<void(const std::vector<std::uint32_t>&)> onSourceMenu;
 
     void paint(juce::Graphics& graphics) override {
         graphics.fillAll(juce::Colour(0xff101716));
         graphics.setColour(juce::Colour(0xff25312e));
         graphics.drawRect(getLocalBounds(), 1);
         nodeBounds_.clear();
+        sourceBounds_.clear();
 
         const auto* path = pathProvider_ ? pathProvider_() : nullptr;
         if (path == nullptr || !path->network || path->network->components.empty()) {
@@ -409,6 +354,10 @@ public:
         for (std::size_t index = 0; index < sourceCount; ++index) {
             const auto y = graph.getY() + (static_cast<float>(index) + 0.5F) * sourceSpacing;
             const juce::Rectangle<float> pill(graph.getX(), y - 11.0F, cylinderWidth, 22.0F);
+            std::vector<std::uint32_t> pillCylinders;
+            for (const auto cylinderId : path->cylinderIds)
+                if (sourceRow[cylinderId] == index) pillCylinders.push_back(cylinderId);
+            sourceBounds_.emplace_back(pill, std::move(pillCylinders));
             graphics.setColour(juce::Colour(0xff263532));
             graphics.fillRoundedRectangle(pill, 5.0F);
             graphics.setColour(juce::Colour(0xffa9bbb5));
@@ -458,24 +407,111 @@ public:
                 + (component.lengthMm > 0.0 ? "  x  " + juce::String(component.lengthMm, 0) + " mm" : "");
             graphics.drawText(detail, bounds.toNearestInt(), juce::Justification::centred);
         }
+
+        // A connection being dragged: a line from where it started, the node
+        // it would land on outlined.
+        if (dragging_) {
+            const auto target = hit(dragPoint_).component;
+            if (target)
+                if (const auto bounds = nodeBounds_.find(*target); bounds != nodeBounds_.end()) {
+                    graphics.setColour(juce::Colour(0xffffd086));
+                    graphics.drawRoundedRectangle(bounds->second.expanded(3.0F), 9.0F, 2.0F);
+                }
+            graphics.setColour(juce::Colour(0xffffd086));
+            const float dashes[] { 6.0F, 4.0F };
+            graphics.drawDashedLine({ press_.anchor, dragPoint_ }, dashes, 2, 2.0F);
+        }
     }
 
     void mouseDown(const juce::MouseEvent& event) override {
-        for (const auto& [id, bounds] : nodeBounds_) {
-            if (bounds.contains(event.position)) {
-                if (selectionCallback_) selectionCallback_(id);
-                return;
+        grabKeyboardFocus();
+        dragging_ = false;
+        const auto pressed = hit(event.position);
+        if (event.mods.isPopupMenu()) {
+            press_ = {};
+            if (pressed.component) {
+                if (selectionCallback_) selectionCallback_(*pressed.component);
+                if (onComponentMenu) onComponentMenu(*pressed.component);
+            } else if (!pressed.cylinders.empty() && onSourceMenu) {
+                onSourceMenu(pressed.cylinders);
             }
+            return;
+        }
+        press_ = pressed;
+        if (pressed.component && selectionCallback_) selectionCallback_(*pressed.component);
+    }
+
+    void mouseDrag(const juce::MouseEvent& event) override {
+        if (!press_.component && press_.cylinders.empty()) return;
+        if (!dragging_ && event.getDistanceFromDragStart() < 6) return;
+        dragging_ = true;
+        dragPoint_ = event.position;
+        repaint();
+    }
+
+    void mouseUp(const juce::MouseEvent& event) override {
+        const auto pressed = std::exchange(press_, {});
+        const auto dragged = std::exchange(dragging_, false);
+        if (!dragged) return;
+        repaint();
+        const auto target = hit(event.position).component;
+        if (!target) return;
+        if (pressed.component) {
+            if (*pressed.component != *target && onConnectComponents) onConnectComponents(*pressed.component, *target);
+        } else if (onConnectCylinders) {
+            onConnectCylinders(pressed.cylinders, *target);
         }
     }
 
 private:
+    /** What a point is on: a node, or a source's cylinders; and where a
+     *  connection from it starts. */
+    struct Hit {
+        std::optional<std::uint32_t> component;
+        std::vector<std::uint32_t> cylinders;
+        juce::Point<float> anchor;
+    };
+
+    [[nodiscard]] Hit hit(juce::Point<float> point) const {
+        for (const auto& [id, bounds] : nodeBounds_)
+            if (bounds.contains(point)) return { id, {}, { bounds.getRight(), bounds.getCentreY() } };
+        for (const auto& [bounds, cylinders] : sourceBounds_)
+            if (bounds.contains(point)) return { std::nullopt, cylinders, { bounds.getRight(), bounds.getCentreY() } };
+        return {};
+    }
+
     PathProvider pathProvider_;
     SelectionProvider selectionProvider_;
     SelectionCallback selectionCallback_;
     RotorOf rotorOf_;
     std::unordered_map<std::uint32_t, juce::Rectangle<float>> nodeBounds_;
+    std::vector<std::pair<juce::Rectangle<float>, std::vector<std::uint32_t>>> sourceBounds_;
+    Hit press_;
+    bool dragging_ { false };
+    juce::Point<float> dragPoint_;
 };
+
+/** Where a menu of the designer opens: at the mouse. */
+[[nodiscard]] juce::PopupMenu::Options menuAtMouse() {
+    return juce::PopupMenu::Options {}.withMousePosition();
+}
+
+/** The fields the property editor writes, to tell an edit from a re-commit. */
+[[nodiscard]] bool sameEditedFields(const ExhaustComponentConfig& a, const ExhaustComponentConfig& b) noexcept {
+    return a.id == b.id && a.type == b.type && a.lengthMm == b.lengthMm && a.diameterMm == b.diameterMm
+        && a.outletDiameterMm == b.outletDiameterMm && a.volumeLitres == b.volumeLitres
+        && a.restriction == b.restriction && a.resonanceHz == b.resonanceHz
+        && a.crossoverCoupling == b.crossoverCoupling && a.acousticGain == b.acousticGain
+        && a.dischargeCoefficient == b.dischargeCoefficient
+        && a.packingFlowResistivityPaSPerM2 == b.packingFlowResistivityPaSPerM2
+        && a.packingThicknessMm == b.packingThicknessMm && a.perforatedOpenAreaRatio == b.perforatedOpenAreaRatio
+        && a.catalystCellDensityCpsi == b.catalystCellDensityCpsi && a.catalystOpenAreaRatio == b.catalystOpenAreaRatio
+        && a.catalystSubstrateVolumetricHeatCapacityJPerM3K == b.catalystSubstrateVolumetricHeatCapacityJPerM3K;
+}
+
+/** The From list's cylinders come after its components, from this item id. */
+constexpr int cylinderItemBase = 10'000;
+constexpr std::size_t maximumUndoSteps = 100;
 
 } // namespace
 
@@ -501,11 +537,40 @@ public:
               [this](std::uint32_t id) { selectComponentId(id); },
               [this](std::uint32_t id) { return rotorOf(id); }) {
         setOpaque(true);
+        setWantsKeyboardFocus(true);
         configureInterface();
+        graphCanvas_.onConnectComponents = [this](std::uint32_t from, std::uint32_t to) { connectComponents(from, to); };
+        graphCanvas_.onConnectCylinders = [this](const std::vector<std::uint32_t>& cylinders, std::uint32_t to) {
+            connectCylinders(cylinders, to);
+        };
+        graphCanvas_.onComponentMenu = [this](std::uint32_t id) { showComponentMenu(id); };
+        graphCanvas_.onSourceMenu = [this](const std::vector<std::uint32_t>& cylinders) { showSourceMenu(cylinders); };
         setConfig(config);
     }
 
+    /** Ctrl+Z undoes the last edit of the working copy; Ctrl+Y or
+     *  Ctrl+Shift+Z redoes it. A text field being typed in keeps its own. */
+    bool keyPressed(const juce::KeyPress& key) override {
+        if (!key.getModifiers().isCommandDown()) return false;
+        const auto code = juce::CharacterFunctions::toUpperCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
+        if (code == 'Z' && !key.getModifiers().isShiftDown()) {
+            undo();
+            return true;
+        }
+        if (code == 'Y' || code == 'Z') {
+            redo();
+            return true;
+        }
+        return false;
+    }
+
     void setConfig(const EngineConfig& config) {
+        // An apply comes back here with the engine it applied: the edit
+        // history is still this engine's. Any other engine starts afresh.
+        if (!applying_) {
+            undo_.clear();
+            redo_.clear();
+        }
         working_ = config;
         // The network the engine is actually running, kept so `apply()` can
         // report what the edit costs RELATIVE to it. A ratio against the user's
@@ -522,6 +587,7 @@ public:
         selectFirstComponent();
         setStatus("Working copy loaded. No change has been applied yet.", false);
         rebuildAll();
+        refreshUndoButtons();
     }
 
     void paint(juce::Graphics& graphics) override {
@@ -556,6 +622,9 @@ public:
         destinationPathSelector_.setBounds(pathTools.removeFromLeft(220).reduced(2, 3));
         pathTools.removeFromLeft(6);
         moveCylinderButton_.setBounds(pathTools.removeFromLeft(130).reduced(2, 3));
+        redoButton_.setBounds(pathTools.removeFromRight(80).reduced(2, 3));
+        pathTools.removeFromRight(4);
+        undoButton_.setBounds(pathTools.removeFromRight(80).reduced(2, 3));
         bounds.removeFromTop(5);
 
         statusLabel_.setBounds(bounds.removeFromBottom(29));
@@ -667,8 +736,18 @@ private:
         newPathButton_.onClick = [this] { createPath(); };
         deletePathButton_.setButtonText("- PATH");
         deletePathButton_.setTooltip(
-            "Deletes the current path and moves all its cylinders to the destination.");
+            "Deletes the current path; its cylinders join the destination, either with a Y junction "
+            "(both collectors kept) or rebuilt as one N-into-1 collector.");
         deletePathButton_.onClick = [this] { deletePath(); };
+        undoButton_.setButtonText("UNDO");
+        undoButton_.setTooltip("Undoes the last edit of the working copy (Ctrl+Z).");
+        undoButton_.setComponentID("exhaust-undo");
+        undoButton_.onClick = [this] { undo(); };
+        redoButton_.setButtonText("REDO");
+        redoButton_.setTooltip("Redoes the edit just undone (Ctrl+Y or Ctrl+Shift+Z).");
+        redoButton_.setComponentID("exhaust-redo");
+        redoButton_.onClick = [this] { redo(); };
+        applyButton_.setComponentID("exhaust-apply");
         legacyButton_.setButtonText("GENERATE FROM LEGACY");
         legacyButton_.setTooltip("Replaces the selected path's graph with a simple, valid network.");
         legacyButton_.onClick = [this] { generateLegacyNetwork(); };
@@ -702,6 +781,10 @@ private:
         addButton_.onClick = [this] { addComponent(); };
         deleteComponentButton_.setButtonText("DELETE");
         deleteComponentButton_.onClick = [this] { deleteComponent(); };
+        componentList_.setComponentID("exhaust-components");
+        addTypeSelector_.setComponentID("exhaust-add-type");
+        addButton_.setComponentID("exhaust-add");
+        deleteComponentButton_.setComponentID("exhaust-delete-component");
 
         componentTypeLabel_.setText("Type", juce::dontSendNotification);
         componentTypeLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffaebbb7));
@@ -768,8 +851,15 @@ private:
             label->setFont(juce::FontOptions(12.0F, juce::Font::bold));
             addAndMakeVisible(*label);
         }
-        fromSelector_.setTextWhenNothingSelected("From");
+        fromSelector_.setTextWhenNothingSelected("From (component or cylinder)");
+        fromSelector_.setTooltip("A component, or a cylinder: a cylinder can feed any part. "
+                                 "On the flow view, drag from a cylinder or a part onto another part.");
         toSelector_.setTextWhenNothingSelected("To");
+        fromSelector_.setComponentID("exhaust-from");
+        toSelector_.setComponentID("exhaust-to");
+        addConnectionButton_.setComponentID("exhaust-connect");
+        graphCanvas_.setTooltip("Drag from a cylinder or a part onto another part to connect them; "
+                                "right-click a part to replace or delete it, a cylinder to disconnect it.");
         cylinderSelector_.setTextWhenNothingSelected("Cylinder");
         mappingComponentSelector_.setTextWhenNothingSelected("Component");
         addConnectionButton_.setButtonText("CONNECT");
@@ -791,6 +881,8 @@ private:
         addAndMakeVisible(pathCylinderSelector_);
         addAndMakeVisible(destinationPathSelector_);
         addAndMakeVisible(moveCylinderButton_);
+        addAndMakeVisible(undoButton_);
+        addAndMakeVisible(redoButton_);
         addAndMakeVisible(graphCanvas_);
         addAndMakeVisible(addTypeSelector_);
         addAndMakeVisible(addButton_);
@@ -978,12 +1070,14 @@ private:
             setStatus("Select a cylinder of the current path.", true);
             return;
         }
+        auto before = snapshot();
         const auto result = ExhaustPathTopologyEditor::createPathFromCylinder(
             working_, source->id, *cylinderId);
         if (!result) {
             setStatus("Creation rejected: " + utf8(result.error), true);
             return;
         }
+        pushUndo(std::move(before));
         selectEditedPath(result.selectedPathId);
         setStatus("New path created; the cylinder was moved atomically.", false);
     }
@@ -997,16 +1091,19 @@ private:
             setStatus("Select the cylinder and the destination path.", true);
             return;
         }
+        auto before = snapshot();
         const auto result = ExhaustPathTopologyEditor::moveCylinder(
             working_, *cylinderId, source->id, *destinationId);
         if (!result) {
             setStatus("Move rejected: " + utf8(result.error), true);
             return;
         }
+        pushUndo(std::move(before));
         selectEditedPath(result.selectedPathId);
-        setStatus("Cylinder moved; the graph roots were repaired and validated.", false);
+        setStatus("Cylinder moved: it joins its neighbours' collector with a primary like theirs.", false);
     }
 
+    /** Asks how the path's cylinders join the destination, then removes it. */
     void deletePath() {
         if (!commitSelectedComponentEdits()) return;
         const auto* source = selectedPath();
@@ -1015,18 +1112,200 @@ private:
             setStatus("Choose the path that will receive the cylinders before deleting.", true);
             return;
         }
-        const auto result = ExhaustPathTopologyEditor::removePath(
-            working_, source->id, *destinationId);
+        const auto pathId = source->id;
+        juce::PopupMenu menu;
+        menu.addSectionHeader("Delete path #" + juce::String(pathId) + " into path #" + juce::String(*destinationId));
+        menu.addItem(1, "Join with a Y junction (both collectors kept)");
+        menu.addItem(2, "Rebuild as one N-into-1 collector");
+        menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&deletePathButton_),
+            [safe = juce::Component::SafePointer<DesignerContent>(this), pathId, destination = *destinationId](int choice) {
+                if (safe == nullptr || choice <= 0) return;
+                safe->removePathInto(pathId, destination,
+                                     choice == 1 ? ExhaustPathJoin::yJunction : ExhaustPathJoin::rebuild);
+            });
+    }
+
+    void removePathInto(std::uint32_t pathId, std::uint32_t destinationId, ExhaustPathJoin join) {
+        auto before = snapshot();
+        const auto result = ExhaustPathTopologyEditor::removePath(working_, pathId, destinationId, join);
         if (!result) {
             setStatus("Deletion rejected: " + utf8(result.error), true);
             return;
         }
+        pushUndo(std::move(before));
         selectEditedPath(result.selectedPathId);
-        setStatus("Path deleted; all its cylinders were merged into the destination.", false);
+        if (!result.note.empty())
+            setStatus("Path deleted. " + utf8(result.note), false);
+        else if (join == ExhaustPathJoin::yJunction)
+            setStatus("Path deleted: both collectors meet in a Y; the pipe after it gave the legs their length.", false);
+        else
+            setStatus("Path deleted: every cylinder has its own primary into one collector.", false);
+    }
+
+    /** The working copy before an edit, for undo. */
+    struct Snapshot {
+        EngineConfig config;
+        int pathIndex {};
+        std::uint32_t componentId {};
+    };
+
+    [[nodiscard]] Snapshot snapshot() const { return { working_, selectedPathIndex_, selectedComponentId_ }; }
+
+    void pushUndo(Snapshot before) {
+        undo_.push_back(std::move(before));
+        if (undo_.size() > maximumUndoSteps) undo_.erase(undo_.begin());
+        redo_.clear();
+        refreshUndoButtons();
+    }
+
+    void rememberForUndo() { pushUndo(snapshot()); }
+
+    void refreshUndoButtons() {
+        undoButton_.setEnabled(!undo_.empty());
+        redoButton_.setEnabled(!redo_.empty());
+    }
+
+    /** The working copy goes back to `from`'s last state; what it was goes on `to`. */
+    void restore(std::vector<Snapshot>& from, std::vector<Snapshot>& to, const juce::String& done) {
+        if (from.empty()) return;
+        to.push_back(snapshot());
+        auto state = std::move(from.back());
+        from.pop_back();
+        working_ = std::move(state.config);
+        selectedPathIndex_ = std::clamp(state.pathIndex, 0, std::max(0, static_cast<int>(working_.exhaustPaths.size()) - 1));
+        selectedComponentId_ = state.componentId;
+        if (selectedComponent() == nullptr) selectFirstComponent();
+        selectedConnectionRow_ = -1;
+        selectedMappingRow_ = -1;
+        rebuildPaths();
+        rebuildAll();
+        refreshUndoButtons();
+        setStatus(done + " (" + juce::String(static_cast<int>(undo_.size())) + " to undo, "
+                      + juce::String(static_cast<int>(redo_.size())) + " to redo).", false);
+    }
+
+    void undo() { restore(undo_, redo_, "Undone"); }
+    void redo() { restore(redo_, undo_, "Redone"); }
+
+    /** Applies `edit` to a copy of the selected path's graph; the working copy
+     *  takes it, as one undo step, only if it returns no error. */
+    template <typename Edit>
+    [[nodiscard]] bool editNetwork(Edit&& edit) {
+        auto* network = selectedNetwork();
+        if (network == nullptr) return false;
+        auto edited = *network;
+        if (const std::string error = edit(edited); !error.empty()) {
+            setStatus(utf8(error), true);
+            return false;
+        }
+        rememberForUndo();
+        *network = std::move(edited);
+        return true;
+    }
+
+    [[nodiscard]] const ExhaustComponentConfig* findComponent(std::uint32_t id) const {
+        const auto* network = selectedNetwork();
+        if (network == nullptr) return nullptr;
+        const auto found = std::find_if(network->components.begin(), network->components.end(),
+            [id](const ExhaustComponentConfig& component) { return component.id == id; });
+        return found != network->components.end() ? &*found : nullptr;
+    }
+
+    void connectComponents(std::uint32_t from, std::uint32_t to) {
+        if (!commitSelectedComponentEdits()) return;
+        if (!editNetwork([from, to](ExhaustNetworkConfig& network) {
+                return ExhaustNetworkEditor::connectComponents(network, from, to);
+            }))
+            return;
+        selectedConnectionRow_ = connectionCount() - 1;
+        setStatus("Connected #" + juce::String(from) + " -> #" + juce::String(to)
+                      + ". Validation will catch cycles and invalid cardinalities.", false);
+        rebuildAll();
+        connectionList_.selectRow(selectedConnectionRow_);
+    }
+
+    /** A cylinder, or a rotor's faces, now feed `to`. */
+    void connectCylinders(const std::vector<std::uint32_t>& cylinders, std::uint32_t to) {
+        if (cylinders.empty() || !commitSelectedComponentEdits()) return;
+        const auto* target = findComponent(to);
+        if (target == nullptr) return;
+        if (cylinders.size() > 1U && target->type != ExhaustComponentType::merge) {
+            setStatus("A rotor's three faces open onto one port: drop the rotor on a collector (its port passage).", true);
+            return;
+        }
+        if (!editNetwork([&cylinders, to](ExhaustNetworkConfig& network) {
+                for (const auto cylinderId : cylinders)
+                    if (auto error = ExhaustNetworkEditor::connectCylinder(network, cylinderId, to); !error.empty())
+                        return error;
+                return std::string {};
+            }))
+            return;
+        selectedMappingRow_ = -1;
+        const auto rotor = rotorOf(cylinders.front());
+        const auto source = rotor >= 0 ? "Rotor " + juce::String(rotor + 1) : cylinderName(cylinders.front());
+        setStatus(source + " now feeds #" + juce::String(to) + ".", false);
+        rebuildAll();
+    }
+
+    void showComponentMenu(std::uint32_t id) {
+        const auto* component = findComponent(id);
+        if (component == nullptr) return;
+        juce::PopupMenu replace;
+        for (int type = static_cast<int>(ExhaustComponentType::pipe);
+             type <= static_cast<int>(ExhaustComponentType::crossover); ++type)
+            replace.addItem(type + 1, componentTypeName(static_cast<ExhaustComponentType>(type)),
+                            type != static_cast<int>(component->type));
+        juce::PopupMenu menu;
+        menu.addSectionHeader("#" + juce::String(id) + "  " + componentTypeName(component->type));
+        menu.addSubMenu("Replace with", replace);
+        menu.addItem(100, "Delete");
+        menu.showMenuAsync(menuAtMouse(), [safe = juce::Component::SafePointer<DesignerContent>(this), id](int choice) {
+            if (safe != nullptr) safe->componentMenuChosen(id, choice);
+        });
+    }
+
+    void componentMenuChosen(std::uint32_t id, int choice) {
+        if (choice == 100) {
+            if (trySelectComponent(id)) deleteComponent();
+            return;
+        }
+        if (choice < 1 || choice > static_cast<int>(ExhaustComponentType::crossover) + 1) return;
+        if (!commitSelectedComponentEdits()) return;
+        const auto type = static_cast<ExhaustComponentType>(choice - 1);
+        if (!editNetwork([id, type](ExhaustNetworkConfig& network) {
+                return ExhaustNetworkEditor::replaceComponent(network, id, type);
+            }))
+            return;
+        selectedComponentId_ = id;
+        setStatus("#" + juce::String(id) + " is now a " + juce::String(componentTypeName(type)).toLowerCase()
+                      + ": its connections, bore and length were kept.", false);
+        rebuildAll();
+    }
+
+    void showSourceMenu(const std::vector<std::uint32_t>& cylinders) {
+        if (cylinders.empty()) return;
+        juce::PopupMenu menu;
+        const auto rotor = rotorOf(cylinders.front());
+        menu.addSectionHeader(rotor >= 0 ? "Rotor " + juce::String(rotor + 1) : cylinderName(cylinders.front()));
+        menu.addItem(1, "Disconnect");
+        menu.showMenuAsync(menuAtMouse(),
+            [safe = juce::Component::SafePointer<DesignerContent>(this), cylinders](int choice) {
+                if (safe == nullptr || choice != 1) return;
+                if (!safe->commitSelectedComponentEdits()) return;
+                if (!safe->editNetwork([&cylinders](ExhaustNetworkConfig& network) {
+                        for (const auto cylinderId : cylinders) ExhaustNetworkEditor::disconnectCylinder(network, cylinderId);
+                        return std::string {};
+                    }))
+                    return;
+                safe->selectedMappingRow_ = -1;
+                safe->setStatus("Disconnected: drag the cylinder onto a part, or pick it in From.", false);
+                safe->rebuildAll();
+            });
     }
 
     void rebuildComponentSelectors() {
         const auto preserveFrom = selectedId(fromSelector_);
+        const auto preserveFromCylinder = selectedFromCylinder();
         const auto preserveTo = selectedId(toSelector_);
         const auto preserveMapping = selectedId(mappingComponentSelector_);
         for (auto* selector : std::array<juce::ComboBox*, 3> {
@@ -1042,9 +1321,33 @@ private:
             toSelector_.addItem(label, itemId);
             mappingComponentSelector_.addItem(label, itemId);
         }
+        // A cylinder can feed any part: it is a source like a component
+        // (owner report 2026-11-11), listed after them so a component's
+        // index is still its row.
+        if (const auto* path = selectedPath(); path != nullptr && !path->cylinderIds.empty()) {
+            fromSelector_.addSectionHeading("Cylinders");
+            for (std::size_t index = 0; index < path->cylinderIds.size(); ++index)
+                fromSelector_.addItem(cylinderName(path->cylinderIds[index]), cylinderItemBase + static_cast<int>(index));
+            if (preserveFromCylinder) {
+                const auto found = std::find(path->cylinderIds.begin(), path->cylinderIds.end(), *preserveFromCylinder);
+                if (found != path->cylinderIds.end())
+                    fromSelector_.setSelectedId(
+                        cylinderItemBase + static_cast<int>(std::distance(path->cylinderIds.begin(), found)),
+                        juce::dontSendNotification);
+            }
+        }
         restoreId(fromSelector_, preserveFrom);
         restoreId(toSelector_, preserveTo);
         restoreId(mappingComponentSelector_, preserveMapping);
+    }
+
+    /** The cylinder picked in From, if a cylinder is. */
+    [[nodiscard]] std::optional<std::uint32_t> selectedFromCylinder() const {
+        const auto* path = selectedPath();
+        const auto itemId = fromSelector_.getSelectedId();
+        if (path == nullptr || itemId < cylinderItemBase) return std::nullopt;
+        const auto index = static_cast<std::size_t>(itemId - cylinderItemBase);
+        return index < path->cylinderIds.size() ? std::optional(path->cylinderIds[index]) : std::nullopt;
     }
 
     void rebuildCylinderSelector() {
@@ -1233,26 +1536,36 @@ private:
         }
         componentTypeSelector_.setSelectedItemIndex(static_cast<int>(component->type),
                                                      juce::dontSendNotification);
-        std::array<double, 11> values {
-            component->lengthMm, component->diameterMm, component->outletDiameterMm,
-            component->volumeLitres,
-            component->restriction, component->resonanceHz, component->acousticGain,
-            component->dischargeCoefficient,
-            component->packingFlowResistivityPaSPerM2,
-            component->packingThicknessMm,
-            component->perforatedOpenAreaRatio
-        };
-        if (component->type == ExhaustComponentType::crossover)
-            values[5] = component->crossoverCoupling;
-        if (component->type == ExhaustComponentType::catalyst) {
-            values[8] = component->catalystCellDensityCpsi;
-            values[9] = component->catalystOpenAreaRatio;
-            values[10] = component->catalystSubstrateVolumetricHeatCapacityJPerM3K;
-        }
+        const auto values = shownValues(*component);
         propertyEditors_[0].setText(juce::String(component->id), false);
         for (std::size_t index = 0; index < values.size(); ++index)
-            propertyEditors_[index + 1].setText(juce::String(values[index], index == 0 ? 1 : 3), false);
+            propertyEditors_[index + 1].setText(shownText(index, values[index]), false);
         updatePackingEditorAvailability(false);
+    }
+
+    /** What the property fields 1..11 show of a component. */
+    [[nodiscard]] static std::array<double, 11> shownValues(const ExhaustComponentConfig& component) {
+        std::array<double, 11> values {
+            component.lengthMm, component.diameterMm, component.outletDiameterMm,
+            component.volumeLitres,
+            component.restriction, component.resonanceHz, component.acousticGain,
+            component.dischargeCoefficient,
+            component.packingFlowResistivityPaSPerM2,
+            component.packingThicknessMm,
+            component.perforatedOpenAreaRatio
+        };
+        if (component.type == ExhaustComponentType::crossover)
+            values[5] = component.crossoverCoupling;
+        if (component.type == ExhaustComponentType::catalyst) {
+            values[8] = component.catalystCellDensityCpsi;
+            values[9] = component.catalystOpenAreaRatio;
+            values[10] = component.catalystSubstrateVolumetricHeatCapacityJPerM3K;
+        }
+        return values;
+    }
+
+    [[nodiscard]] static juce::String shownText(std::size_t index, double value) {
+        return juce::String(value, index == 0 ? 1 : 3);
     }
 
     void layoutPropertyColumn(juce::Rectangle<int> bounds,
@@ -1334,6 +1647,7 @@ private:
             setStatus("Cannot generate a network: this path has no cylinder.", true);
             return;
         }
+        rememberForUndo();
         path->network = makeEditableExhaustNetwork(*path);
         selectedComponentId_ = path->network->components.front().id;
         selectedConnectionRow_ = -1;
@@ -1342,26 +1656,10 @@ private:
         rebuildAll();
     }
 
-    [[nodiscard]] std::uint32_t nextComponentId() const {
-        const auto* network = selectedNetwork();
-        if (network == nullptr || network->components.empty()) return 1;
-        std::unordered_set<std::uint32_t> used;
-        used.reserve(network->components.size());
-        for (const auto& component : network->components) used.insert(component.id);
-        for (std::uint64_t candidate = 1;
-             candidate <= std::numeric_limits<std::uint32_t>::max(); ++candidate) {
-            if (!used.contains(static_cast<std::uint32_t>(candidate)))
-                return static_cast<std::uint32_t>(candidate);
-        }
-        return 0;
-    }
-
     void addComponent() {
         auto* path = selectedPath();
         if (path == nullptr) return;
-        if (!path->network) path->network.emplace();
-        auto& network = *path->network;
-        if (network.components.size() >= maximumComponents) {
+        if (path->network && path->network->components.size() >= maximumComponents) {
             setStatus("Limit reached: 256 components per path.", true);
             return;
         }
@@ -1370,13 +1668,16 @@ private:
             setStatus("Select a component type.", true);
             return;
         }
-        const auto id = nextComponentId();
+        const auto id = path->network ? ExhaustNetworkEditor::nextComponentId(*path->network) : 1U;
         if (id == 0) {
             setStatus("No component identifier available.", true);
             return;
         }
+        rememberForUndo();
+        if (!path->network) path->network.emplace();
+        auto& network = *path->network;
         const auto type = static_cast<ExhaustComponentType>(typeIndex);
-        network.components.push_back(defaultComponent(type, id));
+        network.components.push_back(ExhaustNetworkEditor::defaultComponent(type, id));
         selectedComponentId_ = id;
         setStatus(type == ExhaustComponentType::resonator
                 ? "Resonator added: one inlet and no outlet make a closed branch; adding an outlet makes it inline."
@@ -1388,8 +1689,9 @@ private:
 
     void deleteComponent() {
         auto* network = selectedNetwork();
-        if (network == nullptr || selectedComponentId_ == 0) return;
+        if (network == nullptr || selectedComponent() == nullptr) return;
         const auto id = selectedComponentId_;
+        rememberForUndo();
         std::erase_if(network->components, [id](const auto& component) { return component.id == id; });
         std::erase_if(network->connections, [id](const auto& connection) {
             return connection.fromComponentId == id || connection.toComponentId == id;
@@ -1420,9 +1722,17 @@ private:
             setStatus("This identifier is already used in the path.", true);
             return;
         }
+        const auto current = shownValues(*component);
         std::array<double, 11> values {};
         for (std::size_t index = 0; index < values.size(); ++index) {
-            if (!parseFinite(propertyEditors_[index + 1].getText(), values[index])) {
+            // A field left as shown keeps its exact value: the display rounds
+            // it (763.27 mm read back as 763.3 on every selection change).
+            const auto text = propertyEditors_[index + 1].getText();
+            if (text == shownText(index, current[index])) {
+                values[index] = current[index];
+                continue;
+            }
+            if (!parseFinite(text, values[index])) {
                 setStatus("Every property must be a finite number.", true);
                 return;
             }
@@ -1494,6 +1804,9 @@ private:
             }
         }
 
+        // Committed on every selection change: only a real edit is an undo step.
+        auto before = snapshot();
+        const auto previous = *component;
         const auto oldId = component->id;
         const auto oldType = component->type;
         component->id = newId;
@@ -1538,80 +1851,23 @@ private:
                 if (connection.fromComponentId == newId) connection.fromPort = port(connection.fromPort, nextOutputPort);
             }
         }
+        const auto edited = !sameEditedFields(previous, *component);
         selectedComponentId_ = newId;
-        setStatus("Component updated in the working copy.", false);
+        if (edited) pushUndo(std::move(before));
+        setStatus(edited ? "Component updated in the working copy." : "Component unchanged.", false);
         rebuildAll();
     }
 
     void addConnection() {
-        auto* network = selectedNetwork();
         const auto from = selectedId(fromSelector_);
+        const auto cylinder = selectedFromCylinder();
         const auto to = selectedId(toSelector_);
-        if (network == nullptr || !from || !to) {
-            setStatus("Select a source component and a destination component.", true);
+        if (selectedNetwork() == nullptr || (!from && !cylinder) || !to) {
+            setStatus("Select a source (a component or a cylinder) and a destination component.", true);
             return;
         }
-        if (*from == *to) {
-            setStatus("A component cannot be connected to itself.", true);
-            return;
-        }
-        if (network->connections.size() >= maximumConnections) {
-            setStatus("Limit reached: 1024 connections per path.", true);
-            return;
-        }
-        if (std::any_of(network->connections.begin(), network->connections.end(),
-                [from, to](const auto& connection) {
-                    return connection.fromComponentId == *from && connection.toComponentId == *to;
-                })) {
-            setStatus("This connection already exists.", true);
-            return;
-        }
-        const auto componentType = [network](std::uint32_t id) {
-            const auto found = std::find_if(network->components.begin(),
-                network->components.end(), [id](const auto& component) {
-                    return component.id == id;
-                });
-            return found != network->components.end()
-                ? found->type : ExhaustComponentType::pipe;
-        };
-        const auto nextPort = [network](std::uint32_t id, bool output)
-            -> std::optional<std::uint8_t> {
-            std::array<bool, 2> used {};
-            for (const auto& connection : network->connections) {
-                if (output && connection.fromComponentId == id
-                    && connection.fromPort <= 1U)
-                    used[connection.fromPort] = true;
-                if (!output && connection.toComponentId == id
-                    && connection.toPort <= 1U)
-                    used[connection.toPort] = true;
-            }
-            for (std::uint8_t port = 0; port <= 1U; ++port)
-                if (!used[port]) return port;
-            return std::nullopt;
-        };
-        auto fromPort = unspecifiedExhaustComponentPort;
-        auto toPort = unspecifiedExhaustComponentPort;
-        if (componentType(*from) == ExhaustComponentType::crossover) {
-            const auto port = nextPort(*from, true);
-            if (!port) {
-                setStatus("Both outlet ports of the X-pipe are already in use.", true);
-                return;
-            }
-            fromPort = *port;
-        }
-        if (componentType(*to) == ExhaustComponentType::crossover) {
-            const auto port = nextPort(*to, false);
-            if (!port) {
-                setStatus("Both inlet ports of the X-pipe are already in use.", true);
-                return;
-            }
-            toPort = *port;
-        }
-        network->connections.push_back({ *from, *to, fromPort, toPort });
-        selectedConnectionRow_ = static_cast<int>(network->connections.size()) - 1;
-        setStatus("Connection added. Validation will catch cycles and invalid cardinalities.", false);
-        rebuildAll();
-        connectionList_.selectRow(selectedConnectionRow_);
+        if (cylinder) connectCylinders({ *cylinder }, *to);
+        else connectComponents(*from, *to);
     }
 
     void deleteConnection() {
@@ -1621,6 +1877,7 @@ private:
             setStatus("Select a connection to delete.", true);
             return;
         }
+        rememberForUndo();
         network->connections.erase(network->connections.begin() + selectedConnectionRow_);
         selectedConnectionRow_ = -1;
         setStatus("Connection deleted.", false);
@@ -1638,17 +1895,15 @@ private:
             return;
         }
         const auto cylinderId = path->cylinderIds[static_cast<std::size_t>(cylinderIndex)];
-        const auto existing = std::find_if(network->cylinderConnections.begin(),
+        if (!editNetwork([cylinderId, componentId](ExhaustNetworkConfig& edited) {
+                return ExhaustNetworkEditor::connectCylinder(edited, cylinderId, *componentId);
+            }))
+            return;
+        const auto mapped = std::find_if(network->cylinderConnections.begin(),
             network->cylinderConnections.end(), [cylinderId](const auto& mapping) {
                 return mapping.cylinderId == cylinderId;
             });
-        if (existing != network->cylinderConnections.end()) {
-            existing->componentId = *componentId;
-            selectedMappingRow_ = static_cast<int>(std::distance(network->cylinderConnections.begin(), existing));
-        } else {
-            network->cylinderConnections.push_back({ cylinderId, *componentId });
-            selectedMappingRow_ = static_cast<int>(network->cylinderConnections.size()) - 1;
-        }
+        selectedMappingRow_ = static_cast<int>(std::distance(network->cylinderConnections.begin(), mapped));
         setStatus("Cylinder assignment updated.", false);
         rebuildAll();
         mappingList_.selectRow(selectedMappingRow_);
@@ -1661,6 +1916,7 @@ private:
             setStatus("Select an assignment to delete.", true);
             return;
         }
+        rememberForUndo();
         network->cylinderConnections.erase(network->cylinderConnections.begin() + selectedMappingRow_);
         selectedMappingRow_ = -1;
         setStatus("Assignment deleted; the cylinder must be reassigned before validation.", false);
@@ -1719,6 +1975,8 @@ private:
             setStatus("Configuration valid, but no apply callback is installed.", true);
             return;
         }
+        // The engine applied comes back through setConfig: keep the history.
+        const juce::ScopedValueSetter<bool> applying(applying_, true);
         try {
             if (!applyCallback_(working_)) {
                 setStatus("The valid configuration was rejected by the running engine.", true);
@@ -1750,6 +2008,9 @@ private:
     int selectedMappingRow_ { -1 };
     bool statusIsError_ { false };
     bool suppressComponentSelection_ { false };
+    bool applying_ { false };
+    std::vector<Snapshot> undo_;
+    std::vector<Snapshot> redo_;
 
     CallbackListModel componentModel_;
     CallbackListModel connectionModel_;
@@ -1768,6 +2029,8 @@ private:
     juce::ComboBox pathCylinderSelector_;
     juce::ComboBox destinationPathSelector_;
     juce::TextButton moveCylinderButton_;
+    juce::TextButton undoButton_;
+    juce::TextButton redoButton_;
     juce::Label statusLabel_;
 
     juce::ListBox componentList_;
@@ -1815,6 +2078,11 @@ ExhaustDesignerWindow::ExhaustDesignerWindow(const EngineConfig& config,
 ExhaustDesignerWindow::~ExhaustDesignerWindow() = default;
 
 void ExhaustDesignerWindow::closeButtonPressed() { setVisible(false); }
+
+bool ExhaustDesignerWindow::keyPressed(const juce::KeyPress& key) {
+    // With nothing focused the window gets the keys: undo and redo still work.
+    return content_ != nullptr && content_->keyPressed(key);
+}
 
 void ExhaustDesignerWindow::setConfig(const EngineConfig& config) {
     if (content_ != nullptr) content_->setConfig(config);

@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-11 — the exhaust designer's path removal and cylinder sources
+
+- Owner report: removing one path of a V8's dual 4-into-1 "wired the cylinders anyhow, with useless collectors"; with a cylinder's default pipe deleted nothing could take its place. Cause of the first: `removePath` called the per-cylinder move, which gave each cylinder a default primary and spliced a new zero-length merge after the destination's FIRST primary: five merges in a chain on one pipe, the removed collector and its pipes dropped.
+- `EngineLab.ExhaustPathTopologyEditor`, designer-like V8 dual (4 x 760 x 38 mm into a collector, mid 1,500 mm, silencer, tail per bank), run on the old code: rebuild "left 5 merges, not one 8-into-1"; a moved cylinder "did not make the 4-into-1 a 5-into-1". Both pass now.
+- Y mode: both collectors, legs of clamp(0.2 x pipe on, 150, 400) = 300 mm into a Y, the mid pipe 1,500 -> 1,200 mm; every cylinder's route length to the silencer unchanged to 1e-9 mm (`ExhaustGraph::acousticsForCylinder`). Two scalar paths: Y gives a graph with 3 merges, rebuild stays scalar 8-into-1. No common junction (four separate tails): the nearest-neighbour fallback, said in the status line.
+- `EngineLab.AudioWorkshop`: delete cylinder 1's pipe, add a resonator, connect it to the collector and from the cylinder (From's cylinder entry): applies valid; undo to the start gives the original back, redo the edit. A 763.27 mm tail selected then left keeps its length (the old re-read of the shown 763.3 fails the test).
+- Not measured: the sound or torque of a Y against an 8-into-1 (the join only builds the geometry); the canvas drag itself (mouse) is not exercised by a test.
+
 ## 2026-11-11 — the boost that ran away on a lowered stoichiometric ratio
 
 - Owner report: lowering the stoichiometric AFR in Fuel on a turbo engine sometimes ran the boost to 8-12 bar. Owner's 2JZ file (fuel AFR 8.0, heating value 60 MJ/kg: 32 MJ per kg of oxygen, real fuels ~13 by Thornton's rule), `DynoSweepHarness --saved-engine`: MAP 553/957/1,018 kPa at 4,000/5,000/6,000 rpm, 2,390 N.m. Two causes: the Fuel edit scaled the oxygen and the injectors with the ratio but kept the heating value; nothing bounds a turbo's shaft speed (the map's head grows as N^2).

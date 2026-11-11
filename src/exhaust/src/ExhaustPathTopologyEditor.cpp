@@ -1,6 +1,9 @@
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
+#include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -212,6 +215,98 @@ void repairAfterCylinderRemoval(ExhaustNetworkConfig& network) {
     return std::nullopt;
 }
 
+[[nodiscard]] ExhaustComponentConfig* findComponent(ExhaustNetworkConfig& network, std::uint32_t id) {
+    const auto found = std::find_if(network.components.begin(), network.components.end(),
+        [id](const ExhaustComponentConfig& component) { return component.id == id; });
+    return found != network.components.end() ? &*found : nullptr;
+}
+
+[[nodiscard]] const ExhaustComponentConfig* findComponent(const ExhaustNetworkConfig& network, std::uint32_t id) {
+    const auto found = std::find_if(network.components.begin(), network.components.end(),
+        [id](const ExhaustComponentConfig& component) { return component.id == id; });
+    return found != network.components.end() ? &*found : nullptr;
+}
+
+/** A resonator with no outlet: a closed acoustic branch, not a flow route. */
+[[nodiscard]] bool isTerminalBranch(const ExhaustNetworkConfig& network, std::uint32_t id) {
+    const auto* component = findComponent(network, id);
+    return component != nullptr && component->type == ExhaustComponentType::resonator
+        && std::none_of(network.connections.begin(), network.connections.end(),
+               [id](const ExhaustComponentConnectionConfig& edge) { return edge.fromComponentId == id; });
+}
+
+[[nodiscard]] bool isSideBranch(const ExhaustComponentConnectionConfig& edge) noexcept {
+    return edge.fromPort == exhaustSideBranchPort || edge.toPort == exhaustSideBranchPort;
+}
+
+/** The indices of the edges the flow leaves `id` by (no closed branch, no
+ *  balance pipe). */
+[[nodiscard]] std::vector<std::size_t> flowOutputs(const ExhaustNetworkConfig& network, std::uint32_t id) {
+    std::vector<std::size_t> result;
+    for (std::size_t index = 0; index < network.connections.size(); ++index) {
+        const auto& edge = network.connections[index];
+        if (edge.fromComponentId == id && !isSideBranch(edge) && !isTerminalBranch(network, edge.toComponentId))
+            result.push_back(index);
+    }
+    return result;
+}
+
+/** Every component `id` is reached from, `id` excluded. */
+[[nodiscard]] std::unordered_set<std::uint32_t> ancestorsOf(const ExhaustNetworkConfig& network, std::uint32_t id) {
+    std::unordered_set<std::uint32_t> result;
+    std::vector<std::uint32_t> pending { id };
+    while (!pending.empty()) {
+        const auto current = pending.back();
+        pending.pop_back();
+        for (const auto& edge : network.connections)
+            if (edge.toComponentId == current && result.insert(edge.fromComponentId).second)
+                pending.push_back(edge.fromComponentId);
+    }
+    result.erase(id);
+    return result;
+}
+
+/** Drops what nothing feeds (no cylinder, no component), repeatedly. */
+void pruneOrphans(ExhaustNetworkConfig& network) {
+    for (auto changed = true; changed;) {
+        changed = false;
+        for (const auto& component : network.components) {
+            const auto id = component.id;
+            const auto fed = std::any_of(network.connections.begin(), network.connections.end(),
+                                 [id](const auto& edge) { return edge.toComponentId == id; })
+                || std::any_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+                       [id](const auto& mapping) { return mapping.componentId == id; });
+            if (fed) continue;
+            eraseComponent(network, id);
+            changed = true;
+            break;
+        }
+    }
+}
+
+/** A neighbour's primary pipe and the collector it feeds, for `cylinderId`
+ *  to copy: the mapped cylinder nearest by id whose first component is a
+ *  pipe flowing straight into a merge. */
+[[nodiscard]] std::optional<std::pair<ExhaustComponentConfig, std::uint32_t>> neighbourPrimary(
+    const ExhaustNetworkConfig& network, std::uint32_t cylinderId) {
+    std::optional<std::pair<ExhaustComponentConfig, std::uint32_t>> best;
+    auto bestDistance = std::numeric_limits<long long>::max();
+    for (const auto& mapping : network.cylinderConnections) {
+        const auto* root = findComponent(network, mapping.componentId);
+        if (root == nullptr || root->type != ExhaustComponentType::pipe) continue;
+        const auto outputs = flowOutputs(network, root->id);
+        if (outputs.size() != 1U) continue;
+        const auto* collector = findComponent(network, network.connections[outputs.front()].toComponentId);
+        if (collector == nullptr || collector->type != ExhaustComponentType::merge) continue;
+        const auto distance = std::llabs(static_cast<long long>(mapping.cylinderId) - static_cast<long long>(cylinderId));
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = std::pair { *root, collector->id };
+        }
+    }
+    return best;
+}
+
 [[nodiscard]] std::optional<std::string> addCylinderToPath(
     ExhaustPathConfig& path, std::uint32_t cylinderId) {
     if (containsCylinder(path, cylinderId))
@@ -226,6 +321,20 @@ void repairAfterCylinderRemoval(ExhaustNetworkConfig& network) {
         return "Destination custom graph has no component capacity for another cylinder";
     if (network.connections.size() + 2U > maximumConnections)
         return "Destination custom graph has no connection capacity for another cylinder";
+
+    // Where the neighbours' primaries meet in a collector, the cylinder joins
+    // them there with a primary like theirs: moving one cylinder of a V8's
+    // bank into the other's 4-into-1 makes a 5-into-1, not a chain of merges
+    // on one pipe (owner report 2026-11-11).
+    if (const auto neighbour = neighbourPrimary(network, cylinderId)) {
+        auto primary = neighbour->first;
+        primary.id = nextComponentId(network);
+        if (primary.id == 0) return "No component ID is available in the destination path";
+        network.components.push_back(primary);
+        network.cylinderConnections.push_back({ cylinderId, primary.id });
+        network.connections.push_back({ primary.id, neighbour->second });
+        return std::nullopt;
+    }
 
     // Extend one explicit cylinder branch instead of attaching to an arbitrary
     // merge in a potentially multi-collector DAG. This preserves every existing
@@ -303,7 +412,159 @@ void refreshBankPathHints(EngineConfig& config) {
     if (const auto error = validateEngineConfig(candidate))
         return reject("Path edit would make the engine invalid: " + *error);
     destination = std::move(candidate);
-    return { selectedPathId, {} };
+    return { selectedPathId, {}, {} };
+}
+
+/** `component` added under a fresh id of `network`; that id (0 if none). */
+[[nodiscard]] std::uint32_t addCopy(ExhaustNetworkConfig& network, ExhaustComponentConfig component) {
+    component.id = nextComponentId(network);
+    if (component.id != 0) network.components.push_back(component);
+    return component.id;
+}
+
+[[nodiscard]] ExhaustComponentConfig pipeOf(std::uint32_t id, double lengthMm, double diameterMm) {
+    ExhaustComponentConfig pipe;
+    pipe.id = id;
+    pipe.type = ExhaustComponentType::pipe;
+    pipe.lengthMm = lengthMm;
+    pipe.diameterMm = diameterMm;
+    return pipe;
+}
+
+/** The removed path's cylinders, up to and with its collector, grafted into
+ *  the destination; a leg from each collector into a new Y, which takes the
+ *  destination collector's way on. Empty, or why it cannot. */
+[[nodiscard]] std::optional<std::string> joinWithY(ExhaustPathConfig& destination, const ExhaustPathConfig& source) {
+    auto& network = *destination.network;
+    const auto& removed = *source.network;
+    const auto ownJunction = ExhaustNetworkEditor::firstCommonJunction(network);
+    const auto removedJunction = ExhaustNetworkEditor::firstCommonJunction(removed);
+    if (!ownJunction || !removedJunction) return "a path's cylinders never meet in one collector";
+    const auto outputs = flowOutputs(network, *ownJunction);
+    if (outputs.size() != 1U) return "the destination's collector has no single way on";
+
+    // What is kept of the removed path: its cylinders' pipes up to and with
+    // the collector, and the closed branches hanging off them.
+    auto kept = ancestorsOf(removed, *removedJunction);
+    kept.insert(*removedJunction);
+    for (const auto& edge : removed.connections)
+        if (kept.contains(edge.fromComponentId) && isTerminalBranch(removed, edge.toComponentId))
+            kept.insert(edge.toComponentId);
+    if (network.components.size() + kept.size() + 3U > maximumComponents)
+        return "the joined graph would pass 256 components";
+    std::unordered_map<std::uint32_t, std::uint32_t> renamed;
+    for (const auto& component : removed.components) {
+        if (!kept.contains(component.id)) continue;
+        const auto id = addCopy(network, component);
+        if (id == 0) return "no component id is left";
+        renamed[component.id] = id;
+    }
+    for (const auto& edge : removed.connections)
+        if (renamed.contains(edge.fromComponentId) && renamed.contains(edge.toComponentId))
+            network.connections.push_back({ renamed[edge.fromComponentId], renamed[edge.toComponentId],
+                                            edge.fromPort, edge.toPort });
+    for (const auto& mapping : removed.cylinderConnections) {
+        const auto root = renamed.find(mapping.componentId);
+        if (root == renamed.end()) return "a removed cylinder does not reach its collector";
+        network.cylinderConnections.push_back({ mapping.cylinderId, root->second });
+    }
+
+    // The Y: as the designer's (its legs a fifth of the pipe on, 150 to
+    // 400 mm), the pipe on giving up the legs' length when it has it.
+    const auto edge = network.connections[outputs.front()];
+    auto* onward = findComponent(network, edge.toComponentId);
+    const auto* own = findComponent(network, *ownJunction);
+    const auto* theirs = findComponent(network, renamed[*removedJunction]);
+    if (onward == nullptr || own == nullptr || theirs == nullptr) return "the collectors were not found";
+    const auto onwardIsPipe = onward->type == ExhaustComponentType::pipe;
+    const auto legMm = onwardIsPipe ? std::clamp(0.2 * onward->lengthMm, 150.0, 400.0) : 250.0;
+    if (onwardIsPipe && onward->lengthMm - legMm >= 100.0) onward->lengthMm -= legMm;
+    const auto yDiameter = onwardIsPipe ? onward->diameterMm : own->diameterMm;
+    // Read before the legs are added: adding moves the components.
+    const auto ownDiameter = own->diameterMm;
+    const auto theirDiameter = theirs->diameterMm;
+    const auto ownLeg = addCopy(network, pipeOf(0, legMm, ownDiameter));
+    const auto theirLeg = addCopy(network, pipeOf(0, legMm, theirDiameter));
+    auto y = pipeOf(0, 0.0, yDiameter);
+    y.type = ExhaustComponentType::merge;
+    const auto yId = addCopy(network, y);
+    if (ownLeg == 0 || theirLeg == 0 || yId == 0) return "no component id is left";
+    network.connections[outputs.front()] = { *ownJunction, ownLeg, edge.fromPort, unspecifiedExhaustComponentPort };
+    network.connections.push_back({ ownLeg, yId });
+    network.connections.push_back({ renamed[*removedJunction], theirLeg });
+    network.connections.push_back({ theirLeg, yId });
+    network.connections.push_back({ yId, edge.toComponentId, unspecifiedExhaustComponentPort, edge.toPort });
+    for (const auto cylinderId : source.cylinderIds) destination.cylinderIds.push_back(cylinderId);
+    return std::nullopt;
+}
+
+/** Every cylinder of the destination and of `added`, each with a primary
+ *  like the destination's first, all into its collector (or, for a lone
+ *  cylinder's pipe, a new collector where that pipe was). Empty, or why it
+ *  cannot. */
+[[nodiscard]] std::optional<std::string> rebuildInto(ExhaustPathConfig& destination,
+                                                     const std::vector<std::uint32_t>& added) {
+    auto cylinders = destination.cylinderIds;
+    cylinders.insert(cylinders.end(), added.begin(), added.end());
+    if (!destination.network) {
+        // The engine builds a scalar path's N-into-1 itself.
+        destination.cylinderIds = std::move(cylinders);
+        return std::nullopt;
+    }
+    auto& network = *destination.network;
+    const auto junction = ExhaustNetworkEditor::firstCommonJunction(network);
+    if (!junction) return "the destination's cylinders never meet in one collector";
+    if (network.components.size() + cylinders.size() + 1U > maximumComponents)
+        return "the rebuilt graph would pass 256 components";
+    auto primary = primaryFor(destination, 0);
+    for (const auto& mapping : network.cylinderConnections)
+        if (const auto* root = findComponent(network, mapping.componentId);
+                root != nullptr && root->type == ExhaustComponentType::pipe) {
+            primary = *root;
+            break;
+        }
+
+    auto collector = *junction;
+    const auto* found = findComponent(network, collector);
+    if (found == nullptr) return "the collector was not found";
+    if (found->type != ExhaustComponentType::merge) {
+        // A lone cylinder: its pipe makes way for a collector, which takes
+        // its way on; anything else first in line stays, after the collector.
+        auto merge = mergeFor(destination, 0);
+        if (found->type == ExhaustComponentType::pipe) {
+            const auto outputs = flowOutputs(network, collector);
+            if (outputs.size() != 1U) return "the lone pipe has no single way on";
+            const auto edge = network.connections[outputs.front()];
+            merge.diameterMm = std::max(merge.diameterMm, found->diameterMm);
+            const auto mergeId = addCopy(network, merge);
+            if (mergeId == 0) return "no component id is left";
+            for (const auto ancestor : ancestorsOf(network, collector)) eraseComponent(network, ancestor);
+            eraseComponent(network, collector);
+            network.connections.push_back({ mergeId, edge.toComponentId, unspecifiedExhaustComponentPort, edge.toPort });
+            collector = mergeId;
+        } else {
+            merge.diameterMm = std::max(merge.diameterMm, found->diameterMm);
+            const auto mergeId = addCopy(network, merge);
+            if (mergeId == 0) return "no component id is left";
+            for (const auto ancestor : ancestorsOf(network, collector)) eraseComponent(network, ancestor);
+            network.cylinderConnections.clear();
+            network.connections.push_back({ mergeId, collector });
+            collector = mergeId;
+        }
+    } else {
+        for (const auto ancestor : ancestorsOf(network, collector)) eraseComponent(network, ancestor);
+    }
+    network.cylinderConnections.clear();
+    for (const auto cylinderId : cylinders) {
+        const auto id = addCopy(network, primary);
+        if (id == 0) return "no component id is left";
+        network.cylinderConnections.push_back({ cylinderId, id });
+        network.connections.push_back({ id, collector });
+    }
+    // Closed branches that hung off the old primaries.
+    pruneOrphans(network);
+    destination.cylinderIds = std::move(cylinders);
+    return std::nullopt;
 }
 } // namespace
 
@@ -350,7 +611,7 @@ ExhaustPathEditResult ExhaustPathTopologyEditor::moveCylinder(
 }
 
 ExhaustPathEditResult ExhaustPathTopologyEditor::removePath(
-    EngineConfig& config, std::uint32_t pathId, std::uint32_t destinationPathId) {
+    EngineConfig& config, std::uint32_t pathId, std::uint32_t destinationPathId, ExhaustPathJoin join) {
     if (pathId == destinationPathId) return reject("A path cannot be removed into itself");
     if (const auto error = validateStartingPoint(config)) return reject(*error);
     if (config.exhaustPaths.size() <= 1U) return reject("The engine must retain at least one exhaust path");
@@ -361,11 +622,238 @@ ExhaustPathEditResult ExhaustPathTopologyEditor::removePath(
     if (source == candidate.exhaustPaths.end() || destination == candidate.exhaustPaths.end())
         return reject("Path to remove or destination path does not exist");
     const auto cylinders = source->cylinderIds;
-    for (const auto cylinderId : cylinders) {
-        if (const auto error = addCylinderToPath(*destination, cylinderId)) return reject(*error);
+    std::optional<std::string> why;
+    if (join == ExhaustPathJoin::yJunction) {
+        auto removed = *source;
+        if (!removed.network) removed.network = makeEditableExhaustNetwork(removed);
+        if (!destination->network) destination->network = makeEditableExhaustNetwork(*destination);
+        why = joinWithY(*destination, removed);
+    } else {
+        why = rebuildInto(*destination, cylinders);
     }
-    candidate.exhaustPaths.erase(findPath(candidate, pathId));
-    return commitIfValid(config, std::move(candidate), destinationPathId);
+    if (!why) {
+        candidate.exhaustPaths.erase(findPath(candidate, pathId));
+        refreshBankPathHints(candidate);
+        const auto error = validateEngineConfig(candidate);
+        if (!error) {
+            config = std::move(candidate);
+            return { destinationPathId, {}, {} };
+        }
+        why = "the joined graph is not valid: " + *error;
+    }
+
+    // What is left when the cylinders do not meet in one junction: one at a
+    // time, each onto the collector its nearest neighbour feeds.
+    auto fallback = config;
+    const auto target = findPath(fallback, destinationPathId);
+    for (const auto cylinderId : cylinders)
+        if (const auto error = addCylinderToPath(*target, cylinderId)) return reject(*error);
+    fallback.exhaustPaths.erase(findPath(fallback, pathId));
+    auto result = commitIfValid(config, std::move(fallback), destinationPathId);
+    if (result) result.note = "Each cylinder joined the collector its nearest neighbour feeds (" + *why + ").";
+    return result;
+}
+
+ExhaustComponentConfig ExhaustNetworkEditor::defaultComponent(ExhaustComponentType type,
+                                                              std::uint32_t id) noexcept {
+    ExhaustComponentConfig result;
+    result.id = id;
+    result.type = type;
+    switch (type) {
+    case ExhaustComponentType::pipe:
+        result.lengthMm = 450.0;
+        result.diameterMm = 42.0;
+        break;
+    case ExhaustComponentType::merge:
+        result.lengthMm = 0.0;
+        result.diameterMm = 58.0;
+        result.volumeLitres = 1.5;
+        break;
+    case ExhaustComponentType::splitter:
+        result.lengthMm = 0.0;
+        result.diameterMm = 58.0;
+        break;
+    case ExhaustComponentType::resonator:
+        // The most useful neutral starting point is a closed quarter-wave
+        // branch. One incoming connection and no output gives it that meaning;
+        // adding an output keeps the historical inline-duct behaviour.
+        result.lengthMm = 535.0;
+        result.diameterMm = 28.0;
+        break;
+    case ExhaustComponentType::muffler:
+        result.lengthMm = 480.0;
+        result.diameterMm = 62.0;
+        result.volumeLitres = 8.0;
+        result.restriction = 0.28;
+        result.acousticGain = 0.72;
+        break;
+    case ExhaustComponentType::catalyst:
+        result.lengthMm = 180.0;
+        result.diameterMm = 56.0;
+        result.restriction = 0.18;
+        result.dischargeCoefficient = 0.68;
+        result.catalystCellDensityCpsi = 400.0;
+        result.catalystOpenAreaRatio = 0.80;
+        result.catalystSubstrateVolumetricHeatCapacityJPerM3K = 2'000'000.0;
+        break;
+    case ExhaustComponentType::outlet:
+        // A tailpipe is a pipe. Zero here used to mean "the system ends", but
+        // the layout has to mesh it anyway, and a length it has to invent is
+        // the length that then sets the CFL limit for the whole network. Give
+        // it the real thing instead; the user can still shorten it.
+        result.lengthMm = 300.0;
+        result.diameterMm = 65.0;
+        break;
+    case ExhaustComponentType::crossover:
+        result.lengthMm = 0.0;
+        result.diameterMm = 80.0;
+        result.restriction = 0.06;
+        // Estimated neutral starting point, not a measured calibration.
+        result.crossoverCoupling = 0.30;
+        break;
+    }
+    return result;
+}
+
+std::uint32_t ExhaustNetworkEditor::nextComponentId(const ExhaustNetworkConfig& network) {
+    return enginelab::nextComponentId(network);
+}
+
+std::optional<std::uint32_t> ExhaustNetworkEditor::firstCommonJunction(const ExhaustNetworkConfig& network) {
+    std::unordered_set<std::uint32_t> mapped;
+    for (const auto& mapping : network.cylinderConnections) mapped.insert(mapping.cylinderId);
+    if (mapped.empty()) return std::nullopt;
+    // The cylinders reaching each component, relaxed along the flow (not
+    // across a balance pipe: an H's two sides do not meet in it).
+    std::unordered_map<std::uint32_t, std::unordered_set<std::uint32_t>> reaching;
+    for (const auto& component : network.components) reaching[component.id];
+    for (const auto& mapping : network.cylinderConnections)
+        if (const auto found = reaching.find(mapping.componentId); found != reaching.end())
+            found->second.insert(mapping.cylinderId);
+    for (std::size_t pass = 0; pass <= network.components.size(); ++pass) {
+        auto changed = false;
+        for (const auto& edge : network.connections) {
+            if (isSideBranch(edge)) continue;
+            const auto from = reaching.find(edge.fromComponentId);
+            const auto to = reaching.find(edge.toComponentId);
+            if (from == reaching.end() || to == reaching.end()) continue;
+            for (const auto cylinderId : from->second) changed = to->second.insert(cylinderId).second || changed;
+        }
+        if (!changed) break;
+    }
+    const auto full = [&](std::uint32_t id) {
+        const auto found = reaching.find(id);
+        return found != reaching.end() && found->second.size() == mapped.size();
+    };
+    for (const auto& component : network.components) {
+        if (!full(component.id)) continue;
+        const auto fedFull = std::any_of(network.connections.begin(), network.connections.end(),
+            [&](const ExhaustComponentConnectionConfig& edge) {
+                return edge.toComponentId == component.id && !isSideBranch(edge) && full(edge.fromComponentId);
+            });
+        if (fedFull) continue;
+        // A splitter, an X or an outlet is where routes part or end, not
+        // where they meet into one way on.
+        if (component.type == ExhaustComponentType::splitter || component.type == ExhaustComponentType::crossover
+            || component.type == ExhaustComponentType::outlet)
+            return std::nullopt;
+        return component.id;
+    }
+    return std::nullopt;
+}
+
+std::string ExhaustNetworkEditor::connectCylinder(ExhaustNetworkConfig& network, std::uint32_t cylinderId,
+                                                  std::uint32_t componentId) {
+    const auto* component = findComponent(network, componentId);
+    if (component == nullptr) return "That component is not in this path.";
+    if (component->type == ExhaustComponentType::crossover)
+        return "A cylinder cannot feed an X-pipe directly: put a pipe before it.";
+    const auto existing = std::find_if(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+        [cylinderId](const ExhaustCylinderConnectionConfig& mapping) { return mapping.cylinderId == cylinderId; });
+    if (existing != network.cylinderConnections.end()) existing->componentId = componentId;
+    else network.cylinderConnections.push_back({ cylinderId, componentId });
+    return {};
+}
+
+bool ExhaustNetworkEditor::disconnectCylinder(ExhaustNetworkConfig& network, std::uint32_t cylinderId) {
+    return std::erase_if(network.cylinderConnections, [cylinderId](const ExhaustCylinderConnectionConfig& mapping) {
+        return mapping.cylinderId == cylinderId;
+    }) > 0U;
+}
+
+std::string ExhaustNetworkEditor::connectComponents(ExhaustNetworkConfig& network, std::uint32_t from,
+                                                    std::uint32_t to) {
+    if (from == to) return "A component cannot be connected to itself.";
+    const auto* source = findComponent(network, from);
+    const auto* target = findComponent(network, to);
+    if (source == nullptr || target == nullptr) return "Both components must be in this path.";
+    if (network.connections.size() >= maximumConnections) return "Limit reached: 1024 connections per path.";
+    if (std::any_of(network.connections.begin(), network.connections.end(),
+            [from, to](const ExhaustComponentConnectionConfig& edge) {
+                return edge.fromComponentId == from && edge.toComponentId == to;
+            }))
+        return "This connection already exists.";
+    // An X-pipe's ports are explicit: the next free one on each side.
+    const auto nextPort = [&network](std::uint32_t id, bool output) -> std::optional<std::uint8_t> {
+        std::array<bool, 2> used {};
+        for (const auto& edge : network.connections) {
+            if (output && edge.fromComponentId == id && edge.fromPort <= 1U) used[edge.fromPort] = true;
+            if (!output && edge.toComponentId == id && edge.toPort <= 1U) used[edge.toPort] = true;
+        }
+        for (std::uint8_t port = 0; port <= 1U; ++port)
+            if (!used[port]) return port;
+        return std::nullopt;
+    };
+    auto fromPort = unspecifiedExhaustComponentPort;
+    auto toPort = unspecifiedExhaustComponentPort;
+    if (source->type == ExhaustComponentType::crossover) {
+        const auto port = nextPort(from, true);
+        if (!port) return "Both outlet ports of the X-pipe are already in use.";
+        fromPort = *port;
+    }
+    if (target->type == ExhaustComponentType::crossover) {
+        const auto port = nextPort(to, false);
+        if (!port) return "Both inlet ports of the X-pipe are already in use.";
+        toPort = *port;
+    }
+    network.connections.push_back({ from, to, fromPort, toPort });
+    return {};
+}
+
+std::string ExhaustNetworkEditor::replaceComponent(ExhaustNetworkConfig& network, std::uint32_t componentId,
+                                                   ExhaustComponentType type) {
+    auto* component = findComponent(network, componentId);
+    if (component == nullptr) return "That component is not in this path.";
+    if (component->type == type) return {};
+    const auto lengthy = [](ExhaustComponentType kind) {
+        return kind == ExhaustComponentType::pipe || kind == ExhaustComponentType::resonator
+            || kind == ExhaustComponentType::muffler || kind == ExhaustComponentType::catalyst
+            || kind == ExhaustComponentType::outlet;
+    };
+    auto replacement = defaultComponent(type, componentId);
+    if (component->diameterMm >= 4.0) replacement.diameterMm = component->diameterMm;
+    if (lengthy(type) && lengthy(component->type) && component->lengthMm >= 1.0)
+        replacement.lengthMm = component->lengthMm;
+    if (type == ExhaustComponentType::outlet) {
+        replacement.acousticPositionM = component->acousticPositionM;
+        replacement.acousticAxis = component->acousticAxis;
+    }
+    *component = replacement;
+    // The connections stay; their ports follow the new type: an X-pipe's
+    // are numbered, a merge's or a splitter's balance-pipe port stays, any
+    // other is unspecified.
+    const auto junction = type == ExhaustComponentType::merge || type == ExhaustComponentType::splitter;
+    auto nextInput = std::uint8_t { 0 };
+    auto nextOutput = std::uint8_t { 0 };
+    const auto port = [&](std::uint8_t current, std::uint8_t& next) -> std::uint8_t {
+        if (type == ExhaustComponentType::crossover) return next <= 1U ? next++ : unspecifiedExhaustComponentPort;
+        return junction && current == exhaustSideBranchPort ? current : unspecifiedExhaustComponentPort;
+    };
+    for (auto& edge : network.connections) {
+        if (edge.toComponentId == componentId) edge.toPort = port(edge.toPort, nextInput);
+        if (edge.fromComponentId == componentId) edge.fromPort = port(edge.fromPort, nextOutput);
+    }
+    return {};
 }
 
 } // namespace enginelab

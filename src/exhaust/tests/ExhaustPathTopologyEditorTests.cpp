@@ -193,6 +193,223 @@ void customDagOwnershipEdits() {
         "custom destination graph was discarded during path deletion");
 }
 
+// A V8's dual 4-into-1 as the designer builds it: per bank four primaries into
+// a collector (200), a mid pipe (500), a silencer (600) and a tail (700).
+constexpr double dualPrimaryLengthMm = 760.0;
+constexpr double dualPrimaryDiameterMm = 38.0;
+constexpr double dualMidLengthMm = 1'500.0;
+
+[[nodiscard]] EngineConfig dualFourIntoOneV8() {
+    auto config = makeDefaultV8();
+    require(config.banks.size() == 2U, "the default V8 has two banks");
+    const auto geometry = config.exhaustPaths.front().geometry;
+    config.exhaustPaths.clear();
+    for (std::size_t side = 0; side < 2U; ++side) {
+        ExhaustPathConfig path;
+        path.id = static_cast<std::uint32_t>(side + 1U);
+        path.geometry = geometry;
+        path.inheritsGlobalGeometry = false;
+        path.cylinderIds = config.banks[side].cylinderIds;
+        ExhaustNetworkConfig network;
+        auto collector = component(200, ExhaustComponentType::merge, 0.0, 54.0);
+        collector.volumeLitres = 0.5;
+        network.components.push_back(collector);
+        for (const auto cylinderId : path.cylinderIds) {
+            network.components.push_back(component(1'000 + cylinderId, ExhaustComponentType::pipe,
+                dualPrimaryLengthMm, dualPrimaryDiameterMm));
+            network.cylinderConnections.push_back({ cylinderId, 1'000 + cylinderId });
+            network.connections.push_back({ 1'000 + cylinderId, 200 });
+        }
+        network.components.push_back(component(500, ExhaustComponentType::pipe, dualMidLengthMm, 54.0));
+        auto silencer = component(600, ExhaustComponentType::muffler, 480.0, 62.0);
+        silencer.volumeLitres = 8.0;
+        silencer.restriction = 0.28;
+        network.components.push_back(silencer);
+        network.components.push_back(component(700, ExhaustComponentType::outlet, 300.0, 54.0));
+        network.connections.push_back({ 200, 500 });
+        network.connections.push_back({ 500, 600 });
+        network.connections.push_back({ 600, 700 });
+        path.network = std::move(network);
+        config.exhaustPaths.push_back(std::move(path));
+    }
+    for (auto& bank : config.banks) bank.exhaustPathId = 0;
+    requireUniqueCompleteOwnership(config);
+    return config;
+}
+
+[[nodiscard]] std::size_t countType(const ExhaustNetworkConfig& network, ExhaustComponentType type) {
+    return static_cast<std::size_t>(std::count_if(network.components.begin(), network.components.end(),
+        [type](const ExhaustComponentConfig& item) { return item.type == type; }));
+}
+
+[[nodiscard]] std::size_t inputsOf(const ExhaustNetworkConfig& network, std::uint32_t id) {
+    return static_cast<std::size_t>(std::count_if(network.connections.begin(), network.connections.end(),
+        [id](const ExhaustComponentConnectionConfig& edge) { return edge.toComponentId == id; }));
+}
+
+/** Every cylinder of the path has its own primary like the designer's, flowing
+ *  straight into a merge. */
+void requireOwnPrimaries(const ExhaustPathConfig& path, const std::string& label) {
+    const auto& network = *path.network;
+    std::unordered_set<std::uint32_t> roots;
+    for (const auto& mapping : network.cylinderConnections) {
+        require(roots.insert(mapping.componentId).second, label + ": two cylinders share a primary");
+        const auto root = std::find_if(network.components.begin(), network.components.end(),
+            [&mapping](const ExhaustComponentConfig& item) { return item.id == mapping.componentId; });
+        require(root != network.components.end() && root->type == ExhaustComponentType::pipe
+                && root->lengthMm == dualPrimaryLengthMm && root->diameterMm == dualPrimaryDiameterMm,
+            label + ": a cylinder lost its primary's dimensions");
+        const auto out = std::find_if(network.connections.begin(), network.connections.end(),
+            [&mapping](const ExhaustComponentConnectionConfig& edge) { return edge.fromComponentId == mapping.componentId; });
+        require(out != network.connections.end(), label + ": a primary leads nowhere");
+        const auto next = std::find_if(network.components.begin(), network.components.end(),
+            [&out](const ExhaustComponentConfig& item) { return item.id == out->toComponentId; });
+        require(next != network.components.end() && next->type == ExhaustComponentType::merge,
+            label + ": a primary does not flow into a collector");
+    }
+}
+
+// Owner report 2026-11-11: removing one path of a V8's dual 4-into-1 into the
+// other made a chain of merges on one primary, the cylinders "wired anyhow".
+void removingAPathRebuildsOneCollector() {
+    auto config = dualFourIntoOneV8();
+    const auto removed = ExhaustPathTopologyEditor::removePath(config, 2, 1);
+    require(static_cast<bool>(removed), "rebuilding the dual system failed: " + removed.error);
+    requireUniqueCompleteOwnership(config);
+    require(config.exhaustPaths.size() == 1U && removed.note.empty(), "the rebuild fell back or kept the path");
+    const auto& path = config.exhaustPaths.front();
+    require(path.cylinderIds.size() == 8U, "the rebuilt path does not own the eight cylinders");
+    require(countType(*path.network, ExhaustComponentType::merge) == 1U,
+        "the rebuild left " + std::to_string(countType(*path.network, ExhaustComponentType::merge))
+            + " merges, not one 8-into-1 collector");
+    require(inputsOf(*path.network, 200) == 8U, "the destination collector does not take all eight primaries");
+    requireOwnPrimaries(path, "rebuild");
+    require(countType(*path.network, ExhaustComponentType::muffler) == 1U
+            && countType(*path.network, ExhaustComponentType::outlet) == 1U,
+        "the rebuild did not keep the destination's own silencer and tail");
+}
+
+void removingAPathWithAYKeepsBothCollectors() {
+    auto config = dualFourIntoOneV8();
+    const auto routeBefore = ExhaustGraph::makeForEngine(config).acousticsForCylinder(config.banks[1].cylinderIds.front());
+    const auto removed = ExhaustPathTopologyEditor::removePath(config, 2, 1, ExhaustPathJoin::yJunction);
+    require(static_cast<bool>(removed), "joining the dual system with a Y failed: " + removed.error);
+    requireUniqueCompleteOwnership(config);
+    require(config.exhaustPaths.size() == 1U && removed.note.empty(), "the Y join fell back or kept the path");
+    const auto& path = config.exhaustPaths.front();
+    const auto& network = *path.network;
+    require(countType(network, ExhaustComponentType::merge) == 3U,
+        "a Y join is two collectors and one Y, not "
+            + std::to_string(countType(network, ExhaustComponentType::merge)) + " merges");
+    require(countType(network, ExhaustComponentType::muffler) == 1U
+            && countType(network, ExhaustComponentType::outlet) == 1U,
+        "the removed path's pipes past its collector were kept");
+    requireOwnPrimaries(path, "Y");
+    const auto mid = std::find_if(network.components.begin(), network.components.end(),
+        [](const ExhaustComponentConfig& item) { return item.id == 500; });
+    require(mid != network.components.end() && std::abs(mid->lengthMm - (dualMidLengthMm - 300.0)) < 1.0e-9,
+        "the mid pipe did not give the Y's legs their length");
+    const auto graph = ExhaustGraph::makeForEngine(config);
+    for (const auto bank : { 0U, 1U }) {
+        const auto route = graph.acousticsForCylinder(config.banks[bank].cylinderIds.front());
+        require(std::abs(route.meanLengthMm - routeBefore.meanLengthMm) < 1.0e-9,
+            "the Y changed a cylinder's length to the silencer");
+    }
+}
+
+void legacyPathsJoinBothWays() {
+    auto config = dualFourIntoOneV8();
+    for (auto& path : config.exhaustPaths) path.network.reset();
+    auto yJoined = config;
+    const auto y = ExhaustPathTopologyEditor::removePath(yJoined, 2, 1, ExhaustPathJoin::yJunction);
+    require(static_cast<bool>(y), "a Y join of two scalar paths failed: " + y.error);
+    requireUniqueCompleteOwnership(yJoined);
+    require(yJoined.exhaustPaths.front().network
+            && countType(*yJoined.exhaustPaths.front().network, ExhaustComponentType::merge) == 3U,
+        "two scalar 4-into-1 paths did not become two collectors and a Y");
+    const auto rebuilt = ExhaustPathTopologyEditor::removePath(config, 2, 1);
+    require(static_cast<bool>(rebuilt) && !config.exhaustPaths.front().network
+            && config.exhaustPaths.front().cylinderIds.size() == 8U,
+        "rebuilding two scalar paths is not one scalar 8-into-1");
+}
+
+void cylindersThatNeverMeetFallBack() {
+    auto config = dualFourIntoOneV8();
+    // Path 1 becomes four separate pipes, each to its own tail: no collector.
+    auto& network = *config.exhaustPaths.front().network;
+    network.components.clear();
+    network.connections.clear();
+    for (const auto& mapping : network.cylinderConnections) {
+        network.components.push_back(component(mapping.componentId, ExhaustComponentType::pipe,
+            dualPrimaryLengthMm, dualPrimaryDiameterMm));
+        network.components.push_back(component(mapping.componentId + 2'000, ExhaustComponentType::outlet, 300.0, 40.0));
+        network.connections.push_back({ mapping.componentId, mapping.componentId + 2'000 });
+    }
+    requireUniqueCompleteOwnership(config);
+    const auto removed = ExhaustPathTopologyEditor::removePath(config, 2, 1);
+    require(static_cast<bool>(removed), "removing into separate pipes failed: " + removed.error);
+    requireUniqueCompleteOwnership(config);
+    require(!removed.note.empty(), "a fallback join did not say so");
+}
+
+void movedCylinderJoinsItsNeighboursCollector() {
+    auto config = dualFourIntoOneV8();
+    const auto moved = config.banks[1].cylinderIds.front();
+    const auto result = ExhaustPathTopologyEditor::moveCylinder(config, moved, 2, 1);
+    require(static_cast<bool>(result), "moving a cylinder between banks failed: " + result.error);
+    requireUniqueCompleteOwnership(config);
+    const auto& path = pathById(config, 1);
+    require(countType(*path.network, ExhaustComponentType::merge) == 1U && inputsOf(*path.network, 200) == 5U,
+        "a moved cylinder did not make the bank's 4-into-1 a 5-into-1");
+    requireOwnPrimaries(path, "move");
+}
+
+void cylinderFeedsAnyPart() {
+    auto config = dualFourIntoOneV8();
+    auto& network = *config.exhaustPaths.front().network;
+    const auto cylinderId = config.exhaustPaths.front().cylinderIds.front();
+    require(ExhaustNetworkEditor::firstCommonJunction(network) == std::optional<std::uint32_t> { 200 },
+        "the dual system's collector is not where its cylinders meet");
+    // Owner report 2026-11-11: delete the cylinder's default pipe, put
+    // something else in its place, feed it from the cylinder.
+    const auto oldPrimary = 1'000 + cylinderId;
+    std::erase_if(network.components, [oldPrimary](const auto& item) { return item.id == oldPrimary; });
+    std::erase_if(network.connections, [oldPrimary](const auto& edge) { return edge.fromComponentId == oldPrimary; });
+    std::erase_if(network.cylinderConnections, [oldPrimary](const auto& mapping) { return mapping.componentId == oldPrimary; });
+    const auto id = ExhaustNetworkEditor::nextComponentId(network);
+    network.components.push_back(ExhaustNetworkEditor::defaultComponent(ExhaustComponentType::resonator, id));
+    require(ExhaustNetworkEditor::connectComponents(network, id, 200).empty(), "a part could not feed the collector");
+    require(!ExhaustNetworkEditor::connectComponents(network, id, 200).empty(), "a duplicate connection was accepted");
+    require(!ExhaustNetworkEditor::connectComponents(network, id, id).empty(), "a self connection was accepted");
+    require(ExhaustNetworkEditor::connectCylinder(network, cylinderId, id).empty(), "a cylinder could not feed a part");
+    requireUniqueCompleteOwnership(config);
+    require(ExhaustNetworkEditor::disconnectCylinder(network, cylinderId), "the cylinder fed nothing");
+    require(validateEngineConfig(config).has_value(), "a cylinder feeding nothing must not validate");
+    require(ExhaustNetworkEditor::connectCylinder(network, cylinderId, id).empty(), "reconnecting failed");
+
+    // Right-click "Replace with": the silencer becomes a catalyst, same place.
+    require(ExhaustNetworkEditor::replaceComponent(network, 600, ExhaustComponentType::catalyst).empty(),
+        "replacing the silencer failed");
+    const auto replaced = std::find_if(network.components.begin(), network.components.end(),
+        [](const ExhaustComponentConfig& item) { return item.id == 600; });
+    require(replaced != network.components.end() && replaced->type == ExhaustComponentType::catalyst
+            && replaced->lengthMm == 480.0 && replaced->diameterMm == 62.0 && replaced->volumeLitres == 0.0,
+        "a replaced part did not keep its place, length and bore with the new type's values");
+    require(inputsOf(network, 600) == 1U && std::any_of(network.connections.begin(), network.connections.end(),
+        [](const auto& edge) { return edge.fromComponentId == 600 && edge.toComponentId == 700; }),
+        "a replaced part lost its connections");
+    requireUniqueCompleteOwnership(config);
+
+    // An X-pipe takes numbered ports; a cylinder cannot feed one.
+    require(ExhaustNetworkEditor::replaceComponent(network, 500, ExhaustComponentType::crossover).empty(),
+        "replacing the mid pipe by an X failed");
+    const auto ports = std::count_if(network.connections.begin(), network.connections.end(),
+        [](const auto& edge) { return (edge.toComponentId == 500 && edge.toPort == 0U)
+                                   || (edge.fromComponentId == 500 && edge.fromPort == 0U); });
+    require(ports == 2 && !ExhaustNetworkEditor::connectCylinder(network, cylinderId, 500).empty(),
+        "an X-pipe's ports were not numbered or a cylinder fed it");
+}
+
 void invalidWorkIsNotMutated() {
     auto config = makeDefaultInlineFour();
     installGeneratedNetwork(config.exhaustPaths.front());
@@ -214,6 +431,12 @@ int main() {
         basicPathLifecycle();
         customDagOwnershipEdits();
         invalidWorkIsNotMutated();
+        removingAPathRebuildsOneCollector();
+        movedCylinderJoinsItsNeighboursCollector();
+        removingAPathWithAYKeepsBothCollectors();
+        legacyPathsJoinBothWays();
+        cylindersThatNeverMeetFallBack();
+        cylinderFeedsAnyPart();
         std::cout << "EngineLab exhaust path topology editor tests passed\n";
         return 0;
     } catch (const std::exception& error) {
