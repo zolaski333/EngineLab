@@ -2149,6 +2149,14 @@ struct EngineState final {
     double frameAveragedRpm { 0.0 };
     /** A two-stroke's exhaust power valve, 0 shut to 1 open; 1 without one. */
     double powerValveOpening { 1.0 };
+    /** VTEC: bit i is set while configuration cylinder i runs its high cam
+     *  (the valves' actual profile, switched on a base circle). */
+    std::uint32_t vtecHighCylinderMask { 0U };
+    /** VTEC: the ECU's switch, on an engine with VTEC cams fitted. */
+    bool vtecEnabled { false };
+    /** VTEC: the speed the ECU engages the high cam above, rpm (the first
+     *  VTEC camshaft's own when its tables have no setting); 0 without. */
+    double vtecEngageRpm { 0.0 };
 };
 
 struct EcuCommand final {
@@ -2194,6 +2202,17 @@ struct EcuCommand final {
      *  clutch's upshift intervention). The simulator spreads it over the
      *  cylinders in firing order. */
     double cylinderCutFraction { 0.0 };
+    /** VTEC (calibration `vtec.*`): whether the ECU lets the high cam run.
+     *  Off, a high cam drops back at its next base circle. */
+    bool vtecEnabled { true };
+    /** The speed the high cam engages above, rpm; negative: each camshaft's
+     *  own `switchRpm`. */
+    double vtecEngageRpm { -1.0 };
+    /** The high cam drops back below the engagement speed less this, rpm. */
+    double vtecHysteresisRpm { 0.0 };
+    /** The throttle, 0-1, under which the high cam never runs; negative:
+     *  each camshaft's own `switchThrottle`. */
+    double vtecMinimumThrottle { -1.0 };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.
@@ -2318,6 +2337,24 @@ struct DynoRun final {
 [[nodiscard]] const CarburettorConfig* idleCarburettor(const EngineConfig&) noexcept;
 [[nodiscard]] double intakeRunnerVolumeLitres(const CylinderConfig&, const IntakeConfig&) noexcept;
 void normaliseEngineConfig(EngineConfig&);
+/** The camshaft a cylinder runs: its bank's when a bank names it, else the
+ *  engine-wide one. */
+[[nodiscard]] const CamshaftConfig& camshaftOfCylinder(const EngineConfig&, const CylinderConfig&) noexcept;
+/** Whether a cylinder's camshaft carries a high cam (VTEC; a rotary's staged
+ *  intake ports). A two-stroke has none. */
+[[nodiscard]] bool vtecCamsFitted(const EngineConfig&) noexcept;
+/** The first VTEC camshaft a cylinder runs, or null. */
+[[nodiscard]] const CamshaftConfig* firstVtecCamshaft(const EngineConfig&) noexcept;
+/** Fits VTEC cams to every camshaft that has none, laid out as the
+ *  catalogue K20A's over its own cam (intake +24 deg and +1.0 mm, exhaust
+ *  +22 deg and +0.6 mm; a rotary's exhaust port keeps its timing), engaging
+ *  at two thirds of the rev limit above 55 % throttle. A camshaft that has
+ *  them keeps its high cam. False on a two-stroke, which has no cam to
+ *  switch, or when every camshaft has them already. */
+bool fitVtecCams(EngineConfig&);
+/** Takes the VTEC cams off every camshaft (the high cam's figures stay in
+ *  the file, unused). */
+void removeVtecCams(EngineConfig&) noexcept;
 /** Backfires (overrun afterfire and the wet limiter) are a listening option
  *  the Audio workshop turns on for the running engine, never part of an
  *  engine: every engine is loaded, compared and saved with them off. The

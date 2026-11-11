@@ -641,7 +641,7 @@ add_test(NAME EngineLab.SourceEncoding
 add_executable(EngineLabValveProfileTransitionTests
     ValveProfileTransitionTests.cpp ValveProfileActuatorContracts.cpp)
 target_link_libraries(EngineLabValveProfileTransitionTests PRIVATE
-    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
     EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Runtime)
 target_compile_definitions(EngineLabValveProfileTransitionTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
@@ -780,6 +780,18 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabRotaryTests)
 add_test(NAME EngineLab.Rotary COMMAND EngineLabRotaryTests)
+
+add_executable(EngineLabVtecTests VtecTests.cpp)
+target_link_libraries(EngineLabVtecTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::GasDynamics EngineLab::Simulation EngineLab::Catalog EngineLab::Serialization)
+target_compile_definitions(EngineLabVtecTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabVtecTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabVtecTests)
+add_test(NAME EngineLab.Vtec COMMAND EngineLabVtecTests)
+set_tests_properties(EngineLab.Vtec PROPERTIES TIMEOUT 400)
 
 # Every TIMEOUT above is tuned on Windows, the reference platform, where a test
 # that stops printing after `Start N:` is stuck rather than slow -- a diagnosis

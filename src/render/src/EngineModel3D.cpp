@@ -1255,7 +1255,7 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
 
         const auto phase = cyclePhaseDegrees(i, angle);
         const auto& cams = *cylinder.cams;
-        const auto high = cams.variableProfileEnabled && input.rpm >= cams.switchRpm && input.throttle >= cams.switchThrottle;
+        const auto high = i < 32U && ((input.vtecHighCylinderMask >> i) & 1U) != 0U;
         // A two-stroke's ports are in the cylinder wall: its valves stay shut.
         const auto valves = config_.cycle != EngineCycle::twoStroke;
         const auto intakeLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 + cams.intakeCenterlineDegrees,

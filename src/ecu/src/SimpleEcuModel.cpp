@@ -827,6 +827,19 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         ? std::clamp(controls.shiftCylinderCutFraction, 0.0, 1.0) : 0.0;
     if (command.cylinderCutFraction > 0.0)
         command.lambdaLearningAllowed = false;
+    // VTEC: the ECU's switch over the high cam, read only from tables that
+    // carry it. Without it the cams run as authored: on, at each camshaft's
+    // own switch speed and throttle.
+    if (const auto vtec = calibrationSnapshot->scalar(calibration::keys::vtecEnabled)) {
+        command.vtecEnabled = *vtec >= 0.5;
+        command.vtecEngageRpm = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::vtecEngage, -1.0),
+            -1.0, calibration::ecuLimits::maximumRevLimitRpm);
+        command.vtecHysteresisRpm = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::vtecHysteresis, 0.0),
+            0.0, calibration::ecuLimits::maximumVtecHysteresisRpm);
+        const auto throttlePercent = calibrationSnapshot->scalarOr(calibration::keys::vtecMinimumThrottle, -1.0);
+        command.vtecMinimumThrottle = throttlePercent < 0.0 ? -1.0
+            : std::min(throttlePercent, calibration::ecuLimits::maximumVtecThrottlePercent) / 100.0;
+    }
     // Past the map's -10 deg floor on purpose: the flame lit 20-40 deg after
     // top dead centre is still burning when the exhaust valve opens, and that
     // late, hot, partly burnt charge is what a pops-and-bangs map sends down

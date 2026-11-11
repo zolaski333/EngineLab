@@ -55,11 +55,13 @@ struct CamMetrics final {
 }
 
 [[nodiscard]] CamMetrics aggregateCamMetrics(const EngineConfig& config, double rpmRatio,
-                                              double rpm, double throttle) noexcept {
+                                              std::uint32_t highCylinderMask) noexcept {
     CamMetrics total { 0.0, 0.0, 0.0, 0.0 };
-    for (const auto& cylinder : config.cylinders) {
+    for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+        const auto& cylinder = config.cylinders[index];
         const auto& cam = camshaftForCylinder(config, cylinder);
-        const auto high = cam.variableProfileEnabled && rpm >= cam.switchRpm && throttle >= cam.switchThrottle;
+        // The profile the valves actually run (VTEC, switched by the ECU).
+        const auto high = index < 32U && ((highCylinderMask >> index) & 1U) != 0U;
         const auto intakeDuration = high ? cam.highIntakeDurationDegrees : cam.intakeDurationDegrees;
         const auto exhaustDuration = high ? cam.highExhaustDurationDegrees : cam.exhaustDurationDegrees;
         const auto intakeLift = high ? cam.highIntakeLiftMm : cam.intakeLiftMm;
@@ -114,7 +116,7 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     // Aggregate the active profile of every cylinder/bank. This keeps the
     // low-frequency calibration model aligned with the valves used by the gas
     // solver instead of silently falling back to the global camshaft.
-    const auto cam = aggregateCamMetrics(config, rpmRatio, state.rpm, state.throttle);
+    const auto cam = aggregateCamMetrics(config, rpmRatio, state.vtecHighCylinderMask);
     const auto normalizedLoad = compressionIgnition
         ? std::clamp(state.load, 0.0, 1.0)
         : std::clamp(state.manifoldPressureKpa

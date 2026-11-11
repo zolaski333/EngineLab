@@ -1,5 +1,6 @@
 #include <enginelab/simulation/ValveProfileActuator.hpp>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <numbers>
@@ -257,19 +258,31 @@ bool onceOnlyVvtAndNonvariable() {
     REQUIRE(actuator.finish(cam, state, 1.0, 1.0, 1));
     (void) ValveTrainModel::evaluate(cam, actuator.appliedHigh(), state, 1.0, 6000.0, 1.0, 0.0);
     REQUIRE(sameState(actual, state));
+    // VTEC cams taken off while the high cam runs: it drops back on a base
+    // circle, never mid-lift, and from then on the plain low cam runs.
     cam.variableProfileEnabled = false;
     auto plain = ValveTrainState {};
     auto controlled = plain;
-    for (int index = 0; index < 720; ++index) {
-        const auto phase = static_cast<double>(index);
+    auto dropped = false;
+    for (int index = 0; index < 1440; ++index) {
+        const auto phase = std::fmod(2.0 + static_cast<double>(index), 720.0);
         const auto baseline = ValveTrainModel::evaluate(cam, false, plain, phase, 6000.0, 1.0, 0.0001);
         actuator.updateDemand(cam, 1.0, cycle(5900.0, 6000.0), 1);
         const auto selected = actuator.finish(cam, controlled, phase, 1.0, 1);
+        REQUIRE(!(dropped && selected));
+        if (!dropped && !selected) {
+            auto copy = controlled;
+            const auto high = ValveTrainModel::evaluate(cam, true, copy, phase, 6000.0, 1.0, 0.0);
+            REQUIRE(high.intakeLiftMm == 0.0 && high.exhaustLiftMm == 0.0);
+        }
+        dropped = dropped || !selected;
         const auto observed = ValveTrainModel::evaluate(cam, selected, controlled, phase, 6000.0, 1.0, 0.0001);
-        REQUIRE(!selected && sameState(plain, controlled));
+        if (!dropped) continue;
+        REQUIRE(sameState(plain, controlled));
         REQUIRE(std::bit_cast<std::uint64_t>(baseline.intakeLiftMm) == std::bit_cast<std::uint64_t>(observed.intakeLiftMm));
         REQUIRE(std::bit_cast<std::uint64_t>(baseline.exhaustLiftMm) == std::bit_cast<std::uint64_t>(observed.exhaustLiftMm));
     }
+    REQUIRE(dropped);
     return true;
 }
 bool resetRevisionInvalidAndLongJump() {

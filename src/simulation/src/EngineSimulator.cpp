@@ -722,6 +722,19 @@ struct ActiveCamshaft final {
     return { selected, high };
 }
 
+/** The ECU's VTEC strategy over one camshaft: its settings where its tables
+ *  carry them, the camshaft's own switch where they do not. A minimum
+ *  throttle past 99.9 % is the pedal floored: the plate follows the pedal
+ *  exponentially and never reads exactly 1. */
+[[nodiscard]] cam_controller::ValveProfileStrategy vtecStrategy(const CamshaftConfig& cam,
+                                                                const EcuCommand& command) noexcept {
+    constexpr double flooredThrottle = 0.999;
+    const auto engage = command.vtecEngageRpm >= 0.0 ? command.vtecEngageRpm : cam.switchRpm;
+    return { command.vtecEnabled, engage, engage - std::max(0.0, command.vtecHysteresisRpm),
+             command.vtecMinimumThrottle >= 0.0 ? std::min(command.vtecMinimumThrottle, flooredThrottle)
+                                                : cam.switchThrottle };
+}
+
 }
 
 EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsModel& physics,
@@ -1454,8 +1467,9 @@ bool EngineSimulator::camshaftsReplaceable(const EngineConfig& running,
     for (std::size_t index = 0; index <= running.banks.size(); ++index) {
         const auto& was = camshaftAt(running, index);
         const auto& now = camshaftAt(edited, index);
-        if (was.variableProfileEnabled != now.variableProfileEnabled
-            || was.continuousControl.enabled != now.continuousControl.enabled)
+        // VTEC cams fit and come off live: fitted, they start on the low cam;
+        // off, a high cam still running drops back on its next base circle.
+        if (was.continuousControl.enabled != now.continuousControl.enabled)
             return false;
     }
     return true;
@@ -1467,6 +1481,9 @@ bool EngineSimulator::beginCamshaftChange(EngineConfig& target, double rampSecon
     CamshaftChange change;
     change.startSeconds = state_.simulationTimeSeconds;
     change.rampSeconds = rampSeconds;
+    std::vector<char> switchedBefore(config_.cylinders.size());
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+        switchedBefore[index] = camshaftOfCylinder(config_, config_.cylinders[index]).variableProfileEnabled;
     for (std::size_t index = 0; index <= config_.banks.size(); ++index) {
         auto& running = camshaftAt(config_, index);
         auto& wanted = camshaftAt(target, index);
@@ -1486,7 +1503,15 @@ bool EngineSimulator::beginCamshaftChange(EngineConfig& target, double rampSecon
         std::swap(running.exhaustFlowCurve, wanted.exhaustFlowCurve);
         std::swap(running.continuousControl, wanted.continuousControl);
         running.exhaustPortHeadAreaFraction = wanted.exhaustPortHeadAreaFraction;
+        running.variableProfileEnabled = wanted.variableProfileEnabled;
+        // The shaft-cycle clock the high cam engages on runs from here.
+        hasVariableValveProfiles_ = hasVariableValveProfiles_ || running.variableProfileEnabled;
     }
+    // VTEC cams fitted here engage on a whole cycle that ends after the fit,
+    // never on one the engine ran before it.
+    for (std::size_t index = 0; index < config_.cylinders.size() && index < valveProfileActuators_.size(); ++index)
+        if (!switchedBefore[index] && camshaftOfCylinder(config_, config_.cylinders[index]).variableProfileEnabled)
+            valveProfileActuators_[index].awaitCycleAfter(valveProfileShaftCycle_.completed());
     camshaftChange_ = std::move(change);
     advanceCamshaftChange();
     return true;
@@ -1845,6 +1870,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 / std::max(1.0, config_.ambientPressureKpa), 0.0, 1.5);
         state_.load = smooth(state_.load, thermodynamicLoad, subDt, 12.0);
         const auto ecuCommand = ecu_.evaluate(config_, state_, safeControls);
+        if (hasVariableValveProfiles_) {
+            const auto* vtecCam = firstVtecCamshaft(config_);
+            state_.vtecEnabled = vtecCam != nullptr && ecuCommand.vtecEnabled;
+            state_.vtecEngageRpm = vtecCam == nullptr ? 0.0
+                : ecuCommand.vtecEngageRpm >= 0.0 ? ecuCommand.vtecEngageRpm : vtecCam->switchRpm;
+        }
         const auto afrObservationCommandEnabled = compressionIgnitionEngine
             ? ecuCommand.fuelEnabled
             : ecuCommand.fuelEnabled && ecuCommand.sparkEnabled;
@@ -2671,9 +2702,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 + phaseWrapBiasDegrees(cycleDegrees), cycleDegrees);
             auto cams = activeCamshaft(
                 config_, cylinder, state_.rpm, state_.throttle);
-            if (cams.config->variableProfileEnabled) {
+            // VTEC cams, or cams taken off while their high cam still runs:
+            // it drops back on a base circle like any other switch.
+            const auto switchedProfile = cams.config->variableProfileEnabled
+                || valveProfileActuators_[cylinderIndex].appliedHigh();
+            if (switchedProfile) {
                 auto& actuator = valveProfileActuators_[cylinderIndex];
-                actuator.updateDemand(*cams.config, state_.throttle,
+                actuator.updateDemand(*cams.config, vtecStrategy(*cams.config, ecuCommand), state_.throttle,
                     valveProfileShaftCycle_.completed(), 1);
                 cams.highProfile = actuator.appliedHigh();
             }
@@ -2735,7 +2770,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             valveTrainResults_[cylinderIndex] = ValveTrainModel::evaluate(*cams.config, cams.highProfile,
                 valveTrainStates_[cylinderIndex], cyclePhase, state_.rpm, state_.load, subDt,
                 valveCycleDegrees);
-            if (cams.config->variableProfileEnabled) {
+            if (switchedProfile) {
                 const auto previousAppliedHigh = cams.highProfile;
                 cams.highProfile = valveProfileActuators_[cylinderIndex].finish(*cams.config,
                     valveTrainStates_[cylinderIndex], cyclePhase,
@@ -5711,6 +5746,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     subTravelled, subDt, subPreviousRpm, state_.rpm);
             } else
                 valveProfileShaftCycle_.reset(); // Unsupported clocks leave demand unavailable.
+            std::uint32_t highCylinders = 0U;
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+                if (valveProfileActuators_[index].appliedHigh()) highCylinders |= 1U << index;
+            state_.vtecHighCylinderMask = highCylinders;
         }
         state_.simulationTimeSeconds += subDt;
 
@@ -6259,7 +6298,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 auto cams = activeCamshaft(
                     config_, config_.cylinders[index],
                     state_.rpm, state_.throttle);
-                if (cams.config->variableProfileEnabled)
+                if (cams.config->variableProfileEnabled || valveProfileActuators_[index].appliedHigh())
                     cams.highProfile = valveProfileActuators_[index].appliedHigh();
                 const auto maximumExhaustLiftMm = std::max(0.1, cams.exhaustLift());
                 // A two-stroke's opening is its exhaust port's, as a share of

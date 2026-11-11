@@ -364,8 +364,9 @@ updateConfig`); its rotor and filter states carry on.
 
 The valve train reads the camshafts (the engine's and each bank's) at every
 sub-step and keeps only its phaser state, so an edit of the camshafts that
-keeps the banks, and variable profiles and continuous valve control switched
-on or off alike (`camshaftsReplaceable`), is taken live.
+keeps the banks and continuous valve control switched on or off alike
+(`camshaftsReplaceable`), is taken live, VTEC cams fitted or taken off
+included.
 `EngineRuntime::applyLiveCamshafts` posts it like the other groups;
 `EngineSimulator::beginCamshaftChange` swaps in the lift profiles, flow curves
 and continuous control at once and glides durations, lifts, centrelines, flow

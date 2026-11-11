@@ -13,6 +13,11 @@ namespace enginelab::calibration {
  *  them: the overboost cut of a turbocharged engine. */
 void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config);
 
+/** Puts the tables' VTEC settings (`vtec.*`) in step with the engine: adds
+ *  the missing ones, seeded from its first VTEC camshaft, when it has VTEC
+ *  cams; removes them all when it has none. Whether the draft changed. */
+bool syncVtecSettings(CalibrationDraft& draft, const EngineConfig& config);
+
 /** Create a mutable transaction from an immutable realtime snapshot. */
 [[nodiscard]] CalibrationDraft makeDraft(const CalibrationSnapshot& snapshot);
 

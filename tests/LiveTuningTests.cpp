@@ -192,16 +192,23 @@ void sameCamshaftsAreInvisible() {
     const auto scope = engineEditScope(k20, milderCams(k20));
     require(scope.camshafts && !scope.settings && !scope.cylinders && !scope.other,
             "a cam edit is a camshaft edit only");
+    // VTEC cams are fitted and taken off while the engine runs (EngineLab.Vtec
+    // runs them); continuous valve control is not.
     auto switched = k20;
     switched.camshafts.variableProfileEnabled = !switched.camshafts.variableProfileEnabled;
     for (auto& bank : switched.banks) bank.camshafts.variableProfileEnabled = switched.camshafts.variableProfileEnabled;
-    require(!EngineSimulator::camshaftsReplaceable(k20, switched), "a profile switch added or removed is refused");
+    require(EngineSimulator::camshaftsReplaceable(k20, switched), "VTEC cams fitted or taken off are a live camshaft change");
+    auto phased = k20;
+    phased.camshafts.continuousControl.enabled = !phased.camshafts.continuousControl.enabled;
+    for (auto& bank : phased.banks) bank.camshafts.continuousControl.enabled = phased.camshafts.continuousControl.enabled;
+    require(!EngineSimulator::camshaftsReplaceable(k20, phased), "continuous valve control added or removed is refused");
     auto runtime = std::make_unique<EngineRuntime>(k20);
     require(runtime->applyLiveCamshafts(milderCams(k20), 2.0), "the runtime takes milder cams");
     require(firstCamshafts(runtime->engineConfig()).intakeDurationDegrees
                 == firstCamshafts(k20).intakeDurationDegrees - 40.0,
             "the runtime's configuration carries the new cams");
-    require(!runtime->applyLiveCamshafts(switched, 0.0), "the runtime refuses a profile switch added");
+    require(!runtime->applyLiveCamshafts(phased, 0.0), "the runtime refuses continuous valve control added");
+    require(runtime->applyLiveCamshafts(switched, 0.0), "the runtime takes VTEC cams taken off");
 }
 
 /** Milder cams taken at 6 s, at once or over 2 s: no stall, the duration

@@ -51,6 +51,9 @@ EcuTunerComponent::EcuTunerComponent(
     loadButton_.onClick = [this] { chooseCalibrationToLoad(); };
     saveButton_.onClick = [this] { chooseCalibrationToSave(); };
     refreshButton_.onClick = [this] { reloadFromSnapshot(); };
+    vtecButton_.onClick = [this] { pressVtecButton(); };
+    vtecButton_.setTooltip("VTEC: the ECU's switch over the high cam. Its engagement speed, hysteresis and minimum "
+                           "throttle are tables of their own above.");
     using calibration::CellOperation;
     const auto step = [this] {
         const auto* entry = draft_.find(selectedCalibrationId().toStdString());
@@ -76,6 +79,7 @@ EcuTunerComponent::EcuTunerComponent(
     };
     for (auto* component : components)
         addAndMakeVisible(*component);
+    addChildComponent(vtecButton_);
     reloadFromSnapshot(false);
     startTimerHz(10);
 }
@@ -118,6 +122,39 @@ void EcuTunerComponent::setFuel(const std::string& name, double stoichiometricAi
 
 double EcuTunerComponent::displayScaleOf(const std::string& id) const noexcept {
     return fuelAfr_ && id == calibration::keys::targetAirFuelRatio ? afrDisplayScale_ : 1.0;
+}
+
+void EcuTunerComponent::setVtecFittable(bool fittable) {
+    if (vtecFittable_ == fittable) return;
+    vtecFittable_ = fittable;
+    updateVtecButton();
+    resized();
+}
+
+void EcuTunerComponent::updateVtecButton() {
+    const auto* entry = draft_.find(calibration::keys::vtecEnabled);
+    const auto* setting = entry != nullptr ? std::get_if<calibration::ScalarCalibration>(entry) : nullptr;
+    const auto on = setting != nullptr && setting->value >= 0.5;
+    vtecButton_.setButtonText(setting != nullptr ? (on ? "VTEC ON" : "VTEC OFF") : "FIT VTEC CAMS");
+    vtecButton_.setColour(juce::TextButton::buttonColourId,
+                          on ? juce::Colour(0xff7a4a16) : juce::Colour(0xff26302e));
+    vtecButton_.setVisible(setting != nullptr || vtecFittable_);
+    vtecButton_.setEnabled(!sessionLocked_);
+}
+
+void EcuTunerComponent::pressVtecButton() {
+    if (sessionLocked_) return;
+    const auto* current = draft_.find(calibration::keys::vtecEnabled);
+    if (current == nullptr) {
+        if (vtecFittable_ && onFitVtecCams) onFitVtecCams();
+        return;
+    }
+    auto edited = *current;
+    auto* setting = std::get_if<calibration::ScalarCalibration>(&edited);
+    if (setting == nullptr) return;
+    setting->value = setting->value >= 0.5 ? 0.0 : 1.0;
+    const auto previous = *current;
+    if (publishEdit(std::move(edited), previous)) rebuildCells();
 }
 
 void EcuTunerComponent::setSessionLocked(bool locked) {
@@ -417,6 +454,7 @@ void EcuTunerComponent::updateToolState() {
     interpolateButton_.setEnabled(editable && isGrid && selection_.size() > 1);
     undoButton_.setEnabled(!sessionLocked_ && !undo_.empty());
     redoButton_.setEnabled(!sessionLocked_ && !redo_.empty());
+    updateVtecButton();
     const auto step = entry != nullptr ? calibration::cellStep(calibration::metadataOf(*entry)) : 0.0;
     selectionLabel_.setText(selection_.empty() || entry == nullptr
             ? juce::String("Click a cell; shift-click selects a block, ctrl-click adds a cell")
@@ -550,7 +588,12 @@ void EcuTunerComponent::paint(juce::Graphics& graphics) {
 
 void EcuTunerComponent::resized() {
     auto top = getLocalBounds().reduced(12).removeFromTop(34);
-    mapSelector_.setBounds(top.removeFromLeft(std::min(330, top.getWidth() / 2)));
+    if (vtecButton_.isVisible()) {
+        vtecButton_.setBounds(top.removeFromRight(124));
+        top.removeFromRight(8);
+    }
+    // The buttons after the selector take 329 px.
+    mapSelector_.setBounds(top.removeFromLeft(std::clamp(top.getWidth() - 329, 150, 330)));
     top.removeFromLeft(8);
     loadButton_.setBounds(top.removeFromLeft(92)); top.removeFromLeft(6);
     saveButton_.setBounds(top.removeFromLeft(112)); top.removeFromLeft(6);
@@ -611,6 +654,10 @@ void EcuTunerWindow::setSessionLocked(bool locked) {
 
 void EcuTunerWindow::setFuel(const std::string& name, double stoichiometricAirFuelRatio, bool diesel) {
     if (tuner_ != nullptr) tuner_->setFuel(name, stoichiometricAirFuelRatio, diesel);
+}
+
+void EcuTunerWindow::setVtecFittable(bool fittable) {
+    if (tuner_ != nullptr) tuner_->setVtecFittable(fittable);
 }
 
 } // namespace enginelab

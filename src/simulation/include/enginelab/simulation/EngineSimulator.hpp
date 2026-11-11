@@ -305,8 +305,10 @@ public:
      * thread only, like step(). */
     [[nodiscard]] bool beginCylinderResize(const EngineConfig& target, double rampSeconds);
     /** Whether `edited`'s camshafts can replace `running`'s in a running
-     * engine (beginCamshaftChange): the same banks, and variable profiles
-     * and continuous valve control switched on or off alike. */
+     * engine (beginCamshaftChange): the same banks, and continuous valve
+     * control switched on or off alike. VTEC cams may be fitted or taken off:
+     * fitted, they start on the low cam; taken off while the high cam runs,
+     * it drops back on a base circle. */
     [[nodiscard]] static bool camshaftsReplaceable(const EngineConfig& running,
                                                    const EngineConfig& edited) noexcept;
     /** Move the camshafts (the engine's and every bank's) to `target`'s while

@@ -89,8 +89,10 @@ std::size_t FourStrokeEventGenerator::generate(
                     : static_cast<float>(1.4 + 10.0
                         / std::max(1.0, state.rpm / 1'000.0));
             const auto bankCam = bank != config.banks.end() ? &bank->camshafts : &config.camshafts;
-            const auto highProfile = bankCam->variableProfileEnabled
-                && state.rpm >= bankCam->switchRpm && state.throttle >= bankCam->switchThrottle;
+            // The profile the valves actually run (VTEC switches on a base
+            // circle, as the ECU allows).
+            const auto highProfile = cylinderIndex < 32U
+                && ((state.vtecHighCylinderMask >> cylinderIndex) & 1U) != 0U;
             const auto exhaustDuration = highProfile
                 ? bankCam->highExhaustDurationDegrees : bankCam->exhaustDurationDegrees;
             const auto exhaustOpenCylinderPhase = twoStroke ? config.twoStroke.exhaustPortOpenDegrees

@@ -21,6 +21,10 @@ The set created with each engine contains:
 | `knock.retard_deg_per_intensity` | scalar | knock control gain (spark-ignition only) |
 | `boost.target_gauge_kpa` | curve by engine speed | boost the wastegate controller holds (turbocharged only) |
 | `limits.overboost_kpa` | scalar | overboost cut: margin past the boost target where the fuel is cut; 0 = off, the default (turbocharged only) |
+| `vtec.enabled` | scalar | VTEC on (1) or held on the low cam (0); only with VTEC cams fitted |
+| `vtec.engage_rpm` | scalar | speed a whole cycle must stay above for the high cam to engage |
+| `vtec.hysteresis_rpm` | scalar | how far under the engagement a whole cycle must fall to drop back |
+| `vtec.min_throttle_percent` | scalar | throttle below which the high cam is not used |
 
 Load is currently `MAP / ambient_pressure`, clamped between 0 and 4. The
 default tables cover 0 to 400 %, with extra points above 100 % for
@@ -133,6 +137,37 @@ The overrun fuel cut and the dashpot follow the target; the clutch, the
 gearbox and the starter keep `idle_rpm`. A carburetted engine has
 no governor and no such entry: its idle stop screw sets its idle
 (`idle_screw_turns`, the 3-D view's carburettor).
+
+### VTEC
+
+An engine with VTEC cams (a second, longer and higher, cam lobe per valve,
+`variable_profile_enabled` and `high_*` in the engine file) carries four VTEC
+settings in its tables, and the tuner's top row a **VTEC ON / VTEC OFF**
+switch. An engine without them shows **FIT VTEC CAMS** instead (not on a
+two-stroke); clicking a valve in the 3-D view does the same with "VTEC
+cams", where the high cam's duration and lift are edited, and takes them off
+with "No VTEC cams". Fitted, the high cam is the low one plus 24 deg and
+1.0 mm on the intake and plus 22 deg and 0.6 mm on the exhaust (a rotary's
+staged ports: the intake only), stretched from the low cam's lift profile;
+the engagement is two thirds of the rev limit, at 55 % throttle, as the
+catalogue K20A's. Everything is taken live: no restart, no file to edit.
+
+The ECU engages the high cam when a whole cycle runs at or above
+`vtec.engage_rpm` with the throttle at `vtec.min_throttle_percent` or more,
+and drops back when a whole cycle runs under the engagement less
+`vtec.hysteresis_rpm`, or when the throttle falls under its minimum. Every
+switch, the ECU's or a cam fitted or taken off, lands on a base circle of
+that cylinder (`EngineLab.ValveProfileTransition`); cams fitted live start on
+the low cam and engage on a cycle completed after the fit. Defaults are the
+cams' own figures (`switch_rpm`, `switch_throttle`, no hysteresis), so the
+K20A runs as before until they are edited. Every value of the range is
+taken: an engagement under idle runs the high cam at idle, one past the
+limiter never engages, a hysteresis past the engagement never drops back by
+speed, 100 % throttle means the pedal floored (the plate follows the pedal
+exponentially, so the ECU reads 99.9 %). A high cam smaller than the low is
+allowed. The VTEC light beside the tachometer is lit while the valves run
+the high cam, an outline on the low cam, struck through when the ECU holds
+it off; the side panel says which cam runs and on how many cylinders.
 
 ### Idle and fuel-cut strategies (not tunable)
 

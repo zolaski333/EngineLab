@@ -739,6 +739,52 @@ int main() {
                 "on petrol the same map reads in petrol AFR");
     }
 
+    {
+        // VTEC from the tuner: an engine without VTEC cams offers to fit
+        // them, one with them switches its VTEC off and on; an engine that
+        // cannot take them (a two-stroke) has no button.
+        const auto ls3Entry = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [](const auto& entry) { return entry.config.name.find("LS3") != std::string::npos; });
+        require(ls3Entry != catalog.entries.end(), "catalog has the LS3");
+        auto ls3 = ls3Entry->config;
+        namespace calibration = enginelab::calibration;
+        auto store = std::make_shared<calibration::CalibrationStore>();
+        require(store->publish(calibration::makeDefaultEcuCalibration(ls3), { 0, "engine-default" }).published,
+                "the LS3's calibration publishes");
+        {
+            enginelab::EcuTunerComponent tuner(store);
+            tuner.setSize(980, 620);
+            tuner.setVtecFittable(false);
+            require(!tuner.vtecButtonVisible(), "an engine that cannot take VTEC cams shows no VTEC button");
+            tuner.setVtecFittable(true);
+            require(tuner.vtecButtonVisible() && tuner.vtecButtonText() == "FIT VTEC CAMS",
+                    "an engine without VTEC cams offers to fit them");
+            auto asked = 0;
+            tuner.onFitVtecCams = [&] {
+                ++asked;
+                require(enginelab::fitVtecCams(ls3), "the LS3 takes VTEC cams");
+                auto draft = calibration::makeDraft(*store->snapshot());
+                require(calibration::syncVtecSettings(draft, ls3) && store->publish(draft).published,
+                        "the fitted cams' VTEC settings publish");
+            };
+            tuner.pressVtecButton();
+            require(asked == 1, "FIT VTEC CAMS asks for the cams");
+        }
+        enginelab::EcuTunerComponent tuner(store);
+        tuner.setSize(980, 620);
+        tuner.setVtecFittable(true);
+        const auto vtec = [&store] { return store->snapshot()->scalar(calibration::keys::vtecEnabled).value_or(-1.0); };
+        require(tuner.vtecButtonVisible() && tuner.vtecButtonText() == "VTEC ON" && vtec() == 1.0,
+                "with VTEC cams fitted the tuner shows VTEC on");
+        tuner.pressVtecButton();
+        require(tuner.vtecButtonText() == "VTEC OFF" && vtec() == 0.0, "VTEC OFF holds the low cam");
+        tuner.pressVtecButton();
+        require(tuner.vtecButtonText() == "VTEC ON" && vtec() == 1.0, "and VTEC ON gives the high cam back");
+        tuner.setSessionLocked(true);
+        tuner.pressVtecButton();
+        require(vtec() == 1.0, "a locked tuner (a dyno run) leaves VTEC alone");
+    }
+
     std::cout
         << "Audio workshop: layout, truthful availability, physical A/B, "
            "live telemetry, mute/solo routing and HQ export controls PASS\n";

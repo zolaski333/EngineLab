@@ -79,9 +79,29 @@ void ReadoutStrip::drawTachometer(juce::Graphics& g, juce::Rectangle<float> area
     }
 
     auto text = area.withTrimmedLeft(10.0F).reduced(0.0F, 11.0F);
+    auto heading = text.removeFromTop(16.0F);
+    // The VTEC light, on an engine with VTEC cams: lit while the valves run
+    // the high cam, an outline on the low cam, struck through when the ECU
+    // holds it off.
+    if (vtecCamsFitted(model_.config)) {
+        const auto light = heading.removeFromRight(40.0F).reduced(0.0F, 1.0F);
+        const auto engaged = state.vtecHighCylinderMask != 0U;
+        if (engaged) {
+            g.setColour(colours::warn);
+            g.fillRoundedRectangle(light, 3.0F);
+        } else {
+            g.setColour(state.vtecEnabled ? colours::muted : colours::faint);
+            g.drawRoundedRectangle(light, 3.0F, 1.0F);
+        }
+        g.setColour(engaged ? colours::background : state.vtecEnabled ? colours::muted : colours::faint);
+        g.setFont(sectionFont());
+        g.drawText("VTEC", light, juce::Justification::centred, false);
+        if (!state.vtecEnabled)
+            g.drawLine(light.getX() + 3.0F, light.getCentreY(), light.getRight() - 3.0F, light.getCentreY(), 1.0F);
+    }
     g.setColour(colours::faint);
     g.setFont(sectionFont());
-    g.drawText("ENGINE SPEED", text.removeFromTop(16.0F), juce::Justification::centredLeft, true);
+    g.drawText("ENGINE SPEED", heading, juce::Justification::centredLeft, true);
     g.setColour(state.rpm > redline ? colours::critical : colours::text);
     g.setFont(monoFont(34.0F));
     g.drawText(groupedInteger(state.rpm), text.removeFromTop(36.0F), juce::Justification::centredLeft, false);

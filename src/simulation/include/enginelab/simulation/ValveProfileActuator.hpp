@@ -278,6 +278,20 @@ struct BaseCircleWitness final {
         && outside(exhaustCenter, cam.highExhaustDurationDegrees);
 }
 
+/** When the high cam may run: the ECU's VTEC strategy over a camshaft's
+ *  hardware. `authored` is the camshaft's own switch, which the ECU applies
+ *  when its tables carry no VTEC setting. */
+struct ValveProfileStrategy final {
+    bool enabled { true };
+    double engageRpm {};
+    /** Whole cycles below this drop back: `engageRpm` less the hysteresis. */
+    double disengageRpm {};
+    double minimumThrottle {};
+    [[nodiscard]] static ValveProfileStrategy authored(const CamshaftConfig& cam) noexcept {
+        return { true, cam.switchRpm, cam.switchRpm, cam.switchThrottle };
+    }
+};
+
 class ValveProfileActuator final {
 public:
     void reset(bool initialAppliedHigh = false) noexcept {
@@ -293,6 +307,11 @@ public:
     [[nodiscard]] bool requestedHigh() const noexcept { return requested_; }
     [[nodiscard]] bool pending() const noexcept { return armed_; }
     [[nodiscard]] bool qualifiedDemand() const noexcept { return qualifiedDemand_; }
+    /** VTEC cams fitted while the engine runs: `latest`, the last shaft cycle
+     *  completed before the fit, never engages them; the next one may. */
+    void awaitCycleAfter(const std::optional<ShaftCycleMeasurement>& latest) noexcept {
+        if (latest) seenCycle_ = std::array { latest->epoch, latest->generation };
+    }
 
     // Thresholds remain the authored thresholds. A wholly high physical shaft
     // cycle requests high; a wholly low cycle requests low; a mixed cycle holds
@@ -301,18 +320,33 @@ public:
     void updateDemand(const CamshaftConfig& cam, double throttle,
         const std::optional<ShaftCycleMeasurement>& cycle,
         std::uint64_t camRevision) noexcept {
-        if (!cam.variableProfileEnabled) { reset(false); return; }
+        updateDemand(cam, ValveProfileStrategy::authored(cam), throttle, cycle, camRevision);
+    }
+
+    // The ECU's strategy in place of the camshaft's own thresholds. A switch
+    // turned off, or a camshaft whose VTEC cams were taken off while its high
+    // cam ran, requests the low cam: finish() applies it on a base circle as
+    // any other drop-back. A camshaft without VTEC cams on its low cam
+    // bypasses the actuator.
+    void updateDemand(const CamshaftConfig& cam, const ValveProfileStrategy& strategy, double throttle,
+        const std::optional<ShaftCycleMeasurement>& cycle,
+        std::uint64_t camRevision) noexcept {
+        if (!cam.variableProfileEnabled && !applied_) { reset(false); return; }
         enabled_ = true;
         if (revision_ && *revision_ != camRevision) {
             previous_.reset(); armed_ = false; seenCycle_.reset();
             setRequest(false, false);
         }
         revision_ = camRevision;
-        if (!std::isfinite(throttle) || !std::isfinite(cam.switchThrottle)
-            || !std::isfinite(cam.switchRpm)) {
+        if (!cam.variableProfileEnabled || !strategy.enabled) {
+            if (cycle) seenCycle_ = std::array { cycle->epoch, cycle->generation };
+            setRequest(false, true); return;
+        }
+        if (!std::isfinite(throttle) || !std::isfinite(strategy.minimumThrottle)
+            || !std::isfinite(strategy.engageRpm) || !std::isfinite(strategy.disengageRpm)) {
             setRequest(false, false); return;
         }
-        if (throttle < cam.switchThrottle) {
+        if (throttle < strategy.minimumThrottle) {
             if (cycle) seenCycle_ = std::array { cycle->epoch, cycle->generation };
             setRequest(false, true); return;
         }
@@ -327,10 +361,10 @@ public:
         if (seenCycle_ && *seenCycle_ == token) return;
         if (seenCycle_ && (*seenCycle_)[0] != token[0]) setRequest(false, false);
         seenCycle_ = token;
-        if (cycle->minimumRpm >= cam.switchRpm) setRequest(true, true);
-        else if (cycle->maximumRpm < cam.switchRpm) setRequest(false, true);
-        // Otherwise retain the previous request; this is not a numerical or
-        // manufacturer-specific hysteresis band.
+        if (cycle->minimumRpm >= strategy.engageRpm) setRequest(true, true);
+        else if (cycle->maximumRpm < strategy.disengageRpm) setRequest(false, true);
+        // Otherwise retain the previous request: a cycle that straddles the
+        // switch, or runs inside the ECU's hysteresis band.
     }
 
     // Call after one real VVT advance using the old applied profile. Previous
@@ -340,7 +374,7 @@ public:
     [[nodiscard]] bool finish(const CamshaftConfig& cam, const ValveTrainState& currentVvt,
         double currentPhase, std::optional<double> actualTravelSincePrevious,
         std::uint64_t camRevision, double period = detail::shaftPeriodDegrees) noexcept {
-        if (!enabled_ || !cam.variableProfileEnabled) return false;
+        if (!enabled_) return false;
         const auto validSnapshot = detail::validPhase(currentPhase, period)
             && std::isfinite(currentVvt.intakeAdvanceDegrees)
             && std::isfinite(currentVvt.exhaustAdvanceDegrees)

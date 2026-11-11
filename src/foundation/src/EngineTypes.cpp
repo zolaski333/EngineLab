@@ -454,6 +454,80 @@ void keepBackfires(const EngineConfig& running, EngineConfig& edited) noexcept {
     edited.ignition.limiterKeepsFuel = running.ignition.limiterKeepsFuel;
 }
 
+const CamshaftConfig& camshaftOfCylinder(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
+    for (const auto& bank : config.banks)
+        if (bank.id == cylinder.bankId
+            || std::find(bank.cylinderIds.begin(), bank.cylinderIds.end(), cylinder.id) != bank.cylinderIds.end())
+            return bank.camshafts;
+    return config.camshafts;
+}
+
+const CamshaftConfig* firstVtecCamshaft(const EngineConfig& config) noexcept {
+    if (config.cycle == EngineCycle::twoStroke) return nullptr;
+    for (const auto& cylinder : config.cylinders)
+        if (const auto& cam = camshaftOfCylinder(config, cylinder); cam.variableProfileEnabled) return &cam;
+    return nullptr;
+}
+
+bool vtecCamsFitted(const EngineConfig& config) noexcept {
+    return firstVtecCamshaft(config) != nullptr;
+}
+
+namespace {
+
+/** A custom lift profile stretched to another duration and lift: the high
+ *  cam keeps the low cam's shape. */
+[[nodiscard]] std::vector<ValveLiftSample> stretchedLiftProfile(const std::vector<ValveLiftSample>& samples,
+    double fromDuration, double toDuration, double fromLift, double toLift) {
+    const auto angleScale = fromDuration > 0.0 ? toDuration / fromDuration : 1.0;
+    const auto liftScale = fromLift > 0.0 ? toLift / fromLift : 1.0;
+    auto stretched = samples;
+    for (auto& sample : stretched) {
+        sample.angleDegrees *= angleScale;
+        sample.liftMm = std::clamp(sample.liftMm * liftScale, 0.0, toLift);
+    }
+    return stretched;
+}
+
+} // namespace
+
+bool fitVtecCams(EngineConfig& config) {
+    if (config.cycle == EngineCycle::twoStroke) return false;
+    const auto rotary = config.cycle == EngineCycle::rotary;
+    // The catalogue K20A (parts/camshafts.yaml sport_na): 268/264 deg and
+    // 12.2/11.8 mm under a 292/286 deg, 13.2/12.4 mm high cam, engaging at
+    // 5,800 rpm of its 8,700 rpm limit above 55 % throttle.
+    const auto engage = std::clamp(std::round(config.ignition.revLimitRpm * (2.0 / 3.0) / 50.0) * 50.0,
+                                   200.0, 25'000.0);
+    auto fitted = false;
+    const auto fit = [&](CamshaftConfig& cam) {
+        if (cam.variableProfileEnabled) return;
+        cam.variableProfileEnabled = true;
+        cam.switchRpm = engage;
+        cam.switchThrottle = 0.55;
+        cam.highIntakeDurationDegrees = std::min(cam.intakeDurationDegrees + 24.0, 720.0);
+        cam.highIntakeLiftMm = std::min(cam.intakeLiftMm + 1.0, 150.0);
+        cam.highExhaustDurationDegrees = rotary ? cam.exhaustDurationDegrees
+                                                : std::min(cam.exhaustDurationDegrees + 22.0, 720.0);
+        cam.highExhaustLiftMm = rotary ? cam.exhaustLiftMm : std::min(cam.exhaustLiftMm + 0.6, 150.0);
+        cam.highIntakeLiftProfile = cam.intakeLiftProfile.size() < 2 ? std::vector<ValveLiftSample> {}
+            : stretchedLiftProfile(cam.intakeLiftProfile, cam.intakeDurationDegrees, cam.highIntakeDurationDegrees,
+                                   cam.intakeLiftMm, cam.highIntakeLiftMm);
+        cam.highExhaustLiftProfile = cam.exhaustLiftProfile.size() < 2 ? std::vector<ValveLiftSample> {}
+            : stretchedLiftProfile(cam.exhaustLiftProfile, cam.exhaustDurationDegrees, cam.highExhaustDurationDegrees,
+                                   cam.exhaustLiftMm, cam.highExhaustLiftMm);
+        fitted = true;
+    };
+    fit(config.camshafts);
+    for (auto& bank : config.banks) fit(bank.camshafts);
+    return fitted;
+}
+
+void removeVtecCams(EngineConfig& config) noexcept {
+    config.camshafts.variableProfileEnabled = false;
+    for (auto& bank : config.banks) bank.camshafts.variableProfileEnabled = false;
+}
+
 void normaliseEngineConfig(EngineConfig& config) {
     // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
     // explicit valve geometry; schema 4 adds SI outlet/observer coordinates;

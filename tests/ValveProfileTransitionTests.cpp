@@ -1,5 +1,7 @@
 // Observe every accepted mechanical step. The policy oracle deliberately does
 // not include or call the actuator/window helper under test.
+#include <enginelab/calibration/EcuCalibration.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -21,6 +23,8 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
+#include <vector>
 
 int runValveProfileActuatorContracts();
 
@@ -121,17 +125,37 @@ private:
     bool active_ {}, aligned_ {};
 };
 
+/** The ECU's VTEC settings as the tables state them, read here apart from
+ *  the simulator's own reading: absent, the camshaft's authored switch. */
+struct Strategy final {
+    bool enabled { true };
+    double engage {};
+    double disengage {};
+    double throttle {};
+};
+Strategy strategyOf(const CamshaftConfig& cam, const calibration::CalibrationSnapshot& tables) {
+    const auto engage = tables.scalar(calibration::keys::vtecEngage).value_or(cam.switchRpm);
+    const auto throttle = tables.scalar(calibration::keys::vtecMinimumThrottle);
+    return { tables.scalar(calibration::keys::vtecEnabled).value_or(1.0) >= 0.5, engage,
+             engage - tables.scalar(calibration::keys::vtecHysteresis).value_or(0.0),
+             throttle ? std::min(*throttle / 100.0, 0.999) : cam.switchThrottle };
+}
+
 struct RequestOracle final {
     bool high {};
     std::uint64_t consumed {};
-    void update(const CamshaftConfig& cam, double throttle, const std::optional<CycleRange>& range) {
-        if (!cam.variableProfileEnabled || !range) { high = false; consumed = 0; return; }
-        if (throttle < cam.switchThrottle) { high = false; consumed = range->number; return; }
+    void update(const CamshaftConfig& cam, const Strategy& strategy, double throttle,
+                const std::optional<CycleRange>& range) {
+        if (!range) { high = false; consumed = 0; return; }
+        if (!cam.variableProfileEnabled) { high = false; return; }
+        if (!strategy.enabled || throttle < strategy.throttle) { high = false; consumed = range->number; return; }
         if (range->number == consumed) return;
         consumed = range->number;
-        if (range->minimum >= cam.switchRpm) high = true;
-        else if (range->maximum < cam.switchRpm) high = false;
+        if (range->minimum >= strategy.engage) high = true;
+        else if (range->maximum < strategy.disengage) high = false;
     }
+    /** Cams fitted live: the cycle completed before the fit never engages them. */
+    void fitted(const std::optional<CycleRange>& range) { high = false; consumed = range ? range->number : 0; }
 };
 
 ValveTrainState observedVvt(const CylinderState& cylinder) {
@@ -214,6 +238,10 @@ public:
                - begin.angularVelocityRadPerSecond) / dt_ - disturbance, -5'000.0, 5'000.0);
         if (forceStop) controls.externalTorqueNm = -5'000.0;
         const auto frame = simulator_->step(dt_, controls);
+        if (refreshConfig_) {
+            config_ = simulator_->config();
+            refreshConfig_ = simulator_->camshaftChangeActive();
+        }
         previousMotorTorque_ = controls.externalTorqueNm;
         const auto& end = frame.state;
         require(end.solverSubsteps == 1 && !end.solverResolutionLimited,
@@ -284,6 +312,35 @@ public:
             if (simulator_->appliedHighValveProfile(index)) return false;
         return true;
     }
+    /** The ECU's tables, to change its VTEC settings as the tuner does. */
+    void initialiseTables() { ecu_.initialiseCalibration(config_); }
+    void publish(std::string_view key, double value) {
+        auto draft = calibration::makeDraft(*ecu_.calibrationStore()->snapshot());
+        const auto* found = draft.find(key);
+        require(found != nullptr, "the tables carry the VTEC setting");
+        auto entry = *found;
+        std::get<calibration::ScalarCalibration>(entry).value = value;
+        draft.set(std::move(entry));
+        require(ecu_.calibrationStore()->publish(draft).published, "a VTEC setting publishes");
+    }
+    /** VTEC cams fitted or taken off while the shaft turns, tables following. */
+    void changeCams(bool fit) {
+        auto target = config_;
+        if (fit) require(fitVtecCams(target), "VTEC cams fit");
+        else removeVtecCams(target);
+        std::vector<char> before(config_.cylinders.size());
+        for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+            before[index] = selectedCam(config_, config_.cylinders[index]).variableProfileEnabled;
+        require(simulator_->beginCamshaftChange(target, 0.0), "the turning engine takes the VTEC change");
+        config_ = simulator_->config();
+        refreshConfig_ = true;
+        for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+            if (!before[index] && selectedCam(config_, config_.cylinders[index]).variableProfileEnabled)
+                requests_[index].fitted(physicalCycles_.complete());
+        auto draft = calibration::makeDraft(*ecu_.calibrationStore()->snapshot());
+        if (calibration::syncVtecSettings(draft, config_))
+            require(ecu_.calibrationStore()->publish(draft).published, "the tables follow the cams");
+    }
     EngineSimulator& simulator() { return *simulator_; }
     const EngineConfig& config() const { return config_; }
     double dt() const { return dt_; }
@@ -307,10 +364,14 @@ private:
             const auto actual = observedVvt(end.cylinderStates[index]);
             const auto high = simulator_->appliedHighValveProfile(index);
             auto& previous = observations_[index];
-            requests_[index].update(cam, end.throttle, physicalCycles_.complete());
-            if (!cam.variableProfileEnabled) require(!high, "a selected nonvariable bank always uses its low lobe");
+            requests_[index].update(cam, strategyOf(cam, *ecu_.calibrationStore()->snapshot()), end.throttle,
+                                    physicalCycles_.complete());
+            // VTEC cams taken off while their high cam ran drop back on a
+            // base circle; a camshaft without them never goes high.
+            if (!cam.variableProfileEnabled)
+                require(!high || previous.high, "a selected nonvariable bank always uses its low lobe");
             if (high != previous.high) {
-                require(cam.variableProfileEnabled && high == requests_[index].high,
+                require((cam.variableProfileEnabled || !high) && high == requests_[index].high,
                         "a discrete transition obeys the independent complete physical cycle demand");
                 require(previous.valid && fourLiftsClosed(cam, previous.vvt, previous.phase)
                     && fourLiftsClosed(cam, actual, phase), "a transition has actual previous and current closed valves");
@@ -359,6 +420,7 @@ private:
     std::uint64_t hash_ {1469598103934665603ULL};
     std::size_t up_ {}, down_ {}, pressureSamples_ {}, differingLifts_ {};
     bool hasQualifiedCycleSinceReset_ {};
+    bool refreshConfig_ {};
 };
 
 void engineTransitionsAndReset() {
@@ -400,6 +462,63 @@ void engineTransitionsAndReset() {
         << " digest=" << rig.digest() << '\n';
 }
 
+/** The ECU's VTEC settings and live cam changes move the request; every
+ *  switch they cause still lands on a base circle (the rig's oracle). */
+void ecuStrategyAndLiveCams() {
+    auto rig = std::make_unique<MotorRig>(catalogue("01_honda_k20a_like"));
+    rig->initialiseTables();
+    const auto switchRpm = selectedCam(rig->config(), rig->config().cylinders.front()).switchRpm;
+    const auto cylinders = rig->config().cylinders.size();
+    namespace keys = calibration::keys;
+    rig->hold(switchRpm * 1.10, 1.0, 0.12);
+    require(rig->allVariableHigh(), "the default tables engage where the cams were authored");
+    const auto downBefore = rig->down();
+    rig->publish(keys::vtecEnabled, 0.0);
+    rig->hold(switchRpm * 1.10, 1.0, 0.10);
+    require(rig->allLow() && rig->down() >= downBefore + cylinders,
+            "switched off in the ECU, the high cam drops back on base circles");
+    rig->publish(keys::vtecEnabled, 1.0);
+    rig->hold(switchRpm * 1.10, 1.0, 0.12);
+    require(rig->allVariableHigh(), "switched on again, it engages on fresh whole cycles");
+
+    rig->publish(keys::vtecEngage, switchRpm * 1.25);
+    rig->hold(switchRpm * 1.10, 1.0, 0.10);
+    require(rig->allLow(), "an engagement raised above the speed drops it");
+    rig->publish(keys::vtecEngage, switchRpm * 0.70);
+    rig->hold(switchRpm * 0.80, 1.0, 0.15);
+    require(rig->allVariableHigh(), "a lowered engagement engages below the authored switch");
+
+    rig->publish(keys::vtecEngage, switchRpm);
+    rig->publish(keys::vtecHysteresis, switchRpm * 0.20);
+    rig->hold(switchRpm * 1.10, 1.0, 0.10);
+    rig->hold(switchRpm * 0.90, 1.0, 0.15);
+    require(rig->allVariableHigh(), "inside the hysteresis band the high cam holds");
+    rig->hold(switchRpm * 0.70, 1.0, 0.15);
+    require(rig->allLow(), "below the band it drops back");
+    rig->hold(switchRpm * 0.90, 1.0, 0.15);
+    require(rig->allLow(), "inside the band the low cam holds");
+    rig->publish(keys::vtecHysteresis, 0.0);
+
+    rig->publish(keys::vtecMinimumThrottle, 90.0);
+    rig->hold(switchRpm * 1.10, 0.80, 0.12);
+    require(rig->allLow(), "80 % throttle under a 90 % minimum stays on the low cam");
+    rig->hold(switchRpm * 1.10, 1.0, 0.12);
+    require(rig->allVariableHigh(), "the whole pedal engages");
+    rig->publish(keys::vtecMinimumThrottle, 0.0);
+    rig->hold(switchRpm * 1.10, 0.0, 0.12);
+    require(rig->allVariableHigh(), "a zero minimum throttle runs the high cam off the pedal");
+
+    const auto downAtRemoval = rig->down();
+    rig->changeCams(false);
+    rig->hold(switchRpm * 1.10, 1.0, 0.10);
+    require(rig->allLow() && rig->down() >= downAtRemoval + cylinders,
+            "cams taken off while the high cam runs drop back on base circles");
+    rig->changeCams(true);
+    rig->hold(switchRpm * 1.10, 1.0, 0.12);
+    require(rig->allVariableHigh(), "fitted again live, they engage on a whole cycle after the fit");
+    std::cout << "PASS ecu-strategy-live-cams up=" << rig->up() << " down=" << rig->down() << std::endl;
+}
+
 void bankPrecedenceAndInstanceIsolation() {
     auto hidden = makeDefaultInlineFour();
     require(!hidden.banks.empty(), "bank precedence fixture has explicit banks");
@@ -435,6 +554,7 @@ int main() {
     std::cout << std::setprecision(14);
     if (runValveProfileActuatorContracts() != EXIT_SUCCESS) return EXIT_FAILURE;
     engineTransitionsAndReset();
+    ecuStrategyAndLiveCams();
     bankPrecedenceAndInstanceIsolation();
     return EXIT_SUCCESS;
 }

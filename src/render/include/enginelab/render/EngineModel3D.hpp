@@ -63,9 +63,11 @@ struct ScenePoseInput final {
     double crankAngleDegrees {};
     /** Strength of each cylinder's current burn, 0..1 (0 = misfire or cut). */
     std::array<float, 32> combustion {};
-    /** Engine speed and throttle, for a variable cam profile switch. */
+    /** Engine speed and throttle. */
     double rpm {};
     double throttle {};
+    /** VTEC: bit i set while cylinder i runs its high cam (EngineState). */
+    std::uint32_t vtecHighCylinderMask {};
     /** Strength of the flame at the exhaust outlets, 0..1 (afterfire). */
     float afterfire {};
     /** Turbocharger shaft angle, degrees. */

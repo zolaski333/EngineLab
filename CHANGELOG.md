@@ -30,6 +30,15 @@ file formats, always with an in-memory migration).
 - **- PATH asks how the cylinders join**: a Y junction keeping both
   collectors (the pipe after them gives the legs their length), or one
   N-into-1 rebuilt with a primary like the destination's for every cylinder.
+- **VTEC, fitted, tuned and switched from EngineLab.** The ECU tuner has a
+  VTEC ON / OFF switch and four settings (on, engagement speed, hysteresis,
+  minimum throttle) on an engine with VTEC cams; on any other four-stroke or
+  rotary, FIT VTEC CAMS (or "VTEC cams" on a valve in the 3-D view) fits
+  them, their duration and lift editable there, and "No VTEC cams" takes
+  them off. All of it while the engine runs, no file to edit and no new
+  engine; the switch always lands on a base circle. A VTEC light beside the
+  tachometer shows when the high cam runs, and the side panel on how many
+  cylinders. Engines without VTEC cams are unchanged.
 
 ### Fixed
 

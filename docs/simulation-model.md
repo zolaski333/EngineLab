@@ -101,7 +101,11 @@ roundoff into tens of kPa (see `docs/journal.md`, 2026-10-06).
 and lift/discharge-coefficient curves are sampled and interpolated. An
 RPM/load calibration can continuously drive intake advance, exhaust advance and
 the lift multiplier; the actuators follow their target at a configurable
-response rate. The switched high profile is kept for older configurations.
+response rate. The switched high profile is VTEC: the ECU's `vtec.*` settings
+(`docs/ecu-tuning.md`) choose it per whole cycle, `ValveProfileActuator`
+applies it on a base circle, and the event generator, the physics' cam
+metrics and the 3-D view follow the cam each cylinder actually runs
+(`EngineState::vtecHighCylinderMask`).
 
 `HelmholtzRunnerModel` attaches a damped mode to each runner. Its frequency
 depends on the area, the length, the volume and the local speed of sound. The

@@ -291,6 +291,26 @@ void validateKnownEcuEntry(std::string_view id, const CalibrationEntry& entry,
             addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
                      "The knock retard gain must be a scalar calibration.");
         }
+    } else if (id == keys::vtecEnabled || id == keys::vtecEngage || id == keys::vtecHysteresis
+               || id == keys::vtecMinimumThrottle) {
+        const auto& metadata = metadataOf(entry);
+        const auto unit = id == keys::vtecEnabled ? CalibrationUnit::dimensionless
+            : id == keys::vtecMinimumThrottle ? CalibrationUnit::percent : CalibrationUnit::revolutionsPerMinute;
+        if (metadata.unit != unit) {
+            addIssue(issues, CalibrationErrorCode::incompatibleUnit, std::string(path) + ".unit",
+                     id == keys::vtecEnabled ? "The VTEC switch is a number, 1 on or 0 off."
+                     : id == keys::vtecMinimumThrottle ? "The VTEC minimum throttle must be expressed in percent."
+                     : "The VTEC speeds must be expressed in rpm.");
+        }
+        validateCanonicalLimits(metadata, 0.0,
+            id == keys::vtecEnabled ? 1.0
+            : id == keys::vtecMinimumThrottle ? ecuLimits::maximumVtecThrottlePercent
+            : id == keys::vtecHysteresis ? ecuLimits::maximumVtecHysteresisRpm : ecuLimits::maximumRevLimitRpm,
+            path, issues);
+        if (!std::holds_alternative<ScalarCalibration>(entry)) {
+            addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
+                     "The VTEC settings must be scalar calibrations.");
+        }
     }
 }
 

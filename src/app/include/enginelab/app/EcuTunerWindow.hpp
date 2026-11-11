@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,6 +34,17 @@ public:
     /** What a stored value of `id` reads on screen (1 but for a spark
      *  engine's target AFR). */
     [[nodiscard]] double displayScaleOf(const std::string& id) const noexcept;
+    /** Whether the engine could take VTEC cams (not a two-stroke). The
+     *  VTEC button shows the ECU's switch when the tables carry VTEC
+     *  settings, otherwise offers to fit the cams (onFitVtecCams). */
+    void setVtecFittable(bool fittable);
+    /** Asks the owner to fit VTEC cams to the running engine. */
+    std::function<void()> onFitVtecCams;
+    /** The VTEC button's text now (for tests). */
+    [[nodiscard]] juce::String vtecButtonText() const { return vtecButton_.getButtonText(); }
+    [[nodiscard]] bool vtecButtonVisible() const { return vtecButton_.isVisible(); }
+    /** Presses the VTEC button, as a click does. */
+    void pressVtecButton();
 
 private:
     void timerCallback() override;
@@ -45,6 +57,7 @@ private:
     /** Publishes `edited` live; on success `previous` goes on the undo stack. */
     bool publishEdit(calibration::CalibrationEntry edited, const calibration::CalibrationEntry& previous);
     void updateToolState();
+    void updateVtecButton();
     void chooseCalibrationToLoad();
     void chooseCalibrationToSave();
     void showIssues(const calibration::PublishResult&, const juce::String& title);
@@ -81,6 +94,8 @@ private:
     juce::TextButton loadButton_ { "LOAD" };
     juce::TextButton saveButton_ { "SAVE" };
     juce::TextButton refreshButton_ { "RELOAD" };
+    juce::TextButton vtecButton_ { "FIT VTEC CAMS" };
+    bool vtecFittable_ { false };
     juce::Label statusLabel_;
     juce::Label descriptionLabel_;
     std::vector<std::unique_ptr<juce::Label>> xLabels_;
@@ -101,6 +116,9 @@ public:
     void setOperatingPoint(double rpm, double normalizedLoad);
     void setSessionLocked(bool locked);
     void setFuel(const std::string& name, double stoichiometricAirFuelRatio, bool diesel);
+    void setVtecFittable(bool fittable);
+    /** The tuner itself (its VTEC callback). */
+    [[nodiscard]] EcuTunerComponent* tuner() const noexcept { return tuner_; }
 
 private:
     EcuTunerComponent* tuner_ {};

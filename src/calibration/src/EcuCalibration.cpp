@@ -52,6 +52,38 @@ constexpr double seaLevelPressureKpa = 101.325;
     return curve.back().advanceDegrees;
 }
 
+/** VTEC's settings, seeded from the engine's first VTEC camshaft so the
+ *  engine runs as its cams were authored: on, at their own switch speed and
+ *  throttle, no hysteresis. */
+[[nodiscard]] std::array<ScalarCalibration, 4> vtecSettings(const CamshaftConfig& cam) {
+    // A throttle such as 0.55 stores 55 exactly and reads back as the same
+    // double (55 / 100); a finer one rounds to a tenth of a percent.
+    const auto throttlePercent = std::clamp(std::round(cam.switchThrottle * 1'000.0) / 10.0,
+                                            0.0, ecuLimits::maximumVtecThrottlePercent);
+    return { {
+        { metadata(std::string(keys::vtecEnabled), "VTEC",
+                   "The ECU's VTEC switch: 1 lets the high cam engage, 0 holds the low cam (a high cam drops back "
+                   "at its next base circle, with every valve shut).",
+                   CalibrationUnit::dimensionless, 0.0, 1.0, 0),
+          1.0 },
+        { metadata(std::string(keys::vtecEngage), "VTEC engagement",
+                   "The high cam engages once a whole shaft cycle runs above this speed, on the next base circle. "
+                   "Above the rev limiter it never engages; under idle it is always on, the throttle permitting.",
+                   CalibrationUnit::revolutionsPerMinute, 0.0, ecuLimits::maximumRevLimitRpm, 0),
+          std::clamp(cam.switchRpm, 0.0, ecuLimits::maximumRevLimitRpm) },
+        { metadata(std::string(keys::vtecHysteresis), "VTEC hysteresis",
+                   "The high cam drops back once a whole shaft cycle runs below the engagement speed less this: a "
+                   "speed held around the switch then no longer hunts between cams. Zero: it drops back below the "
+                   "engagement speed itself.",
+                   CalibrationUnit::revolutionsPerMinute, 0.0, ecuLimits::maximumVtecHysteresisRpm, 0),
+          0.0 },
+        { metadata(std::string(keys::vtecMinimumThrottle), "VTEC minimum throttle",
+                   "Under this throttle the high cam never runs, whatever the speed. Zero: any throttle.",
+                   CalibrationUnit::percent, 0.0, ecuLimits::maximumVtecThrottlePercent, 0),
+          throttlePercent },
+    } };
+}
+
 } // namespace
 
 CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
@@ -197,13 +229,31 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
             ecuLimits::defaultKnockRetardGainDegrees
         });
     }
+    if (const auto* cam = firstVtecCamshaft(config))
+        for (auto& setting : vtecSettings(*cam)) draft.set(std::move(setting));
     return draft;
 }
 
 void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config) {
+    (void)syncVtecSettings(draft, config);
     if (draft.find(keys::overboostCut) != nullptr) return;
     const auto defaults = makeDefaultEcuCalibration(config);
     if (const auto* cut = defaults.find(keys::overboostCut)) draft.set(*cut);
+}
+
+bool syncVtecSettings(CalibrationDraft& draft, const EngineConfig& config) {
+    auto changed = false;
+    if (const auto* cam = firstVtecCamshaft(config)) {
+        for (auto& setting : vtecSettings(*cam)) {
+            if (draft.find(setting.metadata.id) != nullptr) continue;
+            draft.set(std::move(setting));
+            changed = true;
+        }
+        return changed;
+    }
+    for (const auto key : { keys::vtecEnabled, keys::vtecEngage, keys::vtecHysteresis, keys::vtecMinimumThrottle })
+        changed = draft.erase(key) || changed;
+    return changed;
 }
 
 CalibrationDraft makeDraft(const CalibrationSnapshot& snapshot) {

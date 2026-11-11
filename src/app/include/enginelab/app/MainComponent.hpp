@@ -155,6 +155,13 @@ private:
     void showKeyBindingsEditor();
     void showAudioWorkshop();
     void showEcuTuner();
+    /** Fits VTEC cams to the running engine (the tuner's VTEC button), live:
+     *  they start on the low cam. */
+    void fitVtecCamsToEngine();
+    /** Gives the running tables the VTEC settings when the engine has VTEC
+     *  cams and takes them away when it has none, whatever fitted or
+     *  removed the cams (the inspector, the tuner, A/B, a loaded table). */
+    void syncVtecTables();
     void showExhaustDesigner();
     void showFuelWindow();
     /** The vehicle's figures, in their own window. */
@@ -216,6 +223,8 @@ private:
     bool configModified_ { false };
     bool calibrationModified_ { false };
     std::shared_ptr<const calibration::CalibrationSnapshot> seenCalibration_;
+    /** The table revision syncVtecTables last tried to complete. */
+    std::optional<std::uint64_t> vtecSyncAttemptedRevision_;
     std::filesystem::path catalogRoot_;
     EngineConfig config_;
     int selectedPresetIndex_ { -1 };

@@ -3,6 +3,7 @@
 #include <enginelab/app/Theme.hpp>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <utility>
 
@@ -53,6 +54,20 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
     return text.isEmpty() ? juce::String("none") : text;
 }
 
+/** VTEC on an engine with VTEC cams: which cam the valves run, on how many
+ *  cylinders, and where the ECU engages it. */
+[[nodiscard]] juce::String vtecText(const EngineState& state, std::size_t cylinders) {
+    const auto high = static_cast<std::size_t>(std::popcount(state.vtecHighCylinderMask));
+    const auto dot = utf8("  \xc2\xb7  ");
+    if (!state.vtecEnabled) return high > 0 ? juce::String("off, dropping back") : juce::String("off (ECU)");
+    const auto engage = "engages " + groupedInteger(state.vtecEngageRpm) + " rpm";
+    if (high == 0) return "low cam" + dot + engage;
+    return (high >= cylinders ? juce::String("high cam")
+                              : "high cam on " + juce::String(static_cast<int>(high)) + " of "
+                                    + juce::String(static_cast<int>(cylinders)))
+        + dot + engage;
+}
+
 [[nodiscard]] Rows engineRows(const DashboardModel& model) {
     const auto& state = model.state;
     const auto peakPressure = state.peakCylinderPressureBar;
@@ -60,7 +75,7 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
     const auto degree = utf8("\xc2\xb0");
     using units::Quantity;
     const auto& unit = model.units;
-    return {
+    Rows rows {
         { "State", runningStateName(state.runningState) },
         { "Limits", activeLimitsText(state.activeLimits) },
         { "Layout", juce::String(layoutName(model.config.layout)) + dot
@@ -80,6 +95,9 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
         { "Mean piston speed", juce::String(state.meanPistonSpeedMps, 1) + " m/s" },
         { "Peak piston acceleration", groupedInteger(state.peakPistonAccelerationG) + " g" },
     };
+    if (vtecCamsFitted(model.config))
+        rows.insert(rows.begin() + 2, { "VTEC", vtecText(state, model.config.cylinders.size()) });
+    return rows;
 }
 
 [[nodiscard]] Rows injectionRows(const DashboardModel& model) {

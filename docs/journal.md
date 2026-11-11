@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-11 — VTEC from EngineLab, made robust
+
+- Owner request: VTEC (that name), fitted, tuned and switched from EngineLab, no file to edit, no sound or curve measured, "make sure it works whatever happens". Tables: `vtec.enabled/engage_rpm/hysteresis_rpm/min_throttle_percent`, only with VTEC cams; the tuner's switch, FIT VTEC CAMS and the valve inspector fit, edit and remove them live.
+- `EngineLab.Vtec` (no curve): K20A, LS3, a V8 with a cam per bank, a high cam smaller than the low, 2JZ, EJ25, radial, TDI, 13B, torture W16, ~17-33 s simulated each: switched at idle, at the limiter, in a shift cut, on overrun, in launch control, cams removed on the high cam and refitted, engagement under idle and past the limiter, hysteresis 25,000 rpm, 100 % throttle: every frame finite, no stall, high cam only where fitted.
+- Found by it: (1) a 100 % minimum never engaged: the plate follows the pedal exponentially (`smooth`, tau 0.1 s) and never reads 1.0; the ECU's minimum is capped at 99.9 %. (2) Cams fitted live engaged in their first frame on a cycle measured before the fit; they now wait for a cycle completed after it (`awaitCycleAfter`).
+- `EngineLab.ValveProfileTransition`: the ECU's switch, a moved engagement, the hysteresis band, the throttle minimum, a live removal and refit, every transition on a base circle (24 up, 20 down). Without the change the ECU switch is ignored and the live fit refused.
+- The event generator, the physics' cam metrics and the 3-D view now follow the cam each cylinder actually runs (was: the instantaneous rpm and throttle against the cam's switch). `DriveScenarioHarness --builtin pull` on K20A (to 8,389 rpm, so through its switch), 2JZ, LS3, TDI, 13B: CSV and report byte-identical to before; `AudioRenderHarness --runtime-only` K20A and 2JZ: WAV byte-identical. The default tables change nothing.
+- Not measured: the sound or torque of any VTEC setting (owner: not wanted); the tuner's timer refresh after an external publish (exercised in the app only).
+
 ## 2026-11-11 — the exhaust designer's path removal and cylinder sources
 
 - Owner report: removing one path of a V8's dual 4-into-1 "wired the cylinders anyhow, with useless collectors"; with a cylinder's default pipe deleted nothing could take its place. Cause of the first: `removePath` called the per-cylinder move, which gave each cylinder a default primary and spliced a new zero-length merge after the destination's FIRST primary: five merges in a chain on one pipe, the removed collector and its pipes dropped.

@@ -28,6 +28,16 @@ inline constexpr std::string_view knockRetardGain = "knock.retard_deg_per_intens
 // carburettor, whose idle stop screw sets it, or saved tables without it):
 // the configuration's idle speed.
 inline constexpr std::string_view idleTarget = "idle.target_rpm";
+// VTEC, on an engine whose camshafts carry a high cam (a rotary's staged
+// intake ports): the ECU's switch, 1 on and 0 off; the speed the high cam
+// engages above (whole shaft cycles above it); how far below that it drops
+// back; and the throttle under which it never runs, in percent. Absent
+// (tables saved before them): on, at each camshaft's own `switch_rpm` and
+// `switch_throttle`, with no hysteresis.
+inline constexpr std::string_view vtecEnabled = "vtec.enabled";
+inline constexpr std::string_view vtecEngage = "vtec.engage_rpm";
+inline constexpr std::string_view vtecHysteresis = "vtec.hysteresis_rpm";
+inline constexpr std::string_view vtecMinimumThrottle = "vtec.min_throttle_percent";
 
 } // namespace enginelab::calibration::keys
 
@@ -68,6 +78,11 @@ inline constexpr double maximumBoostTargetGaugeKpa = 510.0;
 // of a sweep (journal 2026-11-11), so a cut on by default would change it.
 inline constexpr double defaultOverboostCutMarginKpa = 0.0;
 inline constexpr double maximumOverboostCutMarginKpa = 1'000.0;
+// VTEC: any speed a rev limiter can be set to, a hysteresis as large, and the
+// whole pedal. No other bound: a high cam engaged below idle, or never, is the
+// tuner's choice.
+inline constexpr double maximumVtecHysteresisRpm = maximumRevLimitRpm;
+inline constexpr double maximumVtecThrottlePercent = 100.0;
 inline constexpr double minimumNormalizedLoad = 0.0;
 inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;

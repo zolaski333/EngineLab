@@ -2008,8 +2008,9 @@ void EngineViewport::updateInspector() {
         add("Lobe separation", degrees(0.5 * (cams.intakeCenterlineDegrees + cams.exhaustCenterlineDegrees)));
         add("Valve overlap", degrees(std::max(0.0, 0.5 * (cams.intakeDurationDegrees + cams.exhaustDurationDegrees)
                                                        - cams.intakeCenterlineDegrees - cams.exhaustCenterlineDegrees)));
-        if (cams.variableProfileEnabled)
-            add("Profile switch", juce::String(juce::roundToInt(cams.switchRpm)) + " rpm");
+        if (vtecCamsFitted(config))
+            add("VTEC", state.vtecEnabled ? "engages at " + juce::String(juce::roundToInt(state.vtecEngageRpm)) + " rpm"
+                                          : juce::String("off (ECU tuner)"));
         if (cylinderEditor_) {
             PartInspector::Edit timing;
             timing.key = std::uint64_t { 7 } << 60U;
@@ -2245,8 +2246,27 @@ void EngineViewport::updateInspector() {
             camEdit.value("Duration", intake ? cams.intakeDurationDegrees : cams.exhaustDurationDegrees,
                           utf8("\xc2\xb0"), 0, 5.0, 1.0, 120.0, 360.0);
             camEdit.length("Lift", intake ? cams.intakeLiftMm : cams.exhaustLiftMm, 0.5, 0.1, 1.0, 20.0).decimals = 1;
+            // VTEC: the high cam's own figures, and the switch that fits or
+            // removes it; the ECU tuner decides when it engages.
+            const auto vtec = cams.variableProfileEnabled;
+            if (vtec) {
+                camEdit.value("VTEC duration", intake ? cams.highIntakeDurationDegrees : cams.highExhaustDurationDegrees,
+                              utf8("°"), 0, 5.0, 1.0, 120.0, 360.0);
+                camEdit.length("VTEC lift", intake ? cams.highIntakeLiftMm : cams.highExhaustLiftMm, 0.5, 0.1, 1.0,
+                               20.0).decimals = 1;
+            }
+            camEdit.secondChoice = PartInspector::Edit::Choice {
+                { "No VTEC cams", "VTEC cams" },
+                "A second, wilder cam the valves switch to at speed. Fitted as the K20A's (intake +24 deg and "
+                "+1 mm, exhaust +22 deg and +0.6 mm), engaging at two thirds of the rev limit above 55 % "
+                "throttle; the ECU tuner switches it, sets where it engages and its hysteresis. The running "
+                "engine takes it: fitted, it starts on the low cam; removed, the high cam drops back on its next "
+                "base circle.",
+                vtec ? 1 : 0 };
             camEdit.offersRamp = true;
-            camEdit.note = "Every camshaft moves by as much, its high profile too. The running engine takes it.";
+            camEdit.note = vtec ? "Every camshaft moves by as much, its VTEC cam too; the VTEC figures move the VTEC "
+                                  "cam alone. The running engine takes it."
+                                : "Every camshaft moves by as much, its high profile too. The running engine takes it.";
             edit = camEdit;
             const auto durationField = intake ? &CamshaftConfig::intakeDurationDegrees
                                               : &CamshaftConfig::exhaustDurationDegrees;
@@ -2256,12 +2276,26 @@ void EngineViewport::updateInspector() {
             const auto highLiftField = intake ? &CamshaftConfig::highIntakeLiftMm : &CamshaftConfig::highExhaustLiftMm;
             const auto durationNow = cams.*durationField;
             const auto liftNow = cams.*liftField;
+            const auto highDurationNow = cams.*highDurationField;
+            const auto highLiftNow = cams.*highLiftField;
             partEditor_ = [=](EngineConfig& edited, const std::vector<double>& values) {
                 const auto duration = values[0];
                 const auto lift = values[1];
                 shiftCamshafts(edited, durationField, highDurationField, duration - durationNow);
                 shiftCamshafts(edited, liftField, highLiftField, lift - liftNow);
+                if (vtec && values.size() >= 4U) {
+                    shiftCamshafts(edited, highDurationField, nullptr, values[2] - highDurationNow);
+                    shiftCamshafts(edited, highLiftField, nullptr, values[3] - highLiftNow);
+                }
                 return std::string();
+            };
+            partSecondChoice_ = [](EngineConfig& edited, int index) {
+                if (index == 1) {
+                    if (!fitVtecCams(edited) && !vtecCamsFitted(edited))
+                        throw std::runtime_error("This engine has no cam to switch.");
+                } else {
+                    removeVtecCams(edited);
+                }
             };
         }
         add("Lift", millimetres(model_.units, intake ? cams.intakeLiftMm : cams.exhaustLiftMm));
@@ -2980,6 +3014,7 @@ void EngineViewport::refresh() {
         shared_.sampleSequence = ++sampleSequence_;
         shared_.pose.rpm = state.rpm;
         shared_.pose.throttle = state.throttle;
+        shared_.pose.vtecHighCylinderMask = state.vtecHighCylinderMask;
         shared_.pose.powerValveOpening = state.powerValveOpening;
         shared_.pose.engineBrakeCylinders = state.engineBrakeCylinders;
         shared_.turboShaftRpm = state.forcedInductionShaftSpeedRpm;
