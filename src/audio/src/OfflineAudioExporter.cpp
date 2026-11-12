@@ -1,12 +1,6 @@
 #include <enginelab/audio/OfflineAudioExporter.hpp>
-#include <enginelab/audio/ImpulseResponseLoader.hpp>
-#include <enginelab/audio/RealtimeEngineAudio.hpp>
-#include <enginelab/ecu/SimpleEcuModel.hpp>
-#include <enginelab/events/FourStrokeEventGenerator.hpp>
-#include <enginelab/exhaust/ExhaustGraph.hpp>
-#include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
-#include <enginelab/runtime/EngineRuntime.hpp>
-#include <enginelab/simulation/EngineSimulator.hpp>
+
+#include "OfflineRenderChain.hpp"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <nlohmann/json.hpp>
@@ -56,7 +50,7 @@ namespace {
 }
 using Json = nlohmann::json;
 
-constexpr double simulationRateHz = 240.0;
+constexpr double simulationRateHz = offline::simulationRateHz;
 constexpr double maximumScenarioSeconds = 120.0;
 constexpr std::size_t maximumScenarioStages = 128;
 constexpr std::array<std::uint32_t, 3> supportedSampleRates {
@@ -399,25 +393,6 @@ private:
     bool active_ { true };
 };
 
-[[nodiscard]] std::string impulseResponseErrorName(
-    ImpulseResponseLoadError error) {
-    switch (error) {
-    case ImpulseResponseLoadError::none:
-        return "unspecified failure";
-    case ImpulseResponseLoadError::missingFile:
-        return "file not found";
-    case ImpulseResponseLoadError::unsupportedOrCorrupt:
-        return "unsupported or corrupt";
-    case ImpulseResponseLoadError::invalidMetadata:
-        return "invalid metadata";
-    case ImpulseResponseLoadError::empty:
-        return "empty";
-    case ImpulseResponseLoadError::readFailure:
-        return "read failure";
-    }
-    return "unknown failure";
-}
-
 void applyFade(
     juce::AudioBuffer<float>& buffer, int sampleCount,
     std::uint64_t firstFrame, std::uint64_t totalFrames,
@@ -744,95 +719,17 @@ OfflineAudioExportResult exportOfflineAudio(
         if (totalFrames == 0 || samplesPerStep <= 0)
             return fail("Scenario produces no audio frames.");
 
-        SimpleEcuModel ecu;
-        SimplifiedGasolinePhysics physics;
-        FourStrokeEventGenerator events;
-        auto exhaust = ExhaustGraph::makeForEngine(config);
-        auto simulator = std::make_unique<EngineSimulator>(
-            config, ecu, physics, events, exhaust);
-        simulator->setPressureSamplingEnabled(true);
+        auto chain = std::make_unique<offline::RenderChain>(
+            config, request.mix);
+        auto* simulator = &chain->simulator();
+        auto* renderer = &chain->renderer();
+        offline::DroppedTelemetry dropped;
 
-        auto eventQueue = std::make_unique<FiringEventQueue>();
-        auto pressureQueue = std::make_unique<CylinderPressureQueue>();
-        auto exhaustAcousticQueue =
-            std::make_unique<ExhaustAcousticQueue>();
-        auto audioConfiguration =
-            std::make_unique<EngineRuntime>(config);
-        audioConfiguration->setAudioVolume(request.mix.volume);
-        audioConfiguration->setAudioConvolution(
-            request.mix.convolution);
-        audioConfiguration->setHighFrequencyGain(
-            request.mix.highFrequencyGain);
-        audioConfiguration->setLowFrequencyGain(
-            request.mix.lowFrequencyGain);
-        audioConfiguration->setLowFrequencyNoise(
-            request.mix.lowFrequencyNoise);
-        audioConfiguration->setHighFrequencyNoise(
-            request.mix.highFrequencyNoise);
-        audioConfiguration->setCombustionGain(
-            request.mix.combustionGain);
-        audioConfiguration->setExhaustGain(
-            request.mix.exhaustGain);
-        audioConfiguration->setIntakeGain(
-            request.mix.intakeGain);
-        audioConfiguration->setMechanicalGain(
-            request.mix.mechanicalGain);
-        audioConfiguration->setStereoWidth(
-            request.mix.stereoWidth);
-        audioConfiguration->setOutletJetGain(
-            request.mix.outletJetGain);
-        audioConfiguration->setSaturationDrive(
-            request.mix.saturationDrive);
-        audioConfiguration->setSaturationPlacement(
-            request.mix.saturationPlacement);
-        audioConfiguration->applyAudioVoicing(request.mix);
-
-        auto renderer = std::make_unique<RealtimeEngineAudio>(
-            *eventQueue, audioConfiguration->audioState(),
-            pressureQueue.get(), &audioConfiguration->exhaustGraph(),
-            &audioConfiguration->engineConfig(),
-            exhaustAcousticQueue.get());
-
-        if (request.loadAuthoredImpulseResponses) {
-            const auto pathCount = config.exhaustPaths.size();
-            for (std::size_t pathIndex = 0;
-                 pathIndex < pathCount; ++pathIndex) {
-                const auto& configured =
-                    config.exhaustPaths[pathIndex]
-                        .impulseResponsePath;
-                if (configured.empty()) continue;
-                ++result.authoredImpulseResponses;
-                if (pathIndex
-                    >= RealtimeConvolutionBank::maximumPaths) {
-                    result.warnings.push_back(
-                        "Impulse response path "
-                        + std::to_string(pathIndex + 1)
-                        + " exceeds the eight-path renderer limit.");
-                    continue;
-                }
-                auto fullPath = std::filesystem::path(configured);
-                if (fullPath.is_relative())
-                    fullPath = request.assetRoot / fullPath;
-                auto decoded = loadImpulseResponseFile(
-                    juce::File(fullPath.string()), 262'144);
-                if (!decoded.ok()) {
-                    result.warnings.push_back(
-                        "Impulse response not loaded ("
-                        + impulseResponseErrorName(decoded.error)
-                        + "): " + fullPath.string());
-                    continue;
-                }
-                if (decoded.truncated) {
-                    result.warnings.push_back(
-                        "Impulse response truncated to 262144 samples: "
-                        + fullPath.string());
-                }
-                renderer->setImpulseResponse(
-                    std::move(decoded.samples),
-                    decoded.sampleRateHz, pathIndex);
-                ++result.loadedImpulseResponses;
-            }
-        }
+        if (request.loadAuthoredImpulseResponses)
+            chain->loadAuthoredImpulseResponses(
+                config, request.assetRoot, result.warnings,
+                result.authoredImpulseResponses,
+                result.loadedImpulseResponses);
 
         renderer->prepare(
             static_cast<double>(request.sampleRateHz),
@@ -991,66 +888,9 @@ OfflineAudioExportResult exportOfflineAudio(
                     ++speed.tailCount;
                 }
             }
-            const auto simulationStart =
-                frame.state.simulationTimeSeconds - dt;
-            for (std::size_t eventIndex = 0;
-                 eventIndex < frame.firingEventCount;
-                 ++eventIndex) {
-                auto event = frame.firingEvents[eventIndex];
-                const auto fraction = std::clamp(
-                    (event.timeSeconds - simulationStart)
-                        / dt,
-                    0.0, 1.0);
-                event.timeSeconds =
-                    realtimeSeconds + fraction * dt;
-                if (!eventQueue->tryPush(event))
-                    ++result.droppedFiringEvents;
-            }
-            CylinderPressureSample pressureSample;
-            while (simulator->tryPopCylinderPressureSample(
-                pressureSample)) {
-                const auto fraction = std::clamp(
-                    (pressureSample.timeSeconds
-                        - simulationStart)
-                        / dt,
-                    0.0, 1.0);
-                pressureSample.timeSeconds =
-                    realtimeSeconds + fraction * dt;
-                if (!pressureQueue->tryPush(pressureSample))
-                    ++result.droppedPressureSamples;
-            }
-            ExhaustAcousticSample acousticSample;
-            while (simulator->tryPopExhaustAcousticSample(
-                acousticSample)) {
-                const auto fraction = std::clamp(
-                    (acousticSample.timeSeconds - simulationStart) / dt,
-                    0.0, 1.0);
-                acousticSample.timeSeconds =
-                    realtimeSeconds + fraction * dt;
-                for (std::size_t eventIndex = 0;
-                     eventIndex < acousticSample.reactionEventCount;
-                     ++eventIndex) {
-                    const auto eventFraction = std::clamp(
-                        (acousticSample.reactionEvents[eventIndex]
-                            .timeSeconds - simulationStart) / dt,
-                        0.0, 1.0);
-                    acousticSample.reactionEvents[eventIndex].timeSeconds =
-                        realtimeSeconds + eventFraction * dt;
-                }
-                if (!exhaustAcousticQueue->tryPush(acousticSample))
-                    ++result.droppedExhaustAcousticSamples;
-            }
-
-            publishAudioFrame(
-                audioConfiguration->audioState(), frame.state,
-                { false, controls.starterEngaged,
-                  controls.load, 1.0 });
-            audioConfiguration->audioState()
-                .producerTimeNanoseconds.store(
-                    static_cast<std::uint64_t>(
-                        std::max(0.0, realtimeSeconds + dt)
-                        * 1.0e9),
-                    std::memory_order_release);
+            chain->forward(
+                frame, controls.starterEngaged, controls.load,
+                realtimeSeconds, dt, dropped);
 
             master.clear();
             if (request.writeStems) {
@@ -1179,6 +1019,10 @@ OfflineAudioExportResult exportOfflineAudio(
             orderMapStream.reset();
         }
 
+        result.droppedFiringEvents = dropped.firingEvents;
+        result.droppedPressureSamples = dropped.pressureSamples;
+        result.droppedExhaustAcousticSamples =
+            dropped.exhaustAcousticSamples;
         result.renderedFrames = writtenFrames;
         result.durationSeconds =
             static_cast<double>(writtenFrames)

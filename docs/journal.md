@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-11 — a loop pack for games (BeamNG: loops only)
+
+- Owner plan: seamless loops a game's sample engine sound can use; no live link to BeamNG.
+- `exportLoopPack`: the idle, then every step to 0.95 x min(redline, limiter); on load full throttle on the dyno's absorber, off load shut throttle on a one-way motor (the idle's motor only a floor at 0.9 x idle); a whole number of cycles (720/360/1,080 deg), the end cross-faded into the start, an engine (combustion, intake, turbo, mechanical) and an exhaust (dry + IR) mono layer, one gain for the pack, a `smpl` loop chunk, `loop-pack.json` with each loop's measured speed. The HQ export now shares its render chain (`offline::RenderChain`): K20 48 kHz stems bit-identical before/after.
+- `EngineLab.LoopPackExport` (K20A, 1,000 rpm step, 0.5 s): every point held within 3 %; without the cross-fade the idle seam steps 25 x the largest inside (fails).
+- Default packs (500 rpm, 2 s): points on and off load: 2JZ 13 in 127 s, LS3 13 in 178 s, 13B 16 in 120 s, RD350 16 in 152 s, every one settled. First run: the 13B never started (a shut-throttle start released at the cut-out speed coasted down) and the RD350 stalled at its free idle; now the audio harness's start (1.1 s of starter at 20 % throttle) and the floor. The RD350's overrun runs over its target where the engine idles above it (2,000 held 2,046: a motor cannot brake); the file gives the measured speed.
+- Not checked: in BeamNG (no game here), the Ogg copy's seam (lossy), the workshop button in the running app; BeamNG's `sfxBlend2D` file is not written (format undocumented).
+
 ## 2026-11-11 — menus and dialogs inside their window
 
 - Owner request: everything "filmable" with a window capture; no live OBS test, no README section.

@@ -1,3 +1,4 @@
+#include <enginelab/audio/LoopPackExporter.hpp>
 #include <enginelab/audio/OfflineAudioExporter.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 
@@ -39,6 +40,8 @@ void printUsage() {
         << "  [--combustion <0..2>] [--exhaust <0..2>]\n"
         << "  [--intake <0..2>] [--mechanical <0..2>]\n"
         << "  [--overwrite]\n"
+        << "  [--loop-pack [--loop-step <rpm>] [--loop-seconds <s>] [--ogg]]\n"
+        << "      seamless loops for a game instead of the showcase (48 kHz)\n"
         << "  --list-engines\n";
 }
 
@@ -71,6 +74,11 @@ int main(int argc, char** argv) {
     bool writeStems = true;
     bool overwrite = false;
     bool listEngines = false;
+    bool loopPack = false;
+    bool loopOgg = false;
+    bool sampleRateGiven = false;
+    double loopStep = 500.0;
+    double loopSeconds = 2.0;
     enginelab::OfflineAudioMix mix;
     struct MixOverrides final {
         std::optional<double> volume;
@@ -107,6 +115,14 @@ int main(int argc, char** argv) {
             overwrite = true;
             continue;
         }
+        if (option == "--loop-pack") {
+            loopPack = true;
+            continue;
+        }
+        if (option == "--ogg") {
+            loopOgg = true;
+            continue;
+        }
 
         const auto* value = requireValue();
         if (value == nullptr) {
@@ -130,6 +146,7 @@ int main(int argc, char** argv) {
                         > std::numeric_limits<std::uint32_t>::max())
                     throw std::invalid_argument("sample rate");
                 sampleRate = static_cast<std::uint32_t>(parsed);
+                sampleRateGiven = true;
             } catch (const std::exception&) {
                 std::cerr << "Invalid sample rate: " << value << '\n';
                 return 1;
@@ -142,6 +159,16 @@ int main(int argc, char** argv) {
                 format = enginelab::OfflineWaveFormat::float32;
             else {
                 std::cerr << "Unknown format: " << value << '\n';
+                return 1;
+            }
+        } else if (option == "--loop-step") {
+            if (!parseDouble(value, loopStep) || loopStep < 50.0) {
+                std::cerr << "The loop step must be at least 50 rpm.\n";
+                return 1;
+            }
+        } else if (option == "--loop-seconds") {
+            if (!parseDouble(value, loopSeconds) || loopSeconds < 0.25) {
+                std::cerr << "A loop must last at least 0.25 s.\n";
                 return 1;
             }
         } else if (option == "--volume") {
@@ -240,6 +267,54 @@ int main(int argc, char** argv) {
     if (mixOverrides.exhaust) mix.exhaustGain = *mixOverrides.exhaust;
     if (mixOverrides.intake) mix.intakeGain = *mixOverrides.intake;
     if (mixOverrides.mechanical) mix.mechanicalGain = *mixOverrides.mechanical;
+
+    if (loopPack) {
+        enginelab::LoopPackRequest request;
+        request.engine = matches.front()->config;
+        request.mix = mix;
+        request.outputDirectory = outputDirectory;
+        request.assetRoot = catalogRoot;
+        request.sampleRateHz = sampleRateGiven ? sampleRate : 48'000U;
+        request.stepRpm = loopStep;
+        request.loopSeconds = loopSeconds;
+        request.writeOgg = loopOgg;
+        request.overwriteExistingFiles = overwrite;
+        std::cout << "Engine: " << request.engine.name << '\n'
+                  << "Loop pack: every " << loopStep << " rpm, "
+                  << loopSeconds << " s loops\n";
+        std::string lastStage;
+        const auto result = enginelab::exportLoopPack(request,
+            [&lastStage](double fraction, std::string_view stage) {
+                if (stage != lastStage) {
+                    lastStage = stage;
+                    std::cout << "  " << std::setw(3)
+                              << static_cast<int>(std::round(fraction * 100.0))
+                              << "%  " << stage << '\n';
+                }
+                return true;
+            });
+        if (!result.success) {
+            std::cerr << (result.cancelled ? "Export cancelled."
+                                          : "Export failed: " + result.error)
+                      << '\n';
+            return result.cancelled ? 2 : 1;
+        }
+        std::cout << std::fixed << std::setprecision(1);
+        for (const auto& loop : result.loops)
+            std::cout << (loop.onLoad ? "  on  " : "  off ") << std::setw(7)
+                      << loop.requestedRpm << " rpm: held " << loop.meanRpm
+                      << " (" << loop.minimumRpm << ".." << loop.maximumRpm
+                      << "), " << loop.cycles << " cycles, MAP "
+                      << loop.meanManifoldPressureKpa << " kPa, settled "
+                      << (loop.settled ? "yes" : "NO") << " after "
+                      << loop.settleSeconds << " s\n";
+        std::cout << "Pack gain " << result.packGainDb
+                  << " dB; cylinders to declare "
+                  << result.equivalentFourStrokeCylinders << '\n';
+        for (const auto& warning : result.warnings)
+            std::cout << "WARNING: " << warning << '\n';
+        return 0;
+    }
 
     enginelab::OfflineAudioScenario scenario =
         enginelab::makeDefaultOfflineAudioScenario(

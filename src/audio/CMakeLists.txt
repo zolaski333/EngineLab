@@ -5,7 +5,9 @@ add_library(EngineLabAudio STATIC
     src/ForcedInductionAcoustics.cpp
     src/FreeFieldObserver.cpp
     src/ImpulseResponseLoader.cpp
+    src/LoopPackExporter.cpp
     src/OfflineAudioExporter.cpp
+    src/OfflineRenderChain.cpp
     src/PipeRadiationModel.cpp
     src/RealtimeEngineAudio.cpp
     src/RealtimeConvolutionBank.cpp

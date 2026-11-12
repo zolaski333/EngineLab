@@ -48,6 +48,15 @@ file formats, always with an in-memory migration).
   script (`.els`) or ECU maps alone (`.ecu.json`) on the window to open
   it. EngineLab asks first when the running engine or its maps have edits
   not saved that the file would replace.
+- **A loop pack for games** (Audio workshop, LOOP PACK FOR GAMES...): from
+  the idle to just under the redline, every 250, 500 or 1,000 rpm, each
+  point held on the dyno at full throttle and motored with the throttle
+  shut, then recorded once settled. Each loop spans whole engine cycles and
+  runs seamlessly from its end into its start, in an engine and an exhaust
+  layer (BeamNG's `soundConfig` and `soundConfigExhaust`), with one gain
+  for the whole pack: 48 kHz mono WAV, an optional OGG copy, and
+  `loop-pack.json` with each loop's measured speed and the cylinder count
+  to declare. Also `EngineLabOfflineAudioExporter --loop-pack`.
 
 ### Changed
 

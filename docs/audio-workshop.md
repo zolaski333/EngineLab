@@ -15,6 +15,7 @@ This window brings together:
 - the built-in `showcase` profile or a JSON scenario chosen by the user;
 - an offline render on a separate thread;
 - progress, cancellation, opening the output folder and a final report;
+- a **loop pack for games** (below);
 - the engine identity and the state of the physical graph.
 
 Rendering stays available during a simulation or a dyno run: it works on a
@@ -69,6 +70,53 @@ The IR control is called **measured IR return**, not "convolution":
 
 There is therefore no hidden room preset and no fake 100 % wet.
 
+## Loop pack for games
+
+`LOOP PACK FOR GAMES...` renders seamless loops for a game's sample-based
+engine sound, BeamNG's `soundConfig` and `soundConfigExhaust` for instance. It
+is off until clicked and changes nothing else. The step selector (250, 500 or
+1,000 rpm) and `+ OGG` sit beside it; the command line gives the same pack
+with `EngineLabOfflineAudioExporter --loop-pack [--loop-step <rpm>]
+[--loop-seconds <s>] [--ogg]`.
+
+- **Points**: the idle, then every step from a step above it, up to 0.95 x
+  the lower of the redline and the rev limit (the dyno's ceiling).
+- **On load**: full throttle, held at the point by the dyno's absorber
+  (`DynoAbsorberController`). **Off load**: throttle shut, the shaft driven at
+  the point by a motor, as the wheels drive an engine on the overrun, so the
+  ECU's fuel cut and the overrun sound are the engine's own. The motor only
+  drives, never brakes: where an engine runs above the point on its own, the
+  loop is at its own speed (the file says which). At the idle the engine idles
+  on its own, the motor a floor at 0.9 x idle that keeps a wandering
+  two-stroke idle from stalling.
+- The engine is started as the audio harness starts every catalogue engine:
+  1.1 s of starter at a fifth of throttle.
+- A point is recorded once settled: its speed within 1.5 % of the target and
+  steady to 0.4 %, its manifold pressure steady to 1 kPa, over two half
+  seconds. After 12 s it is recorded anyway and the report says so.
+- **Loops**: a whole number of the engine's cycles (720 crank degrees, 360 on
+  a two-stroke, 1,080 on a rotary), at least four, about 2 s. The end is
+  cross-faded into the start over whole cycles (50 ms at least), so the last
+  sample runs into the first as any two consecutive samples do. The loop's
+  mean is removed: over whole cycles it is its DC.
+- **Layers**: `engine` (combustion + intake + forced induction + mechanical,
+  what radiates from the engine) and `exhaust` (dry exhaust + IR return, what
+  leaves the tailpipe). Together they are the premaster of the HQ export.
+- **Gain**: one for the whole pack, so the loudest file peaks at -1 dBFS and
+  every other keeps its level relative to it. The loops are the sources
+  before the master tone shelf, saturation, AGC and limiter: the game applies
+  its own.
+- **Files**: `onload_03000rpm_engine.wav`, `offload_03000rpm_exhaust.wav`...,
+  48 kHz mono 24-bit WAV with a `smpl` chunk marking the whole file as one
+  loop, an optional Ogg Vorbis copy (lossy: the WAV is the exact loop), and
+  `loop-pack.json`: each loop's measured mean speed (the speed to declare for
+  it, not the requested one), cycles, manifold pressure, levels, and the
+  **cylinders to declare**, the firings per 720 degrees: the real count on a
+  four-stroke, twice it on a two-stroke, two per rotor on a rotary.
+
+Not written: BeamNG's `sfxBlend2D` blend file. Its format is not documented,
+and a guessed one would be worse than none.
+
 ## Automated checks
 
 The `EngineLab.AudioWorkshop` test builds the real JUCE window and checks:
@@ -81,6 +129,7 @@ The `EngineLab.AudioWorkshop` test builds the real JUCE window and checks:
   disabled;
 - four MUTE/SOLO pairs exist and direct combustion is unavailable;
 - the HQ export action is visible;
+- the loop pack action is enabled and inside the window;
 - solo routing keeps the exhaust and its IR return, then cuts intake and
   structure;
 - `MUTE` takes priority over `SOLO`;

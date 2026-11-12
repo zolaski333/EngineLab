@@ -1,5 +1,6 @@
 #include <enginelab/app/AudioWorkshopWindow.hpp>
 #include <enginelab/app/Theme.hpp>
+#include <enginelab/audio/LoopPackExporter.hpp>
 
 #include <algorithm>
 #include <array>
@@ -346,6 +347,27 @@ public:
         addAndMakeVisible(formatSelector_);
         addAndMakeVisible(stemsToggle_);
 
+        loopStepSelector_.addItem("Every 250 rpm", 250);
+        loopStepSelector_.addItem("Every 500 rpm", 500);
+        loopStepSelector_.addItem("Every 1000 rpm", 1'000);
+        loopStepSelector_.setSelectedId(500, juce::dontSendNotification);
+        loopStepSelector_.setTooltip(
+            "The loop pack holds the idle, then a point every step up to just "
+            "under the redline, on load and off load.");
+        loopOggToggle_.setColour(
+            juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
+        loopOggToggle_.setTooltip(
+            "Also write an Ogg Vorbis copy of every loop (the WAV is the exact one).");
+        loopPackButton_.setTooltip(
+            "Seamless loops for a game's engine sound (BeamNG soundConfig and "
+            "soundConfigExhaust): each point held on the dyno, whole engine "
+            "cycles, an engine and an exhaust layer, one gain for the pack. "
+            "48 kHz mono 24-bit WAV and loop-pack.json.");
+        loopPackButton_.onClick = [this] { chooseLoopPackDirectory(); };
+        addAndMakeVisible(loopStepSelector_);
+        addAndMakeVisible(loopOggToggle_);
+        addAndMakeVisible(loopPackButton_);
+
         scenarioButton_.onClick =
             [this] { chooseScenario(); };
         defaultScenarioButton_.onClick = [this] {
@@ -638,7 +660,7 @@ public:
         defaultScenarioButton_.setBounds(
             scenarioButtons);
         scenarioLabel_.setBounds(
-            exportBody.removeFromTop(72));
+            exportBody.removeFromTop(56));
         exportBody.removeFromTop(8);
         exportButton_.setBounds(
             exportBody.removeFromTop(42));
@@ -650,6 +672,14 @@ public:
                 jobButtons.getWidth() / 2 - 4));
         jobButtons.removeFromLeft(8);
         revealButton_.setBounds(jobButtons);
+        exportBody.removeFromTop(8);
+        auto loopRow = exportBody.removeFromTop(34);
+        loopStepSelector_.setBounds(loopRow.removeFromLeft(
+            std::min(150, loopRow.getWidth() / 3)));
+        loopRow.removeFromLeft(6);
+        loopOggToggle_.setBounds(loopRow.removeFromLeft(78));
+        loopRow.removeFromLeft(4);
+        loopPackButton_.setBounds(loopRow);
         exportBody.removeFromTop(12);
         progressBar_.setBounds(
             exportBody.removeFromTop(24));
@@ -1062,6 +1092,15 @@ private:
             juce::dontSendNotification);
     }
 
+    void setExportControlsEnabled(bool enabled) {
+        for (juce::Component* control : std::initializer_list<juce::Component*> {
+                 &exportButton_, &scenarioButton_, &defaultScenarioButton_,
+                 &sampleRateSelector_, &formatSelector_, &stemsToggle_,
+                 &loopStepSelector_, &loopOggToggle_, &loopPackButton_ })
+            control->setEnabled(enabled);
+        cancelButton_.setEnabled(!enabled);
+    }
+
     void chooseExportDirectory() {
         if (exportRunning_) return;
         fileChooser_ = std::make_unique<juce::FileChooser>(
@@ -1146,13 +1185,7 @@ private:
         threadProgress_.store(
             0.0, std::memory_order_relaxed);
         progressValue_ = 0.0;
-        exportButton_.setEnabled(false);
-        scenarioButton_.setEnabled(false);
-        defaultScenarioButton_.setEnabled(false);
-        sampleRateSelector_.setEnabled(false);
-        formatSelector_.setEnabled(false);
-        stemsToggle_.setEnabled(false);
-        cancelButton_.setEnabled(true);
+        setExportControlsEnabled(false);
         revealButton_.setEnabled(false);
         statusLabel_.setText(
             "PREPARING RENDER...",
@@ -1208,13 +1241,7 @@ private:
         OfflineAudioExportResult result,
         const std::filesystem::path& outputDirectory) {
         exportRunning_ = false;
-        exportButton_.setEnabled(true);
-        scenarioButton_.setEnabled(true);
-        defaultScenarioButton_.setEnabled(true);
-        sampleRateSelector_.setEnabled(true);
-        formatSelector_.setEnabled(true);
-        stemsToggle_.setEnabled(true);
-        cancelButton_.setEnabled(false);
+        setExportControlsEnabled(true);
         if (result.success) {
             threadProgress_.store(
                 1.0, std::memory_order_relaxed);
@@ -1274,6 +1301,124 @@ private:
                 juce::MessageBoxIconType::WarningIcon,
                 "HQ audio render failed",
                 utf8(result.error));
+        }
+    }
+
+    void chooseLoopPackDirectory() {
+        if (exportRunning_) return;
+        fileChooser_ = std::make_unique<juce::FileChooser>(
+            "Choose the parent folder for the loop pack",
+            juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+            juce::String {});
+        auto safe = juce::Component::SafePointer<WorkshopContent>(this);
+        fileChooser_->launchAsync(
+            juce::FileBrowserComponent::openMode
+                | juce::FileBrowserComponent::canSelectDirectories,
+            [safe](const juce::FileChooser& chooser) {
+                if (!safe) return;
+                const auto directory = chooser.getResult();
+                if (directory.isDirectory())
+                    safe->startLoopPack(fileSystemPath(directory));
+                safe->fileChooser_.reset();
+            });
+    }
+
+    void startLoopPack(const std::filesystem::path& parentDirectory) {
+        const auto stamp = juce::Time::getCurrentTime()
+            .formatted("%Y%m%d-%H%M%S").toStdString();
+        const auto baseName = fileSlug(engine_.name) + "-" + stamp + "-loops";
+        auto outputDirectory = parentDirectory / baseName;
+        for (int suffix = 2; std::filesystem::exists(outputDirectory); ++suffix)
+            outputDirectory = parentDirectory
+                / (baseName + "-" + std::to_string(suffix));
+
+        LoopPackRequest request;
+        request.engine = engine_;
+        request.mix = effectiveMix();
+        request.outputDirectory = outputDirectory;
+        request.assetRoot = assetRoot_;
+        request.stepRpm = static_cast<double>(
+            std::max(50, loopStepSelector_.getSelectedId()));
+        request.writeOgg = loopOggToggle_.getToggleState();
+
+        if (exportThread_.joinable()) exportThread_.join();
+        exportRunning_ = true;
+        threadProgress_.store(0.0, std::memory_order_relaxed);
+        progressValue_ = 0.0;
+        setExportControlsEnabled(false);
+        revealButton_.setEnabled(false);
+        statusLabel_.setText("PREPARING LOOP PACK...", juce::dontSendNotification);
+
+        auto safe = juce::Component::SafePointer<WorkshopContent>(this);
+        exportThread_ = std::jthread(
+            [safe, request = std::move(request), outputDirectory](
+                std::stop_token stopToken) mutable {
+                std::string lastStage;
+                auto result = exportLoopPack(request,
+                    [safe, stopToken, &lastStage](
+                        double fraction, std::string_view stage) {
+                        if (stopToken.stop_requested()) return false;
+                        if (safe)
+                            safe->threadProgress_.store(
+                                fraction, std::memory_order_relaxed);
+                        if (stage != lastStage) {
+                            lastStage = stage;
+                            const auto stageCopy = std::string(stage);
+                            juce::MessageManager::callAsync([safe, stageCopy] {
+                                if (safe)
+                                    safe->statusLabel_.setText(
+                                        "LOOP PACK  " + utf8(stageCopy),
+                                        juce::dontSendNotification);
+                            });
+                        }
+                        return !stopToken.stop_requested();
+                    });
+                juce::MessageManager::callAsync(
+                    [safe, result = std::move(result), outputDirectory]() mutable {
+                        if (safe)
+                            safe->finishLoopPack(std::move(result), outputDirectory);
+                    });
+            });
+    }
+
+    void finishLoopPack(
+        LoopPackResult result, const std::filesystem::path& outputDirectory) {
+        exportRunning_ = false;
+        setExportControlsEnabled(true);
+        if (result.success) {
+            threadProgress_.store(1.0, std::memory_order_relaxed);
+            lastOutputDirectory_ = outputDirectory;
+            revealButton_.setEnabled(true);
+            statusLabel_.setText(
+                "LOOP PACK COMPLETE  /  "
+                    + juce::String(static_cast<int>(result.loops.size())) + " LOOPS",
+                juce::dontSendNotification);
+            juce::String message;
+            message << "Loop pack complete.\n\n" << displayPath(outputDirectory)
+                    << "\n\n" << static_cast<int>(result.loops.size())
+                    << " points, each an engine and an exhaust loop"
+                    << (result.oggWritten ? " (WAV and OGG)" : " (WAV)")
+                    << ".\nOne gain for the pack: "
+                    << juce::String(result.packGainDb, 1) << " dB."
+                    << "\nCylinders to declare: "
+                    << static_cast<int>(result.equivalentFourStrokeCylinders)
+                    << " (firing frequency = rpm / 120 x cylinders)."
+                    << "\nloop-pack.json gives each loop's measured speed.";
+            if (!result.warnings.empty()) {
+                message << "\n\nWarnings:";
+                for (const auto& warning : result.warnings)
+                    message << "\n- " << utf8(warning);
+            }
+            ui::showMessage(this, juce::MessageBoxIconType::InfoIcon,
+                "Loop pack", message);
+        } else if (result.cancelled) {
+            threadProgress_.store(0.0, std::memory_order_relaxed);
+            statusLabel_.setText("LOOP PACK CANCELLED  /  NO FILE KEPT",
+                juce::dontSendNotification);
+        } else {
+            statusLabel_.setText("LOOP PACK FAILED", juce::dontSendNotification);
+            ui::showMessage(this, juce::MessageBoxIconType::WarningIcon,
+                "Loop pack failed", utf8(result.error));
         }
     }
 
@@ -1356,6 +1501,9 @@ private:
     juce::TextButton revealButton_ {
         "OPEN FOLDER"
     };
+    juce::ComboBox loopStepSelector_;
+    juce::ToggleButton loopOggToggle_ { "+ OGG" };
+    juce::TextButton loopPackButton_ { "LOOP PACK FOR GAMES..." };
     juce::Label proofLabel_;
     double progressValue_ { 0.0 };
     std::atomic<double> threadProgress_ { 0.0 };

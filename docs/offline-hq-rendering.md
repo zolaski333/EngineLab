@@ -33,7 +33,11 @@ Available features:
 
 The shared API is declared in
 `src/audio/include/enginelab/audio/OfflineAudioExporter.hpp`. The tool is
-`EngineLabOfflineAudioExporter`.
+`EngineLabOfflineAudioExporter`. The simulator, the telemetry queues and the
+renderer are built and fed by `offline::RenderChain`
+(`src/audio/src/OfflineRenderChain.hpp`), which the game loop pack
+(`LoopPackExporter.hpp`, [audio workshop](audio-workshop.md)) shares, so the
+two renders cannot drift apart.
 
 ## Usage
 

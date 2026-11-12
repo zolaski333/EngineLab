@@ -230,6 +230,7 @@ int main() {
     juce::ToggleButton* mixAfterfireToggle = nullptr;
     juce::ToggleButton* captureModeToggle = nullptr;
     juce::Slider* exhaustMixSlider = nullptr;
+    juce::TextButton* loopPackButton = nullptr;
     for (int index = 0;
          index < content->getNumChildComponents(); ++index) {
         auto* child = content->getChildComponent(index);
@@ -263,6 +264,8 @@ int main() {
                 neutralMixButton = button;
             } else if (text == "APPLY LIVE") {
                 applyPhysicsButton = button;
+            } else if (text == "LOOP PACK FOR GAMES...") {
+                loopPackButton = button;
             }
         }
         if (auto* toggle =
@@ -276,6 +279,10 @@ int main() {
         }
     }
     require(visibleChildren >= 45, "complete workshop control set is present");
+    require(loopPackButton != nullptr && loopPackButton->isEnabled()
+            && loopPackButton->getHeight() >= 24
+            && content->getLocalBounds().contains(loopPackButton->getBounds()),
+        "the loop pack export sits in the export panel, ready");
     require(
         sliderCount == 17 && disabledSliderCount == 4,
         "nine faders and eight physics controls exist; four no-op faders are disabled");

@@ -399,6 +399,19 @@ if(MSVC)
     target_link_options(EngineLabOfflineAudioExportTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabLoopPackExportTests LoopPackExportTests.cpp)
+target_link_libraries(EngineLabLoopPackExportTests PRIVATE
+    EngineLab::Audio EngineLab::Catalog nlohmann_json::nlohmann_json)
+target_compile_definitions(EngineLabLoopPackExportTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabLoopPackExportTests)
+add_test(NAME EngineLab.LoopPackExport
+    COMMAND EngineLabLoopPackExportTests)
+set_tests_properties(EngineLab.LoopPackExport PROPERTIES TIMEOUT 300)
+if(MSVC)
+    target_link_options(EngineLabLoopPackExportTests PRIVATE /STACK:8388608)
+endif()
+
 add_executable(EngineLabAudioWorkshopTests
     AudioWorkshopTests.cpp
     "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp"
