@@ -795,9 +795,10 @@ int main() {
     }
 
     {
-        // Everything a window shows is inside it, so a screen recorder's
-        // window capture films it whole: menus, alert boxes, dialogs and
-        // each tool window's tooltips.
+        // What a window shows is inside it when it fits, so a screen
+        // recorder's window capture films it whole: alert boxes, dialogs and
+        // each tool window's tooltips. Menus and boxes that would not show
+        // whole stay desktop windows.
         enginelab::ui::LookAndFeel lookAndFeel;
         juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
         auto& theDesktop = juce::Desktop::getInstance();
@@ -813,9 +814,12 @@ int main() {
             captureWindow.setContentOwned(captureContent, true);
             require(captureWindow.isOnDesktop(), "the window is on the desktop");
             require(enginelab::ui::windowOf(&menuBox) == &captureWindow, "a component's window is its top-level window");
+            // A menu inside its window was cut to that window (a small tool
+            // window's list showed three entries) and drawn under the 3-D
+            // view's OpenGL surface: it is a desktop window again.
             require(lookAndFeel.getParentComponentForMenuOptions(juce::PopupMenu::Options {}.withTargetComponent(&menuBox))
-                        == &captureWindow,
-                    "a menu (a combo box's list) opens inside its target's window");
+                        == nullptr,
+                    "a menu (a combo box's list) opens as a desktop window, never clipped or hidden");
             const auto childOfWindow = [&captureWindow]<typename Child>(Child*) {
                 for (auto* child : captureWindow.getChildren())
                     if (auto* found = dynamic_cast<Child*>(child)) return found;
@@ -843,6 +847,41 @@ int main() {
                         && theDesktop.getNumComponents() == withDialog - 1
                         && captureWindow.getLocalBounds().contains(dialog.getBounds()),
                     "and is moved inside the window, centred");
+            captureWindow.removeChildComponent(&dialog);
+            dialog.addToDesktop(juce::ComponentPeer::windowHasDropShadow);
+
+            // A native view (the 3-D view's OpenGL surface) hides whatever the
+            // window draws over it: a box there stays a desktop window.
+            juce::Component glView;
+            captureContent->addAndMakeVisible(glView);
+            glView.setBounds(captureContent->getLocalBounds().reduced(100));
+            enginelab::ui::markNativeView(glView, true);
+            require(!enginelab::ui::placeInWindow(dialog, menuBox) && dialog.isOnDesktop()
+                        && dialog.getParentComponent() == nullptr,
+                    "a dialog over the 3-D view stays a desktop window");
+            const auto withNativeView = theDesktop.getNumComponents();
+            enginelab::ui::showMessage(&menuBox, juce::MessageBoxIconType::WarningIcon, "Over3d", "Message");
+            juce::AlertWindow* overView = nullptr;
+            for (int index = 0; index < theDesktop.getNumComponents(); ++index)
+                if (auto* found = dynamic_cast<juce::AlertWindow*>(theDesktop.getComponent(index));
+                    found != nullptr && found->getName() == "Over3d")
+                    overView = found;
+            require(theDesktop.getNumComponents() == withNativeView + 1 && overView != nullptr
+                        && childOfWindow(static_cast<juce::AlertWindow*>(nullptr)) == nullptr,
+                    "so does an alert box");
+            delete overView;
+            enginelab::ui::markNativeView(glView, false);
+            require(enginelab::ui::placeInWindow(dialog, menuBox), "without the mark it goes inside again");
+            captureWindow.removeChildComponent(&dialog);
+            dialog.addToDesktop(juce::ComponentPeer::windowHasDropShadow);
+
+            // A window smaller than the box would shrink it: it stays whole,
+            // a desktop window.
+            captureWindow.setContentComponentSize(160, 90);
+            const auto size = dialog.getBounds().getWidth();
+            require(!enginelab::ui::placeInWindow(dialog, menuBox) && dialog.isOnDesktop()
+                        && dialog.getWidth() == size,
+                    "a dialog larger than its window stays a desktop window, unshrunk");
         }
         {
             // A component in no window on screen keeps a desktop box: one
@@ -878,6 +917,6 @@ int main() {
 
     std::cout
         << "Audio workshop: layout, truthful availability, physical A/B, "
-           "live telemetry, mute/solo routing, HQ export controls and in-window menus PASS\n";
+           "live telemetry, mute/solo routing, HQ export controls and in-window boxes PASS\n";
     return 0;
 }

@@ -100,6 +100,10 @@ void drawSectionLabel(juce::Graphics& g, juce::Rectangle<float> area, const juce
     g.drawText(text.toUpperCase(), area, justification, true);
 }
 
+namespace {
+const juce::Identifier nativeViewProperty { "enginelabNativeView" };
+} // namespace
+
 juce::Component* windowOf(juce::Component* component) {
     if (component == nullptr) return nullptr;
     // Not yet in a window (an error while the app starts, a test): a box
@@ -108,7 +112,25 @@ juce::Component* windowOf(juce::Component* component) {
     return window->isOnDesktop() && !window->getLocalBounds().isEmpty() ? window : nullptr;
 }
 
+void markNativeView(juce::Component& view, bool drawn) {
+    if (drawn) view.getProperties().set(nativeViewProperty, true);
+    else view.getProperties().remove(nativeViewProperty);
+}
+
 namespace {
+/** Whether a visible native view inside `parent` overlaps `area` (in
+    `window`'s coordinates). */
+bool coversNativeView(juce::Component& parent, juce::Component& window, juce::Rectangle<int> area) {
+    for (auto* child : parent.getChildren()) {
+        if (!child->isVisible()) continue;
+        if (child->getProperties().contains(nativeViewProperty)
+            && window.getLocalArea(child, child->getLocalBounds()).intersects(area))
+            return true;
+        if (coversNativeView(*child, window, area)) return true;
+    }
+    return false;
+}
+
 /** The box JUCE's AlertWindow::showAsync builds, built now rather than on
     the next message, and put in `host`'s window. Its result: 1 for the first
     of two buttons, 0 otherwise. */
@@ -140,21 +162,17 @@ void showOkCancel(juce::Component* host, juce::MessageBoxIconType icon, const ju
             });
 }
 
-void placeInWindow(juce::Component& dialog, juce::Component& host) {
+bool placeInWindow(juce::Component& dialog, juce::Component& host) {
     auto* window = windowOf(&host);
-    if (window == nullptr || window == &dialog) return;
+    if (window == nullptr || window == &dialog) return false;
+    const auto area = dialog.getBounds().withCentre(window->getLocalBounds().getCentre());
+    if (!window->getLocalBounds().contains(area) || coversNativeView(*window, *window, area)) {
+        if (dialog.isOnDesktop()) dialog.setCentrePosition(window->getScreenBounds().getCentre());
+        return false;
+    }
     window->addAndMakeVisible(dialog);
-    dialog.setBounds(dialog.getBounds()
-                         .withCentre(window->getLocalBounds().getCentre())
-                         .constrainedWithin(window->getLocalBounds()));
-}
-
-juce::Component* LookAndFeel::getParentComponentForMenuOptions(const juce::PopupMenu::Options& options) {
-    if (auto* parent = options.getParentComponent()) return parent;
-    auto* anchor = options.getTargetComponent();
-    // A menu at the mouse (a right-click) opens over what was clicked.
-    if (anchor == nullptr) anchor = juce::Desktop::getInstance().getMainMouseSource().getComponentUnderMouse();
-    return windowOf(anchor);
+    dialog.setBounds(area);
+    return true;
 }
 
 LookAndFeel::LookAndFeel()

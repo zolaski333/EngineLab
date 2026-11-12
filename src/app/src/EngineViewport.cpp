@@ -1408,12 +1408,14 @@ void EngineViewport::applyRenderer() {
             initialiseFailed_ = false;
             attachedAt_ = wallSeconds();
             context_.attachTo(*this);
+            ui::markNativeView(*this, true);
         }
         cutaway_.setVisible(false);
         startPacing();
     } else {
         stopPacing();
         if (context_.getTargetComponent() != nullptr) context_.detach();
+        ui::markNativeView(*this, false);
         cutaway_.setVisible(true);
     }
     updateOverlayVisibility();

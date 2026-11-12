@@ -64,22 +64,31 @@ void drawSectionLabel(juce::Graphics&, juce::Rectangle<float> area, const juce::
                       juce::Justification = juce::Justification::centredLeft);
 
 /** The window `component` is drawn in (its top-level component), or null
-    while it is in no window on screen. Menus, alert boxes and dialogs are
-    drawn inside it rather than as desktop windows of their own, so a capture
-    of that one window (a screen recorder's window capture) shows them; with
-    no window they are desktop windows, as before. */
+    while it is in no window on screen. Alert boxes and dialogs are drawn
+    inside it when they fit, so a capture of that one window (a screen
+    recorder's window capture) shows them; otherwise they are desktop windows,
+    as before. */
 [[nodiscard]] juce::Component* windowOf(juce::Component* component);
-/** An alert box with an OK button, drawn inside the window of `host`. */
+/** Marks `view` as drawn by a native child window (the 3-D view's OpenGL
+    surface): on Windows nothing its window draws itself shows over it, so a
+    box over it would be hidden. `drawn` false clears the mark. */
+void markNativeView(juce::Component& view, bool drawn);
+/** An alert box with an OK button, drawn inside the window of `host` when it
+    fits there (placeInWindow). */
 void showMessage(juce::Component* host, juce::MessageBoxIconType, const juce::String& title,
                  const juce::String& message);
-/** Two buttons, drawn inside the window of `host`; `onResult` gets true for
-    the first (`accept`). */
+/** Two buttons, drawn inside the window of `host` when they fit; `onResult`
+    gets true for the first (`accept`). */
 void showOkCancel(juce::Component* host, juce::MessageBoxIconType, const juce::String& title,
                   const juce::String& message, const juce::String& accept, const juce::String& cancel,
                   std::function<void(bool)> onResult);
-/** Moves a dialog built by hand (an AlertWindow with editors) inside the
-    window of `host`, centred, before it enters its modal state. */
-void placeInWindow(juce::Component& dialog, juce::Component& host);
+/** Moves a dialog (an AlertWindow, one built by hand with editors) inside the
+    window of `host`, centred, before it enters its modal state -- only when
+    it fits whole inside that window and covers no native view
+    (markNativeView). Otherwise it stays a desktop window, centred over the
+    host's window: a box shrunk to a small window or drawn under the 3-D view
+    is unreadable. Returns true when it was moved inside. */
+bool placeInWindow(juce::Component& dialog, juce::Component& host);
 
 /** Look-and-feel installed as the application default, so the secondary
     windows (ECU tuner, EXHAUST PRO, AUDIO HQ) and the alert boxes share it. */
@@ -116,9 +125,6 @@ public:
     juce::Typeface::Ptr getTypefaceForFont(const juce::Font&) override;
     juce::Rectangle<int> getTooltipBounds(const juce::String& tipText, juce::Point<int> screenPos,
                                           juce::Rectangle<int> parentArea) override;
-    /** Every menu (a combo box's list included) inside the window it opens
-        from: its target's, or the window under the mouse (windowOf). */
-    juce::Component* getParentComponentForMenuOptions(const juce::PopupMenu::Options&) override;
     void drawTooltip(juce::Graphics&, const juce::String& text, int width, int height) override;
 };
 

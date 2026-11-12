@@ -78,10 +78,13 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
-- **Menus, message boxes and dialogs open inside their window**, so a
-  screen recorder capturing one EngineLab window films them too (the
-  engine picker, every list, Save as, the JSON editor, the confirmations).
-  The file pickers stay the system's own.
+- **Message boxes and dialogs open inside their window** when they fit
+  there whole and do not cover the 3-D view, so a screen recorder capturing
+  one EngineLab window films them too (the tool windows' confirmations, the
+  exhaust valve dialog). Menus and lists stay windows of their own, and so
+  do the boxes over the 3-D view: inside the window they were cut short or
+  hidden under the 3-D view. To film those, capture the screen. The file
+  pickers stay the system's own.
 
 ### Fixed
 

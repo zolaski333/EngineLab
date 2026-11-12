@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-12 — boxes inside their window, only when they show whole
+
+- Owner report after the in-window pass: some windows "display very badly, or not at all". Seen in the app: the engine picker's list over the 3-D view showed a strip a few pixels wide (the rest under the OpenGL surface, a native child window on Windows that hides anything its window draws over it); the Fuel window's fuel list was cut to three entries by the small window. `placeInWindow` also shrank a box larger than its window (`constrainedWithin`).
+- Now menus are desktop windows again (no `getParentComponentForMenuOptions` override: a menu's size is not known there); `placeInWindow` moves a box in only when it fits whole and covers no view marked `ui::markNativeView` (the 3-D view, while attached), otherwise it stays a desktop window centred over its window.
+- `EngineLab.AudioWorkshop`: a menu's parent is null; a box over a marked view and a box larger than its window stay desktop windows, unshrunk; unmarked, the box goes in again. Not measured: every dialog in the running app one by one (picker and Fuel list seen before, not after, the fix in this entry).
+
 ## 2026-11-12 — a trackside pass-by microphone
 
 - Owner plan: the car heard from beside its lane as it drives past (ISO 362: 7.5 m, 1.2 m up), on the cruise control; Doppler, ground reflection, air absorption, 6 dB per doubling; off by default.

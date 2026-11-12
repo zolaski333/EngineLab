@@ -117,16 +117,22 @@ constructor.
 the whole application, so the tool windows and alerts share it. `Widgets` holds
 the buttons, segmented controls and slider rows the panels are built from.
 
-**Everything a window shows is inside it**, so a screen recorder's window
-capture films it whole. Every menu (a combo box's list included) is a child of
-the window it opens from (`LookAndFeel::getParentComponentForMenuOptions`: its
-target's window, or for a right-click menu the window under the mouse); alert
-boxes go through `ui::showMessage` and `ui::showOkCancel`, and the hand-built
-dialogs (save as, JSON editor, key bindings) through `ui::placeInWindow`.
-Each tool window has its own tooltip window (one parented to the main window
-shows nothing over another). A component in no window on screen yet (an error
-while the app starts, a test) still gets a desktop window, never a modal box
-out of sight. The file choosers stay the system's own dialogs.
+**A box is inside its window when it shows whole there**, so a screen
+recorder's window capture films it. Alert boxes go through `ui::showMessage`
+and `ui::showOkCancel`, the hand-built dialogs (save as, JSON editor, key
+bindings, the exhaust valve) through `ui::placeInWindow`, which moves a box in
+only when it fits whole inside the window and covers no native view: the 3-D
+view's OpenGL surface is a native child window on Windows, and nothing its
+window draws shows over it (`ui::markNativeView`, set while the 3-D view is
+attached). Otherwise the box stays a desktop window, centred over its window.
+Menus (combo box lists included) are always desktop windows: inside a window
+a list was cut to that window (three entries in the Fuel window) and the
+engine picker vanished under the 3-D view. Each tool window has its own
+tooltip window (one parented to the main window shows nothing over another).
+A component in no window on screen yet (an error while the app starts, a
+test) gets a desktop box, never a modal one out of sight. The file choosers
+stay the system's own dialogs. To film the menus and the boxes over the 3-D
+view, capture the screen rather than the window.
 
 **Display units.** The simulation keeps one internal unit per quantity (m/s,
 kPa absolute, N m, kW, °C, mm, cm³, kg, g/s, L/100 km). `units::` in
