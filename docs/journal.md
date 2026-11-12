@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-12 — a nitrous kit
+
+- Owner plan: a kit hidden until fitted, unlimited if wanted, no limit on a figure; off on every engine. One plenum nozzle; nitrous as 0.5 O2 + N2 per mole with its enthalpy less Watson's latent heat; 82 kJ/mol released at the burn by the kit's oxygen share; jet 2.27 kg/min per 100 hp at 900 psi (energy balance at 30 % brake efficiency; install sheets 1.8-2.7), as the root of the drop; bottle at nitrous's vapour pressure, cooling without its heater.
+- `EngineLab.Nitrous` (dyno hold, 3 s spraying): K20 wet at 6,000 rpm 124.0 -> 181.7 kW (+77.3 hp for a 100 hp shot), AFR 13.27 -> 12.55, peak 81.6 -> 91.3 bar; LS3 dry at 4,500 272.3 -> 328.7 kW (+75.6 hp), AFR 13.26 -> 12.66; flow 2.287 kg/min at 62.96 bar both (rated 2.27 at 62.05). Knock 0 on both.
+- So the model gives about 77 % of a kit's rating at its rated flow, retard (4 deg here) included. Not separated: the retard, the gas volume the nitrous takes from the air, the marginal efficiency. A dry kit at lambda 2.0 ran 16.3:1 against 11.9 at 0.8 with the trim held, but no knock on the LS3 at 4,500 rpm: the "lean kit knocks" case is not shown.
+- Without a kit: K20, 2JZ, 13B, RD350, TDI `DriveScenarioHarness --builtin pull` bit-identical to before (10,801 rows); a fitted kit disarmed is the engine without one over 720 frames (the test). UI: `EngineLab.AudioWorkshop` fits, edits, refills and removes a kit in the Fuel window; not seen in the running app.
+
 ## 2026-11-12 — boxes inside their window, only when they show whole
 
 - Owner report after the in-window pass: some windows "display very badly, or not at all". Seen in the app: the engine picker's list over the 3-D view showed a strip a few pixels wide (the rest under the OpenGL surface, a native child window on Windows that hides anything its window draws over it); the Fuel window's fuel list was cut to three entries by the small window. `placeInWindow` also shrank a box larger than its window (`constrainedWithin`).

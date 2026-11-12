@@ -427,6 +427,19 @@ if(MSVC)
     target_link_options(EngineLabExhaustValveTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabNitrousTests NitrousTests.cpp)
+target_link_libraries(EngineLabNitrousTests PRIVATE
+    EngineLab::Catalog EngineLab::Serialization EngineLab::Simulation EngineLab::Ecu
+    EngineLab::Events EngineLab::Physics EngineLab::Exhaust)
+target_compile_definitions(EngineLabNitrousTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabNitrousTests)
+add_test(NAME EngineLab.Nitrous COMMAND EngineLabNitrousTests)
+set_tests_properties(EngineLab.Nitrous PROPERTIES TIMEOUT 900)
+if(MSVC)
+    target_link_options(EngineLabNitrousTests PRIVATE /STACK:8388608)
+endif()
+
 add_executable(EngineLabPassByMicrophoneTests PassByMicrophoneTests.cpp)
 target_link_libraries(EngineLabPassByMicrophoneTests PRIVATE EngineLab::Audio)
 enginelab_set_warnings(EngineLabPassByMicrophoneTests)

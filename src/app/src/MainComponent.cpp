@@ -139,6 +139,7 @@ MainComponent::MainComponent() {
     controls_.gearDown.onClick = [this] { if (runtime_) runtime_->shiftDown(); };
     controls_.gearUp.onClick = [this] { if (runtime_) runtime_->shiftUp(); };
     controls_.cruise.onClick = [this] { if (runtime_) runtime_->toggleCruise(); };
+    controls_.onNitrousArm = [this] { setNitrousArmed(!controls_.nitrousArmed()); };
     controls_.onEngineBrakeStage = [this](std::uint32_t stage) {
         if (!runtime_) return;
         runtime_->setEngineBrakeStage(stage);
@@ -465,6 +466,9 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     // ... and its exhaust valve on automatic.
     controls_.setExhaustValveFitted(exhaustValveFitted(config_));
     controls_.setExhaustValveMode(ExhaustValveMode::automatic);
+    // ... and its nitrous kit, if any, disarmed.
+    controls_.setNitrousFitted(config_.nitrous.fitted);
+    controls_.setNitrousArmed(false);
     adoptAudioVoicing(config_.audioVoicing);
     voicingRevision_ = audioVoicingRevision(catalogRoot_);
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
@@ -521,6 +525,22 @@ void MainComponent::setExhaustValveMode(ExhaustValveMode mode) {
     if (!runtime_) return;
     runtime_->setExhaustValveMode(mode);
     controls_.setExhaustValveMode(mode);
+}
+
+void MainComponent::setNitrousArmed(bool armed) {
+    if (!runtime_) return;
+    armed = armed && config_.nitrous.fitted;
+    runtime_->setNitrousArmed(armed);
+    controls_.setNitrousArmed(armed);
+}
+
+bool MainComponent::applyNitrousEdit(const NitrousConfig& kit) {
+    auto edited = config_;
+    edited.nitrous = kit;
+    if (!applySettingsEdit(edited)) return false;
+    controls_.setNitrousFitted(config_.nitrous.fitted);
+    if (!config_.nitrous.fitted) setNitrousArmed(false);
+    return true;
 }
 
 void MainComponent::toggleDatalog() {
@@ -637,6 +657,7 @@ bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
     config_.vehicle = running.vehicle;
     config_.thermal = running.thermal;
     config_.octaneRating = running.octaneRating;
+    config_.nitrous = running.nitrous;
     // The simulation has the new settings: a sound that cannot follow them
     // needs the restart after all.
     if (!audio_->replaceForcedInduction(config_.forcedInduction))
@@ -1125,7 +1146,9 @@ void MainComponent::showFuelWindow() {
         auto safe = juce::Component::SafePointer<MainComponent>(this);
         fuelWindow_ = std::make_unique<FuelWindow>(config_, fuelPresets_, [safe](const EngineConfig& edited) {
             return safe && safe->applyEngineEdit(edited);
-        });
+        }, FuelWindow::NitrousCallbacks {
+            [safe](const NitrousConfig& kit) { return safe && safe->applyNitrousEdit(kit); },
+            [safe] { if (safe && safe->runtime_) safe->runtime_->refillNitrousBottle(); } });
     }
     fuelWindow_->setConfig(config_);
     fuelWindow_->setLocked(runtime_->dynoRunning());
@@ -1981,6 +2004,7 @@ bool MainComponent::keyStateChanged(bool) {
     const auto brakeDown = actionMap_.isDown(AppAction::brake);
     brakeKeyDown_ = brakeDown;
     return down || brakeDown || anyThrottleDown || actionMap_.isDown(AppAction::clutchHold)
+        || actionMap_.isDown(AppAction::nitrous)
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
 }
 
@@ -2026,6 +2050,8 @@ void MainComponent::timerCallback() {
     const auto clutchRate = slowClutch ? 2.2 : 12.0;
     currentClutchPressure_ += (clutchTarget - currentClutchPressure_) * (1.0 - std::exp(-clutchRate / 30.0));
     runtime_->setClutchPressure(currentClutchPressure_);
+    // The nitrous kit's push button: held with its key.
+    runtime_->setNitrousButton(actionMap_.isDown(AppAction::nitrous));
     model_.state = runtime_->snapshot();
     model_.redlineRpm = displayRedlineRpm(config_, *runtime_->calibrationStore()->snapshot());
     model_.units.ambientPressureKpa = config_.ambientPressureKpa;
@@ -2060,6 +2086,7 @@ void MainComponent::timerCallback() {
     if (fuelWindow_ && fuelWindow_->isVisible()) {
         fuelWindow_->setLocked(running);
         fuelWindow_->setConfig(config_);
+        fuelWindow_->setNitrousState(model_.state);
     }
     updateModified();
 

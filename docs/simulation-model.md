@@ -496,6 +496,39 @@ tables set the AFR target and the advance as a function of engine speed and a
 normalised load; acceleration enrichment, cold start, temperature, knock and
 rev limiter apply after that.
 
+### Nitrous oxide
+
+A kit (`EngineConfig::nitrous`, the `nitrous` section of an engine file,
+written only when `fitted`) is one nozzle behind the throttle: its liquid
+nitrous enters the plenum cells (split equally over the plenums) as the
+half mole of oxygen and the mole of nitrogen each mole decomposes into, so
+its mass and oxygen are exact, carrying its enthalpy less the latent heat
+of its evaporation (Watson, 376 kJ/kg at 184.7 K, (Tc - T)^0.38: 123 kJ/kg
+at 30 C, about 35 K off the charge). The 82 kJ per mole of its decomposition
+is released where it burns, in proportion to the share of the charge's
+oxygen that came from the kit (`nitrousOxygenShare`, the kit's oxygen rate
+over the kit's and the throttle air's, both smoothed over 0.15 s).
+
+The jet passes `nitrousMassFlowPerShotKw` times the shot (2.27 kg/min per
+100 hp) at the reference bottle pressure, 900 psi, as the root of the drop
+into the plenum. The bottle's pressure is nitrous's vapour pressure at its
+temperature (ln p[bar] = 10.552 - 1942/T); without the heater the vapour
+that replaces the liquid drawn cools it (its share rho_v / (rho_l - rho_v),
+the liquid's 2 kJ/kg K and the bottle's steel), and it warms back towards
+ambient at 1.5 W/K. It sprays armed (`EngineControls::nitrousArmed`), with
+the push button held when `push_button`, past the minimum throttle and in
+the speed window, building over `ramp_s`.
+
+The ECU sizes its pulse for the throttle air alone, the charge less the
+kit's share. A wet kit puts its own fuel into the plenum at its `kit_lambda`
+on the kit's oxygen and the fuel's stoichiometric ratio; a dry kit has the
+injectors add the same. The lambda loop holds its learning while the kit
+sprays, so a lean kit runs lean. The spark is retarded by
+`spark_retard_deg_per_50hp` per 50 hp of shot. Knock, peak pressure and
+breakage see the charge as it is. Not modelled: per-cylinder nozzles, the
+liquid's own transit in the plenum (it evaporates where it enters), the end
+of the liquid in the bottle (the vapour phase's lower flow).
+
 ## Ignition, flame and knock
 
 A spark is scheduled per cylinder. Before the kernel is born, an ignition delay

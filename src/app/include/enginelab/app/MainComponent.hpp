@@ -130,6 +130,10 @@ private:
     /** The engine brake's switch, one stage up (off after the last). */
     void stepEngineBrake();
     void setExhaustValveMode(ExhaustValveMode mode);
+    /** The nitrous kit's arming switch: the runtime and Drive's button. */
+    void setNitrousArmed(bool armed);
+    /** A kit fitted, edited or taken off from the Fuel window, taken live. */
+    bool applyNitrousEdit(const NitrousConfig& kit);
     /** An edit of the camshafts only: taken by the running engine over
         `rampSeconds` when its banks and valve controls stay
         (EngineSimulator::camshaftsReplaceable), else a restart. */

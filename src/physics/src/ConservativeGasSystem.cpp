@@ -269,6 +269,26 @@ void GasCell::injectFuelMoles(double moles, double temperature) noexcept {
         * std::clamp(temperature, minimumTemperatureK, maximumInputTemperatureK);
 }
 
+void GasCell::injectNitrousOxideMoles(double moles, double temperature,
+                                      double latentHeatJPerMol) noexcept {
+    if (!(moles > 0.0) || !std::isfinite(moles)) return;
+    const auto t = std::clamp(temperature, minimumTemperatureK, maximumInputTemperatureK);
+    const auto oxygen = 0.5 * moles;
+    const auto inert = moles;
+    // Enthalpy, u + R T: a flow source pushes its own volume into the cell.
+    const auto oxygenEnthalpy = t * (oxygenCvInterceptJPerMolK + 0.5 * oxygenCvSlopeJPerMolK2 * t
+        + universalGasConstant);
+    const auto inertEnthalpy = t * (inertCvInterceptJPerMolK + 0.5 * inertCvSlopeJPerMolK2 * t
+        + universalGasConstant);
+    mixture_.oxygenMoles += oxygen;
+    mixture_.inertMoles += inert;
+    internalEnergyJ_ += oxygen * oxygenEnthalpy + inert * inertEnthalpy
+        - moles * std::max(0.0, latentHeatJPerMol);
+    // The evaporation can take more than the cell holds only for a spray far
+    // past its air: keep the state physical (and its energy a floor).
+    internalEnergyJ_ = std::max(internalEnergyJ_, internalEnergyAtTemperatureJ(minimumTemperatureK));
+}
+
 void GasCell::configureFuelChemistry(double fuelMolarMassKg, double oxygenMolesPerFuelMole,
                                      double productMolesPerFuelMole) noexcept {
     fuelMolarMassKg_ = std::clamp(fuelMolarMassKg, 0.020, 0.300);

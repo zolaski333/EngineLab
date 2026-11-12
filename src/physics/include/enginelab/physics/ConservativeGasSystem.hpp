@@ -88,6 +88,13 @@ public:
     void resizeKeepingState(double volumeLitres) noexcept;
     void addHeatJoules(double joules) noexcept;
     void injectFuelMoles(double moles, double temperatureK = 293.15) noexcept;
+    /** Liquid nitrous oxide sprayed into the cell, `moles` of N2O at
+     *  `temperatureK`: carried as the oxygen and nitrogen it decomposes to
+     *  (half a mole of O2 and one of N2 per mole, the mass and the oxygen
+     *  exact), with their enthalpy at that temperature less the latent heat
+     *  `latentHeatJPerMol` its evaporation takes from the charge. Its 82 kJ/mol
+     *  of decomposition is released where it burns (EngineSimulator). */
+    void injectNitrousOxideMoles(double moles, double temperatureK, double latentHeatJPerMol) noexcept;
     void configureFuelChemistry(double fuelMolarMassKg, double oxygenMolesPerFuelMole,
                                 double productMolesPerFuelMole) noexcept;
     void setBulkVelocityMps(double velocity) noexcept {

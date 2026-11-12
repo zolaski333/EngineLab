@@ -76,6 +76,16 @@ file formats, always with an in-memory migration).
   ground's reflection, the air's absorption of the treble and its level
   falling 6 dB each time the distance doubles. Off at every start.
 
+- **A nitrous kit.** The Fuel window's *Nitrous* section shows only *Fit a
+  kit...* until one is fitted; then its shot, bottle, bottle temperature,
+  heater, throttle and speed window, progressive ramp, spark retard and
+  mixture, wet or dry, an unlimited bottle if wanted, and a refill. Drive
+  shows *Nitrous* to arm it, and `=` held is the push button. The nitrous
+  is real oxygen in the charge: knock, cylinder pressure and breakage still
+  apply, a lean kit runs lean, and the bottle cools and loses pressure as it
+  empties without its heater. Saved with the engine; nothing changes on an
+  engine without a kit.
+
 ### Changed
 
 - **Message boxes and dialogs open inside their window** when they fit

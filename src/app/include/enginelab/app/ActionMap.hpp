@@ -23,6 +23,7 @@ enum class AppAction : std::size_t {
     datalog,
     engineBrake,
     exhaustValve,
+    nitrous,
     count
 };
 

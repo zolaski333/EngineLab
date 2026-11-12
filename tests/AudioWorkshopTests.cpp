@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <optional>
 #include <iostream>
 #include <memory>
@@ -566,6 +567,78 @@ int main() {
             juce::PNGImageFormat().writeImageToStream(
                 designerView->createComponentSnapshot(designerView->getLocalBounds()), stream);
         }
+    }
+
+    // The Fuel window's nitrous section: hidden behind "Fit a kit..." until a
+    // kit is fitted, then its settings, each taken at once.
+    {
+        const auto petrol = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [](const auto& entry) { return entry.config.fuel == enginelab::FuelType::gasoline; });
+        require(petrol != catalog.entries.end(), "catalog has a petrol engine");
+        std::vector<enginelab::NitrousConfig> kits;
+        auto refills = 0;
+        enginelab::FuelWindow kitWindow(petrol->config, enginelab::loadFuelPresets(ENGINELAB_CATALOG_ROOT), {},
+            enginelab::FuelWindow::NitrousCallbacks {
+                [&kits](const enginelab::NitrousConfig& kit) { kits.push_back(kit); return true; },
+                [&refills] { ++refills; } });
+        const auto findAll = [](juce::Component& root, const auto& predicate) {
+            std::vector<juce::Component*> found;
+            std::function<void(juce::Component&)> walk = [&](juce::Component& parent) {
+                for (auto* child : parent.getChildren()) {
+                    if (predicate(*child)) found.push_back(child);
+                    walk(*child);
+                }
+            };
+            walk(root);
+            return found;
+        };
+        const auto button = [&](const juce::String& text) -> juce::Button* {
+            const auto found = findAll(*kitWindow.getContentComponent(), [&text](juce::Component& child) {
+                auto* asButton = dynamic_cast<juce::Button*>(&child);
+                return asButton != nullptr && asButton->getButtonText() == text;
+            });
+            return found.empty() ? nullptr : dynamic_cast<juce::Button*>(found.front());
+        };
+        const auto visibleKitSliders = [&] {
+            return findAll(*kitWindow.getContentComponent(), [](juce::Component& child) {
+                return dynamic_cast<juce::Slider*>(&child) != nullptr && child.isVisible();
+            }).size();
+        };
+        auto* fit = button("Fit a kit...");
+        require(fit != nullptr && fit->isVisible() && visibleKitSliders() == 5U && kitWindow.getWidth() < 600,
+                "an engine without a kit shows only Fit a kit... (the five fuel fields, the narrow window)");
+        fit->onClick();
+        require(kits.size() == 1U && kits.back().fitted && kits.back().shotKw == enginelab::NitrousConfig {}.shotKw,
+                "Fit a kit... fits the default kit at once");
+        auto* remove = button("Remove kit");
+        require(!fit->isVisible() && remove != nullptr && remove->isVisible() && visibleKitSliders() == 5U + 9U
+                    && kitWindow.getWidth() > 700,
+                "fitted, its nine settings show in the wider window");
+        auto* refill = button("Refill bottle");
+        require(refill != nullptr, "a fitted kit has a refill button");
+        refill->onClick();
+        require(refills == 1, "Refill bottle fills the bottle");
+        auto* unlimited = button("Unlimited bottle");
+        require(unlimited != nullptr, "an unlimited bottle can be chosen");
+        unlimited->onClick();
+        require(kits.size() == 2U && kits.back().unlimitedBottle && kits.back().fitted, "it is taken at once");
+        auto edited = petrol->config;
+        edited.nitrous = kits.back();
+        edited.nitrous.shotKw = 150.0;
+        kitWindow.setConfig(edited);
+        enginelab::EngineState sprayState {};
+        sprayState.nitrousSpraying = true;
+        sprayState.nitrousMassFlowKgPerSecond = 0.05;
+        sprayState.nitrousBottlePressureKpa = 6'200.0;
+        kitWindow.setNitrousState(sprayState);
+        const auto readouts = findAll(*kitWindow.getContentComponent(), [](juce::Component& child) {
+            auto* label = dynamic_cast<juce::Label*>(&child);
+            return label != nullptr && label->getText().contains("spraying 3.00 kg/min");
+        });
+        require(readouts.size() == 1U, "the readout shows the spray");
+        remove->onClick();
+        require(kits.back().fitted == false && fit->isVisible() && kitWindow.getWidth() < 600,
+                "Remove kit takes it off and hides its settings again");
     }
 
     // The Fuel window (top bar): a listed fuel goes in the tank as listed,

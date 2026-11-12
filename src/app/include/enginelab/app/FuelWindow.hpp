@@ -19,8 +19,15 @@ namespace enginelab {
 class FuelWindow final : public juce::DocumentWindow {
 public:
     using ApplyCallback = std::function<bool(const EngineConfig&)>;
+    /** The nitrous kit's section: `apply` takes an edited kit at once (live),
+        false when it could not; `refill` fills its bottle. */
+    struct NitrousCallbacks final {
+        std::function<bool(const NitrousConfig&)> apply;
+        std::function<void()> refill;
+    };
 
-    FuelWindow(const EngineConfig& config, std::vector<FuelPreset> presets, ApplyCallback applyCallback);
+    FuelWindow(const EngineConfig& config, std::vector<FuelPreset> presets, ApplyCallback applyCallback,
+               NitrousCallbacks nitrous = {});
     ~FuelWindow() override;
 
     void closeButtonPressed() override;
@@ -31,6 +38,8 @@ public:
     void setStatus(const juce::String& status);
     /** No edit while the dyno runs. */
     void setLocked(bool locked);
+    /** The kit's bottle and spray, read from the running engine. */
+    void setNitrousState(const EngineState& state);
 
 private:
     class Content;

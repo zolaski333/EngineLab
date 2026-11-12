@@ -43,7 +43,9 @@ ActionMap::ActionMap()
         // and off after the last.
         { "engine_brake", letter('0') },
         // The active exhaust valve: automatic, shut, open, automatic...
-        { "exhaust_valve", letter('-') }
+        { "exhaust_valve", letter('-') },
+        // Held: the nitrous kit's push button (with the kit armed).
+        { "nitrous", letter('=') }
     }} {
     load();
 }

@@ -590,6 +590,62 @@ struct ExhaustValveConfig final {
     double travelSeconds { 0.3 };
 };
 
+enum class NitrousKitType : std::uint8_t {
+    /** Nitrous only: the ECU's injectors add the kit's fuel. */
+    dry,
+    /** The kit's nozzle sprays its own fuel with the nitrous. */
+    wet
+};
+
+/** A nitrous oxide kit: one nozzle (a plate behind the throttle) feeding the
+ * plenum, a bottle, an arming switch and a push button. Nothing on an engine
+ * without one (`fitted`); no limit on any figure (owner, 2026-11-11). */
+struct NitrousConfig final {
+    bool fitted { false };
+    NitrousKitType type { NitrousKitType::wet };
+    /** The kit's rating, kW at the crank (a "100 hp shot": 74.57 kW). It
+     *  sizes the jet: nitrousMassFlowPerShotKw at the reference bottle
+     *  pressure. */
+    double shotKw { 74.57 };
+    /** Liquid nitrous a full bottle holds, kg (a 10 lb bottle: 4.54). */
+    double bottleCapacityKg { 4.54 };
+    /** The bottle never empties and holds its temperature (and so its
+     *  pressure): unlimited nitrous for testing. */
+    bool unlimitedBottle { false };
+    /** A heater holds the bottle at `bottleTemperatureC`; without one it
+     *  starts at the ambient temperature and cools as it empties. */
+    bool bottleHeater { true };
+    double bottleTemperatureC { 30.0 };
+    /** It sprays only at or above this throttle, 0-1 (the WOT switch)... */
+    double minimumThrottle { 0.95 };
+    /** ...and inside this window of engine speed, rpm (0: no ceiling). */
+    double minimumRpm { 3'000.0 };
+    double maximumRpm { 0.0 };
+    /** Only while the push button is held (Drive); off, arming and the WOT
+     *  switch are enough (the dyno). */
+    bool pushButton { true };
+    /** Progressive controller: the flow rises from 0 to the full jet over
+     *  this, s (0: at once). */
+    double rampSeconds { 0.0 };
+    /** Spark taken off the map while it sprays, degrees per 50 hp of shot. */
+    double sparkRetardDegreesPer50Hp { 2.0 };
+    /** The kit's own fuel for its oxygen, as a lambda: the wet nozzle's fuel
+     *  jet, or the ECU's extra pulse for a dry kit. */
+    double kitLambda { 0.80 };
+
+    [[nodiscard]] bool operator==(const NitrousConfig&) const = default;
+};
+
+/** Liquid nitrous a kit's jet passes per kW of its rating, kg/s, at the
+ *  reference bottle pressure: 2.27 kg/min per 100 hp, from the energy
+ *  balance (oxygen 36.4 % by mass, the stoichiometric fuel it burns and
+ *  82 kJ/mol of decomposition, 6.6 MJ per kg of nitrous, at a 30 % brake
+ *  efficiency); install sheets and tuners give 4-6 lb/min per 100 hp
+ *  (1.8-2.7 kg/min). */
+inline constexpr double nitrousMassFlowPerShotKw = 2.27 / 60.0 / 74.57;
+/** The pressure a kit's rating is quoted at, kPa (900 psi). */
+inline constexpr double nitrousReferenceBottlePressureKpa = 6'205.0;
+
 enum class ExhaustValveMode : std::uint8_t {
     /** The actuator follows ExhaustValveConfig's speed and throttle. */
     automatic,
@@ -1446,6 +1502,8 @@ struct EngineConfig final {
     ExhaustConfig exhaust;
     ExhaustAfterfireConfig exhaustAfterfire;
     ExhaustValveConfig exhaustValve;
+    /** A nitrous kit; not fitted by default. */
+    NitrousConfig nitrous;
     TransmissionConfig transmission;
     VehicleConfig vehicle;
     EngineBrakeConfig engineBrake;
@@ -1500,6 +1558,12 @@ struct EngineControls final {
     std::uint32_t engineBrakeStage { 0 };
     /** The active exhaust valves' switch; nothing without one. */
     ExhaustValveMode exhaustValveMode { ExhaustValveMode::automatic };
+    /** The nitrous kit's arming switch and push button; nothing without a
+     *  kit. */
+    bool nitrousArmed { false };
+    bool nitrousButton { false };
+    /** Counts bottle refills: each new value fills the bottle. */
+    std::uint32_t nitrousRefills { 0 };
 };
 
 struct CylinderState final {
@@ -2193,6 +2257,15 @@ struct EngineState final {
     /** VTEC: the speed the ECU engages the high cam above, rpm (the first
      *  VTEC camshaft's own when its tables have no setting); 0 without. */
     double vtecEngageRpm { 0.0 };
+    /** The nitrous kit: spraying, its flow (kg/s of liquid nitrous), the
+     *  liquid left (kg), the bottle's pressure (kPa) and temperature (C),
+     *  and the share of the charge's oxygen that came from it. */
+    bool nitrousSpraying { false };
+    double nitrousMassFlowKgPerSecond { 0.0 };
+    double nitrousBottleMassKg { 0.0 };
+    double nitrousBottlePressureKpa { 0.0 };
+    double nitrousBottleTemperatureC { 0.0 };
+    double nitrousOxygenShare { 0.0 };
 };
 
 struct EcuCommand final {

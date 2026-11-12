@@ -844,6 +844,26 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "open_above_throttle" << YAML::Value << config.exhaustValve.openAboveThrottle
             << YAML::Key << "travel_s" << YAML::Value << config.exhaustValve.travelSeconds
             << YAML::EndMap;
+    // Written when a kit is fitted, so every other engine's file is unchanged.
+    if (config.nitrous.fitted) {
+        const auto& kit = config.nitrous;
+        out << YAML::Key << "nitrous" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "fitted" << YAML::Value << true
+            << YAML::Key << "type" << YAML::Value << (kit.type == NitrousKitType::dry ? "dry" : "wet")
+            << YAML::Key << "shot_kw" << YAML::Value << kit.shotKw
+            << YAML::Key << "bottle_kg" << YAML::Value << kit.bottleCapacityKg
+            << YAML::Key << "unlimited_bottle" << YAML::Value << kit.unlimitedBottle
+            << YAML::Key << "bottle_heater" << YAML::Value << kit.bottleHeater
+            << YAML::Key << "bottle_temperature_c" << YAML::Value << kit.bottleTemperatureC
+            << YAML::Key << "minimum_throttle" << YAML::Value << kit.minimumThrottle
+            << YAML::Key << "minimum_rpm" << YAML::Value << kit.minimumRpm
+            << YAML::Key << "maximum_rpm" << YAML::Value << kit.maximumRpm
+            << YAML::Key << "push_button" << YAML::Value << kit.pushButton
+            << YAML::Key << "ramp_s" << YAML::Value << kit.rampSeconds
+            << YAML::Key << "spark_retard_deg_per_50hp" << YAML::Value << kit.sparkRetardDegreesPer50Hp
+            << YAML::Key << "kit_lambda" << YAML::Value << kit.kitLambda
+            << YAML::EndMap;
+    }
     // Written when one is fitted, so every other engine's file is unchanged.
     if (config.engineBrake.fitted)
         out << YAML::Key << "engine_brake" << YAML::Value << YAML::BeginMap
@@ -1180,6 +1200,23 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             value.openAboveRpm = valve["open_above_rpm"].as<double>(value.openAboveRpm);
             value.openAboveThrottle = valve["open_above_throttle"].as<double>(value.openAboveThrottle);
             value.travelSeconds = valve["travel_s"].as<double>(value.travelSeconds);
+        }
+        if (const auto kit = engine["nitrous"]) {
+            auto& value = config.nitrous;
+            value.fitted = kit["fitted"].as<bool>(value.fitted);
+            value.type = kit["type"].as<std::string>("wet") == "dry" ? NitrousKitType::dry : NitrousKitType::wet;
+            value.shotKw = kit["shot_kw"].as<double>(value.shotKw);
+            value.bottleCapacityKg = kit["bottle_kg"].as<double>(value.bottleCapacityKg);
+            value.unlimitedBottle = kit["unlimited_bottle"].as<bool>(value.unlimitedBottle);
+            value.bottleHeater = kit["bottle_heater"].as<bool>(value.bottleHeater);
+            value.bottleTemperatureC = kit["bottle_temperature_c"].as<double>(value.bottleTemperatureC);
+            value.minimumThrottle = kit["minimum_throttle"].as<double>(value.minimumThrottle);
+            value.minimumRpm = kit["minimum_rpm"].as<double>(value.minimumRpm);
+            value.maximumRpm = kit["maximum_rpm"].as<double>(value.maximumRpm);
+            value.pushButton = kit["push_button"].as<bool>(value.pushButton);
+            value.rampSeconds = kit["ramp_s"].as<double>(value.rampSeconds);
+            value.sparkRetardDegreesPer50Hp = kit["spark_retard_deg_per_50hp"].as<double>(value.sparkRetardDegreesPer50Hp);
+            value.kitLambda = kit["kit_lambda"].as<double>(value.kitLambda);
         }
         if (const auto brake = engine["engine_brake"]) {
             auto& value = config.engineBrake;

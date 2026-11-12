@@ -196,6 +196,12 @@ public:
      * engine ignores it when none is fitted). On the dyno too. */
     void setExhaustValveMode(ExhaustValveMode mode) noexcept { exhaustValveMode_.store(mode, std::memory_order_relaxed); }
     [[nodiscard]] ExhaustValveMode exhaustValveMode() const noexcept { return exhaustValveMode_.load(std::memory_order_relaxed); }
+    /** The nitrous kit's arming switch and push button (nothing without a
+     *  kit), and a refill of its bottle. On the dyno too. */
+    void setNitrousArmed(bool armed) noexcept { nitrousArmed_.store(armed, std::memory_order_relaxed); }
+    [[nodiscard]] bool nitrousArmed() const noexcept { return nitrousArmed_.load(std::memory_order_relaxed); }
+    void setNitrousButton(bool held) noexcept { nitrousButton_.store(held, std::memory_order_relaxed); }
+    void refillNitrousBottle() noexcept { nitrousRefills_.fetch_add(1, std::memory_order_relaxed); }
     void shiftUp() noexcept;
     void shiftDown() noexcept;
     /** Switches the gearbox between automatic and manual shifting. A gear
@@ -581,6 +587,9 @@ private:
     std::atomic<double> brakePressure_ { 0.0 };
     std::atomic<std::uint32_t> engineBrakeStage_ { 0 };
     std::atomic<ExhaustValveMode> exhaustValveMode_ { ExhaustValveMode::automatic };
+    std::atomic<bool> nitrousArmed_ { false };
+    std::atomic<bool> nitrousButton_ { false };
+    std::atomic<std::uint32_t> nitrousRefills_ { 0 };
     std::atomic<int> gear_ { -1 };
     std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
     std::atomic<std::uint64_t> cruiseToggleRequests_ { 0 };

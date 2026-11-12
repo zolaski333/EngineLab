@@ -30,6 +30,11 @@ public:
     [[nodiscard]] ExhaustValveMode nextExhaustValveMode() const noexcept;
     /** The mode the switch shows. */
     void setExhaustValveMode(ExhaustValveMode mode);
+    /** Shows the nitrous kit's arming switch (an engine with a kit) or hides it. */
+    void setNitrousFitted(bool fitted);
+    /** The arming the switch shows. */
+    void setNitrousArmed(bool armed);
+    [[nodiscard]] bool nitrousArmed() const noexcept { return nitrousArmed_; }
     void refresh(const DashboardModel&);
 
     /** Called with a throttle fraction (0.01, 0.10, 0.20 or 1.0). */
@@ -38,6 +43,8 @@ public:
     std::function<void(std::uint32_t)> onEngineBrakeStage;
     /** Called with the mode picked from the exhaust valve's menu. */
     std::function<void(ExhaustValveMode)> onExhaustValveMode;
+    /** Called when the nitrous arming switch is clicked. */
+    std::function<void()> onNitrousArm;
 
     ActionButton ignition { "Ignition" };
     ActionButton starter { "Starter" };
@@ -64,6 +71,9 @@ public:
      * opens Automatic / Shut / Open; its key steps through them. Lit while
      * the valve is open. */
     ActionButton exhaustValve { "Exhaust valve auto", ActionButton::Style::compact };
+    /** The nitrous kit's arming switch, shown only when a kit is fitted.
+     * Lit while the kit sprays. */
+    ActionButton nitrous { "Nitrous off", ActionButton::Style::compact };
     SliderRow afrTrim { "AFR trim" };
     SliderRow sparkTrim { "Spark trim" };
 
@@ -91,6 +101,7 @@ private:
     std::uint32_t engineBrakeStage_ { 0 };
     std::uint32_t engineBrakeCylinders_ { 0 };
     ExhaustValveMode exhaustValveMode_ { ExhaustValveMode::automatic };
+    bool nitrousArmed_ { false };
     void openEngineBrakeMenu();
     void openExhaustValveMenu();
 };

@@ -994,6 +994,17 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         || outOfRange("exhaustValve.openAboveRpm", config.exhaustValve.openAboveRpm, 0.0, 100'000.0)
         || outOfRange("exhaustValve.openAboveThrottle", config.exhaustValve.openAboveThrottle, 0.0, 1.0)
         || outOfRange("exhaustValve.travelSeconds", config.exhaustValve.travelSeconds, 0.0, 60.0)
+        // A nitrous kit: any size, any bottle (owner, 2026-11-11); only what
+        // has no meaning is refused.
+        || outOfRange("nitrous.shotKw", config.nitrous.shotKw, 0.0, 1.0e9)
+        || outOfRange("nitrous.bottleCapacityKg", config.nitrous.bottleCapacityKg, 0.0, 1.0e9)
+        || outOfRange("nitrous.bottleTemperatureC", config.nitrous.bottleTemperatureC, -90.0, 1'000.0)
+        || outOfRange("nitrous.minimumThrottle", config.nitrous.minimumThrottle, 0.0, 1.0)
+        || outOfRange("nitrous.minimumRpm", config.nitrous.minimumRpm, 0.0, 1.0e6)
+        || outOfRange("nitrous.maximumRpm", config.nitrous.maximumRpm, 0.0, 1.0e6)
+        || outOfRange("nitrous.rampSeconds", config.nitrous.rampSeconds, 0.0, 1.0e4)
+        || outOfRange("nitrous.sparkRetardDegreesPer50Hp", config.nitrous.sparkRetardDegreesPer50Hp, -90.0, 90.0)
+        || outOfRange("nitrous.kitLambda", config.nitrous.kitLambda, 0.05, 20.0)
         || outOfRange("engineBrake.valveLiftMm", config.engineBrake.valveLiftMm, 0.0, 10.0)
         || outOfRange("engineBrake.peakAfterTdcDegrees", config.engineBrake.peakAfterTdcDegrees, -90.0, 90.0)
         || outOfRange("engineBrake.durationDegrees", config.engineBrake.durationDegrees, 5.0, 180.0)

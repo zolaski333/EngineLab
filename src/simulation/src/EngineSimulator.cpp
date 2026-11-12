@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <limits>
 #include <numbers>
 #include <numeric>
 #include <optional>
@@ -1608,6 +1609,14 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     std::swap(config_.exhaustAfterfire, config.exhaustAfterfire);
     std::swap(config_.engineBrake, config.engineBrake);
     std::swap(config_.exhaustValve, config.exhaustValve);
+    {
+        // A kit just fitted comes with a full bottle; a smaller bottle holds
+        // no more than it can.
+        const auto wasFitted = config_.nitrous.fitted;
+        std::swap(config_.nitrous, config.nitrous);
+        if (config_.nitrous.fitted && !wasFitted) fillNitrousBottle();
+        nitrousBottleMassKg_ = std::min(nitrousBottleMassKg_, config_.nitrous.bottleCapacityKg);
+    }
     // The driveline (EngineRuntime) runs on these; the copy keeps config()
     // describing the engine that runs.
     std::swap(config_.transmission, config.transmission);
@@ -1699,6 +1708,121 @@ void EngineSimulator::updateExhaustValve(double dtSeconds,
         : 1.0 - std::cos(0.5 * std::numbers::pi * stroke);
 }
 
+namespace {
+/** Nitrous oxide's molar mass, kg/mol, and its critical temperature, K. */
+constexpr double nitrousMolarMassKg = 0.0440128;
+constexpr double nitrousCriticalTemperatureK = 309.57;
+/** Saturated vapour pressure, kPa: ln p = A - B / T through 31.3 bar at 0 C
+ *  and 63.2 bar at 30 C (50.8 at 20 C), the bottle's pressure while it holds
+ *  liquid. Past the critical point the same law goes on. */
+[[nodiscard]] double nitrousVapourPressureKpa(double temperatureK) noexcept {
+    return 100.0 * std::exp(10.552 - 1'942.0 / std::max(150.0, temperatureK));
+}
+/** Latent heat of evaporation, J/kg: 376 kJ/kg at the 184.7 K boiling point,
+ *  Watson's (Tc - T)^0.38 above it, zero at the critical point (123 kJ/kg at
+ *  30 C, 175 at 20 C). */
+[[nodiscard]] double nitrousLatentHeatJPerKg(double temperatureK) noexcept {
+    const auto reduced = std::clamp((nitrousCriticalTemperatureK - temperatureK)
+        / (nitrousCriticalTemperatureK - 184.67), 0.0, 2.0);
+    return 376'000.0 * std::pow(reduced, 0.38);
+}
+/** Saturated liquid and vapour densities, kg/m3, within about 10 %: the
+ *  liquid 905 at 0 C, 786 at 20 C, closing on the vapour, which an ideal gas
+ *  at compressibility 0.7 gives, at the critical point. */
+[[nodiscard]] double nitrousVapourShareOfDrawnLiquid(double temperatureK) noexcept {
+    const auto vapour = nitrousVapourPressureKpa(temperatureK) * 1'000.0 * nitrousMolarMassKg
+        / (0.7 * GasCell::universalGasConstant * std::max(150.0, temperatureK));
+    const auto liquid = std::max(vapour * 1.05, 905.0 - 6.0 * (temperatureK - 273.15));
+    return vapour / (liquid - vapour);
+}
+/** The decomposition N2O -> N2 + 1/2 O2 releases its enthalpy of formation,
+ *  82.05 kJ/mol: per mole of the oxygen it carries, twice that. */
+constexpr double nitrousDecompositionJPerOxygenMole = 2.0 * 82'050.0;
+} // namespace
+
+void EngineSimulator::fillNitrousBottle() noexcept {
+    const auto& kit = config_.nitrous;
+    nitrousBottleMassKg_ = kit.bottleCapacityKg;
+    nitrousBottleTemperatureK_ = (kit.bottleHeater ? kit.bottleTemperatureC : config_.ambientTemperatureC) + 273.15;
+}
+
+void EngineSimulator::updateNitrous(double dtSeconds, const EngineControls& controls) noexcept {
+    const auto& kit = config_.nitrous;
+    if (!kit.fitted) {
+        nitrousSprayFraction_ = 0.0;
+        nitrousMassFlowKgPerSecond_ = 0.0;
+        nitrousOxygenRateMolPerSecond_ = 0.0;
+        throttleOxygenRateMolPerSecond_ = 0.0;
+        nitrousOxygenShare_ = 0.0;
+        state_.nitrousSpraying = false;
+        state_.nitrousMassFlowKgPerSecond = 0.0;
+        state_.nitrousBottleMassKg = 0.0;
+        state_.nitrousBottlePressureKpa = 0.0;
+        state_.nitrousBottleTemperatureC = 0.0;
+        state_.nitrousOxygenShare = 0.0;
+        nitrousRefillsSeen_ = controls.nitrousRefills;
+        return;
+    }
+    if (controls.nitrousRefills != nitrousRefillsSeen_) {
+        nitrousRefillsSeen_ = controls.nitrousRefills;
+        fillNitrousBottle();
+    }
+    const auto restingK = (kit.bottleHeater ? kit.bottleTemperatureC : config_.ambientTemperatureC) + 273.15;
+    if (kit.unlimitedBottle) {
+        nitrousBottleMassKg_ = kit.bottleCapacityKg;
+        nitrousBottleTemperatureK_ = restingK;
+    }
+    nitrousBottleMassKg_ = std::clamp(nitrousBottleMassKg_, 0.0, kit.bottleCapacityKg);
+    const auto bottlePressureKpa = nitrousVapourPressureKpa(nitrousBottleTemperatureK_);
+    const auto maximumRpm = kit.maximumRpm > 0.0 ? kit.maximumRpm : std::numeric_limits<double>::infinity();
+    const auto requested = controls.nitrousArmed && (controls.nitrousButton || !kit.pushButton)
+        && controls.ignitionEnabled && controls.throttle >= std::min(kit.minimumThrottle, 0.999)
+        && state_.rpm >= kit.minimumRpm && state_.rpm <= maximumRpm
+        && nitrousBottleMassKg_ > 0.0;
+    nitrousSprayFraction_ = !requested ? 0.0
+        : kit.rampSeconds > 0.0 ? std::min(1.0, nitrousSprayFraction_ + dtSeconds / kit.rampSeconds)
+        : 1.0;
+    // A liquid jet: the flow follows the square root of the pressure across
+    // it, rated at 900 psi into an atmospheric manifold.
+    const auto dropKpa = std::max(0.0, bottlePressureKpa - state_.manifoldPressureKpa);
+    auto flow = nitrousSprayFraction_ * kit.shotKw * nitrousMassFlowPerShotKw
+        * std::sqrt(dropKpa / (nitrousReferenceBottlePressureKpa - 101.325));
+    if (!kit.unlimitedBottle && dtSeconds > 0.0) flow = std::min(flow, nitrousBottleMassKg_ / dtSeconds);
+    nitrousMassFlowKgPerSecond_ = flow;
+    if (!kit.unlimitedBottle) {
+        // Each kilogram of liquid drawn leaves room the liquid refills by
+        // boiling: its latent heat comes out of the liquid and the shell
+        // (taken as 1.5 kg of aluminium per kg of capacity). A heater
+        // brings back 200 W; without one the air brings 1.5 W/K.
+        const auto drawnKg = flow * dtSeconds;
+        nitrousBottleMassKg_ = std::max(0.0, nitrousBottleMassKg_ - drawnKg);
+        const auto heatCapacity = nitrousBottleMassKg_ * 2'000.0 + 1.5 * kit.bottleCapacityKg * 900.0;
+        auto heatW = -drawnKg / std::max(dtSeconds, 1.0e-9)
+            * nitrousVapourShareOfDrawnLiquid(nitrousBottleTemperatureK_)
+            * nitrousLatentHeatJPerKg(nitrousBottleTemperatureK_);
+        heatW += kit.bottleHeater ? (nitrousBottleTemperatureK_ < restingK ? 200.0 : 0.0)
+            : 1.5 * (restingK - nitrousBottleTemperatureK_);
+        if (heatCapacity > 0.0) {
+            const auto next = nitrousBottleTemperatureK_ + heatW * dtSeconds / heatCapacity;
+            // The heater's thermostat stops at its set point.
+            nitrousBottleTemperatureK_ = kit.bottleHeater && heatW > 0.0 ? std::min(next, restingK) : next;
+        }
+    }
+    state_.nitrousSpraying = flow > 0.0;
+    state_.nitrousMassFlowKgPerSecond = flow;
+    state_.nitrousBottleMassKg = nitrousBottleMassKg_;
+    state_.nitrousBottlePressureKpa = nitrousVapourPressureKpa(nitrousBottleTemperatureK_);
+    state_.nitrousBottleTemperatureC = nitrousBottleTemperatureK_ - 273.15;
+}
+
+double EngineSimulator::releaseNitrousDecomposition(GasCell& cell, double burnedFuelMoles) const noexcept {
+    if (!(nitrousOxygenShare_ > 0.0) || !(burnedFuelMoles > 0.0)) return 0.0;
+    const auto joules = burnedFuelMoles * config_.fuelProperties.oxygenMolesPerFuelMole
+        * nitrousOxygenShare_ * nitrousDecompositionJPerOxygenMole;
+    cell.addHeatJoules(joules);
+    return joules;
+}
+
 SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& controls) noexcept {
     const auto dt = std::isfinite(dtSeconds) ? std::clamp(dtSeconds, 0.0, 0.05) : 0.0;
     if (dt <= 0.0) {
@@ -1720,6 +1844,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     state_.gear = controls.engagedGear;
     state_.vehicleSpeedMps = std::isfinite(controls.vehicleSpeedMps) ? std::abs(controls.vehicleSpeedMps) : 0.0;
     updateExhaustValve(dt, safeControls);
+    updateNitrous(dt, safeControls);
     // Gas pressure and crank loading need much finer resolution than UI/runtime
     // updates. Resolution increases with crank speed and remains bounded by the
     // engine definition so slow machines fail observably instead of diverging.
@@ -1918,7 +2043,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             : std::clamp(state_.manifoldPressureKpa
                 / std::max(1.0, config_.ambientPressureKpa), 0.0, 1.5);
         state_.load = smooth(state_.load, thermodynamicLoad, subDt, 12.0);
-        const auto ecuCommand = ecu_.evaluate(config_, state_, safeControls);
+        auto ecuCommand = ecu_.evaluate(config_, state_, safeControls);
+        if (config_.nitrous.fitted) {
+            // The kit's retard box takes its spark off the map while it
+            // sprays, and its oxygen is invisible to the ECU's air reading:
+            // the lambda loop holds its trims while any is in the charge.
+            ecuCommand.ignitionAdvanceDegrees -= nitrousSprayFraction_
+                * config_.nitrous.sparkRetardDegreesPer50Hp * config_.nitrous.shotKw / (50.0 * 0.745'70);
+            if (nitrousOxygenShare_ > 1.0e-4) ecuCommand.lambdaLearningAllowed = false;
+        }
         if (hasVariableValveProfiles_) {
             const auto* vtecCam = firstVtecCamshaft(config_);
             state_.vtecEnabled = vtecCam != nullptr && ecuCommand.vtecEnabled;
@@ -2520,11 +2653,40 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     carburettorFuelMassKgThisStep_ += metering.meteredMoles * bores
                         * config_.fuelProperties.molarMassGramsPerMole * 0.001;
                 }
+                if (nitrousMassFlowKgPerSecond_ > 0.0) {
+                    // One nozzle behind the throttle(s), shared by the plenums.
+                    const auto nitrousMoles = nitrousMassFlowKgPerSecond_ * subDt / nitrousMolarMassKg
+                        / static_cast<double>(intakePlenumCount_);
+                    intakePlenumGas_[pathIndex].injectNitrousOxideMoles(nitrousMoles,
+                        nitrousBottleTemperatureK_,
+                        nitrousLatentHeatJPerKg(nitrousBottleTemperatureK_) * nitrousMolarMassKg);
+                    if (config_.nitrous.type == NitrousKitType::wet)
+                        intakePlenumGas_[pathIndex].injectFuelMoles(
+                            0.5 * nitrousMoles / (config_.fuelProperties.oxygenMolesPerFuelMole
+                                * config_.nitrous.kitLambda),
+                            config_.injection.fuelTemperatureC + 273.15);
+                }
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
             }
             throttleFlowKgLastStep_ = throttleFlowKgThisStep;
+            if (config_.nitrous.fitted) {
+                // The share of the plenum's oxygen that came from the kit:
+                // both supplies smoothed over 0.15 s, about a cycle and the
+                // runners' transit at the speeds a kit sprays at.
+                const auto smoothing = 1.0 - std::exp(-subDt / 0.15);
+                constexpr double airOxygenMolesPerKg = 0.2314 / 0.0319988;
+                nitrousOxygenRateMolPerSecond_ += smoothing
+                    * (0.5 * nitrousMassFlowKgPerSecond_ / nitrousMolarMassKg - nitrousOxygenRateMolPerSecond_);
+                throttleOxygenRateMolPerSecond_ += smoothing
+                    * (std::max(0.0, throttleFlowKgThisStep) / subDt * airOxygenMolesPerKg
+                        - throttleOxygenRateMolPerSecond_);
+                const auto total = nitrousOxygenRateMolPerSecond_ + throttleOxygenRateMolPerSecond_;
+                nitrousOxygenShare_ = total > 1.0e-12 ? nitrousOxygenRateMolPerSecond_ / total : 0.0;
+                if (nitrousOxygenShare_ < 1.0e-6 && nitrousMassFlowKgPerSecond_ <= 0.0) nitrousOxygenShare_ = 0.0;
+                state_.nitrousOxygenShare = nitrousOxygenShare_;
+            }
         }
         // Resolve plenum jet mixing as a sudden expansion loss. The equivalent
         // spherical diameter supplies its characteristic length; no numerical
@@ -3146,8 +3308,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // A braking cylinder takes no fuel: its compression is the brake.
             const auto cylinderFuelEnabled = ecuCommand.fuelEnabled
                 && !injectionCutThisCycle_[cylinderIndex] && !engineBraking;
+            // The charge figure counts oxygen; the ECU's air reading (MAP or
+            // MAF) never sees the kit's. A two-stroke's reed figure is the
+            // air through its throttle already. A dry kit has the ECU add the
+            // kit's fuel for its oxygen.
+            const auto nitrousShare = twoStroke && config_.injection.mode != InjectionMode::direct
+                ? 0.0 : nitrousOxygenShare_;
+            const auto ecuChargeMassMg = nitrousShare > 0.0
+                ? measuredChargeMassMg * (1.0 - nitrousShare) : measuredChargeMassMg;
+            const auto dryKitFuelMoles = cylinderFuelEnabled && nitrousOxygenShare_ > 0.0
+                    && config_.nitrous.type == NitrousKitType::dry
+                ? measuredChargeMassMg * nitrousOxygenShare_
+                    / (config_.fuelProperties.stoichiometricAirFuelRatio * config_.nitrous.kitLambda)
+                    * 1.0e-6 / fuelMolarMassKg
+                : 0.0;
             auto physicalFuelTargetMoles = cylinderFuelEnabled
-                ? measuredChargeMassMg / targetAirFuelRatio
+                ? ecuChargeMassMg / targetAirFuelRatio
                     * dieselFuelDemand
                     * ecuCommand.fuelCorrection
                     * (compressionIgnitionEngine
@@ -3158,7 +3334,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // The AFR map is a rich-side smoke boundary. Transient fuel
                 // correction and the quantity map may request less fuel, never
                 // more than this oxygen-derived ceiling.
-                const auto smokeLimitMoles = measuredChargeMassMg
+                const auto smokeLimitMoles = ecuChargeMassMg
                     / targetAirFuelRatio * 1.0e-6 / fuelMolarMassKg;
                 const auto quantityLimitMoles =
                     dieselFullLoadFuelLimitMg
@@ -3169,6 +3345,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         ? ActiveLimit::dieselSmokeLimit : ActiveLimit::dieselQuantityLimit);
                 physicalFuelTargetMoles = std::min(physicalFuelTargetMoles, fuelCeilingMoles);
             }
+            if (dryKitFuelMoles > 0.0) physicalFuelTargetMoles += dryKitFuelMoles;
             requestedFuelMolesThisCycle_[cylinderIndex] = std::max(
                 requestedFuelMolesThisCycle_[cylinderIndex], physicalFuelTargetMoles);
             const auto requestedFuelMoles = requestedFuelMolesThisCycle_[cylinderIndex];
@@ -3870,7 +4047,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                  0.0, 4.5)
                     : 0.0;
                 contribution.releasedEnergyJoules +=
-                    compressionResult.reaction.releasedEnergyJoules;
+                    compressionResult.reaction.releasedEnergyJoules
+                    + releaseNitrousDecomposition(cylinderGas_[cylinderIndex],
+                        compressionResult.reaction.burnedFuelMoles);
                 endGasKnockStates_[cylinderIndex] = {};
             } else {
                 if (ignitionPending_[cylinderIndex]) {
@@ -3912,7 +4091,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             config_.fuelProperties.lowerHeatingValueMjPerKg
                                 * 1'000'000.0);
                     contribution.releasedEnergyJoules +=
-                        reaction.releasedEnergyJoules;
+                        reaction.releasedEnergyJoules
+                        + releaseNitrousDecomposition(cylinderGas_[cylinderIndex],
+                            reaction.burnedFuelMoles);
                 }
 
                 // The end gas exists from the moment the cylinder seals: both
@@ -3958,7 +4139,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             config_.fuelProperties.lowerHeatingValueMjPerKg
                                 * 1'000'000.0);
                     contribution.releasedEnergyJoules +=
-                        reaction.releasedEnergyJoules;
+                        reaction.releasedEnergyJoules
+                        + releaseNitrousDecomposition(cylinderGas_[cylinderIndex],
+                            reaction.burnedFuelMoles);
                     flameEvents_[cylinderIndex].burnedFraction = std::clamp(
                         flameEvents_[cylinderIndex].burnedFraction
                             + endGas.autoIgnitedFuelFraction,
@@ -6839,6 +7022,12 @@ void EngineSimulator::accumulateCycleTelemetry(double previousAngleDegrees,
 
 void EngineSimulator::reset() noexcept {
     ecu_.reset();
+    fillNitrousBottle();
+    nitrousSprayFraction_ = 0.0;
+    nitrousMassFlowKgPerSecond_ = 0.0;
+    nitrousOxygenRateMolPerSecond_ = 0.0;
+    throttleOxygenRateMolPerSecond_ = 0.0;
+    nitrousOxygenShare_ = 0.0;
     eventGenerator_.reset();
     intakeBoundaryStateTimeIntegral_.fill({});
     intakeBoundaryVolumeTimeIntegralM3S_.fill(0.0);

@@ -617,6 +617,7 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     change->config.vehicle = edited.vehicle;
     change->config.thermal = edited.thermal;
     change->config.octaneRating = edited.octaneRating;
+    change->config.nitrous = edited.nitrous;
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
@@ -640,6 +641,7 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     config_.vehicle = change->config.vehicle;
     config_.thermal = change->config.thermal;
     config_.octaneRating = change->config.octaneRating;
+    config_.nitrous = change->config.nitrous;
     {
         const std::scoped_lock lock(liveExhaustMutex_);
         std::swap(pendingSettingsChange_, change);
@@ -1448,6 +1450,9 @@ void EngineRuntime::run(std::stop_token stopToken) {
         controls.ignitionEnabled = ignition_.load();
         controls.starterEngaged = starter_.load();
         controls.exhaustValveMode = exhaustValveMode_.load(std::memory_order_relaxed);
+        controls.nitrousArmed = nitrousArmed_.load(std::memory_order_relaxed);
+        controls.nitrousButton = nitrousButton_.load(std::memory_order_relaxed);
+        controls.nitrousRefills = nitrousRefills_.load(std::memory_order_relaxed);
         if (dynoActive_) {
             controls.throttle = std::max(dynoThrottleCommand_, 0.0);
             controls.load = requestedLoad;

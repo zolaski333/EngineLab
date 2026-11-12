@@ -704,6 +704,19 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"open_above_rpm", config.exhaustValve.openAboveRpm},
             {"open_above_throttle", config.exhaustValve.openAboveThrottle},
             {"travel_s", config.exhaustValve.travelSeconds} };
+    // Written when a kit is fitted, so every other engine's file is unchanged.
+    if (config.nitrous.fitted) {
+        const auto& kit = config.nitrous;
+        document["engine"]["nitrous"] = { {"fitted", true},
+            {"type", kit.type == NitrousKitType::dry ? "dry" : "wet"},
+            {"shot_kw", kit.shotKw}, {"bottle_kg", kit.bottleCapacityKg},
+            {"unlimited_bottle", kit.unlimitedBottle}, {"bottle_heater", kit.bottleHeater},
+            {"bottle_temperature_c", kit.bottleTemperatureC},
+            {"minimum_throttle", kit.minimumThrottle}, {"minimum_rpm", kit.minimumRpm},
+            {"maximum_rpm", kit.maximumRpm}, {"push_button", kit.pushButton},
+            {"ramp_s", kit.rampSeconds}, {"spark_retard_deg_per_50hp", kit.sparkRetardDegreesPer50Hp},
+            {"kit_lambda", kit.kitLambda} };
+    }
     // Written when one is fitted, so every other engine's file is unchanged.
     if (config.engineBrake.fitted)
         document["engine"]["engine_brake"] = { {"fitted", true},
@@ -871,6 +884,24 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
             value.openAboveRpm = valve.value("open_above_rpm", value.openAboveRpm);
             value.openAboveThrottle = valve.value("open_above_throttle", value.openAboveThrottle);
             value.travelSeconds = valve.value("travel_s", value.travelSeconds);
+        }
+        if (engine.contains("nitrous")) {
+            const auto& kit = engine.at("nitrous");
+            auto& value = config.nitrous;
+            value.fitted = kit.value("fitted", value.fitted);
+            value.type = kit.value("type", std::string("wet")) == "dry" ? NitrousKitType::dry : NitrousKitType::wet;
+            value.shotKw = kit.value("shot_kw", value.shotKw);
+            value.bottleCapacityKg = kit.value("bottle_kg", value.bottleCapacityKg);
+            value.unlimitedBottle = kit.value("unlimited_bottle", value.unlimitedBottle);
+            value.bottleHeater = kit.value("bottle_heater", value.bottleHeater);
+            value.bottleTemperatureC = kit.value("bottle_temperature_c", value.bottleTemperatureC);
+            value.minimumThrottle = kit.value("minimum_throttle", value.minimumThrottle);
+            value.minimumRpm = kit.value("minimum_rpm", value.minimumRpm);
+            value.maximumRpm = kit.value("maximum_rpm", value.maximumRpm);
+            value.pushButton = kit.value("push_button", value.pushButton);
+            value.rampSeconds = kit.value("ramp_s", value.rampSeconds);
+            value.sparkRetardDegreesPer50Hp = kit.value("spark_retard_deg_per_50hp", value.sparkRetardDegreesPer50Hp);
+            value.kitLambda = kit.value("kit_lambda", value.kitLambda);
         }
         if (engine.contains("engine_brake")) {
             const auto& brake = engine.at("engine_brake");

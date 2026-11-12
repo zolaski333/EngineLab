@@ -870,6 +870,23 @@ private:
     bool previousAfrObservationCommandEnabled_ { false };
     // Whether the engine brake held last step (its speed cut-out's hysteresis).
     void updateExhaustValve(double dtSeconds, const EngineControls&) noexcept;
+    /** The nitrous kit (config_.nitrous), once a frame: whether it sprays,
+     *  its flow, the bottle's liquid and temperature. */
+    void updateNitrous(double dtSeconds, const EngineControls&) noexcept;
+    void fillNitrousBottle() noexcept;
+    /** The decomposition heat of the nitrous oxygen a reaction consumed,
+     *  added to `cell`; J (0 without nitrous in the charge). */
+    double releaseNitrousDecomposition(GasCell& cell, double burnedFuelMoles) const noexcept;
+    double nitrousBottleMassKg_ { 0.0 };
+    double nitrousBottleTemperatureK_ { 293.15 };
+    double nitrousSprayFraction_ { 0.0 };
+    double nitrousMassFlowKgPerSecond_ { 0.0 };
+    /** Oxygen into the plenum, mol/s, from the kit and through the throttle,
+     *  smoothed over 0.15 s: their ratio is the charge's nitrous share. */
+    double nitrousOxygenRateMolPerSecond_ { 0.0 };
+    double throttleOxygenRateMolPerSecond_ { 0.0 };
+    double nitrousOxygenShare_ { 0.0 };
+    std::uint32_t nitrousRefillsSeen_ { 0 };
     bool engineBrakeHeld_ { false };
     /** The active exhaust valves' actuator (updateExhaustValve). */
     bool exhaustValveStarted_ { false };

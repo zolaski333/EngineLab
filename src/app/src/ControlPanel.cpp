@@ -67,6 +67,11 @@ ControlPanel::ControlPanel() {
                                  "them). Lit while it is open"));
     exhaustValve.onClick = [this] { openExhaustValveMenu(); };
     addChildComponent(exhaustValve);
+    nitrous.setTooltip(utf8("Nitrous kit: a click arms or disarms it. Armed, it sprays while its key is held "
+                            "(push button) or at the throttle and engine speeds set in the Fuel window. "
+                            "Lit while it sprays"));
+    nitrous.onClick = [this] { if (onNitrousArm) onNitrousArm(); };
+    addChildComponent(nitrous);
 
     prepareSlider(afrTrim.slider, -3.0, 3.0, 0.1, 0.0);
     afrTrim.slider.setDoubleClickReturnValue(true, 0.0);
@@ -97,6 +102,7 @@ void ControlPanel::setKeyCaps(const ActionMap& actions) {
     automatic.setKeyCap(cap(AppAction::automaticGearbox));
     engineBrake.setKeyCap(cap(AppAction::engineBrake));
     exhaustValve.setKeyCap(cap(AppAction::exhaustValve));
+    nitrous.setKeyCap(cap(AppAction::nitrous));
 }
 
 void ControlPanel::openEngineBrakeMenu() {
@@ -177,6 +183,19 @@ void ControlPanel::setExhaustValveMode(ExhaustValveMode mode) {
     if (exhaustValve.getButtonText() != text) exhaustValve.setButtonText(text);
 }
 
+void ControlPanel::setNitrousFitted(bool fitted) {
+    if (nitrous.isVisible() == fitted) return;
+    nitrous.setVisible(fitted);
+    resized();
+    repaint();
+}
+
+void ControlPanel::setNitrousArmed(bool armed) {
+    nitrousArmed_ = armed;
+    const auto text = juce::String(armed ? "Nitrous armed" : "Nitrous off");
+    if (nitrous.getButtonText() != text) nitrous.setButtonText(text);
+}
+
 void ControlPanel::setDiesel(bool diesel) {
     afrTrim.setName(diesel ? utf8("Smoke limit trim (+ = less fuel)") : utf8("AFR trim"));
     afrTrim.slider.setTooltip(diesel ? utf8("Offset of the smoke-limit AFR table")
@@ -238,6 +257,7 @@ void ControlPanel::refresh(const DashboardModel& model) {
     // pedal to lift or the speed to rise.
     engineBrake.setEngaged(state.engineBrakeCylinders > 0);
     exhaustValve.setEngaged(state.exhaustValveCount > 0 && state.exhaustValveOpening > 0.5);
+    nitrous.setEngaged(state.nitrousSpraying);
     const auto cruiseText = state.cruiseEngaged
         ? "Cruise " + unit.value(Quantity::speed, state.cruiseSetSpeedMps, 0)
         : juce::String("Cruise");
@@ -336,6 +356,10 @@ void ControlPanel::resized() {
     }
     if (exhaustValve.isVisible()) {
         exhaustValve.setBounds(area.removeFromTop(30));
+        area.removeFromTop(6);
+    }
+    if (nitrous.isVisible()) {
+        nitrous.setBounds(area.removeFromTop(30));
         area.removeFromTop(6);
     }
     area.removeFromTop(8);
