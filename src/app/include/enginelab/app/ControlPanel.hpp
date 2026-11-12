@@ -24,12 +24,20 @@ public:
     [[nodiscard]] std::uint32_t nextEngineBrakeStage() const noexcept;
     /** The stage the switch shows. */
     void setEngineBrakeStage(std::uint32_t stage);
+    /** Shows the active exhaust valve's switch (an engine with one) or hides it. */
+    void setExhaustValveFitted(bool fitted);
+    /** The switch's next mode after a key press: automatic, shut, open. */
+    [[nodiscard]] ExhaustValveMode nextExhaustValveMode() const noexcept;
+    /** The mode the switch shows. */
+    void setExhaustValveMode(ExhaustValveMode mode);
     void refresh(const DashboardModel&);
 
     /** Called with a throttle fraction (0.01, 0.10, 0.20 or 1.0). */
     std::function<void(double)> onThrottlePreset;
     /** Called with the stage picked from the engine brake's menu. */
     std::function<void(std::uint32_t)> onEngineBrakeStage;
+    /** Called with the mode picked from the exhaust valve's menu. */
+    std::function<void(ExhaustValveMode)> onExhaustValveMode;
 
     ActionButton ignition { "Ignition" };
     ActionButton starter { "Starter" };
@@ -52,6 +60,10 @@ public:
     /** A truck's engine brake switch, shown only when the engine has one: a
      * click opens the list of its stages; its key steps through them. */
     ActionButton engineBrake { "Engine brake off", ActionButton::Style::compact };
+    /** The active exhaust valve, shown only when the exhaust has one: a click
+     * opens Automatic / Shut / Open; its key steps through them. Lit while
+     * the valve is open. */
+    ActionButton exhaustValve { "Exhaust valve auto", ActionButton::Style::compact };
     SliderRow afrTrim { "AFR trim" };
     SliderRow sparkTrim { "Spark trim" };
 
@@ -78,7 +90,9 @@ private:
     std::uint32_t engineBrakeStages_ { 0 };
     std::uint32_t engineBrakeStage_ { 0 };
     std::uint32_t engineBrakeCylinders_ { 0 };
+    ExhaustValveMode exhaustValveMode_ { ExhaustValveMode::automatic };
     void openEngineBrakeMenu();
+    void openExhaustValveMenu();
 };
 
 } // namespace enginelab::ui

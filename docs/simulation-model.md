@@ -757,6 +757,18 @@ tapping manifold; the cell right behind the plate reads the jet's low pressure
 and costs 10-19 % torque through a false load reading. A small 0-D
 cell per cylinder was tried first and refuted (`.claude/CLAUDE.md`).
 
+An active exhaust valve (`inlet_valve` on a pipe, `exhaust_valve` for its
+actuator; `custom-exhaust.md`) is a face, not a duct. `exhaustValveInterfaces`
+lists the faces whose downstream end is a valved pipe's inlet, for both the
+gas network and the audio one. `EngineSimulator::updateExhaustValve` moves
+the stroke once a frame (automatic, shut or open, from
+`EngineControls::exhaustValveMode`) and gives the opening to the gas network
+before the turbine faces; below 1 the face goes through the restriction
+orifice at that share of its area, at 1 it is the plain face. The audio
+reads `RealtimeAudioState::exhaustValveOpening` once a block.
+`EngineState::exhaustValveCount`, `exhaustValveStroke` and
+`exhaustValveOpening` report it; without a valve they read 0, 1 and 1.
+
 ## Engine temperatures
 
 By default the thermal model is **regulated** (`thermal.regulated`): coolant

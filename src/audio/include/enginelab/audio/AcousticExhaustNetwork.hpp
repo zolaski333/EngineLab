@@ -106,6 +106,12 @@ public:
         std::uint32_t nodeId, float axialPosition,
         float sourcePressurePa) noexcept;
 
+    /** The open share, 0-1, the active exhaust valves glide toward
+     *  (ExhaustComponentConfig::inletValve). Each valve is a series
+     *  resistance between its pipe and the junction it meets: at 1 the plain
+     *  junction, bit for bit; at 0 a rigid end. */
+    void setExhaustValveOpening(float openFraction) noexcept;
+    [[nodiscard]] std::size_t exhaustValveCount() const noexcept;
     /** Diagnostic A/B switch. Production leaves the source enabled. */
     void setOutletJetNoiseEnabled(bool enabled) noexcept;
     /** Diagnostic: density of the air each outlet radiates into. Zero (the

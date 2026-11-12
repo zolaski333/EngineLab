@@ -249,6 +249,8 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
         engineState.forcedInductionShaftSpeedRpm)), std::memory_order_relaxed);
     state.wastegateOpening.store(static_cast<float>(std::clamp(
         engineState.wastegateOpening, 0.0, 1.0)), std::memory_order_relaxed);
+    state.exhaustValveOpening.store(static_cast<float>(std::clamp(
+        engineState.exhaustValveOpening, 0.0, 1.0)), std::memory_order_relaxed);
     constexpr double referenceTemperatureK = 288.15;
     constexpr double referencePressureKpa = 101.325;
     // SAE-style compressor corrected flow is referenced at the compressor
@@ -497,6 +499,7 @@ bool EngineRuntime::applyLiveExhaust(const EngineConfig& edited,
     change->config = config_;
     change->config.exhaust = edited.exhaust;
     change->config.exhaustPaths = edited.exhaustPaths;
+    change->config.exhaustValve = edited.exhaustValve;
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
@@ -512,9 +515,10 @@ bool EngineRuntime::applyLiveExhaust(const EngineConfig& edited,
     }
     change->network = simulator_.buildLiveExhaustNetwork(change->config, cellLengthM);
     if (!change->network) return false;
-    // The simulation thread never reads these two fields of config_.
+    // The simulation thread never reads these fields of config_.
     config_.exhaust = change->config.exhaust;
     config_.exhaustPaths = change->config.exhaustPaths;
+    config_.exhaustValve = change->config.exhaustValve;
     exhaustCellLengthM_ = cellLengthM;
     {
         const std::scoped_lock lock(liveExhaustMutex_);
@@ -1441,6 +1445,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         EngineControls controls;
         controls.ignitionEnabled = ignition_.load();
         controls.starterEngaged = starter_.load();
+        controls.exhaustValveMode = exhaustValveMode_.load(std::memory_order_relaxed);
         if (dynoActive_) {
             controls.throttle = std::max(dynoThrottleCommand_, 0.0);
             controls.load = requestedLoad;

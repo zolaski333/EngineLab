@@ -1560,6 +1560,7 @@ bool EngineSimulator::replaceExhaustNetwork(
     // describing the engine that runs.
     config_.exhaust = config.exhaust;
     config_.exhaustPaths = config.exhaustPaths;
+    config_.exhaustValve = config.exhaustValve;
     return true;
 }
 
@@ -1606,6 +1607,7 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     std::swap(config_.ignition, config.ignition);
     std::swap(config_.exhaustAfterfire, config.exhaustAfterfire);
     std::swap(config_.engineBrake, config.engineBrake);
+    std::swap(config_.exhaustValve, config.exhaustValve);
     // The driveline (EngineRuntime) runs on these; the copy keeps config()
     // describing the engine that runs.
     std::swap(config_.transmission, config.transmission);
@@ -1651,6 +1653,52 @@ void EngineSimulator::applyAudioPhysicsCalibration(
     config_.exhaustAfterfire = calibration.exhaustAfterfire;
 }
 
+void EngineSimulator::updateExhaustValve(double dtSeconds,
+                                         const EngineControls& controls) noexcept {
+    // One actuator drives every active valve of the exhaust. Automatic opens
+    // them at a speed or a throttle and shuts them 250 rpm and 5 % under
+    // both, so a speed sitting on the threshold does not chatter them. The
+    // butterfly turns at a constant rate (a full stroke in travelSeconds);
+    // its open share of the face is 1 - cos of its angle.
+    const auto valves = physicalExhaustNetwork_
+        ? physicalExhaustNetwork_->exhaustValveCount() : std::size_t { 0 };
+    state_.exhaustValveCount = static_cast<std::uint32_t>(valves);
+    if (valves == 0) {
+        state_.exhaustValveStroke = 1.0;
+        state_.exhaustValveOpening = 1.0;
+        exhaustValveStarted_ = false;
+        return;
+    }
+    const auto& valve = config_.exhaustValve;
+    auto open = false;
+    switch (controls.exhaustValveMode) {
+    case ExhaustValveMode::closed: open = false; break;
+    case ExhaustValveMode::open: open = true; break;
+    case ExhaustValveMode::automatic: {
+        const auto throttleThreshold = std::min(valve.openAboveThrottle, 0.999);
+        const auto rpmMargin = exhaustValveAutoOpen_ ? 250.0 : 0.0;
+        const auto throttleMargin = exhaustValveAutoOpen_ ? 0.05 : 0.0;
+        open = state_.rpm >= valve.openAboveRpm - rpmMargin
+            || controls.throttle >= throttleThreshold - throttleMargin;
+        break;
+    }
+    }
+    exhaustValveAutoOpen_ = open;
+    const auto target = open ? 1.0 : 0.0;
+    auto stroke = state_.exhaustValveStroke;
+    if (!exhaustValveStarted_ || !(valve.travelSeconds > 0.0)) {
+        stroke = target;
+        exhaustValveStarted_ = true;
+    } else {
+        const auto travel = dtSeconds / valve.travelSeconds;
+        stroke = target > stroke ? std::min(target, stroke + travel)
+                                 : std::max(target, stroke - travel);
+    }
+    state_.exhaustValveStroke = stroke;
+    state_.exhaustValveOpening = stroke >= 1.0 ? 1.0
+        : 1.0 - std::cos(0.5 * std::numbers::pi * stroke);
+}
+
 SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& controls) noexcept {
     const auto dt = std::isfinite(dtSeconds) ? std::clamp(dtSeconds, 0.0, 0.05) : 0.0;
     if (dt <= 0.0) {
@@ -1671,6 +1719,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     // The ECU reads the gear and the road speed from the state it is given.
     state_.gear = controls.engagedGear;
     state_.vehicleSpeedMps = std::isfinite(controls.vehicleSpeedMps) ? std::abs(controls.vehicleSpeedMps) : 0.0;
+    updateExhaustValve(dt, safeControls);
     // Gas pressure and crank loading need much finer resolution than UI/runtime
     // updates. Resolution increases with crank speed and remains bounded by the
     // engine definition so slow machines fail observably instead of diverging.
@@ -5141,6 +5190,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 * std::max(0.0, config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6;
             const auto wheelShare = turbineAreaM2 + gateAreaM2 > 0.0
                 ? turbineAreaM2 / (turbineAreaM2 + gateAreaM2) : 0.0;
+            if (state_.exhaustValveCount != 0)
+                static_cast<void>(physicalExhaustNetwork.setExhaustValveOpening(
+                    state_.exhaustValveOpening));
             for (const auto& face : exhaustTurbineFaces_) {
                 static_cast<void>(physicalExhaustNetwork.setRestrictionOpeningAreaM2(
                     face.interfaceIndex, (turbineAreaM2 + gateAreaM2) * face.turbochargerShare));
@@ -6871,6 +6923,8 @@ void EngineSimulator::reset() noexcept {
     injectionStartCount_.fill(0U);
     engineBrakeHeld_ = false;
     state_.engineBrakeCylinders = 0U;
+    exhaustValveStarted_ = false;
+    exhaustValveAutoOpen_ = false;
     portPulseInventoryCreditMoles_.fill(0.0);
     portPulsePrimeDeficitMoles_.fill(0.0);
     portPulseAvailableFraction_.fill(1.0);

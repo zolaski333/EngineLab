@@ -144,6 +144,7 @@ MainComponent::MainComponent() {
         runtime_->setEngineBrakeStage(stage);
         controls_.setEngineBrakeStage(stage);
     };
+    controls_.onExhaustValveMode = [this](ExhaustValveMode mode) { setExhaustValveMode(mode); };
     controls_.automatic.onClick = [this] {
         if (runtime_) runtime_->setAutomaticShifting(!model_.state.automaticShifting);
     };
@@ -461,6 +462,9 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     // The new runtime starts with the engine brake off.
     controls_.setEngineBrake(config_.engineBrake.fitted && config_.cycle == EngineCycle::fourStroke
         ? config_.engineBrake.stageCount : 0U, static_cast<std::uint32_t>(config_.cylinders.size()));
+    // ... and its exhaust valve on automatic.
+    controls_.setExhaustValveFitted(exhaustValveFitted(config_));
+    controls_.setExhaustValveMode(ExhaustValveMode::automatic);
     adoptAudioVoicing(config_.audioVoicing);
     voicingRevision_ = audioVoicingRevision(catalogRoot_);
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
@@ -511,6 +515,12 @@ void MainComponent::stepEngineBrake() {
     const auto stage = controls_.nextEngineBrakeStage();
     runtime_->setEngineBrakeStage(stage);
     controls_.setEngineBrakeStage(stage);
+}
+
+void MainComponent::setExhaustValveMode(ExhaustValveMode mode) {
+    if (!runtime_) return;
+    runtime_->setExhaustValveMode(mode);
+    controls_.setExhaustValveMode(mode);
 }
 
 void MainComponent::toggleDatalog() {
@@ -665,6 +675,10 @@ bool MainComponent::applyExhaustEdit(const EngineConfig& edited) {
     // built here from the same configuration.
     config_.exhaust = runtime_->engineConfig().exhaust;
     config_.exhaustPaths = runtime_->engineConfig().exhaustPaths;
+    config_.exhaustValve = runtime_->engineConfig().exhaustValve;
+    // A valve fitted or removed live shows or hides its switch; the mode the
+    // runtime holds carries on.
+    controls_.setExhaustValveFitted(exhaustValveFitted(config_));
     try {
         if (!audio_->replaceExhaustGraph(ExhaustGraph::makeForEngine(config_)) && physicalExhaustTopology_)
             return applyConfig(config_, false, true);
@@ -1924,6 +1938,11 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     if (actionMap_.matches(AppAction::engineBrake, key)) {
         if (!controls_.engineBrake.isVisible()) return false;
         stepEngineBrake();
+        return true;
+    }
+    if (actionMap_.matches(AppAction::exhaustValve, key)) {
+        if (!controls_.exhaustValve.isVisible()) return false;
+        setExhaustValveMode(controls_.nextExhaustValveMode());
         return true;
     }
     if (actionMap_.matches(AppAction::datalog, key)) { toggleDatalog(); return true; }

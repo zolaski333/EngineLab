@@ -75,6 +75,10 @@ struct CompiledExhaustDuct final {
     bool perforatedCoreMuffler { false };
     /** Gross authored can volume minus the swept core volume. Audio only. */
     double mufflerAnnularVolumeM3 { 0.0 };
+    /** An active exhaust valve in the face feeding this duct's inlet
+     *  (ExhaustNode::inletValve): both networks find it on the interface
+     *  whose downstream end is this inlet (exhaustValveInterfaces). */
+    bool inletValve { false };
 };
 
 /** Well-mixed physical junction used only where topology changes direction or
@@ -277,5 +281,11 @@ private:
     std::size_t totalCellCount_ { 0 };
     bool valid_ { false };
 };
+
+/** The interfaces holding an active exhaust valve: plain faces whose downstream
+ *  end is the inlet of a duct marked inletValve, in interface order. A face
+ *  made a restriction (a turbine) carries none. */
+[[nodiscard]] std::vector<std::size_t> exhaustValveInterfaces(
+    const ExhaustNetworkLayout& layout);
 
 } // namespace enginelab::gasdynamics

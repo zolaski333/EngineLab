@@ -1279,11 +1279,14 @@ void RealtimeEngineAudio::renderSynthesis(
         // The outlets radiate into ambient air, whose density follows the
         // live ambient conditions (altitude and temperature edits).
         const auto farFieldDensity = resolvedOutletFarFieldDensityKgPerM3();
+        const auto exhaustValveOpening = realtimeState_.exhaustValveOpening.load(
+            std::memory_order_relaxed);
         for (auto* network : { acousticExhaustNetwork_.get(),
                  swappingExhaustNetwork_ != nullptr
                      ? swappingExhaustNetwork_->network.get() : nullptr }) {
             if (network == nullptr) continue;
             network->setOutletFarFieldDensity(farFieldDensity);
+            network->setExhaustValveOpening(exhaustValveOpening);
             network->beginBlock(
                 std::span<const AcousticExhaustNetwork::Medium>(
                     media.data(), exhaustPathCount),

@@ -58,6 +58,9 @@ struct ExhaustNode final {
     double catalystOpenAreaRatio { 0.0 };
     double catalystSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
     double crossoverCoupling { 0.0 };
+    /** An active valve in the face at this pipe's inlet
+     *  (ExhaustComponentConfig::inletValve). */
+    bool inletValve { false };
 };
 struct ExhaustEdge final {
     std::uint32_t from {};

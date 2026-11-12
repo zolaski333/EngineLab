@@ -96,6 +96,17 @@ public:
     [[nodiscard]] std::span<const CylinderGasExchange> cylinderExchanges() const noexcept;
     [[nodiscard]] std::span<const ExhaustOutletFlowSample> outletSamples() const noexcept;
 
+    /** Every part's active exhaust valves (ExhaustGasNetwork::setExhaustValveOpening). */
+    [[nodiscard]] bool setExhaustValveOpening(double openFraction) noexcept {
+        auto applied = true;
+        for (auto& part : parts_) applied = part->setExhaustValveOpening(openFraction) && applied;
+        return applied;
+    }
+    [[nodiscard]] std::size_t exhaustValveCount() const noexcept {
+        std::size_t count = 0;
+        for (const auto& part : parts_) count += part->exhaustValveCount();
+        return count;
+    }
     [[nodiscard]] bool setRestrictionOpeningAreaM2(std::size_t interfaceIndex,
                                                    double areaM2) noexcept;
     [[nodiscard]] bool setRestrictionTurbine(std::size_t interfaceIndex,

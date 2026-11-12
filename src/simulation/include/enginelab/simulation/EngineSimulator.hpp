@@ -869,7 +869,11 @@ private:
     std::array<PendingUnburnedPocket, 32> pendingUnburnedPockets_ {};
     bool previousAfrObservationCommandEnabled_ { false };
     // Whether the engine brake held last step (its speed cut-out's hysteresis).
+    void updateExhaustValve(double dtSeconds, const EngineControls&) noexcept;
     bool engineBrakeHeld_ { false };
+    /** The active exhaust valves' actuator (updateExhaustValve). */
+    bool exhaustValveStarted_ { false };
+    bool exhaustValveAutoOpen_ { false };
     std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> physicalExhaustNetwork_;
     /** The exhaust layout at construction. Live changes keep its topology, so
      * it stays the reference a new network is checked against, from any

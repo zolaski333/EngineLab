@@ -492,6 +492,8 @@ template <typename T>
                 component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
             assignIfPresent(encoded, "crossover_coupling",
                 component.crossoverCoupling);
+            if (encoded["inlet_valve"])
+                component.inletValve = encoded["inlet_valve"].as<bool>();
             if (encoded["acoustic_position_m"])
                 component.acousticPositionM = decodePoint(encoded["acoustic_position_m"]);
             if (encoded["acoustic_axis"])

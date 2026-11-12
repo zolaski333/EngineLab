@@ -42,7 +42,9 @@ not touch the running engine until the copy is applied.
    resonance, gain and discharge coefficient. The canvas uses automatic layout,
    and clicking a node selects the matching component. Right-click a node to
    **Replace with** another type (it keeps its id, its connections, its bore,
-   and its length when both types have one) or to **Delete** it.
+   and its length when both types have one) or to **Delete** it. The same
+   menu fits an active valve: **Bypass it with an active valve**, **Active
+   valve at its inlet** (a pipe) and **Valve actuator settings...** (below).
 4. Connect the parts in flow order. A cylinder is a source like any part: it
    can feed any part but an X-pipe, picked in **From** (the cylinders follow
    the components) or dragged on the canvas. Drag from a node or a cylinder
@@ -247,7 +249,9 @@ Each component has:
   applied to the passive physical waveguide;
 - `discharge_coefficient`, mainly used by the outlet;
 - `crossover_coupling`, only on `crossover`, the cross-power amplitude `k`
-  between 0 and 1.
+  between 0 and 1;
+- `inlet_valve`, only on a `pipe`: an active valve at its inlet (below),
+  written only when true.
 
 The final restriction adds the computed geometric loss and `restriction`. It
 changes the computed flow and pressure, so it can indirectly change the
@@ -373,6 +377,35 @@ admittance `A/(rho c)`.
 
 The graphical designer exposes both diameters. Older documents without
 `outlet_diameter_mm` keep exactly their historical cylindrical duct.
+
+### Active exhaust valve
+
+`inlet_valve: true` puts a valve at a pipe's inlet: the face between the
+pipe and the one part feeding it (a cylinder cannot feed it; a terminal side
+branch takes none). **Bypass it with an active valve** builds the usual
+layout in one click: a splitter before the part, a merge after it, and
+between them a straight pipe of the part's length and bore with the valve.
+Shut, the gas goes through the part and the bypass is a closed branch that
+resonates; open, most of it takes the bypass.
+
+The valve is a face, not a short duct. Open, it is the plain face, bit for
+bit (no loss, no cost: `EngineLab.ExhaustValve` compares 720 frames with the
+same exhaust without it). Partly open, the gas solver passes it through the
+orifice a throttle plate uses, at the open share of the face's area; shut it
+is a wall. The audio network scales the face's admittance by the same share,
+and the opening glides per sample toward each block's value, so a valve that
+moves, even one snapped in a frame, does not click.
+
+The engine-level `exhaust_valve` block sets the actuator (the designer's
+**Valve actuator settings...**): `open_above_rpm` (3,500), `open_above_throttle`
+(0.5) and `travel_s` (0.3). On automatic (Drive's switch, key `-`), the
+valves open at or above either and shut 250 rpm and 5 % below both; the
+stroke takes `travel_s` (0 at once), and the opening is 1 - cos of a quarter
+turn of the stroke, a butterfly's area. Drive's switch also holds them shut
+or open; it is shown only on an engine with a valve, and the dyno obeys it.
+The block is written only when a valve is fitted. Not modelled: a shut
+valve's leak, the plate's own loss when open, a vacuum actuator's lag
+depending on the manifold.
 
 ## Connection rules
 

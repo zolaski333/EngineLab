@@ -89,6 +89,15 @@ public:
      *  connection. Empty, or why not. */
     [[nodiscard]] static std::string replaceComponent(ExhaustNetworkConfig& network, std::uint32_t componentId,
                                                       ExhaustComponentType type);
+
+    /** A silencer bypass with an active valve, in one click: the component
+     *  (a silencer, or any part with one part in and one out) gets a splitter
+     *  before it, a merge after it and, between them, a straight pipe of its
+     *  length and bore with a valve at its inlet. Shut, the gas goes through
+     *  the component and the bypass is a closed branch; open, most of it
+     *  takes the bypass. Empty, or why not; `bypassPipeId` gets the pipe. */
+    [[nodiscard]] static std::string addValvedBypass(ExhaustNetworkConfig& network, std::uint32_t componentId,
+                                                     std::uint32_t* bypassPipeId = nullptr);
 };
 
 } // namespace enginelab

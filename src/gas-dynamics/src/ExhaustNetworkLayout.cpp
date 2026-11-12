@@ -224,6 +224,7 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
                 : 0.0,
             perforatedCoreMuffler,
             mufflerAnnularVolumeM3,
+            node.inletValve,
         });
         elements.emplace(node.id, ElementReference { false, index });
     }
@@ -602,6 +603,8 @@ bool ExhaustNetworkLayout::sameTopology(
             || left.sourceType != right.sourceType)
             return false;
     }
+    for (std::size_t index = 0; index < ducts_.size(); ++index)
+        if (ducts_[index].inletValve != other.ducts_[index].inletValve) return false;
     for (std::size_t index = 0; index < interfaces_.size(); ++index) {
         const auto& left = interfaces_[index];
         const auto& right = other.interfaces_[index];
@@ -627,6 +630,21 @@ bool ExhaustNetworkLayout::sameTopology(
             return false;
     }
     return true;
+}
+
+std::vector<std::size_t> exhaustValveInterfaces(const ExhaustNetworkLayout& layout) {
+    std::vector<std::size_t> result;
+    for (std::size_t index = 0; index < layout.interfaces().size(); ++index) {
+        const auto& connection = layout.interfaces()[index];
+        if (connection.restriction
+            || connection.downstream.type != ExhaustEndpointType::ductInlet
+            || connection.downstream.elementIndex >= layout.ducts().size()
+            || !layout.ducts()[connection.downstream.elementIndex].inletValve
+            || connection.upstream.nodeId == connection.downstream.nodeId)
+            continue;
+        result.push_back(index);
+    }
+    return result;
 }
 
 bool ExhaustNetworkLayout::makeRestriction(std::size_t interfaceIndex) noexcept {

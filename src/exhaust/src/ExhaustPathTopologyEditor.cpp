@@ -820,6 +820,61 @@ std::string ExhaustNetworkEditor::connectComponents(ExhaustNetworkConfig& networ
     return {};
 }
 
+std::string ExhaustNetworkEditor::addValvedBypass(ExhaustNetworkConfig& network, std::uint32_t componentId,
+                                                  std::uint32_t* bypassPipeId) {
+    const auto* component = findComponent(network, componentId);
+    if (component == nullptr) return "That component is not in this path.";
+    if (component->type == ExhaustComponentType::merge || component->type == ExhaustComponentType::splitter
+        || component->type == ExhaustComponentType::crossover || component->type == ExhaustComponentType::outlet)
+        return "A bypass goes around a silencer, a catalyst, a resonator or a pipe.";
+    for (const auto& cylinder : network.cylinderConnections)
+        if (cylinder.componentId == componentId)
+            return "A cylinder feeds this part directly: bypass a part further down.";
+    std::vector<std::size_t> inputs;
+    std::vector<std::size_t> outputs;
+    for (std::size_t index = 0; index < network.connections.size(); ++index) {
+        if (network.connections[index].toComponentId == componentId) inputs.push_back(index);
+        if (network.connections[index].fromComponentId == componentId) outputs.push_back(index);
+    }
+    if (inputs.size() != 1 || outputs.size() != 1)
+        return "A bypass needs one part feeding this one and one part after it.";
+    const auto diameterMm = component->diameterMm >= 4.0 ? component->diameterMm : 50.0;
+    const auto lengthMm = component->lengthMm >= 1.0 ? component->lengthMm : 300.0;
+
+    auto splitter = defaultComponent(ExhaustComponentType::splitter, nextComponentId(network));
+    splitter.diameterMm = diameterMm;
+    network.components.push_back(splitter);
+    auto merge = defaultComponent(ExhaustComponentType::merge, nextComponentId(network));
+    merge.diameterMm = diameterMm;
+    network.components.push_back(merge);
+    auto pipe = defaultComponent(ExhaustComponentType::pipe, nextComponentId(network));
+    if (splitter.id == 0 || merge.id == 0 || pipe.id == 0) {
+        network.components.resize(network.components.size() - 2);
+        return "This path has no component id left.";
+    }
+    pipe.diameterMm = diameterMm;
+    pipe.lengthMm = lengthMm;
+    pipe.inletValve = true;
+    network.components.push_back(pipe);
+
+    // Upstream -> splitter -> part -> merge -> downstream, and splitter ->
+    // valved pipe -> merge; the outer edges keep their ports (an X-pipe's).
+    auto& in = network.connections[inputs.front()];
+    const auto upstream = in.fromComponentId;
+    const auto upstreamPort = in.fromPort;
+    in = { upstream, splitter.id, upstreamPort, unspecifiedExhaustComponentPort };
+    auto& out = network.connections[outputs.front()];
+    const auto downstream = out.toComponentId;
+    const auto downstreamPort = out.toPort;
+    out = { merge.id, downstream, unspecifiedExhaustComponentPort, downstreamPort };
+    network.connections.push_back({ splitter.id, componentId });
+    network.connections.push_back({ componentId, merge.id });
+    network.connections.push_back({ splitter.id, pipe.id });
+    network.connections.push_back({ pipe.id, merge.id });
+    if (bypassPipeId != nullptr) *bypassPipeId = pipe.id;
+    return {};
+}
+
 std::string ExhaustNetworkEditor::replaceComponent(ExhaustNetworkConfig& network, std::uint32_t componentId,
                                                    ExhaustComponentType type) {
     auto* component = findComponent(network, componentId);

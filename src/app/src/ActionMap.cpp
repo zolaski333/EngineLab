@@ -41,7 +41,9 @@ ActionMap::ActionMap()
         { "datalog", letter('9') },
         // A truck's engine brake: each press takes the switch a stage up,
         // and off after the last.
-        { "engine_brake", letter('0') }
+        { "engine_brake", letter('0') },
+        // The active exhaust valve: automatic, shut, open, automatic...
+        { "exhaust_valve", letter('-') }
     }} {
     load();
 }

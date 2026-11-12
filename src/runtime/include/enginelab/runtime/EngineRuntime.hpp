@@ -126,6 +126,8 @@ struct RealtimeAudioState final {
     std::atomic<float> intakeRunnerAmplitudeKpa { 0.0F };
     std::atomic<float> forcedInductionShaftRpm { 0.0F };
     std::atomic<float> wastegateOpening { 0.0F };
+    /** EngineState::exhaustValveOpening: 1 without an active exhaust valve. */
+    std::atomic<float> exhaustValveOpening { 1.0F };
     std::atomic<float> correctedAirFlowKgPerSecond { 0.0F };
     std::atomic<float> compressorPowerWatts { 0.0F };
     std::atomic<float> turbinePowerWatts { 0.0F };
@@ -187,6 +189,10 @@ public:
      * ignores it when none is fitted). */
     void setEngineBrakeStage(std::uint32_t stage) noexcept { engineBrakeStage_.store(stage, std::memory_order_relaxed); }
     [[nodiscard]] std::uint32_t engineBrakeStage() const noexcept { return engineBrakeStage_.load(std::memory_order_relaxed); }
+    /** The active exhaust valve's switch: automatic, shut or open (the
+     * engine ignores it when none is fitted). On the dyno too. */
+    void setExhaustValveMode(ExhaustValveMode mode) noexcept { exhaustValveMode_.store(mode, std::memory_order_relaxed); }
+    [[nodiscard]] ExhaustValveMode exhaustValveMode() const noexcept { return exhaustValveMode_.load(std::memory_order_relaxed); }
     void shiftUp() noexcept;
     void shiftDown() noexcept;
     /** Switches the gearbox between automatic and manual shifting. A gear
@@ -571,6 +577,7 @@ private:
     std::atomic<double> clutchPressure_ { 1.0 };
     std::atomic<double> brakePressure_ { 0.0 };
     std::atomic<std::uint32_t> engineBrakeStage_ { 0 };
+    std::atomic<ExhaustValveMode> exhaustValveMode_ { ExhaustValveMode::automatic };
     std::atomic<int> gear_ { -1 };
     std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
     std::atomic<std::uint64_t> cruiseToggleRequests_ { 0 };

@@ -129,6 +129,7 @@ private:
     void toggleDatalog();
     /** The engine brake's switch, one stage up (off after the last). */
     void stepEngineBrake();
+    void setExhaustValveMode(ExhaustValveMode mode);
     /** An edit of the camshafts only: taken by the running engine over
         `rampSeconds` when its banks and valve controls stay
         (EngineSimulator::camshaftsReplaceable), else a restart. */

@@ -469,6 +469,14 @@ const CamshaftConfig* firstVtecCamshaft(const EngineConfig& config) noexcept {
     return nullptr;
 }
 
+bool exhaustValveFitted(const EngineConfig& config) noexcept {
+    for (const auto& path : config.exhaustPaths)
+        if (path.network)
+            for (const auto& component : path.network->components)
+                if (component.inletValve) return true;
+    return false;
+}
+
 bool vtecCamsFitted(const EngineConfig& config) noexcept {
     return firstVtecCamshaft(config) != nullptr;
 }
@@ -983,6 +991,9 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         || outOfRange("exhaust.mufflerPerforatedOpenAreaRatio", config.exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
         || !validMufflerPacking(config.exhaust)
         || !validMidpipe(config.exhaust)
+        || outOfRange("exhaustValve.openAboveRpm", config.exhaustValve.openAboveRpm, 0.0, 100'000.0)
+        || outOfRange("exhaustValve.openAboveThrottle", config.exhaustValve.openAboveThrottle, 0.0, 1.0)
+        || outOfRange("exhaustValve.travelSeconds", config.exhaustValve.travelSeconds, 0.0, 60.0)
         || outOfRange("engineBrake.valveLiftMm", config.engineBrake.valveLiftMm, 0.0, 10.0)
         || outOfRange("engineBrake.peakAfterTdcDegrees", config.engineBrake.peakAfterTdcDegrees, -90.0, 90.0)
         || outOfRange("engineBrake.durationDegrees", config.engineBrake.durationDegrees, 5.0, 180.0)
@@ -1729,6 +1740,12 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
 
             for (const auto& component : network.components) {
                 const auto incoming = componentIncoming[component.id] + cylinderIncoming[component.id];
+                if (component.inletValve
+                    && (component.type != ExhaustComponentType::pipe
+                        || isTerminalSideBranch(component.id)
+                        || componentIncoming[component.id] != 1U
+                        || cylinderIncoming[component.id] != 0U))
+                    return "An active exhaust valve sits at the inlet of a pipe fed by exactly one other part, not by a cylinder";
                 if (isTerminalSideBranch(component.id)) {
                     if (componentIncoming[component.id] != 1U
                         || cylinderIncoming[component.id] != 0U)

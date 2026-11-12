@@ -58,6 +58,16 @@ file formats, always with an in-memory migration).
   `loop-pack.json` with each loop's measured speed and the cylinder count
   to declare. Also `EngineLabOfflineAudioExporter --loop-pack`.
 
+- **An active exhaust valve.** In the exhaust designer, right-click a
+  silencer (or any part with one part before and one after) and pick
+  **Bypass it with an active valve**: a pipe around it opens behind a valve.
+  Any pipe fed by another part can take one (**Active valve at its inlet**).
+  Drive gets a switch and a key (`-`): automatic opens it above an engine
+  speed or a throttle (3,500 rpm or 50 % by default, set in **Valve actuator
+  settings...**), shut and open hold it. It takes 0.3 s to move, does not
+  click, and fully open it is exactly the same exhaust without the valve.
+  Nothing changes on an engine without one.
+
 ### Changed
 
 - **Menus, message boxes and dialogs open inside their window**, so a

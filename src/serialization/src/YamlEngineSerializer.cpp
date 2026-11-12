@@ -749,8 +749,10 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << YAML::Value
                     << component.catalystSubstrateVolumetricHeatCapacityJPerM3K
                     << YAML::Key << "crossover_coupling" << YAML::Value
-                    << component.crossoverCoupling
-                    << YAML::Key << "acoustic_position_m" << YAML::Value;
+                    << component.crossoverCoupling;
+                if (component.inletValve)
+                    out << YAML::Key << "inlet_valve" << YAML::Value << true;
+                out << YAML::Key << "acoustic_position_m" << YAML::Value;
                 emitPoint(out, component.acousticPositionM);
                 out << YAML::Key << "acoustic_axis" << YAML::Value;
                 emitPoint(out, component.acousticAxis);
@@ -834,6 +836,13 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "eccentricity_mm" << YAML::Value << config.rotary.eccentricityMm
             << YAML::Key << "rotor_width_mm" << YAML::Value << config.rotary.rotorWidthMm
             << YAML::Key << "rotor_count" << YAML::Value << config.rotary.rotorCount
+            << YAML::EndMap;
+    // Written with a valve fitted, so every other engine's file is unchanged.
+    if (exhaustValveFitted(config))
+        out << YAML::Key << "exhaust_valve" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "open_above_rpm" << YAML::Value << config.exhaustValve.openAboveRpm
+            << YAML::Key << "open_above_throttle" << YAML::Value << config.exhaustValve.openAboveThrottle
+            << YAML::Key << "travel_s" << YAML::Value << config.exhaustValve.travelSeconds
             << YAML::EndMap;
     // Written when one is fitted, so every other engine's file is unchanged.
     if (config.engineBrake.fitted)
@@ -1166,6 +1175,12 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     vehicle["center_of_gravity_height_m"].as<double>();
             if (vehicle["maximum_brake_force_n"]) config.vehicle.maximumBrakeForceN = vehicle["maximum_brake_force_n"].as<double>();
         }
+        if (const auto valve = engine["exhaust_valve"]) {
+            auto& value = config.exhaustValve;
+            value.openAboveRpm = valve["open_above_rpm"].as<double>(value.openAboveRpm);
+            value.openAboveThrottle = valve["open_above_throttle"].as<double>(value.openAboveThrottle);
+            value.travelSeconds = valve["travel_s"].as<double>(value.travelSeconds);
+        }
         if (const auto brake = engine["engine_brake"]) {
             auto& value = config.engineBrake;
             value.fitted = brake["fitted"].as<bool>(value.fitted);
@@ -1401,6 +1416,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                         component.crossoverCoupling = encodedComponent[
                             "crossover_coupling"].as<double>(
                                 component.crossoverCoupling);
+                        component.inletValve = encodedComponent[
+                            "inlet_valve"].as<bool>(component.inletValve);
                         if (encodedComponent["acoustic_position_m"])
                             component.acousticPositionM = decodePoint(
                                 encodedComponent["acoustic_position_m"]);

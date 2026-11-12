@@ -568,6 +568,33 @@ struct ExhaustComponentConfig final {
      * outlets. The complementary straight coefficient is sqrt(1-k^2), so the
      * acoustic scattering matrix is passive for every value in [0, 1]. */
     double crossoverCoupling { 0.0 };
+    /** On a pipe fed by another part: an active exhaust valve at its inlet,
+     * a butterfly in the face between the two parts (never a short pipe of
+     * its own). Shut, the face is a wall: a bypass with its valve shut is a
+     * closed branch that still resonates. Every valve of the engine follows
+     * one actuator (ExhaustValveConfig, EngineControls::exhaustValveMode). */
+    bool inletValve { false };
+};
+
+/** The actuator of the engine's active exhaust valves (inletValve parts).
+ * Nothing on an engine without one. */
+struct ExhaustValveConfig final {
+    /** Automatic mode opens the valves at or above this speed... */
+    double openAboveRpm { 3'500.0 };
+    /** ...or at or above this throttle, 0-1 (the plate never reads more than
+     * 0.999, which is what 1 means here). It shuts them again 250 rpm and
+     * 5 % of throttle under both. */
+    double openAboveThrottle { 0.5 };
+    /** A full stroke, closed to open, s: about 0.3 s on a production
+     * actuator. Zero moves it within a frame. */
+    double travelSeconds { 0.3 };
+};
+
+enum class ExhaustValveMode : std::uint8_t {
+    /** The actuator follows ExhaustValveConfig's speed and throttle. */
+    automatic,
+    closed,
+    open
 };
 
 /** The ECU's overrun map. Clean deceleration fuel cut is every engine's; the
@@ -1418,6 +1445,7 @@ struct EngineConfig final {
     CamshaftConfig camshafts;
     ExhaustConfig exhaust;
     ExhaustAfterfireConfig exhaustAfterfire;
+    ExhaustValveConfig exhaustValve;
     TransmissionConfig transmission;
     VehicleConfig vehicle;
     EngineBrakeConfig engineBrake;
@@ -1470,6 +1498,8 @@ struct EngineControls final {
     /** The engine brake's switch: 0 off, up to `engineBrake.stageCount`.
      * The runtime passes 0 while the clutch is out or a shift is under way. */
     std::uint32_t engineBrakeStage { 0 };
+    /** The active exhaust valves' switch; nothing without one. */
+    ExhaustValveMode exhaustValveMode { ExhaustValveMode::automatic };
 };
 
 struct CylinderState final {
@@ -1986,6 +2016,12 @@ struct EngineState final {
     /** Shaft speed divided by the authored compressor design speed. */
     double forcedInductionShaftSpeedRatio { 0.0 };
     double wastegateOpening { 0.0 };
+    /** The active exhaust valves (ExhaustComponentConfig::inletValve): how
+     * many the exhaust carries, the butterfly's stroke (0 shut, 1 open) and
+     * the open share of the face, 1 - cos of its angle; 1 without a valve. */
+    std::uint32_t exhaustValveCount { 0 };
+    double exhaustValveStroke { 1.0 };
+    double exhaustValveOpening { 1.0 };
     double blowOffMassFlowKgPerSecond { 0.0 };
     /** With `compressorSurge`: the flow through the compressors' duct, kg/s,
      *  negative while the charge blows back through them. */
@@ -2343,6 +2379,8 @@ void normaliseEngineConfig(EngineConfig&);
 /** Whether a cylinder's camshaft carries a high cam (VTEC; a rotary's staged
  *  intake ports). A two-stroke has none. */
 [[nodiscard]] bool vtecCamsFitted(const EngineConfig&) noexcept;
+/** Whether any exhaust part carries an active valve (inletValve). */
+[[nodiscard]] bool exhaustValveFitted(const EngineConfig&) noexcept;
 /** The first VTEC camshaft a cylinder runs, or null. */
 [[nodiscard]] const CamshaftConfig* firstVtecCamshaft(const EngineConfig&) noexcept;
 /** Fits VTEC cams to every camshaft that has none, laid out as the

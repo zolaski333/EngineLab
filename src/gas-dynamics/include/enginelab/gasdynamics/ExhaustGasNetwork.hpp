@@ -464,6 +464,13 @@ public:
         return interfaceIndex < interfaceOpeningAreasM2_.size()
             ? interfaceOpeningAreasM2_[interfaceIndex] : 0.0;
     }
+    /** The open share, 0-1, of every active exhaust valve's face
+     *  (exhaustValveInterfaces). At 1 each is the plain face it would be
+     *  without a valve, bit for bit; below it is an orifice of that share of
+     *  the face, and at 0 a wall. Applies from the next advance. */
+    [[nodiscard]] bool setExhaustValveOpening(double openFraction) noexcept;
+    [[nodiscard]] double exhaustValveOpening() const noexcept { return valveOpening_; }
+    [[nodiscard]] std::size_t exhaustValveCount() const noexcept { return valveInterfaces_.size(); }
     /** Makes a restriction a turbine. Of the gas crossing it forward (upstream
      *  to downstream), `wheelShare` expands through a wheel of total-to-static
      *  isentropic efficiency `efficiency` down to the receiving side's static
@@ -646,6 +653,13 @@ private:
     std::vector<double> interfaceOpeningAreasM2_;
     struct TurbineSetting final { double wheelShare { 0.0 }; double efficiency { 0.0 }; };
     std::vector<TurbineSetting> interfaceTurbines_;
+    /** Active exhaust valves: their faces, whether each is an orifice this
+     *  advance and its open area. */
+    std::vector<std::size_t> valveInterfaces_;
+    std::vector<std::uint8_t> interfaceValveThrottled_;
+    std::vector<double> interfaceValveAreasM2_;
+    double valveOpening_ { 1.0 };
+    bool valveThrottled_ { false };
     /** Rates for one RK stage (kg/s, W), and their integral over an advance
      *  (kg, J). Only restrictions carry them. */
     struct InterfaceTransfer final { double massKg { 0.0 }; double workJ { 0.0 }; };

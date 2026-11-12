@@ -449,6 +449,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                     {"acoustic_position_m", pointJson(component.acousticPositionM)},
                     {"acoustic_axis", pointJson(component.acousticAxis)},
                     {"acoustic_termination", terminationName(component.acousticTermination)} });
+            // Written on a valve only, so every other file is unchanged.
+            for (std::size_t index = 0; index < path.network->components.size(); ++index)
+                if (path.network->components[index].inletValve)
+                    components[index]["inlet_valve"] = true;
             Json cylinderConnections = Json::array();
             for (const auto& connection : path.network->cylinderConnections)
                 cylinderConnections.push_back({ {"cylinder_id", connection.cylinderId},
@@ -694,6 +698,12 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         document["engine"]["rotary"] = { {"generating_radius_mm", config.rotary.generatingRadiusMm},
             {"eccentricity_mm", config.rotary.eccentricityMm}, {"rotor_width_mm", config.rotary.rotorWidthMm},
             {"rotor_count", config.rotary.rotorCount} };
+    // Written with a valve fitted, so every other engine's file is unchanged.
+    if (exhaustValveFitted(config))
+        document["engine"]["exhaust_valve"] = {
+            {"open_above_rpm", config.exhaustValve.openAboveRpm},
+            {"open_above_throttle", config.exhaustValve.openAboveThrottle},
+            {"travel_s", config.exhaustValve.travelSeconds} };
     // Written when one is fitted, so every other engine's file is unchanged.
     if (config.engineBrake.fitted)
         document["engine"]["engine_brake"] = { {"fitted", true},
@@ -854,6 +864,13 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
             config.rotary.eccentricityMm = rotary.value("eccentricity_mm", config.rotary.eccentricityMm);
             config.rotary.rotorWidthMm = rotary.value("rotor_width_mm", config.rotary.rotorWidthMm);
             config.rotary.rotorCount = rotary.value("rotor_count", config.rotary.rotorCount);
+        }
+        if (engine.contains("exhaust_valve")) {
+            const auto& valve = engine.at("exhaust_valve");
+            auto& value = config.exhaustValve;
+            value.openAboveRpm = valve.value("open_above_rpm", value.openAboveRpm);
+            value.openAboveThrottle = valve.value("open_above_throttle", value.openAboveThrottle);
+            value.travelSeconds = valve.value("travel_s", value.travelSeconds);
         }
         if (engine.contains("engine_brake")) {
             const auto& brake = engine.at("engine_brake");
@@ -1252,6 +1269,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
                                 component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
                         component.crossoverCoupling = encodedComponent.value(
                             "crossover_coupling", component.crossoverCoupling);
+                        component.inletValve = encodedComponent.value(
+                            "inlet_valve", component.inletValve);
                         if (encodedComponent.contains("acoustic_position_m"))
                             component.acousticPositionM = decodePoint(
                                 encodedComponent.at("acoustic_position_m"));

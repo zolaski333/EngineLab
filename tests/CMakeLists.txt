@@ -412,6 +412,21 @@ if(MSVC)
     target_link_options(EngineLabLoopPackExportTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabExhaustValveTests ExhaustValveTests.cpp)
+target_link_libraries(EngineLabExhaustValveTests PRIVATE
+    EngineLab::Audio EngineLab::Catalog EngineLab::Serialization
+    EngineLab::Simulation EngineLab::Ecu EngineLab::Events EngineLab::Physics
+    EngineLab::Exhaust EngineLab::GasDynamics)
+target_compile_definitions(EngineLabExhaustValveTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabExhaustValveTests)
+add_test(NAME EngineLab.ExhaustValve
+    COMMAND EngineLabExhaustValveTests)
+set_tests_properties(EngineLab.ExhaustValve PROPERTIES TIMEOUT 300)
+if(MSVC)
+    target_link_options(EngineLabExhaustValveTests PRIVATE /STACK:8388608)
+endif()
+
 add_executable(EngineLabAudioWorkshopTests
     AudioWorkshopTests.cpp
     "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp"

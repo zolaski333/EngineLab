@@ -62,6 +62,11 @@ ControlPanel::ControlPanel() {
                                 "clutch in, cuts their fuel, and lets go near idle and in neutral"));
     engineBrake.onClick = [this] { openEngineBrakeMenu(); };
     addChildComponent(engineBrake);
+    exhaustValve.setTooltip(utf8("Active exhaust valve: automatic opens it above the engine speed or the throttle "
+                                 "set in the exhaust designer; shut and open hold it (its key steps through "
+                                 "them). Lit while it is open"));
+    exhaustValve.onClick = [this] { openExhaustValveMenu(); };
+    addChildComponent(exhaustValve);
 
     prepareSlider(afrTrim.slider, -3.0, 3.0, 0.1, 0.0);
     afrTrim.slider.setDoubleClickReturnValue(true, 0.0);
@@ -91,6 +96,7 @@ void ControlPanel::setKeyCaps(const ActionMap& actions) {
     cruise.setKeyCap(cap(AppAction::cruise));
     automatic.setKeyCap(cap(AppAction::automaticGearbox));
     engineBrake.setKeyCap(cap(AppAction::engineBrake));
+    exhaustValve.setKeyCap(cap(AppAction::exhaustValve));
 }
 
 void ControlPanel::openEngineBrakeMenu() {
@@ -134,6 +140,41 @@ void ControlPanel::setEngineBrakeStage(std::uint32_t stage) {
     const auto text = engineBrakeStage_ == 0 ? juce::String("Engine brake off")
         : "Engine brake " + juce::String(engineBrakeStage_) + "/" + juce::String(engineBrakeStages_);
     if (engineBrake.getButtonText() != text) engineBrake.setButtonText(text);
+}
+
+void ControlPanel::openExhaustValveMenu() {
+    juce::PopupMenu menu;
+    menu.addItem(1, "Automatic", true, exhaustValveMode_ == ExhaustValveMode::automatic);
+    menu.addItem(2, "Shut", true, exhaustValveMode_ == ExhaustValveMode::closed);
+    menu.addItem(3, "Open", true, exhaustValveMode_ == ExhaustValveMode::open);
+    menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&exhaustValve)
+                           .withMinimumWidth(exhaustValve.getWidth()),
+        [safe = juce::Component::SafePointer<ControlPanel>(this)](int result) {
+            if (safe == nullptr || result <= 0) return;
+            const auto mode = result == 2 ? ExhaustValveMode::closed
+                : result == 3 ? ExhaustValveMode::open : ExhaustValveMode::automatic;
+            if (safe->onExhaustValveMode) safe->onExhaustValveMode(mode);
+        });
+}
+
+void ControlPanel::setExhaustValveFitted(bool fitted) {
+    if (exhaustValve.isVisible() == fitted) return;
+    exhaustValve.setVisible(fitted);
+    resized();
+    repaint();
+}
+
+ExhaustValveMode ControlPanel::nextExhaustValveMode() const noexcept {
+    return exhaustValveMode_ == ExhaustValveMode::automatic ? ExhaustValveMode::closed
+        : exhaustValveMode_ == ExhaustValveMode::closed ? ExhaustValveMode::open
+        : ExhaustValveMode::automatic;
+}
+
+void ControlPanel::setExhaustValveMode(ExhaustValveMode mode) {
+    exhaustValveMode_ = mode;
+    const auto text = juce::String("Exhaust valve ")
+        + (mode == ExhaustValveMode::closed ? "shut" : mode == ExhaustValveMode::open ? "open" : "auto");
+    if (exhaustValve.getButtonText() != text) exhaustValve.setButtonText(text);
 }
 
 void ControlPanel::setDiesel(bool diesel) {
@@ -196,6 +237,7 @@ void ControlPanel::refresh(const DashboardModel& model) {
     // Lit while it holds; its stage stays shown while it waits for the
     // pedal to lift or the speed to rise.
     engineBrake.setEngaged(state.engineBrakeCylinders > 0);
+    exhaustValve.setEngaged(state.exhaustValveCount > 0 && state.exhaustValveOpening > 0.5);
     const auto cruiseText = state.cruiseEngaged
         ? "Cruise " + unit.value(Quantity::speed, state.cruiseSetSpeedMps, 0)
         : juce::String("Cruise");
@@ -290,6 +332,10 @@ void ControlPanel::resized() {
     pair(cruise, resetTrip);
     if (engineBrake.isVisible()) {
         engineBrake.setBounds(area.removeFromTop(30));
+        area.removeFromTop(6);
+    }
+    if (exhaustValve.isVisible()) {
+        exhaustValve.setBounds(area.removeFromTop(30));
         area.removeFromTop(6);
     }
     area.removeFromTop(8);

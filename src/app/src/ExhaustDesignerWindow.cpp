@@ -400,7 +400,8 @@ public:
             graphics.drawRoundedRectangle(bounds, 7.0F, selected ? 2.5F : 1.0F);
             graphics.setColour(juce::Colours::white);
             graphics.setFont(juce::FontOptions(12.0F, juce::Font::bold));
-            graphics.drawText("#" + juce::String(component.id) + "  " + componentTypeName(component.type),
+            graphics.drawText("#" + juce::String(component.id) + "  " + componentTypeName(component.type)
+                                  + (component.inletValve ? "  + valve" : ""),
                               bounds.removeFromTop(25.0F).toNearestInt(), juce::Justification::centred);
             graphics.setColour(juce::Colour(0xffe1e9e6));
             graphics.setFont(juce::FontOptions(10.0F));
@@ -1259,6 +1260,14 @@ private:
         juce::PopupMenu menu;
         menu.addSectionHeader("#" + juce::String(id) + "  " + componentTypeName(component->type));
         menu.addSubMenu("Replace with", replace);
+        const auto bypassable = component->type != ExhaustComponentType::merge
+            && component->type != ExhaustComponentType::splitter
+            && component->type != ExhaustComponentType::crossover
+            && component->type != ExhaustComponentType::outlet;
+        menu.addItem(101, "Bypass it with an active valve", bypassable);
+        if (component->type == ExhaustComponentType::pipe)
+            menu.addItem(102, "Active valve at its inlet", true, component->inletValve);
+        if (exhaustValveFitted(working_)) menu.addItem(103, "Valve actuator settings...");
         menu.addItem(100, "Delete");
         menu.showMenuAsync(menuAtMouse(), [safe = juce::Component::SafePointer<DesignerContent>(this), id](int choice) {
             if (safe != nullptr) safe->componentMenuChosen(id, choice);
@@ -1268,6 +1277,32 @@ private:
     void componentMenuChosen(std::uint32_t id, int choice) {
         if (choice == 100) {
             if (trySelectComponent(id)) deleteComponent();
+            return;
+        }
+        if (choice == 101 || choice == 102) {
+            if (!commitSelectedComponentEdits()) return;
+            std::uint32_t bypassId = 0;
+            bool fitted = false;
+            if (!editNetwork([id, choice, &bypassId, &fitted](ExhaustNetworkConfig& network) {
+                    if (choice == 101) return ExhaustNetworkEditor::addValvedBypass(network, id, &bypassId);
+                    return toggleInletValve(network, id, fitted);
+                }))
+                return;
+            if (choice == 101) {
+                selectedComponentId_ = bypassId;
+                setStatus("#" + juce::String(id) + " has a bypass, pipe #" + juce::String(bypassId)
+                              + ", behind an active valve: shut, the gas goes through #" + juce::String(id)
+                              + "; open, most of it takes the bypass. Drive switches it.", false);
+            } else {
+                selectedComponentId_ = id;
+                setStatus(fitted ? "#" + juce::String(id) + " has an active valve at its inlet."
+                                 : "#" + juce::String(id) + " has no valve any more.", false);
+            }
+            rebuildAll();
+            return;
+        }
+        if (choice == 103) {
+            showValveSettings();
             return;
         }
         if (choice < 1 || choice > static_cast<int>(ExhaustComponentType::crossover) + 1) return;
@@ -1281,6 +1316,73 @@ private:
         setStatus("#" + juce::String(id) + " is now a " + juce::String(componentTypeName(type)).toLowerCase()
                       + ": its connections, bore and length were kept.", false);
         rebuildAll();
+    }
+
+    /** Fits or removes the valve at a pipe's inlet; it needs one part, not a
+     *  cylinder, feeding the pipe (validateEngineConfig's rule). */
+    [[nodiscard]] static std::string toggleInletValve(ExhaustNetworkConfig& network, std::uint32_t id,
+                                                      bool& fitted) {
+        const auto found = std::find_if(network.components.begin(), network.components.end(),
+            [id](const ExhaustComponentConfig& component) { return component.id == id; });
+        if (found == network.components.end()) return "That component is not in this path.";
+        if (found->inletValve) {
+            found->inletValve = false;
+            fitted = false;
+            return {};
+        }
+        if (found->type != ExhaustComponentType::pipe) return "An active valve sits at a pipe's inlet.";
+        for (const auto& cylinder : network.cylinderConnections)
+            if (cylinder.componentId == id)
+                return "A cylinder feeds this pipe: a valve goes on a pipe fed by another part.";
+        const auto inputs = std::count_if(network.connections.begin(), network.connections.end(),
+            [id](const ExhaustComponentConnectionConfig& connection) { return connection.toComponentId == id; });
+        if (inputs != 1) return "A valve's pipe is fed by exactly one other part.";
+        found->inletValve = true;
+        fitted = true;
+        return {};
+    }
+
+    /** The actuator: when automatic opens the valve, and how long it takes. */
+    void showValveSettings() {
+        if (valveDialog_) return;
+        const auto& valve = working_.exhaustValve;
+        valveDialog_ = std::make_unique<juce::AlertWindow>("Active exhaust valve",
+            "Automatic opens every valve of this exhaust at or above either the engine speed or the "
+            "throttle, and shuts it 250 rpm and 5 % below both. The stroke takes the travel time "
+            "(0 moves at once). Drive's switch can also hold it shut or open.",
+            juce::MessageBoxIconType::NoIcon);
+        valveDialog_->addTextEditor("rpm", juce::String(valve.openAboveRpm, 0), "Opens above (rpm)");
+        valveDialog_->addTextEditor("throttle", juce::String(valve.openAboveThrottle * 100.0, 0),
+                                    "or above throttle (%)");
+        valveDialog_->addTextEditor("travel", juce::String(valve.travelSeconds, 2), "Travel time (s)");
+        valveDialog_->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        valveDialog_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        ui::placeInWindow(*valveDialog_, *this);
+        auto safe = juce::Component::SafePointer<DesignerContent>(this);
+        valveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
+            if (!safe) return;
+            double values[3] {};
+            bool parsed = true;
+            const char* names[3] { "rpm", "throttle", "travel" };
+            for (int index = 0; index < 3; ++index) {
+                const auto* editor = safe->valveDialog_ ? safe->valveDialog_->getTextEditor(names[index]) : nullptr;
+                parsed = parsed && editor != nullptr && parseFinite(editor->getText(), values[index]);
+            }
+            safe->valveDialog_.reset();
+            if (result != 1) return;
+            if (!parsed || values[0] < 0.0 || values[0] > 100'000.0 || values[1] < 0.0 || values[1] > 100.0
+                || values[2] < 0.0 || values[2] > 60.0) {
+                safe->setStatus("Valve settings: 0-100,000 rpm, 0-100 % throttle, 0-60 s of travel.", true);
+                return;
+            }
+            safe->rememberForUndo();
+            safe->working_.exhaustValve.openAboveRpm = values[0];
+            safe->working_.exhaustValve.openAboveThrottle = values[1] / 100.0;
+            safe->working_.exhaustValve.travelSeconds = values[2];
+            safe->setStatus("Valve: opens above " + juce::String(values[0], 0) + " rpm or "
+                                + juce::String(values[1], 0) + " % throttle, " + juce::String(values[2], 2)
+                                + " s of travel. Apply to hear it.", false);
+        }), false);
     }
 
     void showSourceMenu(const std::vector<std::uint32_t>& cylinders) {
@@ -1452,7 +1554,7 @@ private:
         if (component->outletDiameterMm > 0.0)
             diameter += " -> " + juce::String(component->outletDiameterMm, 1);
         return "#" + juce::String(component->id) + "  " + componentTypeName(component->type)
-            + "  |  D " + diameter + " mm";
+            + (component->inletValve ? " + valve" : "") + "  |  D " + diameter + " mm";
     }
 
     [[nodiscard]] int connectionCount() const {
@@ -2011,6 +2113,7 @@ private:
     bool suppressComponentSelection_ { false };
     bool applying_ { false };
     std::vector<Snapshot> undo_;
+    std::unique_ptr<juce::AlertWindow> valveDialog_;
     std::vector<Snapshot> redo_;
 
     CallbackListModel componentModel_;

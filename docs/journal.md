@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-12 — an active exhaust valve
+
+- Owner plan: a Valve part and a one-click silencer bypass with a valve; a face between two cells, not a tube; Drive's Shut / Open / Auto (rpm and throttle thresholds); ~0.3 s of travel; open = the same exhaust without it, no extra cost, no click.
+- Gas network: below full opening the face uses the throttle plate's orifice code (refactored into one lambda) at the open share; at 1 the plain face. Audio: the face's admittance scaled by the opening, which glides per sample.
+- `EngineLab.ExhaustValve` (K20A, bypassed silencer): open bit-identical over 720 frames; shut 109.1 kPa back-pressure at 4,000 rpm WOT against 104.2 open. Click metric: the change of the second difference from one 50 Hz period to the next (a curvature maximum mixed the two states' timbres: 1.1x apart, useless): settled 0.00016, valve moving 0.00076, snapped in a frame 0.0027, stepped in one sample 0.0070 Pa (fails).
+- Bit-identity of the refactor: `DriveScenarioHarness --builtin pull` (45 s, 10,800 frames) before/after, CSVs identical on 2JZ, K20A, 13B, RD350, TDI and a K20A with individual throttles (the orifice path).
+- Not checked: torque or sound shut against open on a real valved car, the Drive switch and designer menu in the running app (no GUI test), a shut valve's leak, the plate's loss when open.
+
 ## 2026-11-11 — a loop pack for games (BeamNG: loops only)
 
 - Owner plan: seamless loops a game's sample engine sound can use; no live link to BeamNG.

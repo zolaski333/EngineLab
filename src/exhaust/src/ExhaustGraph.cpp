@@ -423,6 +423,8 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                         0.0, 10'000'000.0, 0.0),
                     finiteClamped(component.crossoverCoupling,
                         0.0, 1.0, 0.0) });
+                graph.nodes_.back().inletValve = component.inletValve
+                    && component.type == ExhaustComponentType::pipe;
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {

@@ -991,6 +991,11 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
             ductEndNeighbour_[endSlot(connection.downstream)] = connection.upstream;
         }
     }
+    valveInterfaces_ = exhaustValveInterfaces(layout_);
+    interfaceValveThrottled_.assign(layout_.interfaces().size(), std::uint8_t { 0 });
+    interfaceValveAreasM2_.assign(layout_.interfaces().size(), 0.0);
+    valveOpening_ = 1.0;
+    valveThrottled_ = false;
     cylinderFirstStageFlow_.resize(layout_.cylinderPorts().size());
     cylinderSecondStageFlow_.resize(layout_.cylinderPorts().size());
     outletFirstStageFlow_.resize(layout_.outlets().size());
@@ -1195,6 +1200,30 @@ bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexce
                 index, previous.interfaceOpeningAreasM2_[index]));
     interfaceTurbines_ = previous.interfaceTurbines_;
     interfaceTransfers_ = previous.interfaceTransfers_;
+    static_cast<void>(setExhaustValveOpening(previous.valveOpening_));
+    return true;
+}
+
+bool ExhaustGasNetwork::setExhaustValveOpening(double openFraction) noexcept {
+    if (!std::isfinite(openFraction)) return false;
+    valveOpening_ = std::clamp(openFraction, 0.0, 1.0);
+    valveThrottled_ = !valveInterfaces_.empty() && valveOpening_ < 1.0;
+    const auto endSlot = [](const ExhaustEndpoint& endpoint) noexcept {
+        return 2 * endpoint.elementIndex
+            + (endpoint.type == ExhaustEndpointType::ductInlet ? 0 : 1);
+    };
+    for (const auto index : valveInterfaces_) {
+        const auto& connection = layout_.interfaces()[index];
+        interfaceValveThrottled_[index] = valveThrottled_ ? 1 : 0;
+        interfaceValveAreasM2_[index] = valveOpening_ * interfaceOpeningAreasM2_[index];
+        // Shut, the two sides no longer see each other's cells.
+        if (interfaceReconstructed_[index] != 0) {
+            ductEndNeighbour_[endSlot(connection.upstream)] = valveThrottled_
+                ? std::nullopt : std::optional<ExhaustEndpoint>(connection.downstream);
+            ductEndNeighbour_[endSlot(connection.downstream)] = valveThrottled_
+                ? std::nullopt : std::optional<ExhaustEndpoint>(connection.upstream);
+        }
+    }
     return true;
 }
 
@@ -2488,65 +2517,78 @@ bool ExhaustGasNetwork::evaluateStage(
     std::fill(cylinderResiduals.begin(), cylinderResiduals.end(), ConservativeState {});
     if (ambientReservoirVolumeM3_ > 0.0) ambientResidual = {};
 
+    // A plate (or a turbine) on a face, and an active valve that is not fully
+    // open: at most one side is a junction (ExhaustNetworkLayout::assemble).
+    // A junction side exchanges through the open area itself; it has no face
+    // to load around the jet.
+    const auto exchangeThroughOrifice = [&](std::size_t index,
+                                            double openingAreaM2) noexcept {
+        const auto& connection = layout_.interfaces()[index];
+        const auto& upstreamCell = endpointPrimitive(connection.upstream);
+        const auto& downstreamCell = endpointPrimitive(connection.downstream);
+        const auto rawFlux = openingAreaM2 > 0.0
+            ? restrictionOrificeFlux(
+                endpointState(connection.upstream), upstreamCell,
+                endpointState(connection.downstream), downstreamCell)
+            : EulerFlux {};
+        const auto massFlux = sumSpecies(rawFlux.speciesMassFluxKgPerM2S);
+        const auto forward = massFlux >= 0.0;
+        // The supplying side loses its gas at its own velocity against
+        // its own pressure: the acceleration to the throat happens past
+        // the face, and the plate's upstream side carries its reaction.
+        // Handing it the throat's momentum instead (up to 1.27 p0 when
+        // choked) gave -1.4 % against the isentropic choked flow (-0.2 %
+        // this way). The receiving side takes the jet (Borda-Carnot),
+        // less what a turbine wheel takes from it.
+        auto upstreamFlux = rawFlux;
+        auto downstreamFlux = rawFlux;
+        auto& supplyFlux = forward ? upstreamFlux : downstreamFlux;
+        const auto& supplyCell = forward ? upstreamCell : downstreamCell;
+        supplyFlux.momentumFluxPa = supplyCell.pressurePa + massFlux * supplyCell.velocityMps;
+        const auto& turbine = interfaceTurbines_[index];
+        auto workFlux = 0.0;
+        if (massFlux > 0.0 && turbine.wheelShare > 0.0 && turbine.efficiency > 0.0) {
+            workFlux = massFlux * turbine.wheelShare * turbine.efficiency
+                * isentropicExpansionWorkJPerKg(upstreamCell,
+                    upstreamCell.velocityMps, downstreamCell.pressurePa);
+            downstreamFlux.totalEnergyFluxWPerM2 -= workFlux;
+            // The wheel turns its nozzles' jet into shaft work: what
+            // leaves it carries no jet into the outlet. Left in, the
+            // jet held the outlet cell at a quarter of the inlet
+            // pressure and the wheel took 1.7 times what expanding to
+            // the atmosphere could give. The bypass jet is dropped too
+            // (its dynamic head fully dissipated, the Borda-Carnot limit
+            // of a gate small against its outlet): half open, it still
+            // drew the outlet down and gave the wheel +32 % per kg.
+            downstreamFlux.momentumFluxPa = downstreamCell.pressurePa
+                + massFlux * downstreamCell.velocityMps;
+        }
+        interfaceRates[index] = { massFlux * openingAreaM2, workFlux * openingAreaM2 };
+        const auto apply = [&](const ExhaustEndpoint& endpoint, const EulerFlux& flux,
+                               double sign) noexcept {
+            if (endpoint.type == ExhaustEndpointType::junction) {
+                addJunctionFlow(endpoint.elementIndex,
+                    makeFlowRate(flux, openingAreaM2), openingAreaM2, sign,
+                    (sign < 0.0 ? connection.upstreamPort : connection.downstreamPort)
+                        == exhaustSideBranchPort);
+                return true;
+            }
+            return assignDuctBoundary(endpoint,
+                ductBoundaryFlux(endpoint, flux, openingAreaM2));
+        };
+        return apply(connection.upstream, upstreamFlux, -1.0)
+            && apply(connection.downstream, downstreamFlux, 1.0);
+    };
     for (std::size_t index = 0; index < layout_.interfaces().size(); ++index) {
         const auto& connection = layout_.interfaces()[index];
         if (connection.restriction) {
-            // At most one side is a junction (ExhaustNetworkLayout::assemble).
-            // A junction side exchanges through the open area itself; it has
-            // no face to load around the jet.
-            const auto openingAreaM2 = interfaceOpeningAreasM2_[index];
-            const auto& upstreamCell = endpointPrimitive(connection.upstream);
-            const auto& downstreamCell = endpointPrimitive(connection.downstream);
-            const auto rawFlux = openingAreaM2 > 0.0
-                ? restrictionOrificeFlux(
-                    endpointState(connection.upstream), upstreamCell,
-                    endpointState(connection.downstream), downstreamCell)
-                : EulerFlux {};
-            const auto massFlux = sumSpecies(rawFlux.speciesMassFluxKgPerM2S);
-            const auto forward = massFlux >= 0.0;
-            // The supplying side loses its gas at its own velocity against
-            // its own pressure: the acceleration to the throat happens past
-            // the face, and the plate's upstream side carries its reaction.
-            // Handing it the throat's momentum instead (up to 1.27 p0 when
-            // choked) gave -1.4 % against the isentropic choked flow (-0.2 %
-            // this way). The receiving side takes the jet (Borda-Carnot),
-            // less what a turbine wheel takes from it.
-            auto upstreamFlux = rawFlux;
-            auto downstreamFlux = rawFlux;
-            auto& supplyFlux = forward ? upstreamFlux : downstreamFlux;
-            const auto& supplyCell = forward ? upstreamCell : downstreamCell;
-            supplyFlux.momentumFluxPa = supplyCell.pressurePa + massFlux * supplyCell.velocityMps;
-            const auto& turbine = interfaceTurbines_[index];
-            auto workFlux = 0.0;
-            if (massFlux > 0.0 && turbine.wheelShare > 0.0 && turbine.efficiency > 0.0) {
-                workFlux = massFlux * turbine.wheelShare * turbine.efficiency
-                    * isentropicExpansionWorkJPerKg(upstreamCell,
-                        upstreamCell.velocityMps, downstreamCell.pressurePa);
-                downstreamFlux.totalEnergyFluxWPerM2 -= workFlux;
-                // The wheel turns its nozzles' jet into shaft work: what
-                // leaves it carries no jet into the outlet. Left in, the
-                // jet held the outlet cell at a quarter of the inlet
-                // pressure and the wheel took 1.7 times what expanding to
-                // the atmosphere could give. The bypass jet is dropped too
-                // (its dynamic head fully dissipated, the Borda-Carnot limit
-                // of a gate small against its outlet): half open, it still
-                // drew the outlet down and gave the wheel +32 % per kg.
-                downstreamFlux.momentumFluxPa = downstreamCell.pressurePa
-                    + massFlux * downstreamCell.velocityMps;
-            }
-            interfaceRates[index] = { massFlux * openingAreaM2, workFlux * openingAreaM2 };
-            const auto apply = [&](const ExhaustEndpoint& endpoint, const EulerFlux& flux,
-                                   double sign) noexcept {
-                if (endpoint.type == ExhaustEndpointType::junction) {
-                    addJunctionFlow(endpoint.elementIndex,
-                        makeFlowRate(flux, openingAreaM2), openingAreaM2, sign);
-                    return true;
-                }
-                return assignDuctBoundary(endpoint,
-                    ductBoundaryFlux(endpoint, flux, openingAreaM2));
-            };
-            if (!apply(connection.upstream, upstreamFlux, -1.0)
-                || !apply(connection.downstream, downstreamFlux, 1.0))
+            if (!exchangeThroughOrifice(index, interfaceOpeningAreasM2_[index]))
+                return false;
+            continue;
+        }
+        // A fully open valve is the plain face below, bit for bit.
+        if (valveThrottled_ && interfaceValveThrottled_[index] != 0) {
+            if (!exchangeThroughOrifice(index, interfaceValveAreasM2_[index]))
                 return false;
             continue;
         }

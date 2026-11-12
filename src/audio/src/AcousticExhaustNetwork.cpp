@@ -102,6 +102,8 @@ struct AcousticExhaustNetwork::Impl final {
         /** Incident wave retained by the trapezoidal/WDF compliance port. */
         float complianceIncidentPressurePa {};
         float pendingSourcePressurePa {};
+        /** One of ductEndpoints meets it through an active valve. */
+        bool hasValve { false };
         bool directionalCrossover { false };
         float crossoverCoupling {};
         float crossoverStraightCoupling { 1.0F };
@@ -178,6 +180,17 @@ struct AcousticExhaustNetwork::Impl final {
     std::vector<EndpointOwner> owners;
     std::vector<float> incident;
     std::vector<float> outgoing;
+    /** Per endpoint key: 1 where an active exhaust valve sits between the
+     *  duct end and its junction. */
+    std::vector<std::uint8_t> endpointValve;
+    /** The valves' open share of their face, slewed every sample toward the
+     *  block's target (setExhaustValveOpening). */
+    float valveOpening { 1.0F };
+    float valveOpeningTarget { 1.0F };
+    /** The first target is taken at once: a network built or swapped in
+     *  while the valves are shut starts shut. */
+    bool valveOpeningSet { false };
+    bool hasValves { false };
     /** Samples left during which every line reads linearly, re-armed by each
      *  reaction source strong enough to break the amplitude warp. */
     std::size_t linearSamplesLeft {};
@@ -695,6 +708,21 @@ struct AcousticExhaustNetwork::Impl final {
             }
         }
 
+        // An active valve is a series resistance between its duct's end and
+        // the junction the face became (process). A crossover's directional
+        // scattering has no such port: a valve there is left out.
+        endpointValve.assign(owners.size(), std::uint8_t { 0 });
+        for (const auto index : gasdynamics::exhaustValveInterfaces(layout)) {
+            const auto key = acousticEndpointKey(layout.interfaces()[index].downstream);
+            if (key >= owners.size() || owners[key].type != OwnerType::junction)
+                continue;
+            auto& junction = junctions[owners[key].index];
+            if (junction.directionalCrossover) continue;
+            endpointValve[key] = 1;
+            junction.hasValve = true;
+            hasValves = true;
+        }
+
         for (const auto& junction : junctions) {
             if (!junction.directionalCrossover) continue;
             if (junction.ductEndpoints.size() != 4U
@@ -1124,6 +1152,7 @@ void AcousticExhaustNetwork::placeOutlets(std::span<const AcousticSourcePlacemen
 void AcousticExhaustNetwork::reset() noexcept {
     if (!impl_) return;
     impl_->linearSamplesLeft = 0;
+    impl_->valveOpening = impl_->valveOpeningTarget;
     for (auto& duct : impl_->ducts) {
         std::fill(duct.forward.begin(), duct.forward.end(), 0.0F);
         std::fill(duct.reverse.begin(), duct.reverse.end(), 0.0F);
@@ -1159,6 +1188,18 @@ void AcousticExhaustNetwork::reset() noexcept {
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
     impl_->lastJetNoise.fill(StereoPressure {});
     impl_->mediaInitialised = false;
+}
+
+void AcousticExhaustNetwork::setExhaustValveOpening(float openFraction) noexcept {
+    if (!std::isfinite(openFraction)) return;
+    impl_->valveOpeningTarget = std::clamp(openFraction, 0.0F, 1.0F);
+    if (!impl_->valveOpeningSet) impl_->valveOpening = impl_->valveOpeningTarget;
+    impl_->valveOpeningSet = true;
+}
+
+std::size_t AcousticExhaustNetwork::exhaustValveCount() const noexcept {
+    return static_cast<std::size_t>(std::count(impl_->endpointValve.begin(),
+        impl_->endpointValve.end(), std::uint8_t { 1 }));
 }
 
 void AcousticExhaustNetwork::beginBlock(
@@ -1362,6 +1403,14 @@ AcousticExhaustNetwork::process(
     if (!impl_->prepared) return result;
     impl_->lastJetNoise.fill(StereoPressure {});
     const auto ramp = std::clamp(delayRampCoefficient, 0.0F, 1.0F);
+    if (impl_->hasValves) {
+        // A step of the opening would step every wave through the face: it
+        // glides, and lands exactly on its target (1 is then the plain face).
+        impl_->valveOpening += ramp
+            * (impl_->valveOpeningTarget - impl_->valveOpening);
+        if (std::abs(impl_->valveOpeningTarget - impl_->valveOpening) < 1.0e-6F)
+            impl_->valveOpening = impl_->valveOpeningTarget;
+    }
     // Slew the gas medium toward the block target so every derived scattering
     // coefficient moves continuously. Junction admittance (endpointAdmittance)
     // and duct stiffness read impl_->media directly and so become continuous for
@@ -1461,8 +1510,14 @@ AcousticExhaustNetwork::process(
         }
         double weightedIncident = 0.0;
         double totalAdmittance = 0.0;
+        // A valve of open share s in series with its duct of admittance Y
+        // presents s Y to the junction (a resistance (1 - s) / (s Y)): fully
+        // open the plain junction, shut a rigid wall, passive in between.
+        const auto valveOpening = impl_->valveOpening;
         for (const auto key : junction.ductEndpoints) {
-            const auto admittance = impl_->endpointAdmittance(key);
+            auto admittance = impl_->endpointAdmittance(key);
+            if (junction.hasValve && impl_->endpointValve[key] != 0)
+                admittance *= valveOpening;
             weightedIncident += admittance * impl_->incident[key];
             totalAdmittance += admittance;
         }
@@ -1502,7 +1557,12 @@ AcousticExhaustNetwork::process(
                 ? nextIncident : 0.0F;
         }
         for (const auto key : junction.ductEndpoints)
-            impl_->outgoing[key] = junctionPressure - impl_->incident[key];
+            impl_->outgoing[key] = junction.hasValve && impl_->endpointValve[key] != 0
+                    && valveOpening < 1.0F
+                // The duct end sees p+ - s (2 p+ - p_junction).
+                ? (1.0F - 2.0F * valveOpening) * impl_->incident[key]
+                    + valveOpening * junctionPressure
+                : junctionPressure - impl_->incident[key];
         for (const auto portIndex : junction.cylinderTerminals) {
             auto& port = impl_->cylinderPorts[portIndex];
             const auto towardBoundary = junctionPressure - port.incidentToJunction;
