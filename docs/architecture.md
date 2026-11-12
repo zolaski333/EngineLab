@@ -659,6 +659,11 @@ solver's own state, not by an animation:
   `RealtimeEngineAudio::setSoundSources` in the same way, so the exhaust is
   heard from the drawn tailpipe and the intake from its drawn mouth (see
   `realtime-audio.md`, *Camera microphone*).
+- **Trackside microphone.** *Trackside microphone* (settings menu, *Sound*,
+  `EngineViewport::tracksideMicrophone()`, off at every start, not saved)
+  turns the camera's microphones off and has `MainComponent` call
+  `RealtimeEngineAudio::setPassByEnabled`: the car drives past a microphone
+  7.5 m off its lane (`realtime-audio.md`, *Trackside microphone*).
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.

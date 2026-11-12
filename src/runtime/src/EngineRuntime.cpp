@@ -251,6 +251,8 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
         engineState.wastegateOpening, 0.0, 1.0)), std::memory_order_relaxed);
     state.exhaustValveOpening.store(static_cast<float>(std::clamp(
         engineState.exhaustValveOpening, 0.0, 1.0)), std::memory_order_relaxed);
+    state.vehicleSpeedMps.store(std::isfinite(engineState.vehicleSpeedMps)
+        ? static_cast<float>(engineState.vehicleSpeedMps) : 0.0F, std::memory_order_relaxed);
     constexpr double referenceTemperatureK = 288.15;
     constexpr double referencePressureKpa = 101.325;
     // SAE-style compressor corrected flow is referenced at the compressor

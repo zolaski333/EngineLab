@@ -308,6 +308,10 @@ public:
         where it is heading (render::ListenerFrame), spaced as the engine's
         authored pair; empty when off or with no 3-D model. */
     [[nodiscard]] std::optional<std::array<AcousticPoint3M, 2>> cameraMicrophones() const;
+    /** The trackside microphone (Sound menu): the car heard from 7.5 m off a
+        lane as it drives past (RealtimeEngineAudio::setPassByEnabled). Off
+        at every start; while on, the camera's microphones are not used. */
+    [[nodiscard]] bool tracksideMicrophone() const noexcept { return tracksideMicrophone_; }
     /** Where the 3-D model draws the openings and the turbo, in the frame of
         cameraMicrophones() (render::ListenerFrame::sources); empty with no
         3-D model. `soundSourcesVersion` changes whenever they do. */
@@ -456,6 +460,7 @@ private:
     ViewSettings settings_;
     std::shared_ptr<const render::EngineModel3D> scene_;
     render::ListenerFrame listenerFrame_;
+    bool tracksideMicrophone_ { false };
     AcousticSourcePlacements soundSources_;
     std::uint64_t soundSourcesVersion_ { 0 };
     double microphoneSpacingM_ { 0.36 };

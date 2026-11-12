@@ -4,6 +4,7 @@
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/IAudioRenderer.hpp>
 #include <enginelab/audio/IntegerUpsampler.hpp>
+#include <enginelab/audio/PassByMicrophone.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
@@ -153,6 +154,20 @@ public:
      * positions at its next block.
      */
     void setMicrophones(const std::optional<std::array<AcousticPoint3M, 2>>& positions) noexcept;
+    /**
+     * The trackside microphone (PassByMicrophone, off by default): the
+     * master, as the engine's own observer hears it, is heard 7.5 m off a
+     * lane the car drives along at its speed (RealtimeAudioState::
+     * vehicleSpeedMps), from 150 m before the microphone to 150 m past it,
+     * again and again, starting in front of it. It cross-fades in and out;
+     * off, the master is untouched. Any thread; the audio thread takes it at
+     * its next block. The camera's microphones should be off meanwhile
+     * (setMicrophones with none): the pass-by places its own.
+     */
+    void setPassByEnabled(bool enabled) noexcept { passByRequested_.store(enabled, std::memory_order_relaxed); }
+    [[nodiscard]] bool passByEnabled() const noexcept { return passByRequested_.load(std::memory_order_relaxed); }
+    /** Where the car is along the lane (m, 0 in front of the microphone). */
+    [[nodiscard]] double passByPositionM() const noexcept { return passByPositionM_.load(std::memory_order_relaxed); }
     /**
      * Where the drawn engine puts its openings and its turbo
      * (render::ListenerFrame::sources). While the microphones are moved
@@ -632,6 +647,9 @@ private:
     /** Where the engine's observer puts the microphones, and their mean
      * distance (effectiveMicrophonePosition, effectiveObserverDistanceM). */
     std::array<AcousticPoint3M, 2> authoredMicrophones_ {};
+    PassByMicrophone passBy_;
+    std::atomic<bool> passByRequested_ { false };
+    std::atomic<double> passByPositionM_ { 0.0 };
     double authoredObserverDistanceM_ { 1.0 };
     /** setSoundSources() -> audio thread, and back to be freed. */
     std::atomic<AcousticSourcePlacements*> incomingSoundSources_ { nullptr };

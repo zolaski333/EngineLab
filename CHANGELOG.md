@@ -68,6 +68,13 @@ file formats, always with an in-memory migration).
   click, and fully open it is exactly the same exhaust without the valve.
   Nothing changes on an engine without one.
 
+- **A trackside microphone.** In the 3-D view's settings, *Sound*,
+  *Trackside microphone*: the car is heard from 7.5 m beside its lane,
+  1.2 m up, as it drives past (the standard pass-by microphone). Set the
+  cruise control and it passes again and again, with its Doppler shift, the
+  ground's reflection, the air's absorption of the treble and its level
+  falling 6 dB each time the distance doubles. Off at every start.
+
 ### Changed
 
 - **Menus, message boxes and dialogs open inside their window**, so a

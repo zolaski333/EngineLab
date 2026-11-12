@@ -2096,6 +2096,8 @@ void MainComponent::pushCameraMicrophones() {
         audio_->setSoundSources(viewport_.soundSources());
         pushedSoundSourcesVersion_ = viewport_.soundSourcesVersion();
     }
+    if (audio_->passByEnabled() != viewport_.tracksideMicrophone())
+        audio_->setPassByEnabled(viewport_.tracksideMicrophone());
     if (same(microphones, pushedMicrophones_)) return;
     audio_->setMicrophones(microphones);
     pushedMicrophones_ = microphones;

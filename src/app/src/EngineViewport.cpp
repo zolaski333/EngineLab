@@ -2911,7 +2911,8 @@ void EngineViewport::mouseWheelMove(const juce::MouseEvent& event, const juce::M
 void EngineViewport::mouseDoubleClick(const juce::MouseEvent&) { applyView(view_, true); }
 
 std::optional<std::array<AcousticPoint3M, 2>> EngineViewport::cameraMicrophones() const {
-    if (!settings_.cameraMicrophone || !scene_ || context_.getTargetComponent() == nullptr) return std::nullopt;
+    if (!settings_.cameraMicrophone || tracksideMicrophone_ || !scene_ || context_.getTargetComponent() == nullptr)
+        return std::nullopt;
     // Where the camera is going: the sound glides there on its own.
     const auto orbit = goal();
     const auto eye = orbitEye(orbit.target, orbit.yaw, orbit.pitch, orbit.distance);
@@ -2946,7 +2947,9 @@ void EngineViewport::showSettingsMenu() {
                  settings_.pressureWaves == ViewSettings::PressureWaves::strength);
     menu.addItem(42, utf8("Live pulses"), use3d, settings_.pressureWaves == ViewSettings::PressureWaves::live);
     menu.addSectionHeader(utf8("Sound"));
-    menu.addItem(50, utf8("Microphone on the camera"), use3d, settings_.cameraMicrophone);
+    menu.addItem(50, utf8("Microphone on the camera"), use3d && !tracksideMicrophone_, settings_.cameraMicrophone);
+    menu.addItem(51, utf8("Trackside microphone: the car drives past (7.5 m, on the cruise control)"), true,
+                 tracksideMicrophone_);
     menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&settingsButton_),
         [safe = juce::Component::SafePointer<EngineViewport>(this)](int result) {
             if (safe == nullptr || result == 0) return;
@@ -2963,6 +2966,10 @@ void EngineViewport::showSettingsMenu() {
                 settings.motionBlur = !settings.motionBlur;
             } else if (result == 22) {
                 settings.antiAliasing = !settings.antiAliasing;
+            } else if (result == 51) {
+                // Not a saved setting: it starts off every time.
+                safe->tracksideMicrophone_ = !safe->tracksideMicrophone_;
+                return;
             } else if (result == 50) {
                 settings.cameraMicrophone = !settings.cameraMicrophone;
             } else if (result >= 40 && result <= 42) {

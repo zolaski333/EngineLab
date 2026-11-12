@@ -8,6 +8,7 @@ add_library(EngineLabAudio STATIC
     src/LoopPackExporter.cpp
     src/OfflineAudioExporter.cpp
     src/OfflineRenderChain.cpp
+    src/PassByMicrophone.cpp
     src/PipeRadiationModel.cpp
     src/RealtimeEngineAudio.cpp
     src/RealtimeConvolutionBank.cpp

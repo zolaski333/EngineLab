@@ -88,6 +88,37 @@ sound's with `render::ListenerFrame`: up stays up, distances from the origin
 are kept, and the frame is turned about the vertical so that the drawn
 tailpipe points along the first outlet's acoustic axis.
 
+### Trackside microphone
+
+*Trackside microphone* (view settings, *Sound*; off at every start, not
+saved) hears the car from beside a lane as it drives past, ISO 362's
+microphone: 7.5 m from the lane's centre line, 1.2 m up
+(`PassByMicrophone`, `RealtimeEngineAudio::setPassByEnabled`). The master as
+the engine's own observer hears it, after the voicing and before the master
+gain and limiter, is summed to one point 0.5 m up that moves along the lane
+at the vehicle's speed (`RealtimeAudioState::vehicleSpeedMps`, smoothed over
+20 ms). It starts in front of the microphone, drives to 150 m past it, and
+comes back from 150 m before it, the last 30 m each way faded out; set the
+cruise control and it passes again and again. On the dyno or standing still
+it stays where it is.
+
+Each of the two microphones (0.18 m apart along the lane, the left one
+upstream) gets two paths, the direct one and the ground's image (a hard
+surface, pressure reflection 0.9). Each path reads a delay line at its
+retarded time: the sound heard now left the car tau ago from x - v tau, so
+(c^2 - v^2) tau^2 + 2 x v tau - (x^2 + D^2) = 0, which gives the moving
+source's own Doppler shift exactly for a speed constant over tau (to 80 % of
+the speed of sound). Its level is the observer's distance over the emission
+distance (6 dB per doubling), and two one-pole low-passes at 58 kHz /
+sqrt(r) follow the air's f^2 absorption (ISO 9613-1, 20 C, 70 %: within
+0.03 dB from 10 to 100 m at 2 and 4 kHz; at 8 kHz they take 7.7 dB of the
+10.5). Switched on, it waits until its delay line holds the car's sound,
+then cross-fades in over 50 ms; switched off it cross-fades out and lets go.
+Off, the master is untouched (`EngineLab.PassByMicrophone`). While it is on,
+the camera's microphones go back to their authored place. Not modelled: wind,
+a temperature gradient, the car's own directivity, the tyres and the wind
+noise of the car.
+
 The authored sources are schematic (outlets and intake mouths near the
 origin). While the microphones are on the camera, every opening radiates from
 where the 3-D view draws it instead: `render::ListenerFrame::sources` gives

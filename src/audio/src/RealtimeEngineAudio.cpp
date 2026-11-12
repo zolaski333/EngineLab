@@ -3,6 +3,7 @@
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 #include <algorithm>
+#include <new>
 #include <cmath>
 #include <utility>
 #include <numbers>
@@ -546,6 +547,13 @@ void RealtimeEngineAudio::prepareSynthesis(double sampleRate, int maximumBlockSi
         2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
     oversampler_->initProcessing(static_cast<std::size_t>(maximumBlockSize_));
     oversampler_->reset();
+    try {
+        PassBySettings passBy;
+        if (authoredObserverDistanceM_ > 0.0) passBy.referenceDistanceM = authoredObserverDistanceM_;
+        static_cast<void>(passBy_.prepare(sampleRate_, passBy));
+    } catch (const std::bad_alloc&) {
+        // No trackside microphone: setEnabled() leaves it off unprepared.
+    }
     release();
     updateExhaustPreset(realtimeState_.exhaustPreset.load(std::memory_order_relaxed));
     appliedMicrophoneSequence_ = 0;
@@ -2647,6 +2655,8 @@ void RealtimeEngineAudio::renderSynthesis(
 
     convolutionBank_.process(sampleCount);
     const auto irMix = std::clamp(convolution * 0.50F, 0.0F, 0.78F);
+    passBy_.setEnabled(passByRequested_.load(std::memory_order_relaxed));
+    passBy_.setVehicleSpeed(realtimeState_.vehicleSpeedMps.load(std::memory_order_relaxed));
     // Pass 1: dry/wet sum, a genuine high shelf, DC removal, reconstruction
     // filtering and calibrated gain staging.  Master volume is deliberately
     // before the only output limiter, so volume=2 can never create >0 dBFS.
@@ -2701,6 +2711,12 @@ void RealtimeEngineAudio::renderSynthesis(
             left = mid + side;
             right = mid - side;
         }
+        // The propagation to a trackside microphone, after the voicing.
+        if (passBy_.active()) {
+            const auto heard = passBy_.process(left, right);
+            left = heard.leftPa;
+            right = heard.rightPa;
+        }
 
         const auto dcLeft = left - dcInputLeft_ + dcBlockPole_ * dcOutputLeft_;
         const auto dcRight = right - dcInputRight_ + dcBlockPole_ * dcOutputRight_;
@@ -2733,6 +2749,7 @@ void RealtimeEngineAudio::renderSynthesis(
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, left * levelGain_);
         if (output.getNumChannels() > 1) output.setSample(1, startSample + sample, right * levelGain_);
     }
+    passByPositionM_.store(passBy_.positionM(), std::memory_order_relaxed);
     // Publish the leveler observers once per block (measurement only).
     if (levelLimitedBlockSamples != 0)
         levelLimitedSamples_.fetch_add(levelLimitedBlockSamples, std::memory_order_relaxed);

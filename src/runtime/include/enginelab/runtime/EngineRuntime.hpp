@@ -128,6 +128,9 @@ struct RealtimeAudioState final {
     std::atomic<float> wastegateOpening { 0.0F };
     /** EngineState::exhaustValveOpening: 1 without an active exhaust valve. */
     std::atomic<float> exhaustValveOpening { 1.0F };
+    /** EngineState::vehicleSpeedMps: what moves the car past a trackside
+     *  microphone (RealtimeEngineAudio::setPassByEnabled). */
+    std::atomic<float> vehicleSpeedMps { 0.0F };
     std::atomic<float> correctedAirFlowKgPerSecond { 0.0F };
     std::atomic<float> compressorPowerWatts { 0.0F };
     std::atomic<float> turbinePowerWatts { 0.0F };

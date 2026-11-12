@@ -427,6 +427,13 @@ if(MSVC)
     target_link_options(EngineLabExhaustValveTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabPassByMicrophoneTests PassByMicrophoneTests.cpp)
+target_link_libraries(EngineLabPassByMicrophoneTests PRIVATE EngineLab::Audio)
+enginelab_set_warnings(EngineLabPassByMicrophoneTests)
+add_test(NAME EngineLab.PassByMicrophone
+    COMMAND EngineLabPassByMicrophoneTests)
+set_tests_properties(EngineLab.PassByMicrophone PROPERTIES TIMEOUT 120)
+
 add_executable(EngineLabAudioWorkshopTests
     AudioWorkshopTests.cpp
     "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp"
