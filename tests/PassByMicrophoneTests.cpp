@@ -1,8 +1,9 @@
 // The trackside microphone: a car's sound heard from 7.5 m off its lane
 // while it drives past (PassByMicrophone). A pure tone checks the moving
 // source's Doppler shift, the 1/r spreading, the ground's reflection and the
-// air's absorption against their textbook values; switching it on and off
-// must not click, and switched off it is the signal it was given.
+// air's absorption against their textbook values; the exhaust's share is
+// heard from the tailpipe, behind the engine; switching it on and off must
+// not click, and switched off it is the signal it was given.
 
 #include <enginelab/audio/PassByMicrophone.hpp>
 
@@ -110,6 +111,56 @@ void checkDoppler() {
     require(std::abs(coming / comingExpected - 1.0) < 2.0e-4, "the coming car's tone is shifted up as it must be");
     require(std::abs(going / goingExpected - 1.0) < 2.0e-4, "the going car's tone is shifted down as it must be");
     require(coming > 545.0 && going < 462.0, "about c / (c - v) and c / (c + v) far from the microphone");
+}
+
+void checkTwoSources() {
+    // The tailpipe 3 m behind the engine at 30 m/s passes the microphone
+    // 0.1 s after it: a tone given as the exhaust's share comes back to its
+    // own pitch (no Doppler shift, the emission broadside) 0.1 s after the
+    // same tone given as the engine's. (The level's peak is too flat to time.)
+    auto settings = bare();
+    settings.microphoneSpacingM = 0.0;
+    settings.exhaustBehindM = 3.0;
+    constexpr double speed = 30.0;
+    const auto peakAt = [&](bool exhaust) {
+        enginelab::PassByMicrophone passBy;
+        require(passBy.prepare(rate, settings), "the pass-by prepares");
+        passBy.setVehicleSpeed(speed);
+        passBy.setEnabled(true);
+        passBy.reset(-60.0);
+        std::vector<float> heard;
+        for (std::size_t index = 0; index < static_cast<std::size_t>(4.0 * rate); ++index) {
+            const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * 500.0 * index / rate));
+            const auto share = exhaust ? tone : 0.0F;
+            heard.push_back(passBy.process(tone, tone, share, share).leftPa);
+        }
+        // Upward zero crossings; the period that first exceeds the tone's
+        // own, interpolated between the two crossings' mid-points.
+        std::vector<double> crossings;
+        for (std::size_t index = 1; index < heard.size(); ++index)
+            if (heard[index - 1] < 0.0F && heard[index] >= 0.0F)
+                crossings.push_back(static_cast<double>(index - 1)
+                    + heard[index - 1] / (heard[index - 1] - heard[index]));
+        const auto own = rate / 500.0;
+        for (std::size_t index = 2; index < crossings.size(); ++index) {
+            const auto before = crossings[index - 1] - crossings[index - 2];
+            const auto after = crossings[index] - crossings[index - 1];
+            if (crossings[index] > 0.5 * rate && before <= own && after > own) {
+                const auto midBefore = 0.5 * (crossings[index - 1] + crossings[index - 2]);
+                const auto midAfter = 0.5 * (crossings[index] + crossings[index - 1]);
+                return (midBefore + (own - before) / (after - before) * (midAfter - midBefore)) / rate;
+            }
+        }
+        return 0.0;
+    };
+    const auto engine = peakAt(false);
+    const auto exhaust = peakAt(true);
+    std::cout << "closest approach: engine " << engine << " s, exhaust " << exhaust << " s (3 m behind at "
+              << speed << " m/s: 0.1 s later)\n";
+    const auto broadside = std::hypot(settings.laneDistanceM, settings.microphoneHeightM - settings.sourceHeightM);
+    require(std::abs(engine - (2.0 + broadside / settings.soundSpeedMps)) < 0.002,
+            "the engine passes the microphone when the car's point does");
+    require(std::abs(exhaust - engine - 3.0 / speed) < 0.002, "the exhaust passes 3 m later");
 }
 
 void checkDistanceLaw() {
@@ -223,6 +274,7 @@ void checkSwitching() {
 
 int main() {
     checkDoppler();
+    checkTwoSources();
     checkDistanceLaw();
     checkGround();
     checkAir();

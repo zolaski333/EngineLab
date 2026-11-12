@@ -121,6 +121,8 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
             effectiveMicrophonePosition(engineConfig->acousticObserver, false),
             effectiveMicrophonePosition(engineConfig->acousticObserver, true) };
         authoredObserverDistanceM_ = observerDistance;
+        passByExhaustBehindM_ = std::isfinite(engineConfig->vehicle.wheelbaseM)
+            ? std::clamp(engineConfig->vehicle.wheelbaseM, 0.0, 10.0) : 2.65;
     }
 }
 
@@ -550,6 +552,9 @@ void RealtimeEngineAudio::prepareSynthesis(double sampleRate, int maximumBlockSi
     try {
         PassBySettings passBy;
         if (authoredObserverDistanceM_ > 0.0) passBy.referenceDistanceM = authoredObserverDistanceM_;
+        passBy.exhaustBehindM = passByExhaustBehindM_;
+        for (auto& channel : passByExhaust_)
+            channel.assign(static_cast<std::size_t>(maximumBlockSize_), 0.0F);
         static_cast<void>(passBy_.prepare(sampleRate_, passBy));
     } catch (const std::bad_alloc&) {
         // No trackside microphone: setEnabled() leaves it off unprepared.
@@ -593,6 +598,8 @@ void RealtimeEngineAudio::release() noexcept {
         path.radiation.reset();
     }
     lowPassLeft_ = 0.0F; lowPassRight_ = 0.0F;
+    passByLowPassLeft_ = passByLowPassRight_ = 0.0F;
+    passByToneLowLeft_ = passByToneLowRight_ = 0.0F;
     pressureTailLeft_ = 0.0F; pressureTailRight_ = 0.0F;
     mechanicalPhase_ = 0.0; valvetrainPhase_ = 0.0;
     starterPhase_ = 0.0; smoothedRpm_ = 0.0F; intakeFilter_ = 0.0F;
@@ -1352,6 +1359,13 @@ void RealtimeEngineAudio::renderSynthesis(
     float blockPeakObservedForcedInductionPressurePa = 0.0F;
     std::uint64_t legacySamplesThisBlock = 0;
     std::uint64_t invalidBoundarySamplesThisBlock = 0;
+    passBy_.setEnabled(passByRequested_.load(std::memory_order_relaxed));
+    passBy_.setVehicleSpeed(realtimeState_.vehicleSpeedMps.load(std::memory_order_relaxed));
+    // The trackside microphone hears the exhaust from the tailpipe: keep its
+    // share apart (off, nothing here runs).
+    const auto passByActive = passBy_.active()
+        && passByExhaust_[0].size() >= static_cast<std::size_t>(sampleCount)
+        && passByExhaust_[1].size() >= static_cast<std::size_t>(sampleCount);
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto preset = realtimeState_.exhaustPreset.load(std::memory_order_relaxed);
         if (preset != activeExhaustPreset_) updateExhaustPreset(preset);
@@ -2587,6 +2601,14 @@ void RealtimeEngineAudio::renderSynthesis(
             + radiatedExhaustRight * exhaustGain * exhaustMonitorScale;
         lowPassLeft_ += lowPassCoefficient_ * (left - lowPassLeft_);
         lowPassRight_ += lowPassCoefficient_ * (right - lowPassRight_);
+        if (passByActive) {
+            passByLowPassLeft_ += lowPassCoefficient_
+                * (radiatedExhaustLeft * exhaustGain * exhaustMonitorScale - passByLowPassLeft_);
+            passByLowPassRight_ += lowPassCoefficient_
+                * (radiatedExhaustRight * exhaustGain * exhaustMonitorScale - passByLowPassRight_);
+            passByExhaust_[0][static_cast<std::size_t>(sample)] = passByLowPassLeft_;
+            passByExhaust_[1][static_cast<std::size_t>(sample)] = passByLowPassRight_;
+        }
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, lowPassLeft_);
         if (output.getNumChannels() > 1) output.setSample(1, startSample + sample, lowPassRight_);
         audioTimeSeconds_ += audioTimeStep;
@@ -2655,8 +2677,6 @@ void RealtimeEngineAudio::renderSynthesis(
 
     convolutionBank_.process(sampleCount);
     const auto irMix = std::clamp(convolution * 0.50F, 0.0F, 0.78F);
-    passBy_.setEnabled(passByRequested_.load(std::memory_order_relaxed));
-    passBy_.setVehicleSpeed(realtimeState_.vehicleSpeedMps.load(std::memory_order_relaxed));
     // Pass 1: dry/wet sum, a genuine high shelf, DC removal, reconstruction
     // filtering and calibrated gain staging.  Master volume is deliberately
     // before the only output limiter, so volume=2 can never create >0 dBFS.
@@ -2692,6 +2712,26 @@ void RealtimeEngineAudio::renderSynthesis(
             + radiatedWetExhaustLeft * irMix * exhaustGain * wetMonitorScale, 24.0F);
         auto right = finiteState(dryRight
             + radiatedWetExhaustRight * irMix * exhaustGain * wetMonitorScale, 24.0F);
+        // The exhaust's share, through the same (linear) tone shelf; the
+        // capture mode's saturation stays with the engine's share.
+        float exhaustLeft = 0.0F;
+        float exhaustRight = 0.0F;
+        if (passByActive) {
+            exhaustLeft = finiteState(passByExhaust_[0][static_cast<std::size_t>(sample)]
+                + radiatedWetExhaustLeft * irMix * exhaustGain * wetMonitorScale, 24.0F);
+            exhaustRight = finiteState(passByExhaust_[1][static_cast<std::size_t>(sample)]
+                + radiatedWetExhaustRight * irMix * exhaustGain * wetMonitorScale, 24.0F);
+            passByToneLowLeft_ += toneCoefficient_ * (exhaustLeft - passByToneLowLeft_);
+            passByToneLowRight_ += toneCoefficient_ * (exhaustRight - passByToneLowRight_);
+            exhaustLeft = passByToneLowLeft_ * lowGain + (exhaustLeft - passByToneLowLeft_) * highGain;
+            exhaustRight = passByToneLowRight_ * lowGain + (exhaustRight - passByToneLowRight_) * highGain;
+            if (stereoWidth != 1.0F) {
+                const auto mid = 0.5F * (exhaustLeft + exhaustRight);
+                const auto side = 0.5F * (exhaustLeft - exhaustRight) * stereoWidth;
+                exhaustLeft = mid + side;
+                exhaustRight = mid - side;
+            }
+        }
 
         if (saturationDrive > 0.0F
                 && saturationPlacement == AudioSaturationPlacement::preShelf) {
@@ -2712,8 +2752,8 @@ void RealtimeEngineAudio::renderSynthesis(
             right = mid - side;
         }
         // The propagation to a trackside microphone, after the voicing.
-        if (passBy_.active()) {
-            const auto heard = passBy_.process(left, right);
+        if (passByActive) {
+            const auto heard = passBy_.process(left, right, exhaustLeft, exhaustRight);
             left = heard.leftPa;
             right = heard.rightPa;
         }

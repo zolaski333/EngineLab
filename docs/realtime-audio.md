@@ -95,8 +95,13 @@ saved) hears the car from beside a lane as it drives past, ISO 362's
 microphone: 7.5 m from the lane's centre line, 1.2 m up
 (`PassByMicrophone`, `RealtimeEngineAudio::setPassByEnabled`). The master as
 the engine's own observer hears it, after the voicing and before the master
-gain and limiter, is summed to one point 0.5 m up that moves along the lane
-at the vehicle's speed (`RealtimeAudioState::vehicleSpeedMps`, smoothed over
+gain and limiter, is summed to two points 0.5 m up that move along the lane
+at the vehicle's speed: the exhaust's share (the dry tailpipe and its room
+response) at the tailpipe, the wheelbase behind the engine (an estimate for a
+front-engined car; a mid-engined car or a motorcycle has it shorter), and the
+rest (intake, combustion, structure, turbo) at the engine. So the intake
+leads and the exhaust follows, 0.1 s later at 108 km/h on a 3 m car. The car
+moves (`RealtimeAudioState::vehicleSpeedMps`, smoothed over
 20 ms). It starts in front of the microphone, drives to 150 m past it, and
 comes back from 150 m before it, the last 30 m each way faded out; set the
 cruise control and it passes again and again. On the dyno or standing still

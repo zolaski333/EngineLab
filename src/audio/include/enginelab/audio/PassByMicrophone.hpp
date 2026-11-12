@@ -31,12 +31,17 @@ struct PassBySettings final {
     double referenceDistanceM { 4.0 };
     /** The two microphones' spacing along the lane (left upstream). */
     double microphoneSpacingM { 0.18 };
+    /** How far behind the engine the tailpipe is: the exhaust's share of the
+     *  sound (process()) comes from there. */
+    double exhaustBehindM { 0.0 };
 };
 
 /** The engine heard from the side of a lane while the car drives past: the
- *  incoming stereo (the engine at `referenceDistanceM`) is summed to the
- *  car's one point, which moves along the lane at the vehicle's speed. Each
- *  of the two microphones gets the direct path and the ground's image path,
+ *  incoming stereo (the engine at `referenceDistanceM`) is summed to two
+ *  points of the car, the exhaust's share at the tailpipe and the rest at
+ *  the engine, which move along the lane at the vehicle's speed. Each of the
+ *  two microphones gets, from each point, the direct path and the ground's
+ *  image path,
  *  each with its retarded-time delay (the moving source's exact Doppler shift,
  *  for a speed constant over the delay), its 1/r spreading and the air's
  *  absorption over its length.
@@ -59,7 +64,10 @@ public:
     [[nodiscard]] bool active() const noexcept { return enabled_ || mix_ > 0.0F; }
     [[nodiscard]] bool prepared() const noexcept { return !delay_.empty(); }
     [[nodiscard]] double positionM() const noexcept { return positionM_; }
-    [[nodiscard]] StereoPressure process(float left, float right) noexcept;
+    /** `left`/`right` is everything heard; `exhaustLeft`/`exhaustRight` the
+     *  part of it the tailpipe radiates (none: the car is one point). */
+    [[nodiscard]] StereoPressure process(float left, float right, float exhaustLeft = 0.0F,
+                                         float exhaustRight = 0.0F) noexcept;
 
     /** The ISO 9613-1 absorption two one-pole low-passes in series follow:
      *  their loss, 20 log10(1 + (f/fc)^2), is 8.69 (f/fc)^2 dB below fc, the
@@ -80,14 +88,17 @@ private:
      *  at `alongM` now, moving at `speed`. */
     void retarded(double alongM, double heightDifferenceM, double offsetM,
                   double& delaySamples, double& distanceM) const noexcept;
-    [[nodiscard]] float read(double delaySamples) const noexcept;
+    [[nodiscard]] float read(const std::vector<float>& line, double delaySamples) const noexcept;
+    [[nodiscard]] std::size_t longestStartDelay() const noexcept;
     [[nodiscard]] float window(double alongM) const noexcept;
 
     PassBySettings settings_ {};
+    /** The engine's share and the exhaust's, one sample each. */
     std::vector<float> delay_;
+    std::vector<float> exhaustDelay_;
     std::size_t mask_ {};
     std::size_t write_ {};
-    std::array<Path, 4> paths_ {};
+    std::array<Path, 8> paths_ {};
     double sampleRateHz_ { 48'000.0 };
     double positionM_ {};
     double speedMps_ {};

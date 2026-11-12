@@ -15,13 +15,15 @@ bool PassByMicrophone::prepare(double sampleRateHz, const PassBySettings& settin
         || !std::isfinite(settings.microphoneHeightM) || !std::isfinite(settings.sourceHeightM)
         || !std::isfinite(settings.microphoneSpacingM) || !std::isfinite(settings.groundReflection)
         || settings.microphoneHeightM < 0.0 || settings.sourceHeightM < 0.0
-        || settings.groundReflection < 0.0 || settings.groundReflection > 1.0)
+        || settings.groundReflection < 0.0 || settings.groundReflection > 1.0
+        || !std::isfinite(settings.exhaustBehindM) || std::abs(settings.exhaustBehindM) > fadeLengthM)
         return false;
     settings_ = settings;
     sampleRateHz_ = sampleRateHz;
     std::size_t size = 1;
     while (size < static_cast<std::size_t>(delaySeconds * sampleRateHz) + 8) size <<= 1U;
     delay_.assign(size, 0.0F);
+    exhaustDelay_.assign(size, 0.0F);
     mask_ = size - 1;
     // The pedal and the gearbox move the car's speed at the frame rate:
     // 20 ms smooths their steps out of the Doppler shift.
@@ -33,6 +35,7 @@ bool PassByMicrophone::prepare(double sampleRateHz, const PassBySettings& settin
 
 void PassByMicrophone::reset(double positionM) noexcept {
     std::fill(delay_.begin(), delay_.end(), 0.0F);
+    std::fill(exhaustDelay_.begin(), exhaustDelay_.end(), 0.0F);
     write_ = 0;
     paths_ = {};
     speedMps_ = targetSpeedMps_;
@@ -45,17 +48,11 @@ void PassByMicrophone::setEnabled(bool enabled) noexcept {
     if (enabled && !active()) {
         // Nothing heard since it was last on: start clean, in front.
         std::fill(delay_.begin(), delay_.end(), 0.0F);
+        std::fill(exhaustDelay_.begin(), exhaustDelay_.end(), 0.0F);
         paths_ = {};
         speedMps_ = targetSpeedMps_;
         positionM_ = 0.0;
-        double longest = 0.0;
-        for (const auto offset : { -0.5 * settings_.microphoneSpacingM, 0.5 * settings_.microphoneSpacingM }) {
-            double delaySamples {};
-            double distanceM {};
-            retarded(0.0, settings_.microphoneHeightM + settings_.sourceHeightM, offset, delaySamples, distanceM);
-            longest = std::max(longest, delaySamples);
-        }
-        warmup_ = static_cast<std::size_t>(std::ceil(longest)) + 4;
+        warmup_ = longestStartDelay();
     }
     enabled_ = enabled && prepared();
 }
@@ -95,16 +92,28 @@ void PassByMicrophone::retarded(double alongM, double heightDifferenceM, double 
     delaySamples = tau * sampleRateHz_;
 }
 
-float PassByMicrophone::read(double delaySamples) const noexcept {
+std::size_t PassByMicrophone::longestStartDelay() const noexcept {
+    double longest = 0.0;
+    for (const auto along : { 0.0, -settings_.exhaustBehindM })
+        for (const auto offset : { -0.5 * settings_.microphoneSpacingM, 0.5 * settings_.microphoneSpacingM }) {
+            double delaySamples {};
+            double distanceM {};
+            retarded(along, settings_.microphoneHeightM + settings_.sourceHeightM, offset, delaySamples, distanceM);
+            longest = std::max(longest, delaySamples);
+        }
+    return static_cast<std::size_t>(std::ceil(longest)) + 4;
+}
+
+float PassByMicrophone::read(const std::vector<float>& line, double delaySamples) const noexcept {
     // Four-point Hermite between the samples around the delay.
     const auto position = static_cast<double>(write_) - delaySamples;
     const auto floored = std::floor(position);
     const auto t = static_cast<float>(position - floored);
     const auto base = static_cast<std::size_t>(static_cast<long long>(floored)) & mask_;
-    const auto ym1 = delay_[(base - 1) & mask_];
-    const auto y0 = delay_[base];
-    const auto y1 = delay_[(base + 1) & mask_];
-    const auto y2 = delay_[(base + 2) & mask_];
+    const auto ym1 = line[(base - 1) & mask_];
+    const auto y0 = line[base];
+    const auto y1 = line[(base + 1) & mask_];
+    const auto y2 = line[(base + 2) & mask_];
     const auto c1 = 0.5F * (y1 - ym1);
     const auto c2 = ym1 - 2.5F * y0 + 2.0F * y1 - 0.5F * y2;
     const auto c3 = 0.5F * (y2 - ym1) + 1.5F * (y0 - y1);
@@ -118,9 +127,11 @@ float PassByMicrophone::window(double alongM) const noexcept {
     return static_cast<float>(s * s);
 }
 
-StereoPressure PassByMicrophone::process(float left, float right) noexcept {
+StereoPressure PassByMicrophone::process(float left, float right, float exhaustLeft,
+                                         float exhaustRight) noexcept {
     if (!active()) return { left, right };
-    delay_[write_] = 0.5F * (left + right);
+    delay_[write_] = 0.5F * (left - exhaustLeft + right - exhaustRight);
+    exhaustDelay_[write_] = 0.5F * (exhaustLeft + exhaustRight);
 
     speedMps_ += speedCoefficient_ * (targetSpeedMps_ - speedMps_);
     const auto fade = window(positionM_);
@@ -128,24 +139,28 @@ StereoPressure PassByMicrophone::process(float left, float right) noexcept {
     const auto direct = settings_.microphoneHeightM - settings_.sourceHeightM;
     const auto image = settings_.microphoneHeightM + settings_.sourceHeightM;
     const auto halfSpacing = 0.5 * settings_.microphoneSpacingM;
-    for (std::size_t microphone = 0; microphone < 2; ++microphone) {
+    for (std::size_t path = 0; path < paths_.size(); ++path) {
+        const auto microphone = path / 4;
+        const auto exhaust = (path / 2) % 2 == 1;
+        const auto reflected = path % 2;
         const auto offset = microphone == 0 ? -halfSpacing : halfSpacing;
-        for (std::size_t reflected = 0; reflected < 2; ++reflected) {
+        {
             const auto gain = reflected == 0 ? 1.0 : settings_.groundReflection;
             if (gain <= 0.0) continue;
             double delaySamples {};
             double distanceM {};
-            retarded(positionM_, reflected == 0 ? direct : image, offset, delaySamples, distanceM);
-            auto sample = read(delaySamples)
+            retarded(exhaust ? positionM_ - settings_.exhaustBehindM : positionM_,
+                     reflected == 0 ? direct : image, offset, delaySamples, distanceM);
+            auto sample = read(exhaust ? exhaustDelay_ : delay_, delaySamples)
                 * static_cast<float>(gain * settings_.referenceDistanceM / distanceM);
-            auto& path = paths_[2 * microphone + reflected];
+            auto& state = paths_[path];
             if (settings_.airAbsorption) {
                 const auto cutoff = std::min(absorptionCutoffHz(distanceM), 0.45 * sampleRateHz_);
                 const auto coefficient = static_cast<float>(
                     1.0 - std::exp(-2.0 * std::numbers::pi * cutoff / sampleRateHz_));
-                path.first += coefficient * (sample - path.first);
-                path.second += coefficient * (path.first - path.second);
-                sample = path.second;
+                state.first += coefficient * (sample - state.first);
+                state.second += coefficient * (state.first - state.second);
+                sample = state.second;
             }
             heard[microphone] += sample;
         }

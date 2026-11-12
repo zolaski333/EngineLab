@@ -650,6 +650,16 @@ private:
     PassByMicrophone passBy_;
     std::atomic<bool> passByRequested_ { false };
     std::atomic<double> passByPositionM_ { 0.0 };
+    /** The tailpipe's distance behind the engine for the trackside
+     *  microphone: the wheelbase, a front-engined car's estimate. */
+    double passByExhaustBehindM_ { 2.65 };
+    /** The exhaust's share of the dry mix, per channel, for one block, and
+     *  the copies of the output low-pass and tone shelf it goes through. */
+    std::array<std::vector<float>, 2> passByExhaust_ {};
+    float passByLowPassLeft_ { 0.0F };
+    float passByLowPassRight_ { 0.0F };
+    float passByToneLowLeft_ { 0.0F };
+    float passByToneLowRight_ { 0.0F };
     double authoredObserverDistanceM_ { 1.0 };
     /** setSoundSources() -> audio thread, and back to be freed. */
     std::atomic<AcousticSourcePlacements*> incomingSoundSources_ { nullptr };

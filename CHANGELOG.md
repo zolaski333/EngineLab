@@ -71,7 +71,8 @@ file formats, always with an in-memory migration).
 - **A trackside microphone.** In the 3-D view's settings, *Sound*,
   *Trackside microphone*: the car is heard from 7.5 m beside its lane,
   1.2 m up, as it drives past (the standard pass-by microphone). Set the
-  cruise control and it passes again and again, with its Doppler shift, the
+  cruise control and it passes again and again: the intake and engine
+  first, the exhaust as the back of the car goes by, with the Doppler shift, the
   ground's reflection, the air's absorption of the treble and its level
   falling 6 dB each time the distance doubles. Off at every start.
 
