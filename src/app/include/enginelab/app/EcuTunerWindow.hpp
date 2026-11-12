@@ -45,6 +45,12 @@ public:
     [[nodiscard]] bool vtecButtonVisible() const { return vtecButton_.isVisible(); }
     /** Presses the VTEC button, as a click does. */
     void pressVtecButton();
+    /** Anti-lag's switch: shown when the tables carry it (a turbocharged
+     *  petrol engine); its speed, air, spark, mixture and cut are tables of
+     *  their own. Its text now, whether it shows, and a press (for tests). */
+    [[nodiscard]] juce::String antiLagButtonText() const { return antiLagButton_.getButtonText(); }
+    [[nodiscard]] bool antiLagButtonVisible() const { return antiLagButton_.isVisible(); }
+    void pressAntiLagButton();
     /** Completes tables loaded from a file (LOAD and its hot reload) with
         the settings the file predates. */
     void setTableCompletion(calibration::DraftCompletion complete);
@@ -61,6 +67,7 @@ private:
     bool publishEdit(calibration::CalibrationEntry edited, const calibration::CalibrationEntry& previous);
     void updateToolState();
     void updateVtecButton();
+    void updateAntiLagButton();
     void chooseCalibrationToLoad();
     void chooseCalibrationToSave();
     void showIssues(const calibration::PublishResult&, const juce::String& title);
@@ -99,6 +106,7 @@ private:
     juce::TextButton saveButton_ { "SAVE" };
     juce::TextButton refreshButton_ { "RELOAD" };
     juce::TextButton vtecButton_ { "FIT VTEC CAMS" };
+    juce::TextButton antiLagButton_ { "ANTI-LAG OFF" };
     bool vtecFittable_ { false };
     juce::Label statusLabel_;
     juce::Label descriptionLabel_;

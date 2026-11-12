@@ -169,6 +169,19 @@ allowed. The VTEC light beside the tachometer is lit while the valves run
 the high cam, an outline on the low cam, struck through when the ECU holds
 it off; the side panel says which cam runs and on how many cylinders.
 
+### Anti-lag
+
+A turbocharged petrol engine's tables carry `antilag.enabled` (0, off),
+`antilag.min_rpm` (0.45 x redline), `antilag.air_percent` (20),
+`antilag.spark_atdc_deg` (25), `antilag.lambda` (0.90) and
+`antilag.cut_percent` (33). Armed, the exhaust's reaction model runs; with
+the driver's throttle at or under 5 % above `min_rpm`, no limiter and no
+overboost cut, the ECU holds the throttle at `air_percent`, fires the spark
+`spark_atdc_deg` after top dead centre, targets `lambda`, cuts the overrun
+fuel cut, and cuts the spark of `cut_percent` of the firings (spread in
+firing order) with their fuel kept. The lambda loop does not learn. The
+tuner's ANTI-LAG button switches `antilag.enabled`.
+
 ### Idle and fuel-cut strategies (not tunable)
 
 - **Fuel cut on overrun**: below 2 % throttle and above 1.65 × the idle

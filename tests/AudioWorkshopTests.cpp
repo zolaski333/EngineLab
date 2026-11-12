@@ -865,6 +865,30 @@ int main() {
         tuner.setSessionLocked(true);
         tuner.pressVtecButton();
         require(vtec() == 1.0, "a locked tuner (a dyno run) leaves VTEC alone");
+        require(!tuner.antiLagButtonVisible(), "an engine without a turbo shows no anti-lag switch");
+    }
+    {
+        // Anti-lag's switch, on a turbocharged petrol engine's tables: off,
+        // then armed and off again in one click each.
+        const auto turbo = std::find_if(catalog.entries.begin(), catalog.entries.end(), [](const auto& entry) {
+            return entry.config.name.find("2JZ") != std::string::npos;
+        });
+        require(turbo != catalog.entries.end(), "catalog has the 2JZ");
+        namespace calibration = enginelab::calibration;
+        auto store = std::make_shared<calibration::CalibrationStore>();
+        require(store->publish(calibration::makeDefaultEcuCalibration(turbo->config), { 0, "engine-default" }).published,
+                "the 2JZ's tables publish");
+        enginelab::EcuTunerComponent tuner(store);
+        tuner.setSize(980, 620);
+        const auto antiLag = [&store] {
+            return store->snapshot()->scalar(calibration::keys::antiLagEnabled).value_or(-1.0);
+        };
+        require(tuner.antiLagButtonVisible() && tuner.antiLagButtonText() == "ANTI-LAG OFF" && antiLag() == 0.0,
+                "a turbocharged petrol engine's tuner shows anti-lag, off");
+        tuner.pressAntiLagButton();
+        require(tuner.antiLagButtonText() == "ANTI-LAG ON" && antiLag() == 1.0, "one click arms it");
+        tuner.pressAntiLagButton();
+        require(tuner.antiLagButtonText() == "ANTI-LAG OFF" && antiLag() == 0.0, "and one more turns it off");
     }
 
     {

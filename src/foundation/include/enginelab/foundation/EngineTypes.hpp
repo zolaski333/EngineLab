@@ -2266,6 +2266,9 @@ struct EngineState final {
     double nitrousBottlePressureKpa { 0.0 };
     double nitrousBottleTemperatureC { 0.0 };
     double nitrousOxygenShare { 0.0 };
+    /** Anti-lag: armed in the ECU's tables, and working this frame. */
+    bool antiLagArmed { false };
+    bool antiLagActive { false };
 };
 
 struct EcuCommand final {
@@ -2322,6 +2325,14 @@ struct EcuCommand final {
     /** The throttle, 0-1, under which the high cam never runs; negative:
      *  each camshaft's own `switchThrottle`. */
     double vtecMinimumThrottle { -1.0 };
+    /** Anti-lag (calibration `antilag.*`): armed, the exhaust's reaction
+     *  model runs; active, the ECU holds the throttle open, fires late and
+     *  cuts the spark of `sparkCutFraction` of the firings, fuel kept. */
+    bool antiLagArmed { false };
+    bool antiLagActive { false };
+    /** Share of firings, 0-1, whose spark is cut with the fuel kept; the
+     *  simulator spreads it over the cylinders in firing order. */
+    double sparkCutFraction { 0.0 };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

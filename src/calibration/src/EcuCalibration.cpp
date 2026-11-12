@@ -84,6 +84,48 @@ constexpr double seaLevelPressureKpa = 101.325;
     } };
 }
 
+/** Anti-lag's settings, off: a turbocharged petrol engine's tables carry
+    them so the tuner can arm it. */
+[[nodiscard]] std::array<ScalarCalibration, 6> antiLagSettings(const EngineConfig& config) {
+    return { {
+        { metadata(std::string(keys::antiLagEnabled), "Anti-lag",
+                   "Anti-lag (a rally car's bang-bang): 1 arms it, 0 (the default) turns it off. Armed, with your "
+                   "foot off the throttle above its speed, it holds the throttle open, fires the spark late and "
+                   "cuts the spark of a share of the firings with their fuel kept: those charges burn in the "
+                   "exhaust manifold, before the turbine, and keep the turbo spinning. It heats the exhaust hard.",
+                   CalibrationUnit::dimensionless, 0.0, 1.0, 0),
+          0.0 },
+        { metadata(std::string(keys::antiLagMinimumRpm), "Anti-lag minimum speed",
+                   "Anti-lag works only above this engine speed.",
+                   CalibrationUnit::revolutionsPerMinute, 0.0, ecuLimits::maximumRevLimitRpm, 0),
+          std::clamp(0.45 * config.redlineRpm, 0.0, ecuLimits::maximumRevLimitRpm) },
+        { metadata(std::string(keys::antiLagAir), "Anti-lag air",
+                   "The throttle opening anti-lag holds with your foot off: the air the late and the unlit "
+                   "charges need.",
+                   CalibrationUnit::percent, 0.0, 100.0, 0),
+          20.0 },
+        { metadata(std::string(keys::antiLagRetard), "Anti-lag spark",
+                   "How late the spark fires, degrees after top dead centre: the flame is still burning when the "
+                   "exhaust valve opens.",
+                   CalibrationUnit::degreeCrankshaft, 0.0, ecuLimits::maximumAntiLagSparkAtdcDegrees, 1),
+          25.0 },
+        { metadata(std::string(keys::antiLagLambda), "Anti-lag mixture",
+                   "The mixture, as a lambda: under 1 is rich.",
+                   CalibrationUnit::dimensionless, ecuLimits::minimumAntiLagLambda, ecuLimits::maximumAntiLagLambda, 2),
+          0.90 },
+        { metadata(std::string(keys::antiLagCut), "Anti-lag cut",
+                   "The share of firings whose spark is cut with the fuel kept: their charge, air and fuel, "
+                   "lights in the hot manifold.",
+                   CalibrationUnit::percent, 0.0, 100.0, 0),
+          33.0 },
+    } };
+}
+
+[[nodiscard]] bool antiLagCapable(const EngineConfig& config) noexcept {
+    return config.fuel == FuelType::gasoline && config.forcedInduction.enabled
+        && config.forcedInduction.type == ForcedInductionType::turbocharger;
+}
+
 } // namespace
 
 CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
@@ -231,11 +273,16 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
     }
     if (const auto* cam = firstVtecCamshaft(config))
         for (auto& setting : vtecSettings(*cam)) draft.set(std::move(setting));
+    if (antiLagCapable(config))
+        for (auto& setting : antiLagSettings(config)) draft.set(std::move(setting));
     return draft;
 }
 
 void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config) {
     (void)syncVtecSettings(draft, config);
+    if (antiLagCapable(config))
+        for (auto& setting : antiLagSettings(config))
+            if (draft.find(setting.metadata.id) == nullptr) draft.set(std::move(setting));
     if (draft.find(keys::overboostCut) != nullptr) return;
     const auto defaults = makeDefaultEcuCalibration(config);
     if (const auto* cut = defaults.find(keys::overboostCut)) draft.set(*cut);

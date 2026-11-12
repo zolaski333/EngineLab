@@ -427,6 +427,19 @@ if(MSVC)
     target_link_options(EngineLabExhaustValveTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabAntiLagTests AntiLagTests.cpp)
+target_link_libraries(EngineLabAntiLagTests PRIVATE
+    EngineLab::Catalog EngineLab::Calibration EngineLab::Simulation EngineLab::Ecu
+    EngineLab::Events EngineLab::Physics EngineLab::Exhaust)
+target_compile_definitions(EngineLabAntiLagTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabAntiLagTests)
+add_test(NAME EngineLab.AntiLag COMMAND EngineLabAntiLagTests)
+set_tests_properties(EngineLab.AntiLag PROPERTIES TIMEOUT 900)
+if(MSVC)
+    target_link_options(EngineLabAntiLagTests PRIVATE /STACK:8388608)
+endif()
+
 add_executable(EngineLabNitrousTests NitrousTests.cpp)
 target_link_libraries(EngineLabNitrousTests PRIVATE
     EngineLab::Catalog EngineLab::Serialization EngineLab::Simulation EngineLab::Ecu

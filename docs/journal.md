@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-12 — physical anti-lag
+
+- Owner plan step 10: ECU keys `antilag.*` (off), throttle held open, late spark, own lambda, a firing-order spark cut with fuel kept; armed runs the exhaust reaction model, working is an afterfire window. No new chemistry: the existing in-network oxidation burns it.
+- `EngineLab.AntiLag`, 2JZ lifted 1 s from full boost at 5,000 rpm (unloaded): shaft 129,322 vs 96,303 rpm disarmed, manifold 101.6 vs 17.1 kPa, 11.1 kW burnt in the network, 35 % of sparks cut. Off: bit-identical to tables without the keys.
+- One factor at a time, armed: manifold burn off (reaction efficiency 0) 128,804 at 5,000 (-0.4 %, wastegate-limited) and 119,110 vs 122,850 at 3,500 rpm lifted 2 s (-3 %); a 0.5 ms reaction instead of 10 ms 124,225 (18.9 kW). So most of the held speed is the open throttle's flow and the late, hot in-cylinder burn; the manifold burn adds a few percent. Air 10 % at 3,500 does not hold the turbo (66,603 vs 67,012).
+- Unloaded, armed, the engine climbs (3,500 -> 5,390 rpm in 2 s at 20 % air): net torque stays positive. Not tested in a car in gear; no UI run seen; not in the full ctest yet.
+
 ## 2026-11-12 — a nitrous kit
 
 - Owner plan: a kit hidden until fitted, unlimited if wanted, no limit on a figure; off on every engine. One plenum nozzle; nitrous as 0.5 O2 + N2 per mole with its enthalpy less Watson's latent heat; 82 kJ/mol released at the burn by the kit's oxygen share; jet 2.27 kg/min per 100 hp at 900 psi (energy balance at 30 % brake efficiency; install sheets 1.8-2.7), as the root of the drop; bottle at nitrous's vapour pressure, cooling without its heater.

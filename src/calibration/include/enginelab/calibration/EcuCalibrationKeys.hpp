@@ -38,6 +38,18 @@ inline constexpr std::string_view vtecEnabled = "vtec.enabled";
 inline constexpr std::string_view vtecEngage = "vtec.engage_rpm";
 inline constexpr std::string_view vtecHysteresis = "vtec.hysteresis_rpm";
 inline constexpr std::string_view vtecMinimumThrottle = "vtec.min_throttle_percent";
+// Anti-lag, on a turbocharged petrol engine: the switch, 1 armed and 0 off
+// (the default); the speed it works above; the throttle it holds open, in
+// percent; how late the spark fires, degrees after top dead centre; the
+// mixture, as a lambda; and the share of firings whose spark is cut with the
+// fuel kept, in percent. It works with the driver's foot off the throttle:
+// the late and the unlit charges burn in the manifold, before the turbine.
+inline constexpr std::string_view antiLagEnabled = "antilag.enabled";
+inline constexpr std::string_view antiLagMinimumRpm = "antilag.min_rpm";
+inline constexpr std::string_view antiLagAir = "antilag.air_percent";
+inline constexpr std::string_view antiLagRetard = "antilag.spark_atdc_deg";
+inline constexpr std::string_view antiLagLambda = "antilag.lambda";
+inline constexpr std::string_view antiLagCut = "antilag.cut_percent";
 
 } // namespace enginelab::calibration::keys
 
@@ -83,6 +95,13 @@ inline constexpr double maximumOverboostCutMarginKpa = 1'000.0;
 // tuner's choice.
 inline constexpr double maximumVtecHysteresisRpm = maximumRevLimitRpm;
 inline constexpr double maximumVtecThrottlePercent = 100.0;
+// Anti-lag: the spark may fire up to 90 deg after top dead centre (the
+// spark schedule carries far more); its mixture is a lambda.
+inline constexpr double maximumAntiLagSparkAtdcDegrees = 90.0;
+inline constexpr double minimumAntiLagLambda = 0.5;
+inline constexpr double maximumAntiLagLambda = 1.5;
+// Above this driver's throttle anti-lag lets go: the driver drives.
+inline constexpr double antiLagMaximumDriverThrottle = 0.05;
 inline constexpr double minimumNormalizedLoad = 0.0;
 inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;

@@ -53,6 +53,10 @@ EcuTunerComponent::EcuTunerComponent(
     saveButton_.onClick = [this] { chooseCalibrationToSave(); };
     refreshButton_.onClick = [this] { reloadFromSnapshot(); };
     vtecButton_.onClick = [this] { pressVtecButton(); };
+    antiLagButton_.onClick = [this] { pressAntiLagButton(); };
+    antiLagButton_.setTooltip("Anti-lag: with your foot off, the throttle held open, a late spark and a share of the "
+                              "sparks cut, fuel kept: the manifold burns it and the turbo keeps spinning. Its speed, "
+                              "air, spark, mixture and cut are tables of their own above.");
     vtecButton_.setTooltip("VTEC: the ECU's switch over the high cam. Its engagement speed, hysteresis and minimum "
                            "throttle are tables of their own above.");
     using calibration::CellOperation;
@@ -81,6 +85,7 @@ EcuTunerComponent::EcuTunerComponent(
     for (auto* component : components)
         addAndMakeVisible(*component);
     addChildComponent(vtecButton_);
+    addChildComponent(antiLagButton_);
     reloadFromSnapshot(false);
     startTimerHz(10);
 }
@@ -141,6 +146,32 @@ void EcuTunerComponent::updateVtecButton() {
                           on ? juce::Colour(0xff7a4a16) : juce::Colour(0xff26302e));
     vtecButton_.setVisible(setting != nullptr || vtecFittable_);
     vtecButton_.setEnabled(!sessionLocked_);
+}
+
+void EcuTunerComponent::updateAntiLagButton() {
+    const auto* entry = draft_.find(calibration::keys::antiLagEnabled);
+    const auto* setting = entry != nullptr ? std::get_if<calibration::ScalarCalibration>(entry) : nullptr;
+    const auto on = setting != nullptr && setting->value >= 0.5;
+    antiLagButton_.setButtonText(on ? "ANTI-LAG ON" : "ANTI-LAG OFF");
+    antiLagButton_.setColour(juce::TextButton::buttonColourId,
+                             on ? juce::Colour(0xff7a4a16) : juce::Colour(0xff26302e));
+    antiLagButton_.setEnabled(!sessionLocked_);
+    if (antiLagButton_.isVisible() != (setting != nullptr)) {
+        antiLagButton_.setVisible(setting != nullptr);
+        resized();
+    }
+}
+
+void EcuTunerComponent::pressAntiLagButton() {
+    if (sessionLocked_) return;
+    const auto* current = draft_.find(calibration::keys::antiLagEnabled);
+    if (current == nullptr) return;
+    auto edited = *current;
+    auto* setting = std::get_if<calibration::ScalarCalibration>(&edited);
+    if (setting == nullptr) return;
+    setting->value = setting->value >= 0.5 ? 0.0 : 1.0;
+    const auto previous = *current;
+    if (publishEdit(std::move(edited), previous)) rebuildCells();
 }
 
 void EcuTunerComponent::pressVtecButton() {
@@ -456,6 +487,7 @@ void EcuTunerComponent::updateToolState() {
     undoButton_.setEnabled(!sessionLocked_ && !undo_.empty());
     redoButton_.setEnabled(!sessionLocked_ && !redo_.empty());
     updateVtecButton();
+    updateAntiLagButton();
     const auto step = entry != nullptr ? calibration::cellStep(calibration::metadataOf(*entry)) : 0.0;
     selectionLabel_.setText(selection_.empty() || entry == nullptr
             ? juce::String("Click a cell; shift-click selects a block, ctrl-click adds a cell")
@@ -596,6 +628,10 @@ void EcuTunerComponent::resized() {
     auto top = getLocalBounds().reduced(12).removeFromTop(34);
     if (vtecButton_.isVisible()) {
         vtecButton_.setBounds(top.removeFromRight(124));
+        top.removeFromRight(8);
+    }
+    if (antiLagButton_.isVisible()) {
+        antiLagButton_.setBounds(top.removeFromRight(124));
         top.removeFromRight(8);
     }
     // The buttons after the selector take 329 px.

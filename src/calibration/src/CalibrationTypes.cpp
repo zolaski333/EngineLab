@@ -311,6 +311,28 @@ void validateKnownEcuEntry(std::string_view id, const CalibrationEntry& entry,
             addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
                      "The VTEC settings must be scalar calibrations.");
         }
+    } else if (id == keys::antiLagEnabled || id == keys::antiLagMinimumRpm || id == keys::antiLagAir
+               || id == keys::antiLagRetard || id == keys::antiLagLambda || id == keys::antiLagCut) {
+        const auto& metadata = metadataOf(entry);
+        const auto percent = id == keys::antiLagAir || id == keys::antiLagCut;
+        const auto unit = id == keys::antiLagEnabled || id == keys::antiLagLambda ? CalibrationUnit::dimensionless
+            : percent ? CalibrationUnit::percent
+            : id == keys::antiLagRetard ? CalibrationUnit::degreeCrankshaft
+            : CalibrationUnit::revolutionsPerMinute;
+        if (metadata.unit != unit)
+            addIssue(issues, CalibrationErrorCode::incompatibleUnit, std::string(path) + ".unit",
+                     "An anti-lag setting is in its own unit: a number, percent, degrees or rpm.");
+        validateCanonicalLimits(metadata,
+            id == keys::antiLagLambda ? ecuLimits::minimumAntiLagLambda : 0.0,
+            id == keys::antiLagEnabled ? 1.0
+            : percent ? 100.0
+            : id == keys::antiLagRetard ? ecuLimits::maximumAntiLagSparkAtdcDegrees
+            : id == keys::antiLagLambda ? ecuLimits::maximumAntiLagLambda
+            : ecuLimits::maximumRevLimitRpm,
+            path, issues);
+        if (!std::holds_alternative<ScalarCalibration>(entry))
+            addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
+                     "The anti-lag settings must be scalar calibrations.");
     }
 }
 

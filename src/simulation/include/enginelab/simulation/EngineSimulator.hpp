@@ -705,6 +705,10 @@ private:
      *  many injection starts it has seen (its place in the firing sequence
      *  that spreads the cut). */
     std::array<bool, 32> injectionCutThisCycle_ {};
+    /** Anti-lag's ignition cut, fuel kept: whether this cylinder's spark is
+     *  cut for the cycle that began at its injection start, spread over the
+     *  firings as the dual clutch's injection cut is. */
+    std::array<bool, 32> sparkCutThisCycle_ {};
     std::array<std::uint64_t, 32> injectionStartCount_ {};
     std::array<double, 32> portPulseInventoryCreditMoles_ {};
     std::array<double, 32> portPulsePrimeDeficitMoles_ {};

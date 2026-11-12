@@ -847,6 +847,45 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     if (overrunAfterfireActive)
         command.ignitionAdvanceDegrees =
             config.exhaustAfterfire.overrunSparkAdvanceDegrees;
+    // Anti-lag (calibration `antilag.*`, a turbocharged petrol engine; off
+    // unless armed): with the driver's foot off above its speed, the throttle
+    // is held open, the map's mixture and spark give way to its own late
+    // spark and lambda, and a share of the firings is cut with its fuel kept.
+    // The late flame and the unlit charges reach the manifold with fuel and
+    // oxygen; the exhaust's reaction model burns them before the turbine. The
+    // fuel cut on the overrun gives way to it, and the rev limiter takes over
+    // from it. Its mixture is no lambda observation.
+    if (config.fuel == FuelType::gasoline && config.forcedInduction.enabled
+            && config.forcedInduction.type == ForcedInductionType::turbocharger
+            && calibrationSnapshot->scalarOr(calibration::keys::antiLagEnabled, 0.0) >= 0.5) {
+        command.antiLagArmed = true;
+        const auto minimumRpm = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagMinimumRpm, 0.0),
+            0.0, calibration::ecuLimits::maximumRevLimitRpm);
+        if (controls.ignitionEnabled && !controls.starterEngaged && !limiterActive && !overboostActive
+                && controls.throttle <= calibration::ecuLimits::antiLagMaximumDriverThrottle
+                && state.rpm >= minimumRpm && state.damage < 1.0) {
+            const auto air = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagAir, 0.0), 0.0, 100.0)
+                / 100.0;
+            const auto sparkAtdc = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagRetard, 0.0),
+                0.0, calibration::ecuLimits::maximumAntiLagSparkAtdcDegrees);
+            const auto lambda = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagLambda, 1.0),
+                calibration::ecuLimits::minimumAntiLagLambda, calibration::ecuLimits::maximumAntiLagLambda);
+            const auto cut = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagCut, 0.0), 0.0, 100.0)
+                / 100.0;
+            command.antiLagActive = true;
+            command.effectiveThrottle = std::max(command.effectiveThrottle, air);
+            command.targetAirFuelRatio = lambda * config.fuelProperties.stoichiometricAirFuelRatio;
+            command.ignitionAdvanceDegrees = -sparkAtdc;
+            command.fuelCorrection = warmupCorrection * crankingCorrection;
+            command.fuelEnabled = true;
+            command.sparkEnabled = true;
+            command.overrunAfterfireActive = false;
+            command.wetSparkCutActive = false;
+            command.decelerationFuelCutActive = false;
+            command.sparkCutFraction = cut;
+            command.lambdaLearningAllowed = false;
+        }
+    }
     if (config.forcedInduction.enabled
             && config.forcedInduction.type == ForcedInductionType::turbocharger) {
         if (const auto boost = calibrationSnapshot->sampleCurve(

@@ -76,6 +76,13 @@ file formats, always with an in-memory migration).
   ground's reflection, the air's absorption of the treble and its level
   falling 6 dB each time the distance doubles. Off at every start.
 
+- **Anti-lag.** A turbocharged petrol engine's ECU tables carry it, off;
+  the tuner's *ANTI-LAG* switch arms it. With the foot off above its speed it
+  holds the throttle open (`antilag.air_percent`), fires late
+  (`antilag.spark_atdc_deg`), runs its own mixture and cuts a share of the
+  sparks with their fuel kept: the manifold burns what the cylinders send it
+  and the turbo keeps spinning. Off, nothing changes.
+
 - **A nitrous kit.** The Fuel window's *Nitrous* section shows only *Fit a
   kit...* until one is fitted; then its shot, bottle, bottle temperature,
   heater, throttle and speed window, progressive ramp, spark retard and

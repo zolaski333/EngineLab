@@ -2126,6 +2126,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             ecuCommand.dieselFuelQuantityLimitMgPerCycle;
         state_.ecuFuelEnabled = ecuCommand.fuelEnabled;
         state_.ecuSparkEnabled = ecuCommand.sparkEnabled;
+        state_.antiLagArmed = ecuCommand.antiLagArmed;
+        state_.antiLagActive = ecuCommand.antiLagActive;
         state_.ecuSoftRevLimiterActive = ecuCommand.softRevLimiterActive;
         state_.ecuHardRevLimiterActive = ecuCommand.hardRevLimiterActive;
         state_.activeRevLimitRpm = ecuCommand.revLimitRpm;
@@ -3135,6 +3137,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     injectionCutThisCycle_[cylinderIndex] = fraction > 0.0
                         && std::floor(static_cast<double>(pulse + 1U) * fraction)
                             > std::floor(static_cast<double>(pulse) * fraction);
+                    // Anti-lag's ignition cut, the same sequence: its charge
+                    // is injected and leaves unlit.
+                    const auto sparkFraction = std::clamp(ecuCommand.sparkCutFraction, 0.0, 1.0);
+                    sparkCutThisCycle_[cylinderIndex] = sparkFraction > 0.0
+                        && std::floor(static_cast<double>(pulse + 1U) * sparkFraction)
+                            > std::floor(static_cast<double>(pulse) * sparkFraction);
                     ++injectionStartCount_[cylinderIndex];
                 }
                 injectedFuelMolesThisCycle_[cylinderIndex] = 0.0;
@@ -3940,6 +3948,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         static_cast<double>(rng) / static_cast<double>(0xffffffffU)
                         < config_.exhaustAfterfire.overrunSparkCutFraction;
                 }
+                // Anti-lag's cut: an ECU decision, no draw.
+                if (ecuCommand.antiLagActive && sparkCutThisCycle_[cylinderIndex])
+                    cylinderMisfires_[cylinderIndex] = true;
                 if (cylinderMisfires_[cylinderIndex]) {
                     contribution.misfired = true;
                     contribution.misfireAirFuelRatio = mixtureAfr;
@@ -5427,15 +5438,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // pulse's OFF windows, so a transported slug continues reacting
             // after injection closes; a wet hard limiter likewise stays enabled
             // across its alternating spark phases.
+            // Anti-lag armed runs the reaction model too; working, it is
+            // an afterfire window: its late flames and unlit charges burn in
+            // the manifold, before the turbine.
             const auto exhaustReactionModelEnabled =
                 afterfireRetainsFuel(config_.exhaustAfterfire.strategy)
-                || config_.ignition.limiterKeepsFuel;
+                || config_.ignition.limiterKeepsFuel
+                || ecuCommand.antiLagArmed;
             const auto exhaustReactionOperatingState =
                 (afterfireRetainsFuel(config_.exhaustAfterfire.strategy)
                     && ecuCommand.decelerationFuelCutActive)
                 || (config_.ignition.limiterKeepsFuel
                     && (ecuCommand.wetSparkCutActive
-                        || ecuCommand.hardRevLimiterActive));
+                        || ecuCommand.hardRevLimiterActive))
+                || ecuCommand.antiLagActive;
             if (networkAdvance.completed
                 && exhaustReactionModelEnabled) {
                 // Named assignments are intentional. This public chemistry
@@ -7109,6 +7125,7 @@ void EngineSimulator::reset() noexcept {
     injectedFuelMolesThisCycle_.fill(0.0);
     portPulseCreditSampled_.fill(false);
     injectionCutThisCycle_.fill(false);
+    sparkCutThisCycle_.fill(false);
     injectionStartCount_.fill(0U);
     engineBrakeHeld_ = false;
     state_.engineBrakeCylinders = 0U;
