@@ -5,6 +5,10 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — pass-by never reached the audio
+
+- Owner report: a run sounded from the camera, no distance, no Doppler. Cause: `EngineRuntime` filled `EngineState::passBy*` after `publishAudioFrame`, so the audio always read phase 0 and the microphone never switched on (the UI, reading the later snapshot, did turn the camera's microphones off). Now filled at the frame's creation. `EngineLab.PassByRun` drives the real runtime thread (phase 1 at -300 m published, 0 once stopped; it failed without the fix) and a renderer (its car at -300 m). Not tested: the run heard in the app.
+
 ## 2026-11-13 — pass-by run and propagation
 
 - Owner plan step 4: `PassByDriver` (runtime) drives a real K20 car rig in `EngineLab.PassByRun`: standing start from 150 m, 113.2 km/h at the microphone after 8.24 s, 8,480 rpm peak, third gear, finished after 17.8 s; launch control holds the staging at 4,057 rpm (limit 4,000); 50 km/h held in second within 0.63 km/h, 57.2 km/h at the microphone on the 10 m full-throttle program.

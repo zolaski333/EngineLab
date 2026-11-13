@@ -1558,6 +1558,13 @@ void EngineRuntime::run(std::stop_token stopToken) {
             simulator_.probeGasField(static_cast<std::int32_t>(gasProbePlace / 256),
                                      static_cast<std::uint8_t>(gasProbePlace % 256));
         auto frame = simulationDt > 0.0 ? simulator_.step(simulationDt, controls) : SimulationFrame { simulator_.state() };
+        // The run's place goes to the audio (publishAudioFrame, below) with
+        // this frame: filled with the driveline's figures further down, it
+        // reached the audio as no run at all.
+        frame.state.passByPhase = static_cast<std::uint8_t>(passByDriver_.phase());
+        frame.state.passByPositionM = passByDriver_.positionM();
+        frame.state.passBySeconds = passByDriver_.runSeconds();
+        frame.state.passBySoundGain = passByDriver_.soundGain();
         if (gasFieldRequested && gasFieldDegrees < 0.0 && simulationDt > 0.0)
             simulator_.captureGasFieldNow();
         if (simulator_.gasField().sequence != gasFieldPublished_) {
@@ -1924,10 +1931,6 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.automaticShifting = driveline_.automaticShifting();
             frame.state.cruiseEngaged = cruise_.engaged();
             frame.state.cruiseSetSpeedMps = cruise_.setSpeedMps();
-            frame.state.passByPhase = static_cast<std::uint8_t>(passByDriver_.phase());
-            frame.state.passByPositionM = passByDriver_.positionM();
-            frame.state.passBySeconds = passByDriver_.runSeconds();
-            frame.state.passBySoundGain = passByDriver_.soundGain();
             frame.state.wheelTorqueNm = wheelTorqueNm_;
             frame.state.drivelineLoadTorqueNm = drivelineLoadTorqueNm_;
             frame.state.clutchTorqueNm = -engineClutchTorqueNm_;

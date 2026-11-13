@@ -724,7 +724,7 @@ add_test(NAME EngineLab.CruiseControl COMMAND EngineLabCruiseControlTests)
 
 add_executable(EngineLabPassByRunTests PassByRunTests.cpp)
 target_link_libraries(EngineLabPassByRunTests PRIVATE
-    EngineLab::Runtime EngineLab::Catalog EngineLab::Calibration EngineLab::Simulation EngineLab::Ecu
+    EngineLab::Audio EngineLab::Runtime EngineLab::Catalog EngineLab::Calibration EngineLab::Simulation EngineLab::Ecu
     EngineLab::Events EngineLab::Physics EngineLab::Exhaust)
 target_compile_definitions(EngineLabPassByRunTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")

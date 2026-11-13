@@ -7,6 +7,7 @@
 // speed until its full-throttle point; a held gear is never left; the lift
 // program lifts at the microphone.
 
+#include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/calibration/CalibrationTypes.hpp>
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
@@ -17,10 +18,13 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/DriverCommandArbiter.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
+#include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/runtime/PassByRun.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -289,9 +293,63 @@ void settingsHeld() {
     require(held.gear == 12, "a gear past the gearbox is held");
 }
 
+/** The running application's path: EngineRuntime's own thread drives the
+ *  run, and what the audio reads (RealtimeAudioState, the trackside
+ *  microphone's only input) says a run is on and where its car is. */
+void runtimePublishesTheRun() {
+    auto runtime = std::make_unique<EngineRuntime>(catalogueEngine("K20"));
+    runtime->start();
+    PassByRunSettings settings;
+    settings.startDistanceM = 300.0;
+    runtime->startPassByRun(settings);
+    auto& audio = runtime->audioState();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    auto phase = 0;
+    auto position = 0.0F;
+    while (std::chrono::steady_clock::now() < deadline) {
+        phase = audio.passByPhase.load(std::memory_order_relaxed);
+        position = audio.passByPositionM.load(std::memory_order_relaxed);
+        if (phase != 0 && position == -300.0F) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    runtime->stopPassByRun();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const auto after = audio.passByPhase.load(std::memory_order_relaxed);
+    runtime->stop();
+    std::cout << "runtime: the audio saw phase " << phase << " at " << position << " m, then " << after
+              << " once stopped" << std::endl;
+    require(phase != 0, "the audio is told a run is on");
+    require(position == -300.0F, "and that its car stands 300 m before the microphone");
+    require(after == 0, "stopped, the audio is told the run is off");
+}
+
+/** The renderer takes a published run: its microphone hears the car where
+ *  the run puts it, and lets it loop again once the run is off. */
+void rendererFollowsTheRun() {
+    auto runtime = std::make_unique<EngineRuntime>(catalogueEngine("K20"));
+    FiringEventQueue events;
+    auto renderer = std::make_unique<RealtimeEngineAudio>(events, runtime->audioState(), nullptr,
+        &runtime->exhaustGraph(), &runtime->engineConfig(), &runtime->exhaustAcousticSamples());
+    renderer->prepare(48'000.0, 256);
+    juce::AudioBuffer<float> block(2, 256);
+    auto& audio = runtime->audioState();
+    audio.passByPhase.store(static_cast<int>(PassByPhase::staging), std::memory_order_relaxed);
+    audio.passByPositionM.store(-300.0F, std::memory_order_relaxed);
+    audio.passBySoundGain.store(1.0F, std::memory_order_relaxed);
+    for (auto index = 0; index < 8; ++index) {
+        block.clear();
+        renderer->render(block, 0, 256);
+    }
+    std::cout << "renderer: the microphone's car at " << renderer->passByPositionM() << " m" << std::endl;
+    require(std::abs(renderer->passByPositionM() + 300.0) < 1.0, "the renderer's car is the run's, 300 m away");
+    require(!renderer->passByEnabled(), "without the menu's microphone: the run alone switched it on");
+}
+
 } // namespace
 
 int main() {
+    runtimePublishesTheRun();
+    rendererFollowsTheRun();
     settingsHeld();
     standingStart();
     launchControl();
