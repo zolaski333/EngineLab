@@ -17,7 +17,23 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**The owner's plan of 2026-11-11** (validated in full, autonomous, reported
+**The owner's plan of 2026-11-13** (validated in full, autonomous, reported
+at the end), fixing the ergonomics of the 2026-11-11 features: (1) one
+*Equipment* window (top bar) to fit and set every option (nitrous,
+anti-lag, active valve, VTEC, launch control), a scrolling Drive panel, and
+a live status saying what an option waits for; nitrous sprays armed at full
+throttle, its push button an option; (2) the tuner shows a group of
+single-value settings (`antilag.*`, `vtec.*`) as one page; (3) anti-lag
+with a speed feedback (it never adds speed, it keeps a chosen share of the
+engine braking), a Rally or Launch mode, exits (clutch, neutral, maximum
+speed and time, EGT), after measuring where its fuel burns; (4) a real
+pass-by run: from a standstill at a chosen distance, a scripted driver
+(launch, constant speed, lift at the microphone), a top-down strip and a
+WAV recording, with the sound right at 500 m (delay line, air absorption,
+ground impedance, real or normalised level). Off by default, default sound
+unchanged.
+
+Done before it: **the owner's plan of 2026-11-11** (validated in full, autonomous, reported
 at the end), in this order: (1) the turbo boost that runs away when the
 stoichiometric AFR is lowered (fuel energy per kg of oxygen, a turbo speed
 limit, an ECU overboost cut); (2) the exhaust designer: deleting a path or

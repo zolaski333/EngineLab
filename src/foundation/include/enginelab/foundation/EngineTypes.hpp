@@ -621,9 +621,9 @@ struct NitrousConfig final {
     /** ...and inside this window of engine speed, rpm (0: no ceiling). */
     double minimumRpm { 3'000.0 };
     double maximumRpm { 0.0 };
-    /** Only while the push button is held (Drive); off, arming and the WOT
-     *  switch are enough (the dyno). */
-    bool pushButton { true };
+    /** Only while the push button is held (Drive's key); off (the default),
+     *  arming and the full-throttle switch are enough, as on most kits. */
+    bool pushButton { false };
     /** Progressive controller: the flow rises from 0 to the full jet over
      *  this, s (0: at once). */
     double rampSeconds { 0.0 };
@@ -785,6 +785,20 @@ enum class AfterfireBlocker : std::uint32_t {
  *  Empty when nothing blocks. Declared here so the app and the harnesses print
  *  the same words for the same state. */
 [[nodiscard]] const char* afterfireBlockerName(std::uint32_t mask) noexcept;
+
+/** Why a fitted nitrous kit is not spraying: bits of
+ *  `EngineState::nitrousBlockers`, every one that holds. Telemetry only. */
+enum class NitrousBlocker : std::uint32_t {
+    notArmed = 1U << 0,
+    /** Its push button is not held. */
+    pushButton = 1U << 1,
+    ignitionOff = 1U << 2,
+    /** The throttle is under the kit's minimum. */
+    throttle = 1U << 3,
+    belowMinimumRpm = 1U << 4,
+    aboveMaximumRpm = 1U << 5,
+    bottleEmpty = 1U << 6,
+};
 
 /** Why the engine is not giving more right now: bits of
  *  `EngineState::activeLimits`. Telemetry only; nothing reads it back. */
@@ -2266,6 +2280,8 @@ struct EngineState final {
     double nitrousBottlePressureKpa { 0.0 };
     double nitrousBottleTemperatureC { 0.0 };
     double nitrousOxygenShare { 0.0 };
+    /** A fitted kit that does not spray: why (NitrousBlocker bits). */
+    std::uint32_t nitrousBlockers { 0U };
     /** Anti-lag: armed in the ECU's tables, and working this frame. */
     bool antiLagArmed { false };
     bool antiLagActive { false };

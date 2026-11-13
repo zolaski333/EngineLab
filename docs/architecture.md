@@ -106,8 +106,8 @@ constructor.
 
 | Panel | Area |
 |---|---|
-| `TopBar` | engine picker, run state, Exhaust / ECU / Audio windows, `⋯` menu |
-| `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key), trims |
+| `TopBar` | engine picker, run state, Exhaust / Fuel / Equipment / Vehicle / ECU / Audio windows, `⋯` menu |
+| `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key, and the switch of each fitted option), trims; it scrolls in a `juce::Viewport` when taller than the window (`preferredHeight()`) |
 | `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
 | `ReadoutStrip` | tachometer and six live readouts |
 | `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs; its `VehiclePanel` (the vehicle's figures typed in, taken live) is shown in the top bar's Vehicle window |
@@ -116,6 +116,15 @@ constructor.
 `Theme` holds the colour tokens, fonts and the `ui::LookAndFeel` installed for
 the whole application, so the tool windows and alerts share it. `Widgets` holds
 the buttons, segmented controls and slider rows the panels are built from.
+
+`EquipmentWindow` gathers the optional parts, one section each: nitrous
+(`NitrousConfig`, through `applyNitrousEdit`), the active exhaust valve
+(`ExhaustNetworkEditor::fitSilencerBypass` puts a valved bypass around the
+muffler nearest a tailpipe; the actuator through `applyEngineEdit`), VTEC and
+launch control (their calibration scalars, published at once with
+`EquipmentWindow::publishScalar`). Each section's status line reads the
+engine state of the last tick (`nitrousBlockers`, `exhaustValveOpening`,
+`vtecHighCylinderMask`, the launch-control limit bit).
 
 **A box is inside its window when it shows whole there**, so a screen
 recorder's window capture films it. Alert boxes go through `ui::showMessage`

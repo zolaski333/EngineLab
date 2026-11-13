@@ -5,6 +5,11 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-13 — Equipment window
+
+- Owner plan 2026-11-13 step 1. Nitrous was not broken: its chain is right, but it needed four unseen conditions (armed, `=` held by default, 95 % throttle, 3,000 rpm), and Drive, unscrolled, could cut its switch off. Now: no push button on a new kit, `EngineState::nitrousBlockers` per condition, an Equipment window with a live status per part, a scrolling Drive panel.
+- Tested: `EngineLab.Nitrous` (blocker bits; a K20 at 5 % throttle unloaded runs over the 2,000 rpm the other checks use, so this one sets 5,000) and the Audio workshop GUI test (fit, refill, three status texts, remove, a bypass valve fitted on the 2JZ, the designer callback). Not tested: the real window on screen.
+
 ## 2026-11-12 — physical anti-lag
 
 - Owner plan step 10: ECU keys `antilag.*` (off), throttle held open, late spark, own lambda, a firing-order spark cut with fuel kept; armed runs the exhaust reaction model, working is an afterfire window. No new chemistry: the existing in-network oxidation burns it.

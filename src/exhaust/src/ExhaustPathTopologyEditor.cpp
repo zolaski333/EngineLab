@@ -820,6 +820,56 @@ std::string ExhaustNetworkEditor::connectComponents(ExhaustNetworkConfig& networ
     return {};
 }
 
+std::string ExhaustNetworkEditor::fitSilencerBypass(EngineConfig& config) {
+    if (config.exhaustPaths.empty()) return "This engine's exhaust has no path to fit a valve to.";
+    auto edited = config;
+    std::size_t fitted = 0;
+    std::string why = "No silencer in this exhaust: add one in the exhaust designer first.";
+    for (auto& path : edited.exhaustPaths) {
+        auto network = path.network && !path.network->components.empty() ? *path.network
+                                                                          : makeEditableExhaustNetwork(path);
+        // Parts counted back from the tailpipes: the silencer with the
+        // fewest parts after it is the one nearest the end.
+        std::unordered_map<std::uint32_t, std::size_t> after;
+        std::vector<std::uint32_t> frontier;
+        for (const auto& component : network.components)
+            if (component.type == ExhaustComponentType::outlet) {
+                after[component.id] = 0;
+                frontier.push_back(component.id);
+            }
+        while (!frontier.empty()) {
+            std::vector<std::uint32_t> next;
+            for (const auto id : frontier)
+                for (const auto& connection : network.connections)
+                    if (connection.toComponentId == id && !after.contains(connection.fromComponentId)) {
+                        after[connection.fromComponentId] = after[id] + 1;
+                        next.push_back(connection.fromComponentId);
+                    }
+            frontier = std::move(next);
+        }
+        std::vector<std::pair<std::size_t, std::uint32_t>> silencers;
+        for (const auto& component : network.components)
+            if (component.type == ExhaustComponentType::muffler && !component.inletValve)
+                silencers.emplace_back(after.contains(component.id) ? after[component.id]
+                                                                    : std::numeric_limits<std::size_t>::max(),
+                                       component.id);
+        std::sort(silencers.begin(), silencers.end());
+        for (const auto& [distance, id] : silencers) {
+            auto candidate = network;
+            if (const auto error = addValvedBypass(candidate, id); !error.empty()) {
+                why = error;
+                continue;
+            }
+            path.network = std::move(candidate);
+            ++fitted;
+            break;
+        }
+    }
+    if (fitted == 0) return why;
+    config = std::move(edited);
+    return {};
+}
+
 std::string ExhaustNetworkEditor::addValvedBypass(ExhaustNetworkConfig& network, std::uint32_t componentId,
                                                   std::uint32_t* bypassPipeId) {
     const auto* component = findComponent(network, componentId);

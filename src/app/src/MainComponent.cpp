@@ -123,6 +123,7 @@ MainComponent::MainComponent() {
     topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
     topBar_.fuelButton.onClick = [this] { showFuelWindow(); };
+    topBar_.equipmentButton.onClick = [this] { showEquipmentWindow(); };
     topBar_.vehicleButton.onClick = [this] { showVehicleWindow(); };
     topBar_.audioButton.onClick = [this] { showAudioWorkshop(); };
     topBar_.moreButton.onClick = [this] { showMoreMenu(); };
@@ -245,12 +246,16 @@ MainComponent::MainComponent() {
     });
 
     for (juce::Component* panel : { static_cast<juce::Component*>(&topBar_),
-                                    static_cast<juce::Component*>(&controls_),
+                                    static_cast<juce::Component*>(&controlsViewport_),
                                     static_cast<juce::Component*>(&viewport_),
                                     static_cast<juce::Component*>(&readouts_),
                                     static_cast<juce::Component*>(&side_),
                                     static_cast<juce::Component*>(&status_) })
         addAndMakeVisible(*panel);
+    controlsViewport_.setViewedComponent(&controls_, false);
+    controlsViewport_.setScrollBarsShown(true, false);
+    controlsViewport_.setScrollBarThickness(8);
+    controls_.onLayoutChanged = [this] { resized(); };
     refreshKeyCaps();
 
     selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
@@ -266,6 +271,7 @@ MainComponent::~MainComponent() {
     audioWorkshopWindow_.reset();
     exhaustDesignerWindow_.reset();
     fuelWindow_.reset();
+    equipmentWindow_.reset();
     vehicleWindow_.reset();
     ecuTunerWindow_.reset();
     shutdownAudio();
@@ -525,6 +531,7 @@ void MainComponent::setExhaustValveMode(ExhaustValveMode mode) {
     if (!runtime_) return;
     runtime_->setExhaustValveMode(mode);
     controls_.setExhaustValveMode(mode);
+    if (equipmentWindow_) equipmentWindow_->setValveMode(mode);
 }
 
 void MainComponent::setNitrousArmed(bool armed) {
@@ -1146,14 +1153,32 @@ void MainComponent::showFuelWindow() {
         auto safe = juce::Component::SafePointer<MainComponent>(this);
         fuelWindow_ = std::make_unique<FuelWindow>(config_, fuelPresets_, [safe](const EngineConfig& edited) {
             return safe && safe->applyEngineEdit(edited);
-        }, FuelWindow::NitrousCallbacks {
-            [safe](const NitrousConfig& kit) { return safe && safe->applyNitrousEdit(kit); },
-            [safe] { if (safe && safe->runtime_) safe->runtime_->refillNitrousBottle(); } });
+        });
     }
     fuelWindow_->setConfig(config_);
     fuelWindow_->setLocked(runtime_->dynoRunning());
     fuelWindow_->setVisible(true);
     fuelWindow_->toFront(true);
+}
+
+void MainComponent::showEquipmentWindow() {
+    if (!runtime_) return;
+    if (!equipmentWindow_) {
+        auto safe = juce::Component::SafePointer<MainComponent>(this);
+        EquipmentWindow::Callbacks callbacks;
+        callbacks.applyNitrous = [safe](const NitrousConfig& kit) { return safe && safe->applyNitrousEdit(kit); };
+        callbacks.refillNitrous = [safe] { if (safe && safe->runtime_) safe->runtime_->refillNitrousBottle(); };
+        callbacks.applyEngine = [safe](const EngineConfig& edited) { return safe && safe->applyEngineEdit(edited); };
+        callbacks.setValveMode = [safe](ExhaustValveMode mode) { if (safe) safe->setExhaustValveMode(mode); };
+        callbacks.openExhaustDesigner = [safe] { if (safe) safe->showExhaustDesigner(); };
+        callbacks.fitVtecCams = [safe] { if (safe) safe->fitVtecCamsToEngine(); };
+        equipmentWindow_ = std::make_unique<EquipmentWindow>(config_, runtime_->calibrationStore(),
+                                                             std::move(callbacks));
+    }
+    equipmentWindow_->setEngine(config_, runtime_->calibrationStore());
+    equipmentWindow_->setLocked(runtime_->dynoRunning());
+    equipmentWindow_->setVisible(true);
+    equipmentWindow_->toFront(true);
 }
 
 void MainComponent::showVehicleWindow() {
@@ -2086,7 +2111,11 @@ void MainComponent::timerCallback() {
     if (fuelWindow_ && fuelWindow_->isVisible()) {
         fuelWindow_->setLocked(running);
         fuelWindow_->setConfig(config_);
-        fuelWindow_->setNitrousState(model_.state);
+    }
+    if (equipmentWindow_ && equipmentWindow_->isVisible()) {
+        equipmentWindow_->setLocked(running);
+        equipmentWindow_->setEngine(config_, runtime_->calibrationStore());
+        equipmentWindow_->setState(model_.state);
     }
     updateModified();
 
@@ -2138,7 +2167,15 @@ void MainComponent::resized() {
     auto area = getLocalBounds();
     topBar_.setBounds(area.removeFromTop(ui::TopBar::height));
     status_.setBounds(area.removeFromBottom(ui::StatusBar::height));
-    controls_.setBounds(area.removeFromLeft(ui::ControlPanel::width));
+    controlsViewport_.setBounds(area.removeFromLeft(ui::ControlPanel::width));
+    {
+        // Taller than the window, the Drive panel scrolls (its scroll bar
+        // takes 8 px of its width).
+        const auto needed = controls_.preferredHeight();
+        const auto visible = controlsViewport_.getHeight();
+        const auto scrolls = needed > visible;
+        controls_.setSize(ui::ControlPanel::width - (scrolls ? 8 : 0), std::max(needed, visible));
+    }
     side_.setBounds(area.removeFromRight(ui::SidePanel::width));
     readouts_.setBounds(area.removeFromBottom(ui::ReadoutStrip::height));
     viewport_.setBounds(area);

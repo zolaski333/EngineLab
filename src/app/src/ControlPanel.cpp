@@ -133,8 +133,7 @@ void ControlPanel::setEngineBrake(std::uint32_t stages, std::uint32_t cylinders)
     engineBrakeCylinders_ = cylinders;
     engineBrake.setVisible(stages > 0);
     setEngineBrakeStage(0);
-    resized();
-    repaint();
+    relayout();
 }
 
 std::uint32_t ControlPanel::nextEngineBrakeStage() const noexcept {
@@ -166,8 +165,7 @@ void ControlPanel::openExhaustValveMenu() {
 void ControlPanel::setExhaustValveFitted(bool fitted) {
     if (exhaustValve.isVisible() == fitted) return;
     exhaustValve.setVisible(fitted);
-    resized();
-    repaint();
+    relayout();
 }
 
 ExhaustValveMode ControlPanel::nextExhaustValveMode() const noexcept {
@@ -186,8 +184,7 @@ void ControlPanel::setExhaustValveMode(ExhaustValveMode mode) {
 void ControlPanel::setNitrousFitted(bool fitted) {
     if (nitrous.isVisible() == fitted) return;
     nitrous.setVisible(fitted);
-    resized();
-    repaint();
+    relayout();
 }
 
 void ControlPanel::setNitrousArmed(bool armed) {
@@ -302,74 +299,90 @@ void ControlPanel::mouseUp(const juce::MouseEvent& event) {
     trimsOpen_ = !trimsOpen_;
     afrTrim.setVisible(trimsOpen_);
     sparkTrim.setVisible(trimsOpen_);
-    resized();
-    repaint();
+    relayout();
 }
 
-void ControlPanel::resized() {
-    auto area = getLocalBounds().reduced(16);
-    engineLabel_ = area.removeFromTop(22).toFloat();
+int ControlPanel::arrange(bool apply) {
+    const auto place = [apply](juce::Component& component, juce::Rectangle<int> bounds) {
+        if (apply) component.setBounds(bounds);
+    };
+    const auto mark = [apply](juce::Rectangle<float>& member, juce::Rectangle<int> bounds) {
+        if (apply) member = bounds.toFloat();
+    };
+    auto area = getLocalBounds().withHeight(100000).reduced(16);
+    mark(engineLabel_, area.removeFromTop(22));
     for (auto* button : { &ignition, &starter, &dyno }) {
-        button->setBounds(area.removeFromTop(42));
+        place(*button, area.removeFromTop(42));
         area.removeFromTop(8);
     }
     area.removeFromTop(10);
-    throttleLabel_ = area.removeFromTop(22).toFloat();
+    mark(throttleLabel_, area.removeFromTop(22));
     auto throttleRow = area.removeFromTop(150);
-    throttle.setBounds(throttleRow.removeFromLeft(44));
+    place(throttle, throttleRow.removeFromLeft(44));
     throttleRow.removeFromLeft(12);
-    throttleValue_ = throttleRow.removeFromTop(40).toFloat();
+    mark(throttleValue_, throttleRow.removeFromTop(40));
     auto presets = throttleRow.removeFromBottom(66);
     auto topPresets = presets.removeFromTop(30);
     auto bottomPresets = presets.removeFromBottom(30);
     const auto half = (topPresets.getWidth() - 6) / 2;
-    throttleIdle.setBounds(topPresets.removeFromLeft(half));
-    throttleLow.setBounds(topPresets.removeFromRight(half));
-    throttleMid.setBounds(bottomPresets.removeFromLeft(half));
-    throttleFull.setBounds(bottomPresets.removeFromRight(half));
+    place(throttleIdle, topPresets.removeFromLeft(half));
+    place(throttleLow, topPresets.removeFromRight(half));
+    place(throttleMid, bottomPresets.removeFromLeft(half));
+    place(throttleFull, bottomPresets.removeFromRight(half));
     area.removeFromTop(14);
-    driveLabel_ = area.removeFromTop(22).toFloat();
-    speedValue_ = area.removeFromTop(38).toFloat();
-    tripText_ = area.removeFromTop(36).toFloat();
+    mark(driveLabel_, area.removeFromTop(22));
+    mark(speedValue_, area.removeFromTop(38));
+    mark(tripText_, area.removeFromTop(36));
     area.removeFromTop(6);
-    const auto pair = [&area](ActionButton& left, ActionButton& right) {
+    const auto pair = [&area, &place](ActionButton& left, ActionButton& right) {
         auto row = area.removeFromTop(30);
         const auto halfWidth = (row.getWidth() - 6) / 2;
-        left.setBounds(row.removeFromLeft(halfWidth));
-        right.setBounds(row.removeFromRight(halfWidth));
+        place(left, row.removeFromLeft(halfWidth));
+        place(right, row.removeFromRight(halfWidth));
         area.removeFromTop(6);
     };
     {
         // Gear down, Auto, Gear up on one row.
         auto row = area.removeFromTop(30);
         const auto third = (row.getWidth() - 12) / 3;
-        gearDown.setBounds(row.removeFromLeft(third));
-        gearUp.setBounds(row.removeFromRight(third));
-        automatic.setBounds(row.reduced(6, 0));
+        place(gearDown, row.removeFromLeft(third));
+        place(gearUp, row.removeFromRight(third));
+        place(automatic, row.reduced(6, 0));
         area.removeFromTop(6);
     }
     pair(brake, clutch);
     pair(cruise, resetTrip);
     if (engineBrake.isVisible()) {
-        engineBrake.setBounds(area.removeFromTop(30));
+        place(engineBrake, area.removeFromTop(30));
         area.removeFromTop(6);
     }
     if (exhaustValve.isVisible()) {
-        exhaustValve.setBounds(area.removeFromTop(30));
+        place(exhaustValve, area.removeFromTop(30));
         area.removeFromTop(6);
     }
     if (nitrous.isVisible()) {
-        nitrous.setBounds(area.removeFromTop(30));
+        place(nitrous, area.removeFromTop(30));
         area.removeFromTop(6);
     }
     area.removeFromTop(8);
-    trimsHeader_ = area.removeFromTop(22).toFloat();
+    mark(trimsHeader_, area.removeFromTop(22));
     area.removeFromTop(4);
     if (trimsOpen_) {
-        afrTrim.setBounds(area.removeFromTop(SliderRow::preferredHeight));
+        place(afrTrim, area.removeFromTop(SliderRow::preferredHeight));
         area.removeFromTop(10);
-        sparkTrim.setBounds(area.removeFromTop(SliderRow::preferredHeight));
+        place(sparkTrim, area.removeFromTop(SliderRow::preferredHeight));
     }
+    return area.getY() + 16;
+}
+
+void ControlPanel::resized() { (void)arrange(true); }
+
+int ControlPanel::preferredHeight() const { return const_cast<ControlPanel*>(this)->arrange(false); }
+
+void ControlPanel::relayout() {
+    resized();
+    repaint();
+    if (onLayoutChanged) onLayoutChanged();
 }
 
 } // namespace enginelab::ui

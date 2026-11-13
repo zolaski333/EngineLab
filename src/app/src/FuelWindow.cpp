@@ -4,9 +4,7 @@
 #include <enginelab/app/Theme.hpp>
 #include <enginelab/app/Widgets.hpp>
 
-#include <array>
 #include <cstddef>
-#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -33,267 +31,13 @@ constexpr std::size_t ratioRow = 2;
         && fuel_editing::values(left) == fuel_editing::values(right);
 }
 
-constexpr double kilowattsPerHorsepower = 0.745699872;
-
-/**
- * The nitrous kit: hidden behind "Fit a kit..." until one is fitted, then
- * every setting of it, taken by the running engine at once.
- */
-class NitrousPanel final : public juce::Component {
-public:
-    explicit NitrousPanel(FuelWindow::NitrousCallbacks callbacks) : callbacks_(std::move(callbacks)) {
-        fitButton_.setTooltip(utf8("Fits a nitrous kit: a 100 hp wet shot and a 10 lb bottle, disarmed. "
-                                   "Arm it from Drive (Nitrous) and hold its key to spray."));
-        fitButton_.onClick = [this] {
-            auto kit = NitrousConfig {};
-            kit.fitted = true;
-            commit(kit);
-        };
-        removeButton_.setTooltip(utf8("Takes the kit off the engine."));
-        removeButton_.onClick = [this] {
-            auto kit = kit_;
-            kit.fitted = false;
-            commit(kit);
-        };
-        refillButton_.setTooltip(utf8("Fills the bottle again."));
-        refillButton_.onClick = [this] { if (callbacks_.refill) callbacks_.refill(); };
-        type_.setOptionTooltip(0, utf8("Wet: the kit sprays its own fuel with the nitrous, at its mixture."));
-        type_.setOptionTooltip(1, utf8("Dry: nitrous alone; the injectors add the fuel, at the kit's mixture."));
-        type_.onChange = [this](int index) {
-            auto kit = kit_;
-            kit.type = index == 1 ? NitrousKitType::dry : NitrousKitType::wet;
-            commit(kit);
-        };
-        unlimited_.setTooltip(utf8("A bottle that never runs down."));
-        unlimited_.onClick = [this] { auto kit = kit_; kit.unlimitedBottle = !kit.unlimitedBottle; commit(kit); };
-        heater_.setTooltip(utf8("A bottle heater holds the bottle at its temperature, so its pressure; "
-                                "without it the bottle cools as it empties and the flow falls."));
-        heater_.onClick = [this] { auto kit = kit_; kit.bottleHeater = !kit.bottleHeater; commit(kit); };
-        push_.setTooltip(utf8("Push button: armed, it sprays only while its key is held. Off, it sprays "
-                              "whenever armed, past the throttle and in the speed window."));
-        push_.onClick = [this] { auto kit = kit_; kit.pushButton = !kit.pushButton; commit(kit); };
-        for (auto* child : std::initializer_list<juce::Component*> { &fitButton_, &removeButton_, &refillButton_,
-                                                                     &type_, &unlimited_, &heater_, &push_,
-                                                                     &readout_, &none_ })
-            addChildComponent(child);
-        none_.setText(utf8("No kit"), juce::dontSendNotification);
-        none_.setColour(juce::Label::textColourId, ui::colours::muted);
-        readout_.setColour(juce::Label::textColourId, ui::colours::muted);
-        readout_.setJustificationType(juce::Justification::centredLeft);
-        const std::array<FieldSpec, fieldCount> specs { {
-            { "Shot", " hp", 0.0, 100000.0, 5.0, 0,
-              "The power the kit's jets are sized to add: a 100 hp shot passes 2.27 kg/min of nitrous at "
-              "900 psi into the atmosphere." },
-            { "Bottle", " kg", 0.0, 100000.0, 0.1, 2, "Nitrous in a full bottle (a 10 lb bottle holds 4.54 kg)." },
-            { "Bottle temperature", " C", -40.0, 150.0, 1.0, 0,
-              "The bottle's temperature when full, which sets its pressure (30 C: 62 bar). The heater holds it." },
-            { "Minimum throttle", " %", 0.0, 100.0, 1.0, 0, "It sprays only past this throttle opening." },
-            { "Minimum speed", " rpm", 0.0, 100000.0, 100.0, 0, "It sprays only above this engine speed." },
-            { "Maximum speed", " rpm", 0.0, 100000.0, 100.0, 0,
-              "It stops above this engine speed; 0 is none (the limiter cuts it)." },
-            { "Ramp", " s", 0.0, 1000.0, 0.1, 1,
-              "A progressive controller: the shot builds up over this time; 0 is all at once." },
-            { "Retard", " deg/50 hp", -90.0, 90.0, 0.5, 1,
-              "Spark retard while spraying, per 50 hp of shot (2 is the common rule)." },
-            { "Kit mixture", " lambda", 0.05, 20.0, 0.01, 2,
-              "The mixture of the nitrous's oxygen with the kit's fuel: 0.80 is rich and safe; "
-              "lean it out and the engine knocks." },
-        } };
-        for (std::size_t index = 0; index < fieldCount; ++index) {
-            auto& field = fields_[index];
-            const auto& spec = specs[index];
-            field.label.setText(utf8(spec.label), juce::dontSendNotification);
-            field.label.setColour(juce::Label::textColourId, ui::colours::text);
-            field.label.setTooltip(utf8(spec.tooltip));
-            field.slider.setRange(spec.minimum, spec.maximum, spec.step);
-            field.slider.setNumDecimalPlacesToDisplay(spec.decimals);
-            field.slider.setTextValueSuffix(utf8(spec.unit));
-            field.slider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 130, rowHeight);
-            field.slider.setIncDecButtonsMode(juce::Slider::incDecButtonsDraggable_AutoDirection);
-            field.slider.setTooltip(utf8(spec.tooltip));
-            field.slider.onValueChange = [this] { if (!loading_) fieldsEdited(); };
-            addChildComponent(field.label);
-            addChildComponent(field.slider);
-        }
-        show(kit_, true);
-    }
-
-    std::function<void()> onLayoutChanged;
-
-    [[nodiscard]] static int preferredHeight(bool fitted) {
-        if (!fitted) return 18 + 8 + 34;
-        constexpr int fieldRows = static_cast<int>((fieldCount + 1) / 2);
-        return 18 + 8 + 30 + rowGap + 30 + rowGap + fieldRows * (rowHeight + rowGap) + energyHeight;
-    }
-
-    [[nodiscard]] bool fitted() const noexcept { return kit_.fitted; }
-
-    void setKit(const NitrousConfig& kit) {
-        if (kit == kit_) return;
-        show(kit, false);
-    }
-
-    void setLocked(bool locked) {
-        locked_ = locked;
-        for (auto* control : std::initializer_list<juce::Component*> { &fitButton_, &removeButton_, &type_,
-                                                                       &unlimited_, &heater_, &push_ })
-            control->setEnabled(!locked);
-        for (auto& field : fields_) field.slider.setEnabled(!locked);
-    }
-
-    void setState(const EngineState& state) {
-        if (!kit_.fitted) return;
-        juce::String text;
-        if (kit_.unlimitedBottle) text << utf8("Unlimited bottle");
-        else text << utf8("Bottle ") << juce::String(state.nitrousBottleMassKg, 2) << utf8(" kg");
-        text << utf8(", ") << juce::String(state.nitrousBottlePressureKpa / 100.0, 1) << utf8(" bar, ")
-             << juce::String(state.nitrousBottleTemperatureC, 0) << utf8(" C");
-        if (state.nitrousSpraying)
-            text << utf8("  -  spraying ") << juce::String(state.nitrousMassFlowKgPerSecond * 60.0, 2)
-                 << utf8(" kg/min, ") << juce::String(state.nitrousOxygenShare * 100.0, 0)
-                 << utf8(" % of the oxygen");
-        if (readout_.getText() != text) readout_.setText(text, juce::dontSendNotification);
-    }
-
-    void paint(juce::Graphics& g) override {
-        ui::drawSectionLabel(g, getLocalBounds().removeFromTop(18).toFloat(), utf8("NITROUS"));
-    }
-
-    void resized() override {
-        auto area = getLocalBounds();
-        area.removeFromTop(18 + 8);
-        if (!kit_.fitted) {
-            auto row = area.removeFromTop(34);
-            fitButton_.setBounds(row.removeFromRight(fitButton_.idealWidth()));
-            none_.setBounds(row);
-            return;
-        }
-        auto top = area.removeFromTop(30);
-        type_.setBounds(top.removeFromLeft(type_.idealWidth()));
-        top.removeFromLeft(12);
-        const auto toggleWidth = top.getWidth() / 3;
-        unlimited_.setBounds(top.removeFromLeft(toggleWidth).reduced(3, 0));
-        heater_.setBounds(top.removeFromLeft(toggleWidth).reduced(3, 0));
-        push_.setBounds(top.reduced(3, 0));
-        area.removeFromTop(rowGap);
-        auto buttons = area.removeFromTop(30);
-        removeButton_.setBounds(buttons.removeFromRight(removeButton_.idealWidth()));
-        buttons.removeFromRight(8);
-        refillButton_.setBounds(buttons.removeFromRight(refillButton_.idealWidth()));
-        area.removeFromTop(rowGap);
-        const auto columnWidth = (area.getWidth() - 16) / 2;
-        for (std::size_t index = 0; index < fieldCount; index += 2) {
-            auto line = area.removeFromTop(rowHeight);
-            for (std::size_t column = 0; column < 2 && index + column < fieldCount; ++column) {
-                auto cell = column == 0 ? line.removeFromLeft(columnWidth) : line.removeFromRight(columnWidth);
-                auto& field = fields_[index + column];
-                field.label.setBounds(cell.removeFromLeft(130));
-                field.slider.setBounds(cell);
-            }
-            area.removeFromTop(rowGap);
-        }
-        readout_.setBounds(area.removeFromTop(energyHeight));
-    }
-
-private:
-    struct FieldSpec final {
-        const char* label;
-        const char* unit;
-        double minimum;
-        double maximum;
-        double step;
-        int decimals;
-        const char* tooltip;
-    };
-    struct Field final {
-        juce::Label label;
-        juce::Slider slider { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
-    };
-    static constexpr std::size_t fieldCount = 9;
-
-    [[nodiscard]] static std::array<double, fieldCount> valuesOf(const NitrousConfig& kit) {
-        return { kit.shotKw / kilowattsPerHorsepower, kit.bottleCapacityKg, kit.bottleTemperatureC,
-                 kit.minimumThrottle * 100.0, kit.minimumRpm, kit.maximumRpm, kit.rampSeconds,
-                 kit.sparkRetardDegreesPer50Hp, kit.kitLambda };
-    }
-
-    void show(const NitrousConfig& kit, bool first) {
-        const auto layoutChanged = first || kit.fitted != kit_.fitted;
-        kit_ = kit;
-        loading_ = true;
-        const auto values = valuesOf(kit);
-        for (std::size_t index = 0; index < fieldCount; ++index)
-            fields_[index].slider.setValue(values[index], juce::dontSendNotification);
-        loading_ = false;
-        type_.setSelected(kit.type == NitrousKitType::dry ? 1 : 0);
-        unlimited_.setEngaged(kit.unlimitedBottle);
-        heater_.setEngaged(kit.bottleHeater);
-        push_.setEngaged(kit.pushButton);
-        none_.setVisible(!kit.fitted);
-        fitButton_.setVisible(!kit.fitted);
-        for (auto* child : std::initializer_list<juce::Component*> { &removeButton_, &refillButton_, &type_,
-                                                                     &unlimited_, &heater_, &push_, &readout_ })
-            child->setVisible(kit.fitted);
-        for (auto& field : fields_) {
-            field.label.setVisible(kit.fitted);
-            field.slider.setVisible(kit.fitted);
-        }
-        if (!kit.fitted) readout_.setText({}, juce::dontSendNotification);
-        resized();
-        repaint();
-        if (layoutChanged && onLayoutChanged) onLayoutChanged();
-    }
-
-    void fieldsEdited() {
-        auto kit = kit_;
-        const auto value = [this](std::size_t index) { return fields_[index].slider.getValue(); };
-        kit.shotKw = value(0) * kilowattsPerHorsepower;
-        kit.bottleCapacityKg = value(1);
-        kit.bottleTemperatureC = value(2);
-        kit.minimumThrottle = value(3) / 100.0;
-        kit.minimumRpm = value(4);
-        kit.maximumRpm = value(5);
-        kit.rampSeconds = value(6);
-        kit.sparkRetardDegreesPer50Hp = value(7);
-        kit.kitLambda = value(8);
-        commit(kit);
-    }
-
-    /** The engine takes the kit at once; one it refuses is shown back as it was. */
-    void commit(const NitrousConfig& kit) {
-        if (locked_ || !callbacks_.apply || !callbacks_.apply(kit)) {
-            show(kit_, false);
-            return;
-        }
-        show(kit, false);
-    }
-
-    FuelWindow::NitrousCallbacks callbacks_;
-    NitrousConfig kit_ {};
-    bool loading_ { false };
-    bool locked_ { false };
-    juce::Label none_;
-    juce::Label readout_;
-    ui::ActionButton fitButton_ { utf8("Fit a kit..."), ui::ActionButton::Style::standard };
-    ui::ActionButton removeButton_ { utf8("Remove kit"), ui::ActionButton::Style::compact };
-    ui::ActionButton refillButton_ { utf8("Refill bottle"), ui::ActionButton::Style::compact };
-    ui::SegmentedControl type_ { juce::StringArray { "Wet", "Dry" } };
-    ui::ActionButton unlimited_ { utf8("Unlimited bottle"), ui::ActionButton::Style::compact };
-    ui::ActionButton heater_ { utf8("Bottle heater"), ui::ActionButton::Style::compact };
-    ui::ActionButton push_ { utf8("Push button"), ui::ActionButton::Style::compact };
-    std::array<Field, fieldCount> fields_;
-};
-
 } // namespace
 
 class FuelWindow::Content final : public juce::Component {
 public:
-    Content(const EngineConfig& config, std::vector<FuelPreset> presets, ApplyCallback applyCallback,
-            NitrousCallbacks nitrous)
-        : presets_(std::move(presets)), apply_(std::move(applyCallback)), nitrous_(std::move(nitrous)) {
+    Content(const EngineConfig& config, std::vector<FuelPreset> presets, ApplyCallback applyCallback)
+        : presets_(std::move(presets)), apply_(std::move(applyCallback)) {
         setOpaque(true);
-        nitrous_.onLayoutChanged = [this] { fitWindow(); };
-        addAndMakeVisible(nitrous_);
         presetBox_.setTooltip(utf8("A listed fuel (parts/fuels.yaml) fills the values below; Apply puts it in "
                                    "the tank."));
         presetBox_.onChange = [this] { presetChosen(); };
@@ -325,10 +69,7 @@ public:
         show(config);
     }
 
-    void setNitrousState(const EngineState& state) { nitrous_.setState(state); }
-
     void setConfig(const EngineConfig& config) {
-        nitrous_.setKit(config.nitrous);
         // Unapplied edits of this engine stay; anything else shows the engine.
         const auto sameEngine = config.name == shown_.name && config.fuel == shown_.fuel;
         if (pending_ && sameEngine) {
@@ -348,7 +89,6 @@ public:
         locked_ = locked;
         presetBox_.setEnabled(!locked);
         for (auto& row : rows_) row->slider.setEnabled(!locked);
-        nitrous_.setLocked(locked);
         updateButtons();
         repaint();
     }
@@ -394,17 +134,13 @@ public:
         area.removeFromTop(12);
         status_.setBounds(area.removeFromTop(40));
         note_.setBounds(area.removeFromTop(90));
-        area.removeFromTop(10);
-        nitrous_.setBounds(area.removeFromTop(NitrousPanel::preferredHeight(nitrous_.fitted())));
     }
 
-    [[nodiscard]] static int preferredHeight(bool diesel, bool kitFitted) {
+    [[nodiscard]] static int preferredHeight(bool diesel) {
         const auto fieldCount = static_cast<int>(fuel_editing::fields(diesel).size());
         return 14 + 18 + 26 + 18 + 8 + rowHeight + rowGap + 6 + fieldCount * (rowHeight + rowGap) + energyHeight
-            + 6 + 34 + 12 + 40 + 90 + 10 + NitrousPanel::preferredHeight(kitFitted) + 14;
+            + 6 + 34 + 12 + 40 + 90 + 14;
     }
-    /** A fitted kit's settings need the wider window. */
-    [[nodiscard]] static int preferredWidth(bool kitFitted) { return kitFitted ? 760 : 520; }
 
 private:
     struct Row final {
@@ -465,19 +201,14 @@ private:
                 rows_.push_back(std::move(row));
             }
             diesel_ = diesel;
-            fitWindow();
+            if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+                window->setSize(window->getWidth(), preferredHeight(diesel));
+            resized();
         }
         showValues(config);
         note_.setText(utf8(fuel_editing::note(diesel)), juce::dontSendNotification);
         updateButtons();
         repaint();
-    }
-
-    /** The window's size for the fuel's fields and the kit's section. */
-    void fitWindow() {
-        if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
-            window->setSize(preferredWidth(nitrous_.fitted()), preferredHeight(diesel_, nitrous_.fitted()));
-        resized();
     }
 
     void showValues(const EngineConfig& config) {
@@ -586,23 +317,15 @@ private:
     juce::Label energy_;
     ui::ActionButton applyButton_ { "Apply", ui::ActionButton::Style::primary };
     ui::ActionButton revertButton_ { "Revert", ui::ActionButton::Style::standard };
-    NitrousPanel nitrous_;
 };
 
-FuelWindow::FuelWindow(const EngineConfig& config, std::vector<FuelPreset> presets, ApplyCallback applyCallback,
-                       NitrousCallbacks nitrous)
+FuelWindow::FuelWindow(const EngineConfig& config, std::vector<FuelPreset> presets, ApplyCallback applyCallback)
     : juce::DocumentWindow("EngineLab - Fuel", ui::colours::background, juce::DocumentWindow::closeButton, true) {
-    content_ = new Content(config, std::move(presets), std::move(applyCallback), std::move(nitrous));
+    content_ = new Content(config, std::move(presets), std::move(applyCallback));
     setContentOwned(content_, false);
     setUsingNativeTitleBar(true);
     setResizable(false, false);
-    content_->setConfig(config);
-    centreWithSize(Content::preferredWidth(config.nitrous.fitted),
-                   Content::preferredHeight(config.fuel == FuelType::diesel, config.nitrous.fitted));
-}
-
-void FuelWindow::setNitrousState(const EngineState& state) {
-    if (content_ != nullptr) content_->setNitrousState(state);
+    centreWithSize(520, Content::preferredHeight(config.fuel == FuelType::diesel));
 }
 
 FuelWindow::~FuelWindow() = default;

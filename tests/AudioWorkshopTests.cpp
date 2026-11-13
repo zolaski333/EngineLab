@@ -1,5 +1,6 @@
 #include <enginelab/app/AudioWorkshopWindow.hpp>
 #include <enginelab/app/EcuTunerWindow.hpp>
+#include <enginelab/app/EquipmentWindow.hpp>
 #include <enginelab/calibration/CalibrationStore.hpp>
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
@@ -569,76 +570,105 @@ int main() {
         }
     }
 
-    // The Fuel window's nitrous section: hidden behind "Fit a kit..." until a
-    // kit is fitted, then its settings, each taken at once.
+    // The Equipment window: every part in one place. Nitrous hidden behind
+    // "Fit a kit..." until fitted, then its settings, each taken at once,
+    // and a status that says what an armed kit waits for; the active valve
+    // fitted in one click; VTEC and launch control read from the tables.
     {
         const auto petrol = std::find_if(catalog.entries.begin(), catalog.entries.end(),
-            [](const auto& entry) { return entry.config.fuel == enginelab::FuelType::gasoline; });
-        require(petrol != catalog.entries.end(), "catalog has a petrol engine");
+            [](const auto& entry) { return entry.config.name.find("2JZ") != std::string::npos; });
+        require(petrol != catalog.entries.end(), "catalog has the 2JZ");
+        namespace calibration = enginelab::calibration;
+        auto store = std::make_shared<calibration::CalibrationStore>();
+        require(store->publish(calibration::makeDefaultEcuCalibration(petrol->config), { 0, "engine-default" }).published,
+                "the 2JZ's tables publish");
         std::vector<enginelab::NitrousConfig> kits;
+        std::vector<enginelab::EngineConfig> engines;
         auto refills = 0;
-        enginelab::FuelWindow kitWindow(petrol->config, enginelab::loadFuelPresets(ENGINELAB_CATALOG_ROOT), {},
-            enginelab::FuelWindow::NitrousCallbacks {
-                [&kits](const enginelab::NitrousConfig& kit) { kits.push_back(kit); return true; },
-                [&refills] { ++refills; } });
-        const auto findAll = [](juce::Component& root, const auto& predicate) {
+        auto designer = 0;
+        enginelab::EquipmentWindow::Callbacks callbacks;
+        callbacks.applyNitrous = [&kits](const enginelab::NitrousConfig& kit) { kits.push_back(kit); return true; };
+        callbacks.refillNitrous = [&refills] { ++refills; };
+        callbacks.applyEngine = [&engines](const enginelab::EngineConfig& edited) {
+            engines.push_back(edited);
+            return true;
+        };
+        callbacks.openExhaustDesigner = [&designer] { ++designer; };
+        enginelab::EquipmentWindow equipment(petrol->config, store, callbacks);
+        auto& root = *equipment.content();
+        const auto findAll = [](juce::Component& parent, const auto& predicate) {
             std::vector<juce::Component*> found;
-            std::function<void(juce::Component&)> walk = [&](juce::Component& parent) {
-                for (auto* child : parent.getChildren()) {
+            std::function<void(juce::Component&)> walk = [&](juce::Component& node) {
+                for (auto* child : node.getChildren()) {
                     if (predicate(*child)) found.push_back(child);
                     walk(*child);
                 }
             };
-            walk(root);
+            walk(parent);
             return found;
         };
         const auto button = [&](const juce::String& text) -> juce::Button* {
-            const auto found = findAll(*kitWindow.getContentComponent(), [&text](juce::Component& child) {
+            const auto found = findAll(root, [&text](juce::Component& child) {
                 auto* asButton = dynamic_cast<juce::Button*>(&child);
                 return asButton != nullptr && asButton->getButtonText() == text;
             });
             return found.empty() ? nullptr : dynamic_cast<juce::Button*>(found.front());
         };
-        const auto visibleKitSliders = [&] {
-            return findAll(*kitWindow.getContentComponent(), [](juce::Component& child) {
-                return dynamic_cast<juce::Slider*>(&child) != nullptr && child.isVisible();
+        const auto visibleSliders = [&] {
+            return findAll(root, [](juce::Component& child) {
+                return dynamic_cast<juce::Slider*>(&child) != nullptr && child.isShowing();
             }).size();
         };
+        const auto labelWith = [&](const juce::String& text) {
+            return !findAll(root, [&text](juce::Component& child) {
+                auto* label = dynamic_cast<juce::Label*>(&child);
+                return label != nullptr && label->getText().contains(text);
+            }).empty();
+        };
+        equipment.setVisible(true);
+        equipment.setEngine(petrol->config, store);
+        // Launch control (one field) only: no kit, no valve, no VTEC cams.
+        const auto before = visibleSliders();
         auto* fit = button("Fit a kit...");
-        require(fit != nullptr && fit->isVisible() && visibleKitSliders() == 5U && kitWindow.getWidth() < 600,
-                "an engine without a kit shows only Fit a kit... (the five fuel fields, the narrow window)");
+        require(fit != nullptr && fit->isShowing(), "an engine without a kit shows Fit a kit...");
+        require(button("Fit a bypass valve") != nullptr && button("Fit VTEC cams") != nullptr,
+                "the valve and VTEC cams can be fitted from it");
         fit->onClick();
-        require(kits.size() == 1U && kits.back().fitted && kits.back().shotKw == enginelab::NitrousConfig {}.shotKw,
-                "Fit a kit... fits the default kit at once");
-        auto* remove = button("Remove kit");
-        require(!fit->isVisible() && remove != nullptr && remove->isVisible() && visibleKitSliders() == 5U + 9U
-                    && kitWindow.getWidth() > 700,
-                "fitted, its nine settings show in the wider window");
+        require(kits.size() == 1U && kits.back().fitted && !kits.back().pushButton,
+                "Fit a kit... fits the default kit at once, sprayed without a push button");
+        auto fitted = petrol->config;
+        fitted.nitrous = kits.back();
+        equipment.setEngine(fitted, store);
+        require(visibleSliders() == before + 9U, "fitted, its nine settings show");
         auto* refill = button("Refill bottle");
         require(refill != nullptr, "a fitted kit has a refill button");
         refill->onClick();
         require(refills == 1, "Refill bottle fills the bottle");
-        auto* unlimited = button("Unlimited bottle");
-        require(unlimited != nullptr, "an unlimited bottle can be chosen");
-        unlimited->onClick();
-        require(kits.size() == 2U && kits.back().unlimitedBottle && kits.back().fitted, "it is taken at once");
-        auto edited = petrol->config;
-        edited.nitrous = kits.back();
-        edited.nitrous.shotKw = 150.0;
-        kitWindow.setConfig(edited);
-        enginelab::EngineState sprayState {};
-        sprayState.nitrousSpraying = true;
-        sprayState.nitrousMassFlowKgPerSecond = 0.05;
-        sprayState.nitrousBottlePressureKpa = 6'200.0;
-        kitWindow.setNitrousState(sprayState);
-        const auto readouts = findAll(*kitWindow.getContentComponent(), [](juce::Component& child) {
-            auto* label = dynamic_cast<juce::Label*>(&child);
-            return label != nullptr && label->getText().contains("spraying 3.00 kg/min");
-        });
-        require(readouts.size() == 1U, "the readout shows the spray");
-        remove->onClick();
-        require(kits.back().fitted == false && fit->isVisible() && kitWindow.getWidth() < 600,
-                "Remove kit takes it off and hides its settings again");
+        enginelab::EngineState state {};
+        state.nitrousBlockers = static_cast<std::uint32_t>(enginelab::NitrousBlocker::throttle)
+            | static_cast<std::uint32_t>(enginelab::NitrousBlocker::belowMinimumRpm);
+        equipment.setState(state);
+        require(labelWith("Armed, waiting for 95 % throttle, over 3000 rpm"), "an armed kit says what it waits for");
+        state.nitrousBlockers = static_cast<std::uint32_t>(enginelab::NitrousBlocker::notArmed);
+        equipment.setState(state);
+        require(labelWith("arm it in Drive"), "a disarmed kit says where to arm it");
+        state.nitrousBlockers = 0U;
+        state.nitrousSpraying = true;
+        state.nitrousMassFlowKgPerSecond = 0.05;
+        equipment.setState(state);
+        require(labelWith("Spraying 3.00 kg/min"), "the status shows the spray");
+        button("Remove kit")->onClick();
+        require(!kits.back().fitted, "Remove kit takes it off");
+        // The active valve, in one click: a bypass around the last silencer.
+        button("Fit a bypass valve")->onClick();
+        require(engines.size() == 1U && enginelab::exhaustValveFitted(engines.back()),
+                "Fit a bypass valve fits one");
+        equipment.setEngine(engines.back(), store);
+        require(button("Fit a bypass valve") == nullptr || !button("Fit a bypass valve")->isShowing(),
+                "fitted, the valve shows its settings instead");
+        button("Exhaust designer...")->onClick();
+        require(designer == 1, "the exhaust designer is one click away");
+        equipment.setVisible(false);
     }
 
     // The Fuel window (top bar): a listed fuel goes in the tank as listed,

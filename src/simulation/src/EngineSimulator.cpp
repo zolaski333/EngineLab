@@ -1760,6 +1760,7 @@ void EngineSimulator::updateNitrous(double dtSeconds, const EngineControls& cont
         state_.nitrousBottlePressureKpa = 0.0;
         state_.nitrousBottleTemperatureC = 0.0;
         state_.nitrousOxygenShare = 0.0;
+        state_.nitrousBlockers = 0U;
         nitrousRefillsSeen_ = controls.nitrousRefills;
         return;
     }
@@ -1775,10 +1776,16 @@ void EngineSimulator::updateNitrous(double dtSeconds, const EngineControls& cont
     nitrousBottleMassKg_ = std::clamp(nitrousBottleMassKg_, 0.0, kit.bottleCapacityKg);
     const auto bottlePressureKpa = nitrousVapourPressureKpa(nitrousBottleTemperatureK_);
     const auto maximumRpm = kit.maximumRpm > 0.0 ? kit.maximumRpm : std::numeric_limits<double>::infinity();
-    const auto requested = controls.nitrousArmed && (controls.nitrousButton || !kit.pushButton)
-        && controls.ignitionEnabled && controls.throttle >= std::min(kit.minimumThrottle, 0.999)
-        && state_.rpm >= kit.minimumRpm && state_.rpm <= maximumRpm
-        && nitrousBottleMassKg_ > 0.0;
+    const auto bit = [](NitrousBlocker blocker) { return static_cast<std::uint32_t>(blocker); };
+    const auto blockers = (controls.nitrousArmed ? 0U : bit(NitrousBlocker::notArmed))
+        | (controls.nitrousButton || !kit.pushButton ? 0U : bit(NitrousBlocker::pushButton))
+        | (controls.ignitionEnabled ? 0U : bit(NitrousBlocker::ignitionOff))
+        | (controls.throttle >= std::min(kit.minimumThrottle, 0.999) ? 0U : bit(NitrousBlocker::throttle))
+        | (state_.rpm >= kit.minimumRpm ? 0U : bit(NitrousBlocker::belowMinimumRpm))
+        | (state_.rpm <= maximumRpm ? 0U : bit(NitrousBlocker::aboveMaximumRpm))
+        | (nitrousBottleMassKg_ > 0.0 ? 0U : bit(NitrousBlocker::bottleEmpty));
+    state_.nitrousBlockers = blockers;
+    const auto requested = blockers == 0U;
     nitrousSprayFraction_ = !requested ? 0.0
         : kit.rampSeconds > 0.0 ? std::min(1.0, nitrousSprayFraction_ + dtSeconds / kit.rampSeconds)
         : 1.0;

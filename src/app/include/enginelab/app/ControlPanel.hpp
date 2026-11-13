@@ -81,9 +81,17 @@ public:
     void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
     static constexpr int width = 248;
+    /** The height its controls need: more than its window gives, the main
+     *  component scrolls it. */
+    [[nodiscard]] int preferredHeight() const;
+    /** A control shown or hidden: the height changed. */
+    std::function<void()> onLayoutChanged;
 
 private:
     [[nodiscard]] static juce::String percentLabel(int percent);
+    /** Places the children (apply) or only measures; the height used. */
+    int arrange(bool apply);
+    void relayout();
     void sliderValueChanged(juce::Slider*) override;
     juce::Rectangle<float> engineLabel_;
     juce::Rectangle<float> throttleLabel_;

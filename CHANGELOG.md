@@ -83,11 +83,23 @@ file formats, always with an in-memory migration).
   sparks with their fuel kept: the manifold burns what the cylinders send it
   and the turbo keeps spinning. Off, nothing changes.
 
-- **A nitrous kit.** The Fuel window's *Nitrous* section shows only *Fit a
-  kit...* until one is fitted; then its shot, bottle, bottle temperature,
-  heater, throttle and speed window, progressive ramp, spark retard and
-  mixture, wet or dry, an unlimited bottle if wanted, and a refill. Drive
-  shows *Nitrous* to arm it, and `=` held is the push button. The nitrous
+- **An Equipment window** (top bar, *Equipment*): every optional part in
+  one place, each fitted in one click, all its settings on one page and a
+  live line saying what it is doing or what it waits for: the nitrous kit
+  ("Armed, waiting for 95 % throttle, over 3000 rpm"), the active exhaust
+  valve (*Fit a bypass valve* puts it around the silencer nearest the
+  tailpipe; its mode and actuator settings; how far open it is), VTEC (fit
+  the cams, the switch and its settings; which cylinders run the high cam)
+  and launch control. The Drive panel scrolls when the window is shorter
+  than it, so a fitted option's switch is never cut off.
+
+- **A nitrous kit.** The Equipment window's *Nitrous* section shows only
+  *Fit a kit...* until one is fitted; then its shot, bottle, bottle
+  temperature, heater, throttle and speed window, progressive ramp, spark
+  retard and mixture, wet or dry, an unlimited bottle if wanted, a push
+  button if wanted, and a refill. Drive shows *Nitrous* to arm it: armed, it
+  sprays at full throttle in its speed window, and with the push button on
+  only while `=` is held. The nitrous
   is real oxygen in the charge: knock, cylinder pressure and breakage still
   apply, a lean kit runs lean, and the bottle cools and loses pressure as it
   empties without its heater. Saved with the engine; nothing changes on an

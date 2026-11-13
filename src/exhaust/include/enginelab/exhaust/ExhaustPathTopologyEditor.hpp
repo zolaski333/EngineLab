@@ -98,6 +98,13 @@ public:
      *  takes the bypass. Empty, or why not; `bypassPipeId` gets the pipe. */
     [[nodiscard]] static std::string addValvedBypass(ExhaustNetworkConfig& network, std::uint32_t componentId,
                                                      std::uint32_t* bypassPipeId = nullptr);
+
+    /** The Equipment window's "Fit": each exhaust path's silencer nearest its
+     *  tailpipe gets the valved bypass of addValvedBypass (a path drawn from
+     *  scalar fields first becomes the network it was drawn from). A path
+     *  without a silencer, or whose silencer cannot take one, is left as it
+     *  is. Empty when at least one valve was fitted, or why none was. */
+    [[nodiscard]] static std::string fitSilencerBypass(EngineConfig& config);
 };
 
 } // namespace enginelab

@@ -467,6 +467,7 @@ add_executable(EngineLabAudioWorkshopTests
     "${CMAKE_SOURCE_DIR}/src/app/src/ExhaustDesignerWindow.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/FuelEditing.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/FuelWindow.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/EquipmentWindow.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/Theme.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/Widgets.cpp")
 target_include_directories(EngineLabAudioWorkshopTests PRIVATE

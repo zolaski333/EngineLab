@@ -160,6 +160,38 @@ void checkFittedIsNothing(const enginelab::EngineConfig& plain) {
     std::cout << "fitted, not armed == no kit over 720 frames\n";
 }
 
+/** A kit that does not spray says why: every condition that holds it. */
+void checkBlockers() {
+    using enginelab::NitrousBlocker;
+    const auto bit = [](NitrousBlocker blocker) { return static_cast<std::uint32_t>(blocker); };
+    require(!enginelab::NitrousConfig {}.pushButton, "a new kit sprays armed at full throttle, no push button");
+    auto config = withKit(catalogueEngine("K20"), enginelab::NitrousKitType::wet);
+    config.nitrous.pushButton = true;
+    config.nitrous.minimumRpm = 5'000.0; // over what 5 % throttle reaches unloaded
+    auto rig = std::make_unique<Rig>(config);
+    enginelab::EngineState state;
+    for (int frame = 0; frame < static_cast<int>(1.5 / frameSeconds); ++frame) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = frame * frameSeconds < 1.1;
+        controls.throttle = 0.05;
+        state = rig->simulator->step(frameSeconds, controls).state;
+    }
+    require(state.nitrousBlockers == (bit(NitrousBlocker::notArmed) | bit(NitrousBlocker::pushButton)
+                                      | bit(NitrousBlocker::throttle) | bit(NitrousBlocker::belowMinimumRpm)),
+            "disarmed, button up, part throttle, at idle: all four say so (" + std::to_string(state.nitrousBlockers)
+                + ")");
+    enginelab::EngineControls controls;
+    controls.ignitionEnabled = true;
+    controls.throttle = 1.0;
+    controls.nitrousArmed = true;
+    controls.nitrousButton = true;
+    state = rig->simulator->step(frameSeconds, controls).state;
+    require(state.nitrousBlockers == bit(NitrousBlocker::belowMinimumRpm),
+            "armed, held, full throttle: only the engine speed holds it");
+    std::cout << "a kit that does not spray says why\n";
+}
+
 void checkShot(const std::string& name, enginelab::NitrousKitType type, double rpm) {
     const auto plain = catalogueEngine(name);
     const auto kit = withKit(plain, type);
@@ -219,12 +251,13 @@ void checkFiles() {
     config.nitrous.unlimitedBottle = true;
     config.nitrous.kitLambda = 0.72;
     config.nitrous.maximumRpm = 7'800.0;
+    config.nitrous.pushButton = true;
     const auto check = [&](const auto& serializer, const char* name) {
         const auto decoded = serializer.decode(serializer.encode(config));
         require(static_cast<bool>(decoded), std::string(name) + " reads the kit back: " + decoded.error);
         const auto& kit = decoded.config->nitrous;
         require(kit.fitted && kit.type == enginelab::NitrousKitType::dry && kit.shotKw == 111.0
-                && kit.unlimitedBottle && kit.kitLambda == 0.72 && kit.maximumRpm == 7'800.0 && !kit.pushButton,
+                && kit.unlimitedBottle && kit.kitLambda == 0.72 && kit.maximumRpm == 7'800.0 && kit.pushButton,
             std::string(name) + " keeps the kit");
         const auto plain = serializer.encode(catalogueEngine("K20"));
         require(plain.find("nitrous") == std::string::npos, std::string(name) + ": an engine without a kit writes none");
@@ -237,6 +270,7 @@ void checkFiles() {
 
 int main() {
     checkFittedIsNothing(catalogueEngine("K20"));
+    checkBlockers();
     checkFiles();
     checkShot("K20", enginelab::NitrousKitType::wet, 6'000.0);
     checkShot("LS3", enginelab::NitrousKitType::dry, 4'500.0);

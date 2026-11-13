@@ -516,8 +516,11 @@ temperature (ln p[bar] = 10.552 - 1942/T); without the heater the vapour
 that replaces the liquid drawn cools it (its share rho_v / (rho_l - rho_v),
 the liquid's 2 kJ/kg K and the bottle's steel), and it warms back towards
 ambient at 1.5 W/K. It sprays armed (`EngineControls::nitrousArmed`), with
-the push button held when `push_button`, past the minimum throttle and in
-the speed window, building over `ramp_s`.
+the push button held when `push_button` (off on a new kit), past the
+minimum throttle and in the speed window, building over `ramp_s`. Each frame
+`EngineState::nitrousBlockers` holds one `NitrousBlocker` bit per condition
+not met (disarmed, button, ignition, throttle, below or above the speed
+window, empty bottle), so the Equipment window can say what it waits for.
 
 The ECU sizes its pulse for the throttle air alone, the charge less the
 kit's share. A wet kit puts its own fuel into the plenum at its `kit_lambda`

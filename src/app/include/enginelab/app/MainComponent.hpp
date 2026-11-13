@@ -5,6 +5,7 @@
 #include <enginelab/app/ControlPanel.hpp>
 #include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/EcuTunerWindow.hpp>
+#include <enginelab/app/EquipmentWindow.hpp>
 #include <enginelab/app/FuelWindow.hpp>
 #include <enginelab/app/EngineViewport.hpp>
 #include <enginelab/app/EngineDesignerWindow.hpp>
@@ -174,6 +175,8 @@ private:
     void syncVtecTables();
     void showExhaustDesigner();
     void showFuelWindow();
+    /** Every optional part: nitrous, the active valve, VTEC, launch control. */
+    void showEquipmentWindow();
     /** The vehicle's figures, in their own window. */
     void showVehicleWindow();
     /** A line in the 3-D view's inspector and in the Fuel window. */
@@ -312,6 +315,7 @@ private:
     std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
     std::unique_ptr<FuelWindow> fuelWindow_;
+    std::unique_ptr<EquipmentWindow> equipmentWindow_;
     /** Shows `vehiclePanel_` (not owned: reset before it in the destructor). */
     std::unique_ptr<juce::DocumentWindow> vehicleWindow_;
     std::vector<FuelPreset> fuelPresets_;
@@ -327,6 +331,8 @@ private:
 
     ui::TopBar topBar_;
     ui::ControlPanel controls_;
+    /** Scrolls the Drive panel when the window is shorter than it. */
+    juce::Viewport controlsViewport_;
     ui::EngineViewport viewport_ { model_ };
     ui::ReadoutStrip readouts_ { model_ };
     ui::SidePanel side_ { model_, [this] { return wheelModifierDown(); } };
