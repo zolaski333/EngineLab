@@ -93,11 +93,14 @@ file formats, always with an in-memory migration).
 
 - **Anti-lag.** A turbocharged petrol engine's ECU tables carry it, off;
   the Equipment window, the tuner or its Drive switch arms it. With the foot
-  off it fires late, runs its own mixture and cuts a share of the sparks
-  with their fuel kept, so the turbo keeps spinning, and it opens the
-  throttle only as far as keeps a chosen share of the engine braking
-  (*Engine braking kept*, 50 %; *Aggressiveness* caps the opening): it never
-  makes the engine gain speed. *Rally* works on every lift; *Launch* only
+  off it holds the throttle open, fires late, runs its own mixture and cuts
+  sparks with their fuel kept; the cut charges burn in the hot manifold,
+  before the turbine, so the boost stays up and the turbo keeps spinning
+  (2JZ: 1.5 bar and 91 % of its speed after 2 s off the throttle). How many
+  sparks it cuts, and only then how far it closes the throttle, keeps a
+  chosen share of the engine braking (*Engine braking kept*, 50 %;
+  *Aggressiveness* caps the opening): it never makes the engine gain
+  speed. *Rally* works on every lift; *Launch* only
   while launch control holds the car on the line, to build boost before the
   start. It lets go in neutral or with the clutch out, over its maximum
   speed, after its maximum time (the throttle re-arms it), over its exhaust

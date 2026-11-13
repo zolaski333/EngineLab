@@ -853,10 +853,11 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // unless armed). Rally: with the driver's foot off above its speed, the
     // throttle is held open, the map's mixture and spark give way to its own
     // late spark and lambda, and a share of the firings is cut with its fuel
-    // kept: the late flame and the unlit charges keep the turbine fed. How far
-    // it opens is a feedback on the engine's torque: it holds the engine to a
-    // share of its own drag (friction and a shut throttle's pumping), so it
-    // never drives the engine and brakes as much as it is asked to. Launch:
+    // kept: the late flame and the unlit charges keep the turbine fed. How
+    // many firings it cuts, then how far it opens, is a feedback on the
+    // engine's torque: it holds the engine to a share of its own drag
+    // (friction and a shut throttle's pumping), so it never drives the engine
+    // and brakes as much as it is asked to. Launch:
     // only while launch control holds the engine, foot down; the limiter
     // keeps its speed, anti-lag fires late and cuts sparks to build boost.
     // Exits: neutral or the clutch out past a gear change (rally), a speed,
@@ -940,27 +941,39 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
                 const auto kept = setting(calibration::keys::antiLagBrakingKept, 50.0, 0.0, 100.0) / 100.0;
                 const auto ceiling = setting(calibration::keys::antiLagAggressiveness, 100.0, 0.0, 100.0) / 100.0;
                 const auto targetNm = -kept * dragNm;
-                // The engine's torque over 50 ms; the opening starts at half
-                // its ceiling on a new lift and integrates the torque error,
-                // normalised by the drag: 6 per second of a whole drag's error.
+                // How much it lets the engine burn, 0-1: a PI on the torque
+                // over 50 ms, normalised by the drag (1.5 per second of a
+                // whole drag's error, 0.3 at once). Its lower half opens the
+                // air with as many firings cut as it may; its upper half
+                // keeps the air open and gives firings back down to the
+                // calibrated cut. A rally system holds its air and kills the torque with
+                // cut firings and a late spark, so the charges it cuts feed
+                // the turbine. Closing the air instead, by an integral that
+                // shut it at once on any driving torque, emptied the manifold
+                // and hunted (2JZ: 20-110 kPa, the shaft down to two thirds;
+                // journal 2026-11-14). A new lift starts with the air open and
+                // as many firings cut as it may.
                 constexpr double torqueFilterSeconds = 0.05;
-                constexpr double integralGainPerSecond = 6.0;
+                constexpr double integralGainPerSecond = 1.5;
+                constexpr double proportionalGain = 0.3;
+                const auto maximumCut = std::max(cut, calibration::ecuLimits::antiLagMaximumCutFraction);
                 auto torqueNm = antiLagTorqueNm_.load(std::memory_order_relaxed);
                 auto authority = antiLagAuthority_.load(std::memory_order_relaxed);
                 if (!wasActive) {
                     torqueNm = state.torqueNm;
-                    authority = 0.5 * ceiling;
+                    authority = 0.5;
                 }
                 torqueNm += (state.torqueNm - torqueNm) * std::clamp(dt / torqueFilterSeconds, 0.0, 1.0);
-                authority -= integralGainPerSecond * (torqueNm - targetNm) / dragNm * dt;
-                // Never a driving torque: any above zero closes it at once.
-                if (torqueNm > 0.0) authority -= 4.0 * integralGainPerSecond * dt;
-                authority = std::clamp(authority, 0.0, ceiling);
+                const auto error = (torqueNm - targetNm) / dragNm;
+                authority = std::clamp(authority - integralGainPerSecond * error * dt, 0.0, 1.0);
+                const auto applied = std::clamp(authority - proportionalGain * error, 0.0, 1.0);
                 antiLagTorqueNm_.store(torqueNm, std::memory_order_relaxed);
                 antiLagAuthority_.store(authority, std::memory_order_relaxed);
-                command.antiLagAuthority = authority;
+                command.antiLagAuthority = applied;
                 command.antiLagTargetTorqueNm = targetNm;
-                command.effectiveThrottle = std::max(command.effectiveThrottle, airShare * authority);
+                const auto airOpening = airShare * ceiling * std::clamp(2.0 * applied, 0.0, 1.0);
+                command.sparkCutFraction = std::lerp(maximumCut, cut, std::clamp(2.0 * applied - 1.0, 0.0, 1.0));
+                command.effectiveThrottle = std::max(command.effectiveThrottle, airOpening);
                 command.fuelCorrection = warmupCorrection * crankingCorrection;
                 command.fuelEnabled = true;
                 command.sparkEnabled = true;

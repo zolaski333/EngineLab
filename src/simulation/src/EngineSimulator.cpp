@@ -230,6 +230,10 @@ constexpr double ductWallHeatUpdateIntervalSeconds = 150.0e-6;
 // and leaves every sub-step longer than that (idle, cruise) exactly as it was.
 constexpr double blowByUpdateIntervalSeconds = 100.0e-6;
 constexpr double stainlessExhaustWallThicknessM = 0.0015;
+/** Zabetakis' modified Burgess-Wheeler law: a hydrocarbon's flammability
+ * limits widen by 0.0721 % of their 25 C value per kelvin (US Bureau of
+ * Mines Bulletin 627, 1965). */
+constexpr double zabetakisRichLimitWideningPerK = 7.21e-4;
 constexpr double stainlessDensityKgPerM3 = 7'900.0;
 constexpr double stainlessSpecificHeatJPerKgK = 500.0;
 constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
@@ -5526,6 +5530,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     config_.exhaustAfterfire.minimumEquivalenceRatio;
                 reactionConfig.maximumEquivalenceRatio =
                     config_.exhaustAfterfire.maximumEquivalenceRatio;
+                // Anti-lag's manifold holds 700-1,300 K gas, where the
+                // room-temperature rich limit (1.80) left a cut charge
+                // mixed with a rich firing's products unlit (2JZ lift,
+                // phi 1.85-2.0 before the turbine; journal 2026-11-14).
+                // The backfire's chemistry is closed and keeps it.
+                reactionConfig.richLimitWideningPerK =
+                    ecuCommand.antiLagArmed ? zabetakisRichLimitWideningPerK : 0.0;
                 reactionConfig.quenchTemperatureK =
                     config_.exhaustAfterfire.quenchTemperatureK;
                 reactionConfig.pocketMixingTimeSeconds =

@@ -758,7 +758,9 @@ juce::String describeAntiLag(const EngineState& state, double minimumRpm, double
     if (!state.antiLagArmed) return utf8("Off: switch it on here or in Drive.");
     if (state.antiLagActive)
         return state.antiLagTargetTorqueNm < 0.0 || state.antiLagAuthority < 1.0
-            ? utf8("Working: ") + juce::String(state.antiLagAuthority * 100.0, 0)
+            // The lower half of its authority opens the air, the upper half
+            // gives cut firings back with all of it open.
+            ? utf8("Working: ") + juce::String(std::min(1.0, 2.0 * state.antiLagAuthority) * 100.0, 0)
                 + utf8(" % of its air, holding the engine to ") + juce::String(state.antiLagTargetTorqueNm, 0)
                 + utf8(" N.m.")
             : utf8("Working on the line.");

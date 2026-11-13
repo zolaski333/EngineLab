@@ -234,6 +234,12 @@ struct ExhaustFuelReactionConfig final {
     double inductionDecayTimeSeconds { 0.008 };
     double minimumEquivalenceRatio { 0.45 };
     double maximumEquivalenceRatio { 1.80 };
+    /** How far the rich limit widens per kelvin of the mixture above 25 C:
+     * the limit is `maximumEquivalenceRatio * (1 + k (T - 298.15 K))`.
+     * Zabetakis' modified Burgess-Wheeler law for hydrocarbons in air gives
+     * 7.21e-4 (US Bureau of Mines Bulletin 627, 1965). Zero keeps the limit
+     * at its room-temperature value. */
+    double richLimitWideningPerK { 0.0 };
     double quenchTemperatureK { 520.0 };
     /** Mixing time of an unburned pocket (see `emitUnburnedPocket`): its
      * temperature relaxes to the gas around it at this rate, and after three

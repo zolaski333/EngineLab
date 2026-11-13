@@ -43,6 +43,17 @@ namespace {
  * not clamp a physical delay: overflow means no induction at that condition,
  * while underflow means the integral completes in the current coupling step.
  */
+/** The rich flammability limit of a mixture at `temperatureK`: hot gas burns
+ * richer than the room-temperature limit (Zabetakis' widening, see
+ * `ExhaustFuelReactionConfig::richLimitWideningPerK`). */
+[[nodiscard]] double richEquivalenceLimit(
+    const ExhaustFuelReactionConfig& reaction, double temperatureK) noexcept {
+    if (!(reaction.richLimitWideningPerK > 0.0) || !finite(temperatureK))
+        return reaction.maximumEquivalenceRatio;
+    return reaction.maximumEquivalenceRatio
+        * (1.0 + reaction.richLimitWideningPerK * std::max(0.0, temperatureK - 298.15));
+}
+
 [[nodiscard]] double localInductionDelaySeconds(
     const ExhaustFuelReactionConfig& reaction, double ignitionSourceK,
     double pressurePa, double equivalenceRatio) noexcept {
@@ -1364,6 +1375,8 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         || !(reaction.minimumEquivalenceRatio > 0.0)
         || !(reaction.maximumEquivalenceRatio
             > reaction.minimumEquivalenceRatio)
+        || !(reaction.richLimitWideningPerK >= 0.0)
+        || !finite(reaction.richLimitWideningPerK)
         || !(reaction.quenchTemperatureK > 0.0))
         return result;
 
@@ -1430,7 +1443,7 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
             : std::numeric_limits<double>::infinity();
         const auto flammable = fuelDensity > 0.0 && oxygenDensity > 0.0
             && equivalenceRatio >= reaction.minimumEquivalenceRatio
-            && equivalenceRatio <= reaction.maximumEquivalenceRatio;
+            && equivalenceRatio <= richEquivalenceLimit(reaction, primitive->temperatureK);
         const auto ignitionCondition =
             ignitionSourceK >= reaction.ignitionTemperatureK;
         if (!site.burning && flammable && ignitionCondition) {
@@ -1539,7 +1552,7 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
             : std::numeric_limits<double>::infinity();
         if (!(pocket.fuelKg > 0.0)
             || equivalenceRatio < reaction.minimumEquivalenceRatio
-            || equivalenceRatio > reaction.maximumEquivalenceRatio) {
+            || equivalenceRatio > richEquivalenceLimit(reaction, pocket.temperatureK)) {
             pocket.active = false;
             return false;
         }
@@ -1768,7 +1781,7 @@ bool ExhaustGasNetwork::emitUnburnedPocket(
         reaction.oxygenMolesPerFuelMole * 0.032 / reaction.fuelMolarMassKg;
     const auto equivalenceRatio = fuelKg * oxygenMassPerFuelMass / oxygenKg;
     if (equivalenceRatio < reaction.minimumEquivalenceRatio
-        || equivalenceRatio > reaction.maximumEquivalenceRatio)
+        || equivalenceRatio > richEquivalenceLimit(reaction, temperatureK))
         return false;
     const auto ports = layout_.cylinderPorts();
     const auto port = std::find_if(ports.begin(), ports.end(),

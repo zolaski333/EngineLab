@@ -310,6 +310,28 @@ void rallyKeepsItsShareOfTheBraking() {
                 "the engine's torque meets the braking asked for");
     require(armed.after.shaftRpm > 1.1 * off.after.shaftRpm, "the turbo keeps more of its speed");
     require(hold.after.shaftRpm > armed.after.shaftRpm, "less braking kept, more turbo speed kept");
+    // The owner's report: nothing like the real thing. A rally anti-lag
+    // keeps boost with the foot off and the turbo near its loaded speed,
+    // the charges it cuts burning in the manifold. Before: the manifold
+    // fell to 37 kPa, the shaft to 64 %, 1 % of the fuel burnt before the
+    // turbine (journal 2026-11-14).
+    const auto lastSecond = [](const LiftOff& run) {
+        auto sum = 0.0;
+        const auto last = std::min<std::size_t>(run.trace.size(), static_cast<std::size_t>(1.0 / frameSeconds));
+        for (std::size_t index = run.trace.size() - last; index < run.trace.size(); ++index)
+            sum += run.trace[index].manifoldKpa;
+        return last > 0 ? sum / static_cast<double>(last) : 0.0;
+    };
+    std::cout << "last second's manifold: off " << lastSecond(off) << " kPa, armed " << lastSecond(armed)
+              << " kPa; shaft kept: off " << off.after.shaftRpm / off.before.shaftRpm << ", armed "
+              << armed.after.shaftRpm / armed.before.shaftRpm << "; burnt before the turbine "
+              << armed.burntBeforeTurbineMgPerS / armed.injectedMgPerS << " of the fuel" << std::endl;
+    for (const auto* run : { &armed, &hold }) {
+        require(lastSecond(*run) > 110.0, "the foot off, the manifold keeps boost");
+        require(run->after.shaftRpm > 0.8 * run->before.shaftRpm, "the turbo keeps 80 % of its loaded speed");
+    }
+    require(armed.burntBeforeTurbineMgPerS > 0.1 * armed.injectedMgPerS,
+            "a tenth of the fuel or more burns in the manifold, before the turbine");
 }
 
 void exitsLetItGo() {

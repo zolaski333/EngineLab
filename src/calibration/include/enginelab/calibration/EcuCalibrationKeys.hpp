@@ -119,6 +119,11 @@ inline constexpr double maximumAntiLagExhaustLimitC = 1'400.0;
 // engine's friction and the pumping of a shut throttle, 0.65 bar (motoring
 // closed-throttle PMEP, Heywood fig. 13-12, 0.5-0.9 bar).
 inline constexpr double antiLagShutThrottlePumpingBar = 0.65;
+// Rally anti-lag holds its torque with cut firings first: at most this share
+// of them (or `antilag.cut_percent`, if more). Every tenth still fires, a
+// flame for the manifold; at 0.75 the 2JZ kept half its braking only by
+// shutting the air (shaft 70 %), at 0.90 with its boost (92 %).
+inline constexpr double antiLagMaximumCutFraction = 0.90;
 // Neutral or the clutch out longer than a gear change: anti-lag lets go.
 inline constexpr double antiLagDecoupledExitSeconds = 1.0;
 // Back above this driver's throttle, a timed-out anti-lag re-arms.

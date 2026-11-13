@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — anti-lag holds boost
+
+- Owner report: nothing like a real one. 2JZ lifted 2 s from full boost at 5,000 rpm, 50 % kept, before: manifold 20-110 kPa hunting (37 at the end), shaft 64 %, 1.2 % of the fuel burnt before the turbine. Where its fuel sat (fuel-weighted, before the turbine): 65 % too rich (phi 1.97 > 1.80), 33 % cold (761 K), 1 % burning. A cold rig: walls 334 K 4.5 s after the start (764 K after 40 s at full load, the EGT 894 C), so the hot run is the one to judge by.
+- One factor, the rich limit widened with temperature (Zabetakis, Bureau of Mines Bulletin 627: x(1 + 7.21e-4 (T - 298 K)); anti-lag armed only, the closed backfire keeps 1.80), hot: 13 -> 49 kW burnt in the network, EGT 894 -> 995 C, shaft 87,000 -> 93,400 rpm.
+- One factor, the controller: it shut the air at once on any driving torque and hunted (limit cycle ~0.6 s). Now a PI that cuts up to 90 % of the firings before it closes the air: manifold 151 kPa over the last second, shaft 91 % (disarmed 16 kPa, 53 %), 21 % of the fuel burnt before the turbine; cold or hot alike. Maximum cut 75 % kept only 70 % (it had to shut the air), 100 % gives the same as 90 %. EJ25 80 %, I5 94 % of their loaded speed.
+- `EngineLab.AntiLag` checks boost, 80 % shaft and a tenth of the fuel before the turbine; it fails without either change (shaft 65 %; manifold 56 kPa).
+- Measured, not fixed: the fuelling is 13-35 % richer than its lambda (the trapped-oxygen reference counts a cut charge's retained oxygen as new air; the port metering adds ~15 %). Fuelling the delivered air instead moved the chamber AFR 9.8 -> 10.4 but not the targets (shaft 90 % without it), so it was left out. EGT telemetry is the cylinder-out mean: with 90 % cut it reads ~420 C cold, so `antilag.egt_limit_c` under-reads the manifold. Not tested: the sound of the bangs, a car on a road, the window on screen.
+
 ## 2026-11-14 — pass-by never reached the audio
 
 - Owner report: a run sounded from the camera, no distance, no Doppler. Cause: `EngineRuntime` filled `EngineState::passBy*` after `publishAudioFrame`, so the audio always read phase 0 and the microphone never switched on (the UI, reading the later snapshot, did turn the camera's microphones off). Now filled at the frame's creation. `EngineLab.PassByRun` drives the real runtime thread (phase 1 at -300 m published, 0 once stopped; it failed without the fix) and a renderer (its car at -300 m). Not tested: the run heard in the app.

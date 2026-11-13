@@ -688,7 +688,7 @@ int main() {
             require(labelWith("press the throttle to re-arm"), "timed out, it says how to re-arm it");
             armedState.antiLagBlockers = 0U;
             armedState.antiLagActive = true;
-            armedState.antiLagAuthority = 0.4;
+            armedState.antiLagAuthority = 0.2;
             armedState.antiLagTargetTorqueNm = -24.0;
             equipment.setState(armedState);
             require(labelWith("Working: 40 % of its air, holding the engine to -24 N.m"), "working, it says how");

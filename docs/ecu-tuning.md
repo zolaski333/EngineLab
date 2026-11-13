@@ -181,20 +181,29 @@ A turbocharged petrol engine's tables carry `antilag.enabled` (0, off),
 one page, the Equipment window as two sliders (braking kept, aggressiveness)
 with the rest folded under *Advanced*, and Drive has its switch.
 
-Armed, the exhaust's reaction model runs. While it works the ECU fires the
+Armed, the exhaust's reaction model runs, its rich limit widened with the
+gas temperature (Zabetakis: 1.80 x (1 + 7.21e-4 (T - 298 K)), about 2.3 at
+700 K; US Bureau of Mines Bulletin 627). While it works the ECU fires the
 spark `spark_atdc_deg` after top dead centre, targets `lambda`, cuts the
-spark of `cut_percent` of the firings (spread in firing order) with their
-fuel kept, keeps the overrun fuel cut and overrun afterfire off and does not
-learn lambda.
+spark of at least `cut_percent` of the firings (spread in firing order) with
+their fuel kept, keeps the overrun fuel cut and overrun afterfire off and does
+not learn lambda.
 
-- **Rally** works with the driver's throttle at or under 5 %. Its air is a
-  feedback, not a fixed opening: the ECU models the engine's drag as its
-  friction plus a shut throttle's pumping, 0.65 bar over the displacement
-  (Heywood fig. 13-12, 0.5-0.9 bar), and holds the brake torque (filtered
-  50 ms) at `-braking_kept x drag` by an integral on the throttle, between 0
-  and `aggressiveness x air_percent` (`EngineState::antiLagAuthority`). On a
-  positive torque it closes faster: anti-lag never makes the engine gain
-  speed. 100 % kept brakes as without it; 0 % holds the speed.
+- **Rally** works with the driver's throttle at or under 5 %. Its cut and
+  air are a feedback, not a fixed setting: the ECU models the engine's drag
+  as its friction plus a shut throttle's pumping, 0.65 bar over the
+  displacement (Heywood fig. 13-12, 0.5-0.9 bar), and holds the brake torque
+  (filtered 50 ms) at `-braking_kept x drag` by a PI (1.5/s and 0.3 per drag
+  of error) on an authority from 0 to 1 (`EngineState::antiLagAuthority`).
+  Its lower half opens the throttle from 0 to `aggressiveness x air_percent`
+  with 90 % of the firings cut (`ecuLimits::antiLagMaximumCutFraction`); its
+  upper half keeps it open and gives firings back down to `cut_percent`. A
+  lift starts at the middle: all the air, 90 % cut. Like a rally system it
+  holds its air and kills the torque with cut firings, whose charges burn in
+  the manifold; 2JZ lifted 2 s at 5,000 rpm, 50 % kept: 151 kPa in the
+  manifold over the last second, the turbo at 91 % of its loaded speed
+  (16 kPa and 53 % disarmed). 100 % kept brakes as without it; 0 % holds the
+  speed.
 - **Launch** works only while launch control holds the engine (foot down,
   standing): the limiter decides fuel and spark, anti-lag adds its late spark,
   mixture and cut.
