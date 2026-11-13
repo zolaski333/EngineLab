@@ -1324,6 +1324,31 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
         exhaustTurbineFaces_.push_back(ExhaustTurbineFace { face.interfaceIndex, face.cylinderShare,
             turbocharger, static_cast<double>(face.cylinders) });
     }
+    {
+        // The fuel balance's "before the turbine": every element from which
+        // a turbine face can be reached.
+        const auto& interfaces = layout.interfaces();
+        std::vector<std::uint8_t> ducts(layout.ducts().size(), 0U);
+        std::vector<std::uint8_t> junctions(layout.junctions().size(), 0U);
+        const auto mark = [&](const gasdynamics::ExhaustEndpoint& endpoint) {
+            auto& flags = endpoint.type == gasdynamics::ExhaustEndpointType::junction ? junctions : ducts;
+            if (endpoint.elementIndex >= flags.size() || flags[endpoint.elementIndex] != 0U) return false;
+            flags[endpoint.elementIndex] = 1U;
+            return true;
+        };
+        for (const auto& face : exhaustTurbineFaces_)
+            if (face.interfaceIndex < interfaces.size()) static_cast<void>(mark(interfaces[face.interfaceIndex].upstream));
+        for (auto changed = true; changed;) {
+            changed = false;
+            for (const auto& connection : interfaces) {
+                const auto& down = connection.downstream;
+                const auto& flags = down.type == gasdynamics::ExhaustEndpointType::junction ? junctions : ducts;
+                const auto marked = down.elementIndex < flags.size() && flags[down.elementIndex] != 0U;
+                if (marked && mark(connection.upstream)) changed = true;
+            }
+        }
+        network->markUpstreamOfTurbine(ducts, junctions);
+    }
     for (auto& face : exhaustTurbineFaces_)
         face.turbochargerShare /= static_cast<double>(std::max<std::size_t>(1,
             turbochargerCylinders[face.turbocharger]));
@@ -2135,6 +2160,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.ecuSparkEnabled = ecuCommand.sparkEnabled;
         state_.antiLagArmed = ecuCommand.antiLagArmed;
         state_.antiLagActive = ecuCommand.antiLagActive;
+        state_.antiLagBlockers = ecuCommand.antiLagBlockers;
+        state_.antiLagAuthority = ecuCommand.antiLagAuthority;
+        state_.antiLagTargetTorqueNm = ecuCommand.antiLagTargetTorqueNm;
         state_.ecuSoftRevLimiterActive = ecuCommand.softRevLimiterActive;
         state_.ecuHardRevLimiterActive = ecuCommand.hardRevLimiterActive;
         state_.activeRevLimitRpm = ecuCommand.revLimitRpm;
@@ -5345,6 +5373,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         auto exhaustNetworkCompleted = true;
         auto exhaustAdvanceDurationSeconds = 0.0;
         auto outletMassKg = 0.0;
+        auto outletFuelKg = 0.0;
+        auto cylinderFuelOutKg = 0.0;
         auto publishExhaustAcousticState = false;
         exhaustFuelReactionScratch_ = {};
         auto& exhaustFuelReaction = exhaustFuelReactionScratch_;
@@ -5609,6 +5639,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     }
                 }
                 exhaustFlowMgThisCycle_[index] += exchange.totalMassKg() * 1.0e6;
+                if (applied)
+                    cylinderFuelOutKg += exchange.speciesMassKg[
+                        static_cast<std::size_t>(gasdynamics::GasSpecies::fuel)];
                 if (applied && networkAdvance.advancedTimeSeconds > 0.0) {
                     const auto inverseSeconds = 1.0 / networkAdvance.advancedTimeSeconds;
                     for (std::size_t species = 0;
@@ -5623,6 +5656,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 for (const auto speciesMassKg : outlet.speciesMassKg)
                     transferredMassKg += speciesMassKg;
                 outletMassKg += std::max(0.0, transferredMassKg);
+                outletFuelKg += outlet.speciesMassKg[static_cast<std::size_t>(gasdynamics::GasSpecies::fuel)];
             }
             // Publish the acoustic medium of each duct, not just of the valve.
             // The waveguide's delays, wall/liner losses and radiation state all
@@ -6138,6 +6172,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 state_.exhaustAfterfireFuelBurnMgPerSecond,
                 exhaustFuelReaction.burnedFuelMassKg
                     / exhaustAdvanceDurationSeconds * 1.0e6,
+                exhaustAdvanceDurationSeconds, 80.0);
+            state_.exhaustFuelBurnBeforeTurbineMgPerSecond = smooth(
+                state_.exhaustFuelBurnBeforeTurbineMgPerSecond,
+                exhaustFuelReaction.burnedFuelBeforeTurbineMassKg
+                    / exhaustAdvanceDurationSeconds * 1.0e6,
+                exhaustAdvanceDurationSeconds, 80.0);
+            state_.exhaustFuelInMgPerSecond = smooth(state_.exhaustFuelInMgPerSecond,
+                cylinderFuelOutKg / exhaustAdvanceDurationSeconds * 1.0e6,
+                exhaustAdvanceDurationSeconds, 80.0);
+            state_.tailpipeFuelMgPerSecond = smooth(state_.tailpipeFuelMgPerSecond,
+                outletFuelKg / exhaustAdvanceDurationSeconds * 1.0e6,
                 exhaustAdvanceDurationSeconds, 80.0);
             // Unsmoothed: the wall moves on a tens-of-seconds time constant, so
             // there is nothing here for a filter to remove.

@@ -141,6 +141,12 @@ MainComponent::MainComponent() {
     controls_.gearUp.onClick = [this] { if (runtime_) runtime_->shiftUp(); };
     controls_.cruise.onClick = [this] { if (runtime_) runtime_->toggleCruise(); };
     controls_.onNitrousArm = [this] { setNitrousArmed(!controls_.nitrousArmed()); };
+    controls_.onAntiLagToggle = [this] {
+        if (!runtime_ || runtime_->dynoRunning()) return;
+        const auto store = runtime_->calibrationStore();
+        const auto on = store->snapshot()->scalar(calibration::keys::antiLagEnabled).value_or(0.0) >= 0.5;
+        (void)EquipmentWindow::publishScalar(*store, calibration::keys::antiLagEnabled, on ? 0.0 : 1.0);
+    };
     controls_.onEngineBrakeStage = [this](std::uint32_t stage) {
         if (!runtime_) return;
         runtime_->setEngineBrakeStage(stage);
@@ -2111,6 +2117,10 @@ void MainComponent::timerCallback() {
     if (fuelWindow_ && fuelWindow_->isVisible()) {
         fuelWindow_->setLocked(running);
         fuelWindow_->setConfig(config_);
+    }
+    if (runtime_) {
+        const auto antiLag = runtime_->calibrationStore()->snapshot()->scalar(calibration::keys::antiLagEnabled);
+        controls_.setAntiLag(antiLag.has_value(), antiLag.value_or(0.0) >= 0.5);
     }
     if (equipmentWindow_ && equipmentWindow_->isVisible()) {
         equipmentWindow_->setLocked(running);

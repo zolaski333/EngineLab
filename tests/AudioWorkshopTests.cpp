@@ -659,6 +659,41 @@ int main() {
         require(labelWith("Spraying 3.00 kg/min"), "the status shows the spray");
         button("Remove kit")->onClick();
         require(!kits.back().fitted, "Remove kit takes it off");
+        // Anti-lag on one page: its switch, its mode, two sliders, the rest
+        // folded under Advanced..., and what it is doing.
+        {
+            const auto antiLag = [&store] {
+                return store->snapshot()->scalar(calibration::keys::antiLagEnabled).value_or(-1.0);
+            };
+            auto* antiLagSwitch = button("Anti-lag off");
+            require(antiLagSwitch != nullptr && antiLagSwitch->isShowing() && antiLag() == 0.0,
+                    "a turbocharged petrol engine shows anti-lag, off");
+            antiLagSwitch->onClick();
+            require(antiLag() == 1.0, "one click switches it on");
+            equipment.setEngine(petrol->config, store);
+            const auto folded = visibleSliders();
+            button("Advanced...")->onClick();
+            require(visibleSliders() == folded + 8U, "its eight advanced settings unfold");
+            button("Hide advanced")->onClick();
+            require(visibleSliders() == folded, "and fold again");
+            enginelab::EngineState armedState {};
+            armedState.antiLagArmed = true;
+            armedState.antiLagBlockers = static_cast<std::uint32_t>(enginelab::AntiLagBlocker::throttle);
+            equipment.setState(armedState);
+            require(labelWith("works when you lift off"), "on, it says it works when you lift off");
+            armedState.antiLagBlockers = static_cast<std::uint32_t>(enginelab::AntiLagBlocker::timeUp);
+            equipment.setState(armedState);
+            require(labelWith("press the throttle to re-arm"), "timed out, it says how to re-arm it");
+            armedState.antiLagBlockers = 0U;
+            armedState.antiLagActive = true;
+            armedState.antiLagAuthority = 0.4;
+            armedState.antiLagTargetTorqueNm = -24.0;
+            equipment.setState(armedState);
+            require(labelWith("Working: 40 % of its air, holding the engine to -24 N.m"), "working, it says how");
+            button("Anti-lag on")->onClick();
+            require(antiLag() == 0.0, "and one more click switches it off");
+            equipment.setEngine(petrol->config, store);
+        }
         // The active valve, in one click: a bypass around the last silencer.
         button("Fit a bypass valve")->onClick();
         require(engines.size() == 1U && enginelab::exhaustValveFitted(engines.back()),
@@ -937,14 +972,14 @@ int main() {
         require(antiLagPage >= 0 && limitsPage >= 0, "the selector has an Anti-lag page and a Limits page");
         const auto pages = enginelab::EcuTunerComponent::pagesOf(*store->snapshot());
         const auto group = std::find_if(pages.begin(), pages.end(), [](const auto& page) { return page.id == "antilag.*"; });
-        require(group != pages.end() && group->members.size() == 6U
+        require(group != pages.end() && group->members.size() == 12U
                     && group->members.front() == calibration::keys::antiLagEnabled,
-                "the Anti-lag page holds its six settings, its switch first");
+                "the Anti-lag page holds its twelve settings, its switch first");
         selector->setSelectedItemIndex(antiLagPage, juce::sendNotificationSync);
         std::vector<juce::TextEditor*> rows;
         for (auto* child : tuner.getChildren())
             if (auto* cell = dynamic_cast<juce::TextEditor*>(child)) rows.push_back(cell);
-        require(rows.size() == 6U, "the Anti-lag page shows six rows");
+        require(rows.size() == 12U, "the Anti-lag page shows twelve rows");
         const auto minimumRpm = std::find_if(rows.begin(), rows.end(), [](juce::TextEditor* row) {
             return row->getTooltip().startsWith("antilag.min_rpm:");
         });

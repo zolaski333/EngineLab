@@ -35,6 +35,9 @@ public:
     /** The arming the switch shows. */
     void setNitrousArmed(bool armed);
     [[nodiscard]] bool nitrousArmed() const noexcept { return nitrousArmed_; }
+    /** Shows anti-lag's switch (an engine whose tables carry anti-lag) and
+     *  whether it is on. */
+    void setAntiLag(bool carried, bool on);
     void refresh(const DashboardModel&);
 
     /** Called with a throttle fraction (0.01, 0.10, 0.20 or 1.0). */
@@ -45,6 +48,8 @@ public:
     std::function<void(ExhaustValveMode)> onExhaustValveMode;
     /** Called when the nitrous arming switch is clicked. */
     std::function<void()> onNitrousArm;
+    /** Called when the anti-lag switch is clicked. */
+    std::function<void()> onAntiLagToggle;
 
     ActionButton ignition { "Ignition" };
     ActionButton starter { "Starter" };
@@ -74,6 +79,9 @@ public:
     /** The nitrous kit's arming switch, shown only when a kit is fitted.
      * Lit while the kit sprays. */
     ActionButton nitrous { "Nitrous off", ActionButton::Style::compact };
+    /** Anti-lag's switch, shown on an engine whose tables carry it. Lit
+     * while it works. */
+    ActionButton antiLag { "Anti-lag off", ActionButton::Style::compact };
     SliderRow afrTrim { "AFR trim" };
     SliderRow sparkTrim { "Spark trim" };
 

@@ -213,6 +213,24 @@ ExhaustNetworkInventory PartitionedExhaustNetwork::inventory() const noexcept {
     return total;
 }
 
+void PartitionedExhaustNetwork::markUpstreamOfTurbine(const std::vector<std::uint8_t>& ducts,
+                                                      const std::vector<std::uint8_t>& junctions) {
+    std::vector<std::vector<std::uint8_t>> partDucts(parts_.size());
+    std::vector<std::vector<std::uint8_t>> partJunctions(parts_.size());
+    for (std::size_t part = 0; part < parts_.size(); ++part) {
+        partDucts[part].assign(parts_[part]->ducts().size(), 0U);
+        partJunctions[part].assign(parts_[part]->junctionStates().size(), 0U);
+    }
+    for (std::size_t index = 0; index < ducts.size() && index < ductAt_.size(); ++index)
+        if (const auto place = ductAt_[index]; place.local < partDucts[place.part].size())
+            partDucts[place.part][place.local] = ducts[index];
+    for (std::size_t index = 0; index < junctions.size() && index < junctionAt_.size(); ++index)
+        if (const auto place = junctionAt_[index]; place.local < partJunctions[place.part].size())
+            partJunctions[place.part][place.local] = junctions[index];
+    for (std::size_t part = 0; part < parts_.size(); ++part)
+        parts_[part]->markUpstreamOfTurbine(std::move(partDucts[part]), std::move(partJunctions[part]));
+}
+
 ExhaustFuelReactionResult PartitionedExhaustNetwork::reactUnburnedFuel(
     double durationSeconds, const ExhaustFuelReactionConfig& reaction) noexcept {
     if (parts_.size() == 1) return parts_.front()->reactUnburnedFuel(durationSeconds, reaction);
@@ -220,6 +238,7 @@ ExhaustFuelReactionResult PartitionedExhaustNetwork::reactUnburnedFuel(
     for (auto& part : parts_) {
         const auto result = part->reactUnburnedFuel(durationSeconds, reaction);
         total.burnedFuelMassKg += result.burnedFuelMassKg;
+        total.burnedFuelBeforeTurbineMassKg += result.burnedFuelBeforeTurbineMassKg;
         total.consumedOxygenMassKg += result.consumedOxygenMassKg;
         total.releasedEnergyJoules += result.releasedEnergyJoules;
         total.reactingControlVolumes += result.reactingControlVolumes;

@@ -77,11 +77,17 @@ file formats, always with an in-memory migration).
   falling 6 dB each time the distance doubles. Off at every start.
 
 - **Anti-lag.** A turbocharged petrol engine's ECU tables carry it, off;
-  the tuner's *ANTI-LAG* switch arms it. With the foot off above its speed it
-  holds the throttle open (`antilag.air_percent`), fires late
-  (`antilag.spark_atdc_deg`), runs its own mixture and cuts a share of the
-  sparks with their fuel kept: the manifold burns what the cylinders send it
-  and the turbo keeps spinning. Off, nothing changes.
+  the Equipment window, the tuner or its Drive switch arms it. With the foot
+  off it fires late, runs its own mixture and cuts a share of the sparks
+  with their fuel kept, so the turbo keeps spinning, and it opens the
+  throttle only as far as keeps a chosen share of the engine braking
+  (*Engine braking kept*, 50 %; *Aggressiveness* caps the opening): it never
+  makes the engine gain speed. *Rally* works on every lift; *Launch* only
+  while launch control holds the car on the line, to build boost before the
+  start. It lets go in neutral or with the clutch out, over its maximum
+  speed, after its maximum time (the throttle re-arms it), over its exhaust
+  temperature limit and at the limiter. The Equipment window says why it
+  waits. Off, nothing changes.
 
 - **An Equipment window** (top bar, *Equipment*): every optional part in
   one place, each fitted in one click, all its settings on one page and a

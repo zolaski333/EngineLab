@@ -107,7 +107,7 @@ constructor.
 | Panel | Area |
 |---|---|
 | `TopBar` | engine picker, run state, Exhaust / Fuel / Equipment / Vehicle / ECU / Audio windows, `⋯` menu |
-| `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key, and the switch of each fitted option), trims; it scrolls in a `juce::Viewport` when taller than the window (`preferredHeight()`) |
+| `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key, and the switch of each fitted option, anti-lag's included), trims; it scrolls in a `juce::Viewport` when taller than the window (`preferredHeight()`) |
 | `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
 | `ReadoutStrip` | tachometer and six live readouts |
 | `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs; its `VehiclePanel` (the vehicle's figures typed in, taken live) is shown in the top bar's Vehicle window |

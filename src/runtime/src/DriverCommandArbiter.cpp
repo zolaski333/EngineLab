@@ -57,6 +57,8 @@ void applyVehicleStep(EngineControls& controls, const VehicleStep& step) noexcep
     controls.engineBrakeStage = step.engineBrakeStage;
     controls.engagedGear = step.drive.engagedGear;
     controls.vehicleSpeedMps = std::abs(step.drive.vehicleSpeedMps);
+    // Neutral is -1, reverse -2: anti-lag reads either, or the clutch out.
+    controls.drivelineDecoupled = step.drive.engagedGear == -1 || step.drive.clutchPressure < 0.5;
 }
 
 } // namespace enginelab

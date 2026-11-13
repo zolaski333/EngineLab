@@ -590,6 +590,135 @@ private:
     ui::ActionButton switch_ { utf8("VTEC off"), ui::ActionButton::Style::compact };
 };
 
+class AntiLagSection final : public TableSection {
+public:
+    AntiLagSection()
+        : TableSection(utf8("ANTI-LAG"),
+                       {
+                           { "Engine braking kept", " %", 0.0, 100.0, 5.0, 0,
+                             "The share of the engine's own braking it keeps when you lift off: 100 % brakes as "
+                             "without anti-lag and holds little boost, 0 % holds the engine's speed and the most "
+                             "boost. It never makes the engine gain speed." },
+                           { "Aggressiveness", " %", 0.0, 100.0, 5.0, 0,
+                             "How much of its air it may open to keep the turbo spinning." },
+                       },
+                       { calibration::keys::antiLagBrakingKept, calibration::keys::antiLagAggressiveness },
+                       { 1.0, 1.0 }),
+          advanced_(*this, {
+              { "Works above", " rpm", 0.0, calibration::ecuLimits::maximumRevLimitRpm, 100.0, 0,
+                "It works only above this engine speed." },
+              { "Lets go above", " rpm", 0.0, calibration::ecuLimits::maximumRevLimitRpm, 100.0, 0,
+                "Above this engine speed it lets go (0: the rev limiter only)." },
+              { "Air", " %", 0.0, 100.0, 1.0, 0, "The most throttle it opens with your foot off." },
+              { "Spark", " deg ATDC", 0.0, calibration::ecuLimits::maximumAntiLagSparkAtdcDegrees, 1.0, 0,
+                "How late the spark fires, after top dead centre." },
+              { "Mixture", " lambda", calibration::ecuLimits::minimumAntiLagLambda,
+                calibration::ecuLimits::maximumAntiLagLambda, 0.01, 2, "Its mixture: under 1 is rich." },
+              { "Spark cut", " %", 0.0, 100.0, 1.0, 0,
+                "The share of firings whose spark is cut, fuel kept: that charge goes to the exhaust." },
+              { "Maximum time", " s", 0.0, calibration::ecuLimits::maximumAntiLagSeconds, 0.5, 1,
+                "It lets go after this long on one lift, until you press the throttle again (0: no limit)." },
+              { "Exhaust limit", " C", 0.0, calibration::ecuLimits::maximumAntiLagExhaustLimitC,
+                10.0, 0, "Above this exhaust temperature it lets go (0: no limit)." },
+          }),
+          mode_(juce::StringArray { "Rally", "Launch" }) {
+        advancedKeys_ = { calibration::keys::antiLagMinimumRpm, calibration::keys::antiLagMaximumRpm,
+                          calibration::keys::antiLagAir, calibration::keys::antiLagRetard,
+                          calibration::keys::antiLagLambda, calibration::keys::antiLagCut,
+                          calibration::keys::antiLagMaximumSeconds, calibration::keys::antiLagExhaustLimit };
+        advanced_.onEdited = [this](std::size_t index) {
+            if (locked_ || !store_) return;
+            if (!EquipmentWindow::publishScalar(*store_, advancedKeys_[index], advanced_.value(index)))
+                readTables(true);
+        };
+        switch_.setTooltip(utf8("Switches anti-lag on or off (also in Drive)."));
+        switch_.onClick = [this] {
+            if (locked_ || !store_) return;
+            const auto on = table(calibration::keys::antiLagEnabled).value_or(0.0) >= 0.5;
+            (void)EquipmentWindow::publishScalar(*store_, calibration::keys::antiLagEnabled, on ? 0.0 : 1.0);
+            readTables(true);
+        };
+        mode_.setOptionTooltip(0, utf8("Rally: on every lift above its speed, between gears and into corners."));
+        mode_.setOptionTooltip(1, utf8("Launch: only while launch control holds the engine on the line, foot "
+                                       "down, to build boost before the start."));
+        mode_.onChange = [this](int index) {
+            if (locked_ || !store_) return;
+            (void)EquipmentWindow::publishScalar(*store_, calibration::keys::antiLagMode, index == 1 ? 1.0 : 0.0);
+            readTables(true);
+        };
+        advancedButton_.setTooltip(utf8("Its speeds, air, spark, mixture, cut and exits."));
+        advancedButton_.onClick = [this] {
+            advancedOpen_ = !advancedOpen_;
+            advancedButton_.setButtonText(advancedOpen_ ? utf8("Hide advanced") : utf8("Advanced..."));
+            advanced_.setVisible(carried_ && advancedOpen_);
+            layoutChanged();
+        };
+        addChildComponent(switch_);
+        addChildComponent(mode_);
+        addChildComponent(advancedButton_);
+    }
+
+    [[nodiscard]] int preferredHeight() const override {
+        return headerHeight + (carried_ ? 34 + rowGap + fields_.height() + 34 + rowGap
+                                            + (advancedOpen_ ? advanced_.height() : 0) : 0);
+    }
+
+    void setState(const EngineState& state) override {
+        if (!carried_) {
+            setStatus(utf8("Anti-lag needs a turbocharged petrol engine."));
+            return;
+        }
+        setStatus(describeAntiLag(state, table(calibration::keys::antiLagMinimumRpm).value_or(0.0),
+                                  table(calibration::keys::antiLagMaximumRpm).value_or(0.0)));
+    }
+
+    void setLocked(bool locked) override {
+        TableSection::setLocked(locked);
+        advanced_.setEnabled(!locked);
+        switch_.setEnabled(!locked);
+        mode_.setEnabled(!locked);
+    }
+
+    void resized() override {
+        auto area = body();
+        if (!carried_) return;
+        auto row = area.removeFromTop(34);
+        switch_.setBounds(row.removeFromLeft(switch_.idealWidth()));
+        row.removeFromLeft(12);
+        mode_.setBounds(row.removeFromLeft(220));
+        area.removeFromTop(rowGap);
+        fields_.layout(area);
+        auto line = area.removeFromTop(34);
+        advancedButton_.setBounds(line.removeFromLeft(advancedButton_.idealWidth()));
+        area.removeFromTop(rowGap);
+        if (advancedOpen_) advanced_.layout(area);
+    }
+
+private:
+    void tablesChanged(const calibration::CalibrationSnapshot& snapshot) override {
+        const auto setting = snapshot.scalar(calibration::keys::antiLagEnabled);
+        const auto on = setting.value_or(0.0) >= 0.5;
+        switch_.setButtonText(on ? utf8("Anti-lag on") : utf8("Anti-lag off"));
+        switch_.setEngaged(on);
+        mode_.setSelected(snapshot.scalar(calibration::keys::antiLagMode).value_or(0.0) >= 0.5 ? 1 : 0);
+        std::vector<double> values;
+        for (const auto key : advancedKeys_) values.push_back(snapshot.scalar(key).value_or(0.0));
+        advanced_.setValues(values);
+        const auto carried = setting.has_value();
+        switch_.setVisible(carried);
+        mode_.setVisible(carried);
+        advancedButton_.setVisible(carried);
+        advanced_.setVisible(carried && advancedOpen_);
+    }
+
+    FieldGrid advanced_;
+    std::vector<std::string_view> advancedKeys_;
+    ui::ActionButton switch_ { utf8("Anti-lag off"), ui::ActionButton::Style::compact };
+    ui::SegmentedControl mode_;
+    ui::ActionButton advancedButton_ { utf8("Advanced..."), ui::ActionButton::Style::compact };
+    bool advancedOpen_ { false };
+};
+
 class LaunchSection final : public TableSection {
 public:
     LaunchSection()
@@ -625,6 +754,31 @@ public:
 
 // --------------------------------------------------------------------------
 
+juce::String describeAntiLag(const EngineState& state, double minimumRpm, double maximumRpm) {
+    if (!state.antiLagArmed) return utf8("Off: switch it on here or in Drive.");
+    if (state.antiLagActive)
+        return state.antiLagTargetTorqueNm < 0.0 || state.antiLagAuthority < 1.0
+            ? utf8("Working: ") + juce::String(state.antiLagAuthority * 100.0, 0)
+                + utf8(" % of its air, holding the engine to ") + juce::String(state.antiLagTargetTorqueNm, 0)
+                + utf8(" N.m.")
+            : utf8("Working on the line.");
+    const auto has = [&state](AntiLagBlocker blocker) {
+        return (state.antiLagBlockers & static_cast<std::uint32_t>(blocker)) != 0U;
+    };
+    if (has(AntiLagBlocker::ignition)) return utf8("On: waiting for the engine to run.");
+    if (has(AntiLagBlocker::timeUp)) return utf8("Let go after its maximum time: press the throttle to re-arm it.");
+    if (has(AntiLagBlocker::exhaustTooHot)) return utf8("Let go: the exhaust is over its temperature limit.");
+    if (has(AntiLagBlocker::protection)) return utf8("Let go: the rev limiter or the overboost cut holds the engine.");
+    if (has(AntiLagBlocker::decoupled)) return utf8("Let go: neutral, or the clutch held out.");
+    if (has(AntiLagBlocker::notLaunching))
+        return utf8("Launch mode: works while launch control holds the engine on the line, foot down.");
+    if (has(AntiLagBlocker::aboveMaximumRpm)) return utf8("On: lets go above ") + rpmText(maximumRpm) + utf8(".");
+    if (has(AntiLagBlocker::throttle))
+        return utf8("On: works when you lift off, above ") + rpmText(minimumRpm) + utf8(".");
+    if (has(AntiLagBlocker::belowMinimumRpm)) return utf8("On: works above ") + rpmText(minimumRpm) + utf8(".");
+    return utf8("On.");
+}
+
 juce::String describeNitrousBlockers(std::uint32_t blockers, const NitrousConfig& kit) {
     if (blockers == 0U) return {};
     const auto has = [blockers](NitrousBlocker blocker) {
@@ -657,7 +811,9 @@ public:
         setEngine(config, std::move(store));
     }
 
-    [[nodiscard]] std::array<Section*, 4> sections() noexcept { return { &nitrous_, &valve_, &vtec_, &launch_ }; }
+    [[nodiscard]] std::array<Section*, 5> sections() noexcept {
+        return { &nitrous_, &antiLag_, &valve_, &vtec_, &launch_ };
+    }
 
     void setEngine(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store) {
         for (auto* section : sections()) section->setEngine(config, store);
@@ -694,6 +850,7 @@ private:
     NitrousSection nitrous_;
     ValveSection valve_;
     VtecSection vtec_;
+    AntiLagSection antiLag_;
     LaunchSection launch_;
 };
 

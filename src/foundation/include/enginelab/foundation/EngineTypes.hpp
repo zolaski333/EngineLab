@@ -788,6 +788,25 @@ enum class AfterfireBlocker : std::uint32_t {
 
 /** Why a fitted nitrous kit is not spraying: bits of
  *  `EngineState::nitrousBlockers`, every one that holds. Telemetry only. */
+/** What holds anti-lag back, one bit each (`EngineState::antiLagBlockers`):
+ *  zero while it works, or while it is off (`antiLagArmed` false). */
+enum class AntiLagBlocker : std::uint32_t {
+    ignition = 1U << 0,
+    /** Rally: the driver's foot is on the throttle. */
+    throttle = 1U << 1,
+    /** Launch: launch control is not holding the engine. */
+    notLaunching = 1U << 2,
+    belowMinimumRpm = 1U << 3,
+    aboveMaximumRpm = 1U << 4,
+    /** Rally: neutral or the clutch out longer than a gear change. */
+    decoupled = 1U << 5,
+    /** Its maximum time on this lift: the throttle re-arms it. */
+    timeUp = 1U << 6,
+    exhaustTooHot = 1U << 7,
+    /** The rev limiter, the overboost cut or a broken engine. */
+    protection = 1U << 8,
+};
+
 enum class NitrousBlocker : std::uint32_t {
     notArmed = 1U << 0,
     /** Its push button is not held. */
@@ -1567,6 +1586,8 @@ struct EngineControls final {
      * control never armed in the application (owner report 2026-10-30). */
     int engagedGear { -1 };
     double vehicleSpeedMps { 0.0 };
+    /** Neutral, or the clutch out (a vehicle only; false on the dyno). */
+    bool drivelineDecoupled { false };
     /** The engine brake's switch: 0 off, up to `engineBrake.stageCount`.
      * The runtime passes 0 while the clutch is out or a shift is under way. */
     std::uint32_t engineBrakeStage { 0 };
@@ -1926,6 +1947,13 @@ struct EngineState final {
     /** Real chemical heat release occurring in the physical exhaust network. */
     double exhaustAfterfireHeatReleaseKw { 0.0 };
     double exhaustAfterfireFuelBurnMgPerSecond { 0.0 };
+    /** The exhaust's fuel balance, mg/s, smoothed as the line above: the
+     *  unburnt fuel the cylinders send into it, the part of the burn above
+     *  that happens before a turbine, and the unburnt fuel leaving the
+     *  tailpipe. Bookkeeping only. */
+    double exhaustFuelInMgPerSecond { 0.0 };
+    double exhaustFuelBurnBeforeTurbineMgPerSecond { 0.0 };
+    double tailpipeFuelMgPerSecond { 0.0 };
     /** Cylinders the engine brake holds this step (fuel cut, brake valve
      * event on): zero when it is off or released. */
     std::uint32_t engineBrakeCylinders { 0 };
@@ -2285,6 +2313,11 @@ struct EngineState final {
     /** Anti-lag: armed in the ECU's tables, and working this frame. */
     bool antiLagArmed { false };
     bool antiLagActive { false };
+    /** Armed and not working: why (AntiLagBlocker bits). Working: the share
+     *  of its air it opens, 0-1, and the torque it holds the engine to. */
+    std::uint32_t antiLagBlockers { 0U };
+    double antiLagAuthority { 0.0 };
+    double antiLagTargetTorqueNm { 0.0 };
 };
 
 struct EcuCommand final {
@@ -2349,6 +2382,12 @@ struct EcuCommand final {
     /** Share of firings, 0-1, whose spark is cut with the fuel kept; the
      *  simulator spreads it over the cylinders in firing order. */
     double sparkCutFraction { 0.0 };
+    /** Anti-lag's `AntiLagBlocker` bits, the share of its air it opens
+     *  (0-1, its feedback's output) and the torque it holds the engine to,
+     *  N.m (negative: braking). */
+    std::uint32_t antiLagBlockers { 0U };
+    double antiLagAuthority { 0.0 };
+    double antiLagTargetTorqueNm { 0.0 };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

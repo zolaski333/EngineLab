@@ -67,11 +67,16 @@ ControlPanel::ControlPanel() {
                                  "them). Lit while it is open"));
     exhaustValve.onClick = [this] { openExhaustValveMenu(); };
     addChildComponent(exhaustValve);
-    nitrous.setTooltip(utf8("Nitrous kit: a click arms or disarms it. Armed, it sprays while its key is held "
-                            "(push button) or at the throttle and engine speeds set in the Fuel window. "
-                            "Lit while it sprays"));
+    nitrous.setTooltip(utf8("Nitrous kit: a click arms or disarms it. Armed, it sprays at the throttle and "
+                            "engine speeds set in the Equipment window (and, with a push button, while its key "
+                            "is held). Lit while it sprays"));
     nitrous.onClick = [this] { if (onNitrousArm) onNitrousArm(); };
     addChildComponent(nitrous);
+    antiLag.setTooltip(utf8("Anti-lag: a click switches it on or off. On, it keeps the turbo spinning when you "
+                            "lift off, keeping the share of the engine braking set in the Equipment window. Lit "
+                            "while it works"));
+    antiLag.onClick = [this] { if (onAntiLagToggle) onAntiLagToggle(); };
+    addChildComponent(antiLag);
 
     prepareSlider(afrTrim.slider, -3.0, 3.0, 0.1, 0.0);
     afrTrim.slider.setDoubleClickReturnValue(true, 0.0);
@@ -193,6 +198,14 @@ void ControlPanel::setNitrousArmed(bool armed) {
     if (nitrous.getButtonText() != text) nitrous.setButtonText(text);
 }
 
+void ControlPanel::setAntiLag(bool carried, bool on) {
+    const auto text = juce::String(on ? "Anti-lag on" : "Anti-lag off");
+    if (antiLag.getButtonText() != text) antiLag.setButtonText(text);
+    if (antiLag.isVisible() == carried) return;
+    antiLag.setVisible(carried);
+    relayout();
+}
+
 void ControlPanel::setDiesel(bool diesel) {
     afrTrim.setName(diesel ? utf8("Smoke limit trim (+ = less fuel)") : utf8("AFR trim"));
     afrTrim.slider.setTooltip(diesel ? utf8("Offset of the smoke-limit AFR table")
@@ -255,6 +268,7 @@ void ControlPanel::refresh(const DashboardModel& model) {
     engineBrake.setEngaged(state.engineBrakeCylinders > 0);
     exhaustValve.setEngaged(state.exhaustValveCount > 0 && state.exhaustValveOpening > 0.5);
     nitrous.setEngaged(state.nitrousSpraying);
+    antiLag.setEngaged(state.antiLagActive);
     const auto cruiseText = state.cruiseEngaged
         ? "Cruise " + unit.value(Quantity::speed, state.cruiseSetSpeedMps, 0)
         : juce::String("Cruise");
@@ -362,6 +376,10 @@ int ControlPanel::arrange(bool apply) {
     }
     if (nitrous.isVisible()) {
         place(nitrous, area.removeFromTop(30));
+        area.removeFromTop(6);
+    }
+    if (antiLag.isVisible()) {
+        place(antiLag, area.removeFromTop(30));
         area.removeFromTop(6);
     }
     area.removeFromTop(8);

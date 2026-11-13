@@ -69,6 +69,9 @@ public:
     [[nodiscard]] bool adoptStateFrom(const PartitionedExhaustNetwork& previous) noexcept;
     [[nodiscard]] double peakWallTemperatureK() const noexcept;
     [[nodiscard]] ExhaustNetworkInventory inventory() const noexcept;
+    /** Global duct and junction flags, handed to each part in its own
+     *  indices (ExhaustGasNetwork::markUpstreamOfTurbine). */
+    void markUpstreamOfTurbine(const std::vector<std::uint8_t>& ducts, const std::vector<std::uint8_t>& junctions);
     /** Each part's reaction in turn; the sources follow in part order, and
      * those past ExhaustFuelReactionResult::maximumSources are counted dropped. */
     [[nodiscard]] ExhaustFuelReactionResult reactUnburnedFuel(

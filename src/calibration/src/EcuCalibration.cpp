@@ -86,7 +86,7 @@ constexpr double seaLevelPressureKpa = 101.325;
 
 /** Anti-lag's settings, off: a turbocharged petrol engine's tables carry
     them so the tuner can arm it. */
-[[nodiscard]] std::array<ScalarCalibration, 6> antiLagSettings(const EngineConfig& config) {
+[[nodiscard]] std::array<ScalarCalibration, 12> antiLagSettings(const EngineConfig& config) {
     return { {
         { metadata(std::string(keys::antiLagEnabled), "Anti-lag",
                    "Anti-lag (a rally car's bang-bang): 1 arms it, 0 (the default) turns it off. Armed, with your "
@@ -101,9 +101,9 @@ constexpr double seaLevelPressureKpa = 101.325;
           std::clamp(0.45 * config.redlineRpm, 0.0, ecuLimits::maximumRevLimitRpm) },
         { metadata(std::string(keys::antiLagAir), "Anti-lag air",
                    "The throttle opening anti-lag holds with your foot off: the air the late and the unlit "
-                   "charges need.",
+                   "charges need. Its feedback opens up to Anti-lag aggressiveness of it.",
                    CalibrationUnit::percent, 0.0, 100.0, 0),
-          20.0 },
+          40.0 },
         { metadata(std::string(keys::antiLagRetard), "Anti-lag spark",
                    "How late the spark fires, degrees after top dead centre: the flame is still burning when the "
                    "exhaust valve opens.",
@@ -118,6 +118,34 @@ constexpr double seaLevelPressureKpa = 101.325;
                    "lights in the hot manifold.",
                    CalibrationUnit::percent, 0.0, 100.0, 0),
           33.0 },
+        { metadata(std::string(keys::antiLagMode), "Anti-lag mode",
+                   "0 rally: it works on every lift above its speed. 1 launch: only while launch control holds "
+                   "the engine on the line, foot down, to build boost before the start.",
+                   CalibrationUnit::dimensionless, 0.0, 1.0, 0),
+          0.0 },
+        { metadata(std::string(keys::antiLagBrakingKept), "Anti-lag engine braking kept",
+                   "The share of the engine's own braking it keeps, by feedback on the engine's torque: 100 % brakes "
+                   "as without anti-lag (and holds little boost), 0 % holds the engine's speed. It never makes the "
+                   "engine gain speed.",
+                   CalibrationUnit::percent, 0.0, 100.0, 0),
+          50.0 },
+        { metadata(std::string(keys::antiLagAggressiveness), "Anti-lag aggressiveness",
+                   "How much of its air (Anti-lag air) it may open to keep the turbo spinning.",
+                   CalibrationUnit::percent, 0.0, 100.0, 0),
+          70.0 },
+        { metadata(std::string(keys::antiLagMaximumRpm), "Anti-lag maximum speed",
+                   "Above this engine speed it lets go. Zero: no limit but the rev limiter.",
+                   CalibrationUnit::revolutionsPerMinute, 0.0, ecuLimits::maximumRevLimitRpm, 0),
+          std::clamp(0.90 * config.redlineRpm, 0.0, ecuLimits::maximumRevLimitRpm) },
+        { metadata(std::string(keys::antiLagMaximumSeconds), "Anti-lag maximum time",
+                   "It lets go after working this long on one lift, until the throttle is pressed again. Zero: no "
+                   "limit.",
+                   CalibrationUnit::second, 0.0, ecuLimits::maximumAntiLagSeconds, 1),
+          4.0 },
+        { metadata(std::string(keys::antiLagExhaustLimit), "Anti-lag exhaust temperature limit",
+                   "Above this exhaust temperature it lets go, and works again 50 C below it. Zero: no limit.",
+                   CalibrationUnit::degreeCelsius, 0.0, ecuLimits::maximumAntiLagExhaustLimitC, 0),
+          1'000.0 },
     } };
 }
 

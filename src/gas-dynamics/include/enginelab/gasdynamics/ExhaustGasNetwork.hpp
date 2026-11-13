@@ -263,6 +263,9 @@ struct ExhaustFuelReactionResult final {
     // fixed stack frame on Windows.
     static constexpr std::size_t maximumSources { 32 };
     double burnedFuelMassKg { 0.0 };
+    /** The part of it burnt in the elements `markUpstreamOfTurbine` marked
+     *  (bookkeeping only). */
+    double burnedFuelBeforeTurbineMassKg { 0.0 };
     double consumedOxygenMassKg { 0.0 };
     double releasedEnergyJoules { 0.0 };
     std::size_t reactingControlVolumes { 0 };
@@ -364,6 +367,10 @@ public:
      * chemical heat is added to the same conservative state that drives the
      * pressure/acoustic boundary. No authored fuel or synthetic impulse is
      * introduced. */
+    /** Marks the ducts and junctions before a turbine, for the fuel balance
+     *  `reactUnburnedFuel` reports; nothing else reads it. */
+    void markUpstreamOfTurbine(std::vector<std::uint8_t> ducts, std::vector<std::uint8_t> junctions);
+
     [[nodiscard]] ExhaustFuelReactionResult reactUnburnedFuel(
         double durationSeconds,
         const ExhaustFuelReactionConfig& reaction) noexcept;
@@ -707,6 +714,8 @@ private:
     };
     std::vector<std::vector<ReactionSiteState>> ductReactionStates_;
     std::vector<ReactionSiteState> junctionReactionStates_;
+    std::vector<std::uint8_t> ductUpstreamOfTurbine_;
+    std::vector<std::uint8_t> junctionUpstreamOfTurbine_;
     struct UnburnedPocket final {
         bool active { false };
         bool burning { false };

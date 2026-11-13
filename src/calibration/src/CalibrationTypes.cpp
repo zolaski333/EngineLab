@@ -312,22 +312,31 @@ void validateKnownEcuEntry(std::string_view id, const CalibrationEntry& entry,
                      "The VTEC settings must be scalar calibrations.");
         }
     } else if (id == keys::antiLagEnabled || id == keys::antiLagMinimumRpm || id == keys::antiLagAir
-               || id == keys::antiLagRetard || id == keys::antiLagLambda || id == keys::antiLagCut) {
+               || id == keys::antiLagRetard || id == keys::antiLagLambda || id == keys::antiLagCut
+               || id == keys::antiLagMode || id == keys::antiLagBrakingKept || id == keys::antiLagAggressiveness
+               || id == keys::antiLagMaximumRpm || id == keys::antiLagMaximumSeconds
+               || id == keys::antiLagExhaustLimit) {
         const auto& metadata = metadataOf(entry);
-        const auto percent = id == keys::antiLagAir || id == keys::antiLagCut;
-        const auto unit = id == keys::antiLagEnabled || id == keys::antiLagLambda ? CalibrationUnit::dimensionless
+        const auto percent = id == keys::antiLagAir || id == keys::antiLagCut || id == keys::antiLagBrakingKept
+            || id == keys::antiLagAggressiveness;
+        const auto number = id == keys::antiLagEnabled || id == keys::antiLagLambda || id == keys::antiLagMode;
+        const auto unit = number ? CalibrationUnit::dimensionless
             : percent ? CalibrationUnit::percent
             : id == keys::antiLagRetard ? CalibrationUnit::degreeCrankshaft
+            : id == keys::antiLagMaximumSeconds ? CalibrationUnit::second
+            : id == keys::antiLagExhaustLimit ? CalibrationUnit::degreeCelsius
             : CalibrationUnit::revolutionsPerMinute;
         if (metadata.unit != unit)
             addIssue(issues, CalibrationErrorCode::incompatibleUnit, std::string(path) + ".unit",
-                     "An anti-lag setting is in its own unit: a number, percent, degrees or rpm.");
+                     "An anti-lag setting is in its own unit: a number, percent, degrees, rpm, seconds or C.");
         validateCanonicalLimits(metadata,
             id == keys::antiLagLambda ? ecuLimits::minimumAntiLagLambda : 0.0,
-            id == keys::antiLagEnabled ? 1.0
+            id == keys::antiLagEnabled || id == keys::antiLagMode ? 1.0
             : percent ? 100.0
             : id == keys::antiLagRetard ? ecuLimits::maximumAntiLagSparkAtdcDegrees
             : id == keys::antiLagLambda ? ecuLimits::maximumAntiLagLambda
+            : id == keys::antiLagMaximumSeconds ? ecuLimits::maximumAntiLagSeconds
+            : id == keys::antiLagExhaustLimit ? ecuLimits::maximumAntiLagExhaustLimitC
             : ecuLimits::maximumRevLimitRpm,
             path, issues);
         if (!std::holds_alternative<ScalarCalibration>(entry))

@@ -172,15 +172,39 @@ it off; the side panel says which cam runs and on how many cylinders.
 ### Anti-lag
 
 A turbocharged petrol engine's tables carry `antilag.enabled` (0, off),
-`antilag.min_rpm` (0.45 x redline), `antilag.air_percent` (20),
+`antilag.mode` (0 rally, 1 launch), `antilag.braking_kept_percent` (50),
+`antilag.aggressiveness_percent` (70), `antilag.min_rpm` (0.45 x redline),
+`antilag.max_rpm` (0.90 x redline), `antilag.max_time_s` (4),
+`antilag.egt_limit_c` (1,000), `antilag.air_percent` (40),
 `antilag.spark_atdc_deg` (25), `antilag.lambda` (0.90) and
-`antilag.cut_percent` (33). Armed, the exhaust's reaction model runs; with
-the driver's throttle at or under 5 % above `min_rpm`, no limiter and no
-overboost cut, the ECU holds the throttle at `air_percent`, fires the spark
-`spark_atdc_deg` after top dead centre, targets `lambda`, cuts the overrun
-fuel cut, and cuts the spark of `cut_percent` of the firings (spread in
-firing order) with their fuel kept. The lambda loop does not learn. The
-tuner's ANTI-LAG button switches `antilag.enabled`.
+`antilag.cut_percent` (33); a zero exit is no exit. The tuner shows them as
+one page, the Equipment window as two sliders (braking kept, aggressiveness)
+with the rest folded under *Advanced*, and Drive has its switch.
+
+Armed, the exhaust's reaction model runs. While it works the ECU fires the
+spark `spark_atdc_deg` after top dead centre, targets `lambda`, cuts the
+spark of `cut_percent` of the firings (spread in firing order) with their
+fuel kept, keeps the overrun fuel cut and overrun afterfire off and does not
+learn lambda.
+
+- **Rally** works with the driver's throttle at or under 5 %. Its air is a
+  feedback, not a fixed opening: the ECU models the engine's drag as its
+  friction plus a shut throttle's pumping, 0.65 bar over the displacement
+  (Heywood fig. 13-12, 0.5-0.9 bar), and holds the brake torque (filtered
+  50 ms) at `-braking_kept x drag` by an integral on the throttle, between 0
+  and `aggressiveness x air_percent` (`EngineState::antiLagAuthority`). On a
+  positive torque it closes faster: anti-lag never makes the engine gain
+  speed. 100 % kept brakes as without it; 0 % holds the speed.
+- **Launch** works only while launch control holds the engine (foot down,
+  standing): the limiter decides fuel and spark, anti-lag adds its late spark,
+  mixture and cut.
+
+It lets go (`EngineState::antiLagBlockers`, one `AntiLagBlocker` bit per
+reason) under `min_rpm` or over `max_rpm`; in neutral or with the clutch out
+longer than 1 s; after `max_time_s` on one lift, until the throttle passes
+30 % again (rally) or launch control lets go (launch); over `egt_limit_c`,
+working again 50 C below it; at the rev limiter (rally), on the overboost cut
+or a broken engine.
 
 ### Idle and fuel-cut strategies (not tunable)
 

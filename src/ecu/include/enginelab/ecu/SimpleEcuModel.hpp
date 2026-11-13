@@ -142,6 +142,16 @@ private:
     mutable std::atomic<double> postStartAirOpening_ { 0.0 };
     /** Latched only after a deliberate high-speed driver power request. */
     mutable std::atomic<bool> overrunAfterfireArmed_ { false };
+    /** Anti-lag's feedback: the share of its air it opens, its filtered
+     *  torque, its time on this lift, how long the driveline has been
+     *  decoupled, and its latched exits. */
+    mutable std::atomic<double> antiLagAuthority_ { 0.0 };
+    mutable std::atomic<double> antiLagTorqueNm_ { 0.0 };
+    mutable std::atomic<double> antiLagActiveSeconds_ { 0.0 };
+    mutable std::atomic<double> antiLagDecoupledSeconds_ { 0.0 };
+    mutable std::atomic<bool> antiLagWasActive_ { false };
+    mutable std::atomic<bool> antiLagTimedOut_ { false };
+    mutable std::atomic<bool> antiLagTooHot_ { false };
     mutable std::atomic<bool> driverRevvedSinceStart_ { false };
 };
 } // namespace enginelab

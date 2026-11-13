@@ -1332,6 +1332,12 @@ double ExhaustGasNetwork::peakWallTemperatureK() const noexcept {
     return peak;
 }
 
+void ExhaustGasNetwork::markUpstreamOfTurbine(std::vector<std::uint8_t> ducts,
+                                              std::vector<std::uint8_t> junctions) {
+    ductUpstreamOfTurbine_ = std::move(ducts);
+    junctionUpstreamOfTurbine_ = std::move(junctions);
+}
+
 ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
     double durationSeconds,
     const ExhaustFuelReactionConfig& reaction) noexcept {
@@ -1623,6 +1629,8 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
                 aggregate) || reacted;
         }
         if (reacted) duct.cellStateCacheIsValid_ = false;
+        if (ductIndex < ductUpstreamOfTurbine_.size() && ductUpstreamOfTurbine_[ductIndex] != 0U)
+            result.burnedFuelBeforeTurbineMassKg += aggregate.fuelKg;
         appendSource(aggregate, layoutDuct.nodeId,
             layoutDuct.sourceComponentId, layoutDuct.pathIndex,
             layoutDuct.flowAreaM2);
@@ -1642,6 +1650,8 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
                 || reacted;
         }
         if (!reacted) continue;
+        if (index < junctionUpstreamOfTurbine_.size() && junctionUpstreamOfTurbine_[index] != 0U)
+            result.burnedFuelBeforeTurbineMassKg += aggregate.fuelKg;
         const auto primitive = mixtureModel_.primitiveFromConservative(
             junctionStates_[index]);
         if (primitive) junctionPrimitives_[index] = *primitive;

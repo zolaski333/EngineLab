@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <numbers>
+#include <string_view>
 namespace enginelab {
 namespace {
 constexpr std::array<double, 4> rpmAxis { 0.0, 2'000.0, 4'500.0, 8'000.0 };
@@ -848,42 +850,126 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         command.ignitionAdvanceDegrees =
             config.exhaustAfterfire.overrunSparkAdvanceDegrees;
     // Anti-lag (calibration `antilag.*`, a turbocharged petrol engine; off
-    // unless armed): with the driver's foot off above its speed, the throttle
-    // is held open, the map's mixture and spark give way to its own late
-    // spark and lambda, and a share of the firings is cut with its fuel kept.
-    // The late flame and the unlit charges reach the manifold with fuel and
-    // oxygen; the exhaust's reaction model burns them before the turbine. The
-    // fuel cut on the overrun gives way to it, and the rev limiter takes over
-    // from it. Its mixture is no lambda observation.
+    // unless armed). Rally: with the driver's foot off above its speed, the
+    // throttle is held open, the map's mixture and spark give way to its own
+    // late spark and lambda, and a share of the firings is cut with its fuel
+    // kept: the late flame and the unlit charges keep the turbine fed. How far
+    // it opens is a feedback on the engine's torque: it holds the engine to a
+    // share of its own drag (friction and a shut throttle's pumping), so it
+    // never drives the engine and brakes as much as it is asked to. Launch:
+    // only while launch control holds the engine, foot down; the limiter
+    // keeps its speed, anti-lag fires late and cuts sparks to build boost.
+    // Exits: neutral or the clutch out past a gear change (rally), a speed,
+    // a time on one lift, an exhaust temperature. Its mixture is no lambda
+    // observation.
     if (config.fuel == FuelType::gasoline && config.forcedInduction.enabled
             && config.forcedInduction.type == ForcedInductionType::turbocharger
             && calibrationSnapshot->scalarOr(calibration::keys::antiLagEnabled, 0.0) >= 0.5) {
+        using calibration::ecuLimits::maximumRevLimitRpm;
+        const auto setting = [&](std::string_view key, double fallback, double low, double high) {
+            const auto value = calibrationSnapshot->scalarOr(key, fallback);
+            return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+        };
         command.antiLagArmed = true;
-        const auto minimumRpm = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagMinimumRpm, 0.0),
-            0.0, calibration::ecuLimits::maximumRevLimitRpm);
-        if (controls.ignitionEnabled && !controls.starterEngaged && !limiterActive && !overboostActive
-                && controls.throttle <= calibration::ecuLimits::antiLagMaximumDriverThrottle
-                && state.rpm >= minimumRpm && state.damage < 1.0) {
-            const auto air = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagAir, 0.0), 0.0, 100.0)
-                / 100.0;
-            const auto sparkAtdc = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagRetard, 0.0),
-                0.0, calibration::ecuLimits::maximumAntiLagSparkAtdcDegrees);
-            const auto lambda = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagLambda, 1.0),
+        const auto launchMode = setting(calibration::keys::antiLagMode, 0.0, 0.0, 1.0) >= 0.5;
+        const auto minimumRpm = setting(calibration::keys::antiLagMinimumRpm, 0.0, 0.0, maximumRevLimitRpm);
+        const auto maximumRpm = setting(calibration::keys::antiLagMaximumRpm, 0.0, 0.0, maximumRevLimitRpm);
+        const auto maximumSeconds = setting(calibration::keys::antiLagMaximumSeconds, 0.0, 0.0,
+            calibration::ecuLimits::maximumAntiLagSeconds);
+        const auto exhaustLimitC = setting(calibration::keys::antiLagExhaustLimit, 0.0, 0.0,
+            calibration::ecuLimits::maximumAntiLagExhaustLimitC);
+        const auto dt = idleDt;
+        // The latched exits: the time on this lift until the driver presses
+        // the throttle again, the exhaust 50 C under its limit.
+        auto timedOut = antiLagTimedOut_.load(std::memory_order_relaxed);
+        if (controls.throttle > calibration::ecuLimits::antiLagRearmThrottle && !launchMode) timedOut = false;
+        if (launchMode && !launchActive) timedOut = false;
+        auto tooHot = antiLagTooHot_.load(std::memory_order_relaxed);
+        if (!(exhaustLimitC > 0.0)) tooHot = false;
+        else if (state.exhaustTemperatureC > exhaustLimitC) tooHot = true;
+        else if (state.exhaustTemperatureC < exhaustLimitC - 50.0) tooHot = false;
+        const auto decoupledSeconds = controls.drivelineDecoupled
+            ? antiLagDecoupledSeconds_.load(std::memory_order_relaxed) + dt : 0.0;
+        antiLagDecoupledSeconds_.store(decoupledSeconds, std::memory_order_relaxed);
+        const auto bit = [](AntiLagBlocker blocker) { return static_cast<std::uint32_t>(blocker); };
+        const auto blockers = (controls.ignitionEnabled && !controls.starterEngaged ? 0U : bit(AntiLagBlocker::ignition))
+            | (launchMode || controls.throttle <= calibration::ecuLimits::antiLagMaximumDriverThrottle
+                ? 0U : bit(AntiLagBlocker::throttle))
+            | (!launchMode || launchActive ? 0U : bit(AntiLagBlocker::notLaunching))
+            | (state.rpm >= minimumRpm ? 0U : bit(AntiLagBlocker::belowMinimumRpm))
+            | (!(maximumRpm > 0.0) || state.rpm <= maximumRpm ? 0U : bit(AntiLagBlocker::aboveMaximumRpm))
+            | (launchMode || decoupledSeconds <= calibration::ecuLimits::antiLagDecoupledExitSeconds
+                ? 0U : bit(AntiLagBlocker::decoupled))
+            | (timedOut ? bit(AntiLagBlocker::timeUp) : 0U)
+            | (tooHot ? bit(AntiLagBlocker::exhaustTooHot) : 0U)
+            | (state.damage < 1.0 && !overboostActive && (launchMode || !limiterActive)
+                ? 0U : bit(AntiLagBlocker::protection));
+        command.antiLagBlockers = blockers;
+        const auto active = blockers == 0U;
+        auto activeSeconds = active ? antiLagActiveSeconds_.load(std::memory_order_relaxed) + dt : 0.0;
+        if (active && maximumSeconds > 0.0 && activeSeconds > maximumSeconds) timedOut = true;
+        if (!active) activeSeconds = 0.0;
+        antiLagActiveSeconds_.store(activeSeconds, std::memory_order_relaxed);
+        antiLagTimedOut_.store(timedOut, std::memory_order_relaxed);
+        antiLagTooHot_.store(tooHot, std::memory_order_relaxed);
+        const auto wasActive = antiLagWasActive_.exchange(active, std::memory_order_relaxed);
+        if (active) {
+            const auto airShare = setting(calibration::keys::antiLagAir, 0.0, 0.0, 100.0) / 100.0;
+            const auto sparkAtdc = setting(calibration::keys::antiLagRetard, 0.0, 0.0,
+                calibration::ecuLimits::maximumAntiLagSparkAtdcDegrees);
+            const auto lambda = setting(calibration::keys::antiLagLambda, 1.0,
                 calibration::ecuLimits::minimumAntiLagLambda, calibration::ecuLimits::maximumAntiLagLambda);
-            const auto cut = std::clamp(calibrationSnapshot->scalarOr(calibration::keys::antiLagCut, 0.0), 0.0, 100.0)
-                / 100.0;
+            const auto cut = setting(calibration::keys::antiLagCut, 0.0, 0.0, 100.0) / 100.0;
             command.antiLagActive = true;
-            command.effectiveThrottle = std::max(command.effectiveThrottle, air);
             command.targetAirFuelRatio = lambda * config.fuelProperties.stoichiometricAirFuelRatio;
             command.ignitionAdvanceDegrees = -sparkAtdc;
-            command.fuelCorrection = warmupCorrection * crankingCorrection;
-            command.fuelEnabled = true;
-            command.sparkEnabled = true;
-            command.overrunAfterfireActive = false;
-            command.wetSparkCutActive = false;
-            command.decelerationFuelCutActive = false;
             command.sparkCutFraction = cut;
             command.lambdaLearningAllowed = false;
+            if (launchMode) {
+                // The limiter holds the speed; the driver's throttle is open.
+                antiLagAuthority_.store(1.0, std::memory_order_relaxed);
+                command.antiLagAuthority = 1.0;
+            } else {
+                // The drag torque model: friction now, and a shut throttle's
+                // pumping over the swept volume (4 pi per cycle of a
+                // four-stroke, 2 pi of a two-stroke).
+                const auto cyclePerRevolution = config.cycle == EngineCycle::twoStroke ? 2.0 : 4.0;
+                const auto dragNm = std::max(1.0, std::max(0.0, state.frictionTorqueNm)
+                    + calibration::ecuLimits::antiLagShutThrottlePumpingBar * 1.0e5
+                        * breathingDisplacementLitres(config) * 1.0e-3 / (cyclePerRevolution * std::numbers::pi));
+                const auto kept = setting(calibration::keys::antiLagBrakingKept, 50.0, 0.0, 100.0) / 100.0;
+                const auto ceiling = setting(calibration::keys::antiLagAggressiveness, 100.0, 0.0, 100.0) / 100.0;
+                const auto targetNm = -kept * dragNm;
+                // The engine's torque over 50 ms; the opening starts at half
+                // its ceiling on a new lift and integrates the torque error,
+                // normalised by the drag: 6 per second of a whole drag's error.
+                constexpr double torqueFilterSeconds = 0.05;
+                constexpr double integralGainPerSecond = 6.0;
+                auto torqueNm = antiLagTorqueNm_.load(std::memory_order_relaxed);
+                auto authority = antiLagAuthority_.load(std::memory_order_relaxed);
+                if (!wasActive) {
+                    torqueNm = state.torqueNm;
+                    authority = 0.5 * ceiling;
+                }
+                torqueNm += (state.torqueNm - torqueNm) * std::clamp(dt / torqueFilterSeconds, 0.0, 1.0);
+                authority -= integralGainPerSecond * (torqueNm - targetNm) / dragNm * dt;
+                // Never a driving torque: any above zero closes it at once.
+                if (torqueNm > 0.0) authority -= 4.0 * integralGainPerSecond * dt;
+                authority = std::clamp(authority, 0.0, ceiling);
+                antiLagTorqueNm_.store(torqueNm, std::memory_order_relaxed);
+                antiLagAuthority_.store(authority, std::memory_order_relaxed);
+                command.antiLagAuthority = authority;
+                command.antiLagTargetTorqueNm = targetNm;
+                command.effectiveThrottle = std::max(command.effectiveThrottle, airShare * authority);
+                command.fuelCorrection = warmupCorrection * crankingCorrection;
+                command.fuelEnabled = true;
+                command.sparkEnabled = true;
+                command.decelerationFuelCutActive = false;
+                command.overrunAfterfireActive = false;
+                command.wetSparkCutActive = false;
+            }
+        } else {
+            antiLagAuthority_.store(0.0, std::memory_order_relaxed);
         }
     }
     if (config.forcedInduction.enabled

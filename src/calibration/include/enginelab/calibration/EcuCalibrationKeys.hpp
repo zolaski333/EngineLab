@@ -50,6 +50,17 @@ inline constexpr std::string_view antiLagAir = "antilag.air_percent";
 inline constexpr std::string_view antiLagRetard = "antilag.spark_atdc_deg";
 inline constexpr std::string_view antiLagLambda = "antilag.lambda";
 inline constexpr std::string_view antiLagCut = "antilag.cut_percent";
+// How it is driven: its mode (0 rally, on every lift; 1 launch, only while
+// launch control holds the engine), the share of the engine braking it keeps
+// (percent: it never makes the engine gain speed), how hard it may open its
+// air (percent of `antilag.air_percent`), and its exits: a speed, a time
+// (s), an exhaust temperature (C); zero turns an exit off.
+inline constexpr std::string_view antiLagMode = "antilag.mode";
+inline constexpr std::string_view antiLagBrakingKept = "antilag.braking_kept_percent";
+inline constexpr std::string_view antiLagAggressiveness = "antilag.aggressiveness_percent";
+inline constexpr std::string_view antiLagMaximumRpm = "antilag.max_rpm";
+inline constexpr std::string_view antiLagMaximumSeconds = "antilag.max_time_s";
+inline constexpr std::string_view antiLagExhaustLimit = "antilag.egt_limit_c";
 
 } // namespace enginelab::calibration::keys
 
@@ -102,6 +113,16 @@ inline constexpr double minimumAntiLagLambda = 0.5;
 inline constexpr double maximumAntiLagLambda = 1.5;
 // Above this driver's throttle anti-lag lets go: the driver drives.
 inline constexpr double antiLagMaximumDriverThrottle = 0.05;
+inline constexpr double maximumAntiLagSeconds = 120.0;
+inline constexpr double maximumAntiLagExhaustLimitC = 1'400.0;
+// The ECU's drag torque model (a torque-structured ECU's loss torque): the
+// engine's friction and the pumping of a shut throttle, 0.65 bar (motoring
+// closed-throttle PMEP, Heywood fig. 13-12, 0.5-0.9 bar).
+inline constexpr double antiLagShutThrottlePumpingBar = 0.65;
+// Neutral or the clutch out longer than a gear change: anti-lag lets go.
+inline constexpr double antiLagDecoupledExitSeconds = 1.0;
+// Back above this driver's throttle, a timed-out anti-lag re-arms.
+inline constexpr double antiLagRearmThrottle = 0.30;
 inline constexpr double minimumNormalizedLoad = 0.0;
 inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;

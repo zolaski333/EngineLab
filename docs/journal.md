@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-13 — anti-lag feedback
+
+- Owner plan step 3. Measured first, where the fuel burns (new bookkeeping, `EngineState::exhaustFuelInMgPerSecond` and siblings), 2JZ lifted 2 s from full boost at 5,000 rpm unloaded, 50 % kept: injected 5,999 mg/s, 3,364 into the exhaust unburnt (56 %), 176 burnt there (5 %), 74 of it before the turbine, 3,114 out of the tailpipe.
+- Refuted for anti-lag: 40 ms exhaust pockets burn 2.6x more but mostly after the turbine; the shaft does not move. The turbo is held by the air and the late in-cylinder burn, so the air is the lever: a lever sweep gave +3 % shaft at the old 20 % air, +22 % at 40 % (the new default).
+- The old fixed opening made the engine climb (3,500 -> 5,390 rpm). Now a torque feedback on a drag model (friction + 0.65 bar shut-throttle PMEP): torque -23.3 for a -24.3 N.m target at 50 % kept, -37.3 for -41.9 at 90 %, +0.29 N.m at 0 % (holds); shaft 83,801 vs 68,572 rpm disarmed (1.22x), 93,861 at 0 % kept; peak 5,420 rpm armed vs 6,469 off (the lift's own overshoot, which DFCO does not stop).
+- Launch mode, 4,000 rpm on the line for 3 s: shaft 115,616 vs 73,545 rpm, manifold 180 vs 120 kPa, 3,841 rpm. Exits tested: time, EGT, max rpm, neutral. Not tested: a car in gear on a road, the real window on screen.
+
 ## 2026-11-13 — tuner group pages
 
 - Owner plan step 2: a scalar sharing its prefix with another scalar goes on one page (`EcuTunerComponent::pagesOf`); 2JZ: Anti-lag (6, switch first), Limits (3), each a single selector entry. Tested in the Audio workshop GUI test: no selector item for a grouped key, six rows, a typed row published. Not tested on screen.
