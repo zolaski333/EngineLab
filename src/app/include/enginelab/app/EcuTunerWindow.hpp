@@ -55,10 +55,25 @@ public:
         the settings the file predates. */
     void setTableCompletion(calibration::DraftCompletion complete);
 
+    /** One page of the selector: a table or curve, or every single-value
+     *  setting sharing a prefix with another one ("antilag", "vtec",
+     *  "limits") shown together, one row each. */
+    struct Page final {
+        /** The entry's id, or "<prefix>.*" for a group. */
+        std::string id;
+        std::string title;
+        /** The entries on the page: one, or the group's settings in order. */
+        std::vector<std::string> members;
+        [[nodiscard]] bool group() const noexcept { return id.ends_with(".*"); }
+    };
+    /** The selector's pages, in its order. */
+    [[nodiscard]] static std::vector<Page> pagesOf(const calibration::CalibrationSnapshot& snapshot);
+
 private:
     void timerCallback() override;
     void reloadFromSnapshot(bool preserveSelection = true);
     void rebuildCells();
+    void rebuildGroupPage(const Page& page);
     void updateActiveCellHighlight();
     void commitCell(std::size_t valueIndex);
     void applyTool(calibration::CellOperation operation, double amount);
@@ -72,6 +87,12 @@ private:
     void chooseCalibrationToSave();
     void showIssues(const calibration::PublishResult&, const juce::String& title);
     [[nodiscard]] juce::String selectedCalibrationId() const;
+    [[nodiscard]] const Page* selectedPage() const;
+    /** The entry a cell edits: the page's table, or a group's row. */
+    [[nodiscard]] std::string entryIdOfCell(std::size_t valueIndex) const;
+    /** The entry the tools act on: the selected one, or the selected row's. */
+    [[nodiscard]] std::string toolEntryId() const;
+    void selectPageOf(const std::string& entryId);
 
     std::shared_ptr<calibration::CalibrationStore> store_;
     calibration::CalibrationDraft draft_;
@@ -89,6 +110,10 @@ private:
 
     juce::ComboBox mapSelector_;
     std::vector<std::string> mapIds_;
+    std::vector<Page> pages_;
+    /** On a group page, the entry of each row (empty on a table's page). */
+    std::vector<std::string> cellIds_;
+    std::vector<std::unique_ptr<juce::Label>> rowLabels_;
     juce::TextButton stepDownButton_ { "-" };
     juce::TextButton stepUpButton_ { "+" };
     juce::TextButton percentDownButton_ { "-5 %" };

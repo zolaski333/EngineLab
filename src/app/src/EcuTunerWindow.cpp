@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cctype>
 #include <limits>
+#include <map>
 #include <string>
 #include <variant>
 
@@ -55,13 +57,13 @@ EcuTunerComponent::EcuTunerComponent(
     vtecButton_.onClick = [this] { pressVtecButton(); };
     antiLagButton_.onClick = [this] { pressAntiLagButton(); };
     antiLagButton_.setTooltip("Anti-lag: with your foot off, the throttle held open, a late spark and a share of the "
-                              "sparks cut, fuel kept: the manifold burns it and the turbo keeps spinning. Its speed, "
-                              "air, spark, mixture and cut are tables of their own above.");
-    vtecButton_.setTooltip("VTEC: the ECU's switch over the high cam. Its engagement speed, hysteresis and minimum "
-                           "throttle are tables of their own above.");
+                              "sparks cut, fuel kept: the manifold burns it and the turbo keeps spinning. All its "
+                              "settings are on the selector's Anti-lag page.");
+    vtecButton_.setTooltip("VTEC: the ECU's switch over the high cam. All its settings are on the selector's VTEC "
+                           "page.");
     using calibration::CellOperation;
     const auto step = [this] {
-        const auto* entry = draft_.find(selectedCalibrationId().toStdString());
+        const auto* entry = draft_.find(toolEntryId());
         return entry != nullptr ? calibration::cellStep(calibration::metadataOf(*entry)) : 0.0;
     };
     stepDownButton_.onClick = [this, step] { applyTool(CellOperation::add, -step()); };
@@ -214,6 +216,79 @@ juce::String EcuTunerComponent::selectedCalibrationId() const {
         ? utf8(mapIds_[static_cast<std::size_t>(index)]) : juce::String {};
 }
 
+const EcuTunerComponent::Page* EcuTunerComponent::selectedPage() const {
+    const auto index = mapSelector_.getSelectedItemIndex();
+    return index >= 0 && static_cast<std::size_t>(index) < pages_.size()
+        ? &pages_[static_cast<std::size_t>(index)] : nullptr;
+}
+
+std::string EcuTunerComponent::entryIdOfCell(std::size_t valueIndex) const {
+    if (!cellIds_.empty()) return valueIndex < cellIds_.size() ? cellIds_[valueIndex] : std::string {};
+    return selectedCalibrationId().toStdString();
+}
+
+std::string EcuTunerComponent::toolEntryId() const {
+    if (cellIds_.empty()) return selectedCalibrationId().toStdString();
+    return selection_.empty() ? std::string {} : entryIdOfCell(selection_.front());
+}
+
+void EcuTunerComponent::selectPageOf(const std::string& entryId) {
+    for (std::size_t index = 0; index < pages_.size(); ++index) {
+        const auto& members = pages_[index].members;
+        if (std::find(members.begin(), members.end(), entryId) == members.end()) continue;
+        if (mapSelector_.getSelectedItemIndex() != static_cast<int>(index)) {
+            mapSelector_.setSelectedItemIndex(static_cast<int>(index), juce::dontSendNotification);
+            selection_.clear();
+        }
+        return;
+    }
+}
+
+std::vector<EcuTunerComponent::Page> EcuTunerComponent::pagesOf(const calibration::CalibrationSnapshot& snapshot) {
+    // A single-value setting shares its page with every other one of its
+    // prefix (the id before its first dot) when there are two or more.
+    const auto prefixOf = [](const std::string& id) {
+        const auto dot = id.find('.');
+        return dot == std::string::npos ? std::string {} : id.substr(0, dot);
+    };
+    std::map<std::string, std::size_t> scalarsPerPrefix;
+    for (const auto& [id, entry] : snapshot.entries())
+        if (std::holds_alternative<calibration::ScalarCalibration>(entry) && !prefixOf(id).empty())
+            ++scalarsPerPrefix[prefixOf(id)];
+    const auto groupTitle = [](const std::string& prefix) -> std::string {
+        if (prefix == "antilag") return "Anti-lag";
+        if (prefix == "vtec") return "VTEC";
+        if (prefix == "limits") return "Limits";
+        auto title = prefix;
+        if (!title.empty()) title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(title[0])));
+        return title;
+    };
+    std::vector<Page> pages;
+    std::map<std::string, std::size_t> groupPage;
+    for (const auto& [id, entry] : snapshot.entries()) {
+        const auto prefix = prefixOf(id);
+        const auto grouped = std::holds_alternative<calibration::ScalarCalibration>(entry) && !prefix.empty()
+            && scalarsPerPrefix[prefix] >= 2;
+        if (!grouped) {
+            const auto& name = calibration::metadataOf(entry).displayName;
+            pages.push_back({ id, name.empty() || name == id ? id : name, { id } });
+            continue;
+        }
+        if (const auto found = groupPage.find(prefix); found != groupPage.end()) {
+            pages[found->second].members.push_back(id);
+            continue;
+        }
+        groupPage.emplace(prefix, pages.size());
+        pages.push_back({ prefix + ".*", groupTitle(prefix) + " settings", { id } });
+    }
+    // A group's switch ("enabled") reads first.
+    for (auto& page : pages)
+        if (page.group())
+            std::stable_partition(page.members.begin(), page.members.end(),
+                                  [](const std::string& id) { return id.ends_with(".enabled"); });
+    return pages;
+}
+
 void EcuTunerComponent::reloadFromSnapshot(bool preserveSelection) {
     const auto selected = preserveSelection ? selectedCalibrationId() : juce::String {};
     const auto snapshot = store_->snapshot();
@@ -221,11 +296,11 @@ void EcuTunerComponent::reloadFromSnapshot(bool preserveSelection) {
     baseRevision_ = snapshot->revision();
     mapSelector_.clear(juce::dontSendNotification);
     mapIds_.clear();
+    pages_ = pagesOf(*snapshot);
     int itemId = 1;
-    for (const auto& [id, entry] : snapshot->entries()) {
-        const auto& name = calibration::metadataOf(entry).displayName;
-        mapSelector_.addItem(utf8(name.empty() || name == id ? id : name + "  (" + id + ")"), itemId++);
-        mapIds_.push_back(id);
+    for (const auto& page : pages_) {
+        mapSelector_.addItem(utf8(page.title == page.id ? page.id : page.title + "  (" + page.id + ")"), itemId++);
+        mapIds_.push_back(page.id);
     }
     if (selected.isNotEmpty()) {
         for (std::size_t index = 0; index < mapIds_.size(); ++index) {
@@ -250,11 +325,17 @@ void EcuTunerComponent::rebuildCells() {
     rebuilding_ = true;
     xLabels_.clear();
     yLabels_.clear();
+    rowLabels_.clear();
+    cellIds_.clear();
     valueEditors_.clear();
     committedTexts_.clear();
     xCount_ = 1;
     yCount_ = 1;
 
+    if (const auto* page = selectedPage(); page != nullptr && page->group()) {
+        rebuildGroupPage(*page);
+        return;
+    }
     const auto id = selectedCalibrationId().toStdString();
     const auto* entry = draft_.find(id);
     if (entry == nullptr) {
@@ -353,6 +434,55 @@ void EcuTunerComponent::rebuildCells() {
     repaint();
 }
 
+void EcuTunerComponent::rebuildGroupPage(const Page& page) {
+    // One row per setting: its name and unit, its value, its description
+    // as the row's tooltip. A switch reads 1 on, 0 off.
+    descriptionLabel_.setText(utf8(page.title + "  ·  every single-value setting of " + page.id
+        + " on one page; type a value and press Enter, it is taken at once."), juce::dontSendNotification);
+    for (const auto& member : page.members) {
+        const auto* entry = draft_.find(member);
+        const auto* scalar = entry != nullptr ? std::get_if<calibration::ScalarCalibration>(entry) : nullptr;
+        if (scalar == nullptr) continue;
+        const auto& metadata = calibration::metadataOf(*entry);
+        const auto unit = std::string(calibration::toString(metadata.unit));
+        auto label = std::make_unique<juce::Label>();
+        label->setText(utf8((metadata.displayName.empty() ? member : metadata.displayName)
+            + (unit.empty() ? std::string {} : "  [" + unit + "]")), juce::dontSendNotification);
+        label->setJustificationType(juce::Justification::centredLeft);
+        label->setColour(juce::Label::textColourId, juce::Colour(0xffd5dcd9));
+        label->setTooltip(utf8(member + ": " + metadata.description));
+        addAndMakeVisible(*label);
+        rowLabels_.push_back(std::move(label));
+        const auto text = number(scalar->value * displayScaleOf(member), metadata.displayPrecision);
+        auto editor = std::make_unique<juce::TextEditor>();
+        editor->setText(text, false);
+        editor->setJustification(juce::Justification::centred);
+        editor->setFont(juce::FontOptions(14.0F, juce::Font::bold));
+        editor->setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff22302d));
+        editor->setColour(juce::TextEditor::textColourId, juce::Colours::white);
+        editor->setColour(juce::TextEditor::highlightColourId, juce::Colour(0xffe89945));
+        editor->setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff46524e));
+        editor->setTooltip(utf8(member + ": " + metadata.description));
+        const auto index = valueEditors_.size();
+        editor->onReturnKey = [this, index] { commitCell(index); };
+        editor->onFocusLost = [this, index] { commitCell(index); };
+        editor->addMouseListener(this, true);
+        editor->setReadOnly(sessionLocked_);
+        addAndMakeVisible(*editor);
+        committedTexts_.push_back(text);
+        valueEditors_.push_back(std::move(editor));
+        cellIds_.push_back(member);
+    }
+    xCount_ = 1;
+    yCount_ = valueEditors_.size();
+    const auto count = valueEditors_.size();
+    std::erase_if(selection_, [count](std::size_t index) { return index >= count; });
+    updateToolState();
+    rebuilding_ = false;
+    resized();
+    repaint();
+}
+
 void EcuTunerComponent::updateActiveCellHighlight() {
     for (auto& editor : valueEditors_)
         editor->setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff46524e));
@@ -388,9 +518,11 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
             "Invalid ECU value", "Enter a finite number.");
         return;
     }
-    const auto id = selectedCalibrationId().toStdString();
+    const auto id = entryIdOfCell(valueIndex);
     const auto* current = draft_.find(id);
     if (current == nullptr) return;
+    // A group page's row is its setting's only value.
+    const auto entryIndex = cellIds_.empty() ? valueIndex : std::size_t { 0 };
     // Typed in the fuel's own AFR, stored in petrol AFR.
     value /= displayScaleOf(id);
     auto edited = *current;
@@ -398,10 +530,10 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
     std::visit([&](auto& calibrationEntry) {
         using T = std::decay_t<decltype(calibrationEntry)>;
         if constexpr (std::is_same_v<T, calibration::ScalarCalibration>) {
-            if (valueIndex == 0) { calibrationEntry.value = value; changed = true; }
+            if (entryIndex == 0) { calibrationEntry.value = value; changed = true; }
         } else {
-            if (valueIndex < calibrationEntry.values.size()) {
-                calibrationEntry.values[valueIndex] = value;
+            if (entryIndex < calibrationEntry.values.size()) {
+                calibrationEntry.values[entryIndex] = value;
                 changed = true;
             }
         }
@@ -432,6 +564,21 @@ bool EcuTunerComponent::publishEdit(calibration::CalibrationEntry edited,
 
 void EcuTunerComponent::applyTool(calibration::CellOperation operation, double amount) {
     if (sessionLocked_ || selection_.empty()) return;
+    if (!cellIds_.empty()) {
+        // A group page: the tool acts on each selected row's setting.
+        auto any = false;
+        for (const auto index : selection_) {
+            const auto* row = draft_.find(entryIdOfCell(index));
+            if (row == nullptr) continue;
+            auto edited = *row;
+            if (!calibration::applyCellOperation(edited, { 0 }, operation, amount)) continue;
+            const auto previous = *row;
+            if (!publishEdit(std::move(edited), previous)) return;
+            any = true;
+        }
+        if (any) rebuildCells();
+        return;
+    }
     const auto* current = draft_.find(selectedCalibrationId().toStdString());
     if (current == nullptr) return;
     auto edited = *current;
@@ -466,11 +613,7 @@ void EcuTunerComponent::stepHistory(bool undo) {
         return;
     }
     baseRevision_ = result.activeRevision;
-    for (std::size_t index = 0; index < mapIds_.size(); ++index)
-        if (mapIds_[index] == id && mapSelector_.getSelectedItemIndex() != static_cast<int>(index)) {
-            mapSelector_.setSelectedItemIndex(static_cast<int>(index), juce::dontSendNotification);
-            selection_.clear();
-        }
+    selectPageOf(id);
     statusLabel_.setText("REVISION " + juce::String(baseRevision_)
         + utf8(undo ? "  ·  UNDONE" : "  ·  REDONE"), juce::dontSendNotification);
     rebuildCells();
@@ -478,7 +621,7 @@ void EcuTunerComponent::stepHistory(bool undo) {
 
 void EcuTunerComponent::updateToolState() {
     const auto editable = !sessionLocked_ && !selection_.empty();
-    const auto* entry = draft_.find(selectedCalibrationId().toStdString());
+    const auto* entry = draft_.find(toolEntryId());
     const auto isGrid = entry != nullptr && !std::holds_alternative<calibration::ScalarCalibration>(*entry);
     for (auto* button : { &stepDownButton_, &stepUpButton_, &percentDownButton_, &percentUpButton_ })
         button->setEnabled(editable);
@@ -491,7 +634,9 @@ void EcuTunerComponent::updateToolState() {
     const auto step = entry != nullptr ? calibration::cellStep(calibration::metadataOf(*entry)) : 0.0;
     selectionLabel_.setText(selection_.empty() || entry == nullptr
             ? juce::String("Click a cell; shift-click selects a block, ctrl-click adds a cell")
-            : juce::String(static_cast<int>(selection_.size())) + utf8(selection_.size() == 1 ? " cell" : " cells")
+            : juce::String(static_cast<int>(selection_.size()))
+                + utf8(selection_.size() == 1 ? (cellIds_.empty() ? " cell" : " setting")
+                                              : (cellIds_.empty() ? " cells" : " settings"))
                 + utf8("  ·  step ") + juce::String(step * displayScaleOf(calibration::metadataOf(*entry).id),
                     std::max(0, calibration::metadataOf(*entry).displayPrecision - 1)),
         juce::dontSendNotification);
@@ -618,7 +763,7 @@ void EcuTunerComponent::paint(juce::Graphics& graphics) {
     graphics.drawHorizontalLine(96, 12.0F, static_cast<float>(getWidth() - 12));
     graphics.setColour(juce::Colour(0xff77847f));
     graphics.setFont(11.0F);
-    graphics.drawText("LOAD / RPM", 12, 76, 96, 18, juce::Justification::centredLeft);
+    if (cellIds_.empty()) graphics.drawText("LOAD / RPM", 12, 76, 96, 18, juce::Justification::centredLeft);
     graphics.drawText("Operating point  " + juce::String(operatingRpm_, 0) + utf8(" rpm  ·  ")
         + juce::String(operatingLoad_ * 100.0, 1) + " %", getWidth() - 270, 76, 255, 18,
         juce::Justification::centredRight);
@@ -654,6 +799,18 @@ void EcuTunerComponent::resized() {
     redoButton_.setBounds(tools.removeFromLeft(64)); tools.removeFromLeft(12);
     selectionLabel_.setBounds(tools);
 
+    if (!cellIds_.empty()) {
+        // A group page: one row per setting, its name then its value.
+        const auto rowHeight = std::clamp((getHeight() - 190) / static_cast<int>(std::max<std::size_t>(1, yCount_)),
+                                          30, 40);
+        const auto labelWidth = std::clamp(getWidth() - 24 - 160, 200, 460);
+        for (std::size_t row = 0; row < valueEditors_.size(); ++row) {
+            const auto y = 108 + static_cast<int>(row) * rowHeight;
+            if (row < rowLabels_.size()) rowLabels_[row]->setBounds(12, y, labelWidth, rowHeight);
+            valueEditors_[row]->setBounds(12 + labelWidth + 8, y + 2, 140, rowHeight - 4);
+        }
+        return;
+    }
     const auto availableWidth = std::max(100, getWidth() - 126);
     const auto cellWidth = std::clamp(availableWidth / static_cast<int>(std::max<std::size_t>(1, xCount_)), 58, 112);
     const auto cellHeight = std::clamp((getHeight() - 190)

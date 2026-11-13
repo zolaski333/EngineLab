@@ -919,6 +919,41 @@ int main() {
         require(tuner.antiLagButtonText() == "ANTI-LAG ON" && antiLag() == 1.0, "one click arms it");
         tuner.pressAntiLagButton();
         require(tuner.antiLagButtonText() == "ANTI-LAG OFF" && antiLag() == 0.0, "and one more turns it off");
+        // Its single-value settings are one page, one row each, not one
+        // selector item per value; so are the limits.
+        juce::ComboBox* selector = nullptr;
+        for (auto* child : tuner.getChildren())
+            if (auto* box = dynamic_cast<juce::ComboBox*>(child)) selector = box;
+        require(selector != nullptr, "the tuner lists its pages");
+        auto antiLagPage = -1;
+        auto limitsPage = -1;
+        for (int index = 0; index < selector->getNumItems(); ++index) {
+            const auto text = selector->getItemText(index);
+            require(!text.contains("(antilag.min_rpm)") && !text.contains("(limits.overboost_kpa)"),
+                    "a grouped setting has no selector item of its own");
+            if (text.contains("(antilag.*)")) antiLagPage = index;
+            if (text.contains("(limits.*)")) limitsPage = index;
+        }
+        require(antiLagPage >= 0 && limitsPage >= 0, "the selector has an Anti-lag page and a Limits page");
+        const auto pages = enginelab::EcuTunerComponent::pagesOf(*store->snapshot());
+        const auto group = std::find_if(pages.begin(), pages.end(), [](const auto& page) { return page.id == "antilag.*"; });
+        require(group != pages.end() && group->members.size() == 6U
+                    && group->members.front() == calibration::keys::antiLagEnabled,
+                "the Anti-lag page holds its six settings, its switch first");
+        selector->setSelectedItemIndex(antiLagPage, juce::sendNotificationSync);
+        std::vector<juce::TextEditor*> rows;
+        for (auto* child : tuner.getChildren())
+            if (auto* cell = dynamic_cast<juce::TextEditor*>(child)) rows.push_back(cell);
+        require(rows.size() == 6U, "the Anti-lag page shows six rows");
+        const auto minimumRpm = std::find_if(rows.begin(), rows.end(), [](juce::TextEditor* row) {
+            return row->getTooltip().startsWith("antilag.min_rpm:");
+        });
+        require(minimumRpm != rows.end() && (*minimumRpm)->getBounds().getY() > rows.front()->getBounds().getY(),
+                "each row is its own setting, below the switch");
+        (*minimumRpm)->setText("3200", false);
+        (*minimumRpm)->onReturnKey();
+        require(store->snapshot()->scalar(calibration::keys::antiLagMinimumRpm).value_or(-1.0) == 3200.0,
+                "a value typed on the page is published at once");
     }
 
     {

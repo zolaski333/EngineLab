@@ -107,6 +107,10 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- **The ECU tuner shows a group of single settings as one page**: the
+  anti-lag's six settings, VTEC's four and the limits (rev limit, launch
+  control, overboost) are each one entry of the selector, one row per
+  setting, instead of one entry holding a single number each.
 - **Message boxes and dialogs open inside their window** when they fit
   there whole and do not cover the 3-D view, so a screen recorder capturing
   one EngineLab window films them too (the tool windows' confirmations, the

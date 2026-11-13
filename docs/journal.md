@@ -5,6 +5,10 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-13 — tuner group pages
+
+- Owner plan step 2: a scalar sharing its prefix with another scalar goes on one page (`EcuTunerComponent::pagesOf`); 2JZ: Anti-lag (6, switch first), Limits (3), each a single selector entry. Tested in the Audio workshop GUI test: no selector item for a grouped key, six rows, a typed row published. Not tested on screen.
+
 ## 2026-11-13 — Equipment window
 
 - Owner plan 2026-11-13 step 1. Nitrous was not broken: its chain is right, but it needed four unseen conditions (armed, `=` held by default, 95 % throttle, 3,000 rpm), and Drive, unscrolled, could cut its switch off. Now: no push button on a new kit, `EngineState::nitrousBlockers` per condition, an Equipment window with a live status per part, a scrolling Drive panel.

@@ -229,7 +229,12 @@ another one is shown. The history is dropped when it no longer applies (an
 engine change removed the entry, or the store rejected the version). The
 operations are in `calibration::applyCellOperation`, tested by
 `EngineLab.CalibrationEditing`. The selector shows each entry's display name
-with its id.
+with its id. Single-value settings that share a prefix with another one (the
+id before its first dot: `antilag.*`, `vtec.*`, `limits.*`) are one page
+instead, *Anti-lag settings (antilag.*)*: one row each, its name and unit,
+its value, its description as the tooltip, the switch (`.enabled`) first. A
+row typed is published at once, and the tools act on the selected rows
+(`EcuTunerComponent::pagesOf`).
 
 ## Transactional publishing
 
