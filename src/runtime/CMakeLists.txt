@@ -2,6 +2,7 @@ add_library(EngineLabRuntime STATIC
     src/EngineRuntime.cpp
     src/DriverCommandArbiter.cpp
     src/CruiseControl.cpp
+    src/PassByRun.cpp
     src/DrivelineModel.cpp
     src/ShiftSchedule.cpp
     src/VariatorControl.cpp

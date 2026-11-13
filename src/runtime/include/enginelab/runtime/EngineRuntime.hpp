@@ -15,6 +15,7 @@
 #include <enginelab/runtime/DynoEstimator.hpp>
 #include <enginelab/runtime/DynoQualityGate.hpp>
 #include <enginelab/runtime/DynoRunArchive.hpp>
+#include <enginelab/runtime/PassByRun.hpp>
 #include <enginelab/runtime/RealtimeLoadGovernor.hpp>
 #include <algorithm>
 #include <atomic>
@@ -131,6 +132,11 @@ struct RealtimeAudioState final {
     /** EngineState::vehicleSpeedMps: what moves the car past a trackside
      *  microphone (RealtimeEngineAudio::setPassByEnabled). */
     std::atomic<float> vehicleSpeedMps { 0.0F };
+    /** A pass-by run's phase (PassByPhase, 0 none), the car's place along
+     *  the lane and the sound's share (EngineState::passBy*). */
+    std::atomic<int> passByPhase { 0 };
+    std::atomic<float> passByPositionM { 0.0F };
+    std::atomic<float> passBySoundGain { 1.0F };
     std::atomic<float> correctedAirFlowKgPerSecond { 0.0F };
     std::atomic<float> compressorPowerWatts { 0.0F };
     std::atomic<float> turbinePowerWatts { 0.0F };
@@ -212,6 +218,13 @@ public:
     }
     /** Engages the cruise control at the current road speed, or cancels it. */
     void toggleCruise() noexcept { cruiseToggleRequests_.fetch_add(1, std::memory_order_release); }
+    /** A pass-by run (PassByDriver): the ignition on, a scripted driver takes
+     *  the pedals and the gears from the next frame, stops the car, stages it
+     *  at the start and drives its program to the end (EngineState::passBy*).
+     *  A new start restarts it. Not on the dyno. Any thread. */
+    void startPassByRun(const PassByRunSettings& settings);
+    /** The driver lets go: the pedals are the user's again. Any thread. */
+    void stopPassByRun() noexcept { passByStopRequests_.fetch_add(1, std::memory_order_release); }
     /** Starts a new trip: distance and fuel count from zero again. */
     void resetTrip() noexcept { tripResetRequests_.fetch_add(1, std::memory_order_release); }
     void setGear(int gear) noexcept;
@@ -593,6 +606,10 @@ private:
     std::atomic<int> gear_ { -1 };
     std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
     std::atomic<std::uint64_t> cruiseToggleRequests_ { 0 };
+    std::mutex passByMutex_;
+    PassByRunSettings pendingPassBy_ {};
+    std::atomic<std::uint64_t> passByStartRequests_ { 0 };
+    std::atomic<std::uint64_t> passByStopRequests_ { 0 };
     // -1 nothing asked, else the automatic-shifting mode the UI asked for.
     std::atomic<int> automaticShiftingRequest_ { -1 };
     std::atomic<std::uint64_t> tripResetRequests_ { 0 };
@@ -600,6 +617,13 @@ private:
     // control merged in, and where the current trip started.
     CruiseControl cruise_;
     DriverInputs frameDriver_;
+    // Simulation thread only: the pass-by run's driver, its requests served,
+    // its key, and the automatic shifting it switched off for a held gear.
+    PassByDriver passByDriver_;
+    std::uint64_t passByStartsConsumed_ { 0 };
+    std::uint64_t passByStopsConsumed_ { 0 };
+    bool passByStarter_ { false };
+    std::optional<bool> passByRestoreAutomatic_;
     std::uint64_t cruiseTogglesConsumed_ { 0 };
     std::uint64_t tripResetsConsumed_ { 0 };
     double tripStartDistanceM_ { 0.0 };

@@ -68,13 +68,28 @@ file formats, always with an in-memory migration).
   click, and fully open it is exactly the same exhaust without the valve.
   Nothing changes on an engine without one.
 
-- **A trackside microphone.** In the 3-D view's settings, *Sound*,
-  *Trackside microphone*: the car is heard from 7.5 m beside its lane,
-  1.2 m up, as it drives past (the standard pass-by microphone). Set the
-  cruise control and it passes again and again: the intake and engine
-  first, the exhaust as the back of the car goes by, with the Doppler shift, the
-  ground's reflection, the air's absorption of the treble and its level
-  falling 6 dB each time the distance doubles. Off at every start.
+- **A pass-by run.** The top bar's **Pass-by** window: the car waits at a
+  standstill a chosen distance before a trackside microphone (500 m by
+  default), a scripted driver takes the pedals and the gears and drives a
+  program past it to a chosen distance beyond (500 m): a standing start at
+  full throttle (on launch control when the tables carry it), a constant
+  speed then full throttle from a point before the microphone, a constant
+  speed, or full throttle lifted at the microphone; through the gears or up
+  to one gear and held there. Past the end it lifts, brakes and the sound
+  fades out. A strip seen from above shows where the car is, its speed, its
+  gear and the time; **Record WAV** saves the run as heard to
+  Documents/EngineLab recordings. Stop gives the pedals back.
+- **A trackside microphone.** The pass-by run's, and in the 3-D view's
+  settings, *Sound*, *Trackside microphone*, where the car loops past at its
+  own speed. It stands 7.5 m beside the lane, 1.2 m up (both settable in the
+  Pass-by window) and hears the car with its delay (a car 500 m away is
+  heard 1.5 s late), the Doppler shift, the intake and engine first and the
+  exhaust as the back of the car goes by, the air's absorption of the treble
+  (ISO 9613-1: at 500 m the air takes 11 dB at 4 kHz), and the ground's
+  reflection: asphalt, gravel, grass, snow or none (grass, 500 m away, takes
+  30 dB at 500 Hz). Its level is the real one (6 dB less each time the
+  distance doubles) or, *Normalised*, the far car's timbre as loud as at the
+  closest approach. Off at every start; nothing changes while it is off.
 
 - **Anti-lag.** A turbocharged petrol engine's ECU tables carry it, off;
   the Equipment window, the tuner or its Drive switch arms it. With the foot

@@ -1359,7 +1359,19 @@ void RealtimeEngineAudio::renderSynthesis(
     float blockPeakObservedForcedInductionPressurePa = 0.0F;
     std::uint64_t legacySamplesThisBlock = 0;
     std::uint64_t invalidBoundarySamplesThisBlock = 0;
-    passBy_.setEnabled(passByRequested_.load(std::memory_order_relaxed));
+    {
+        // A pass-by run switches the microphone on and moves its car.
+        const auto runPhase = realtimeState_.passByPhase.load(std::memory_order_relaxed);
+        const auto running = runPhase != 0;
+        static_cast<void>(passBy_.setGeometry(passByLaneM_.load(std::memory_order_relaxed),
+            passByMicrophoneHeightM_.load(std::memory_order_relaxed),
+            static_cast<PassByGround>(std::clamp(passByGround_.load(std::memory_order_relaxed), 0,
+                                                 static_cast<int>(PassByGround::snow))),
+            passByNormalised_.load(std::memory_order_relaxed)));
+        passBy_.setEnabled(passByRequested_.load(std::memory_order_relaxed) || running);
+        passBy_.setRun(running, realtimeState_.passByPositionM.load(std::memory_order_relaxed),
+                       realtimeState_.passBySoundGain.load(std::memory_order_relaxed));
+    }
     passBy_.setVehicleSpeed(realtimeState_.vehicleSpeedMps.load(std::memory_order_relaxed));
     // The trackside microphone hears the exhaust from the tailpipe: keep its
     // share apart (off, nothing here runs).

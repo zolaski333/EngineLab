@@ -92,8 +92,9 @@ tailpipe points along the first outlet's acoustic axis.
 
 *Trackside microphone* (view settings, *Sound*; off at every start, not
 saved) hears the car from beside a lane as it drives past, ISO 362's
-microphone: 7.5 m from the lane's centre line, 1.2 m up
-(`PassByMicrophone`, `RealtimeEngineAudio::setPassByEnabled`). The master as
+microphone: 7.5 m from the lane's centre line, 1.2 m up by default
+(`PassByMicrophone`, `RealtimeEngineAudio::setPassByEnabled`; the place, the
+ground and the level from `setPassByGeometry`). The master as
 the engine's own observer hears it, after the voicing and before the master
 gain and limiter, is summed to two points 0.5 m up that move along the lane
 at the vehicle's speed: the exhaust's share (the dry tailpipe and its room
@@ -102,22 +103,44 @@ front-engined car; a mid-engined car or a motorcycle has it shorter), and the
 rest (intake, combustion, structure, turbo) at the engine. So the intake
 leads and the exhaust follows, 0.1 s later at 108 km/h on a 3 m car. The car
 moves (`RealtimeAudioState::vehicleSpeedMps`, smoothed over
-20 ms). It starts in front of the microphone, drives to 150 m past it, and
-comes back from 150 m before it, the last 30 m each way faded out; set the
-cruise control and it passes again and again. On the dyno or standing still
-it stays where it is.
+20 ms). Alone it starts in front of the microphone, drives to 150 m past it,
+and comes back from 150 m before it, the last 30 m each way faded out; set
+the cruise control and it passes again and again. On the dyno or standing
+still it stays where it is. During a pass-by run (`RealtimeAudioState::
+passByPhase` not 0) the microphone is on whatever the menu says and the car
+is the run's (`passByPositionM`, followed between frames at the car's speed
+and pulled toward each new figure over 0.5 s; a jump over 50 m, a restart,
+fades out, moves and fades in), scaled by the run's fade (`passBySoundGain`).
+The delay line holds a car 2.1 km away (`maximumRangeM`).
 
 Each of the two microphones (0.18 m apart along the lane, the left one
-upstream) gets two paths, the direct one and the ground's image (a hard
-surface, pressure reflection 0.9). Each path reads a delay line at its
+upstream) gets two paths, the direct one and the ground's image. Each path
+reads a delay line at its
 retarded time: the sound heard now left the car tau ago from x - v tau, so
 (c^2 - v^2) tau^2 + 2 x v tau - (x^2 + D^2) = 0, which gives the moving
 source's own Doppler shift exactly for a speed constant over tau (to 80 % of
 the speed of sound). Its level is the observer's distance over the emission
-distance (6 dB per doubling), and two one-pole low-passes at 58 kHz /
-sqrt(r) follow the air's f^2 absorption (ISO 9613-1, 20 C, 70 %: within
-0.03 dB from 10 to 100 m at 2 and 4 kHz; at 8 kHz they take 7.7 dB of the
-10.5). Switched on, it waits until its delay line holds the car's sound,
+distance (6 dB per doubling); *Normalised* holds it at the closest
+approach's, so a far car keeps its timbre (delay, air, ground) at a level
+one can hear. The image path is a real reflection: the ground's spherical-
+wave coefficient's magnitude at the comb's first notch, so its notches stay
+where a hard ground puts them.
+
+What a delay and a real gain cannot carry goes on each microphone after the
+sum, redesigned every 256 samples from where the car is: ISO 9613-1's air
+absorption (20 C, 70 %, 101.325 kPa; the exact formula) as four one-pole
+low-passes set where the air takes 20 dB, and the porous ground's
+reflection: Delany-Bazley's impedance (flow resistivity: asphalt 30,000,
+gravel 3,000, grass 200, snow 20 kPa s/m2, Embleton, Piercy & Daigle 1983)
+in the spherical-wave coefficient Q = Rp + (1 - Rp) F(w) (the Faddeeva
+function by Weideman's 32 terms). Both become the levels of a 29-band
+third-octave graphic equaliser (25 Hz-16 kHz, peaking filters at Q 4.3, the
+bands' interaction inverted, each held to -36..+12 dB) that takes what the
+low-passes and the real reflection left: within 0.3 dB of ISO from 10 m to
+1 km and 0.1 dB of the exact ground at band centres (`EngineLab.
+PassByMicrophone`). Not modelled: the notches' shift on a soft ground
+between band centres, turbulence, refraction. Switched on, it waits until
+its delay line holds the car's sound,
 then cross-fades in over 50 ms; switched off it cross-fades out and lets go.
 Off, the master is untouched (`EngineLab.PassByMicrophone`). While it is on,
 the camera's microphones go back to their authored place. Not modelled: wind,

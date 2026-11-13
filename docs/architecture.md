@@ -106,7 +106,7 @@ constructor.
 
 | Panel | Area |
 |---|---|
-| `TopBar` | engine picker, run state, Exhaust / Fuel / Equipment / Vehicle / ECU / Audio windows, `⋯` menu |
+| `TopBar` | engine picker, run state, Exhaust / Fuel / Equipment / Pass-by / Vehicle / ECU / Audio windows, `⋯` menu |
 | `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key, and the switch of each fitted option, anti-lag's included), trims; it scrolls in a `juce::Viewport` when taller than the window (`preferredHeight()`) |
 | `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
 | `ReadoutStrip` | tachometer and six live readouts |
@@ -125,6 +125,17 @@ launch control (their calibration scalars, published at once with
 `EquipmentWindow::publishScalar`). Each section's status line reads the
 engine state of the last tick (`nitrousBlockers`, `exhaustValveOpening`,
 `vtecHighCylinderMask`, the launch-control limit bit).
+
+`PassByWindow` sets a pass-by run and its microphone: Start hands the
+settings to `EngineRuntime::startPassByRun`, where a `PassByDriver`
+(runtime, `PassByRun.hpp`) takes the pedals and the gears on the simulation
+thread and publishes its phase, place, time and fade in `EngineState`
+(`passBy*`) and `RealtimeAudioState`; `MainComponent` passes the
+microphone's place, ground and level to `RealtimeEngineAudio::
+setPassByGeometry`, turns the camera's microphones off while a run is
+published, and, with Record WAV, `WavRecorder` writes what
+`getNextAudioBlock` plays (a background thread, 24-bit) until the end's
+sound has reached the microphone.
 
 **A box is inside its window when it shows whole there**, so a screen
 recorder's window capture films it. Alert boxes go through `ui::showMessage`
@@ -677,8 +688,9 @@ solver's own state, not by an animation:
 - **Trackside microphone.** *Trackside microphone* (settings menu, *Sound*,
   `EngineViewport::tracksideMicrophone()`, off at every start, not saved)
   turns the camera's microphones off and has `MainComponent` call
-  `RealtimeEngineAudio::setPassByEnabled`: the car drives past a microphone
-  7.5 m off its lane (`realtime-audio.md`, *Trackside microphone*).
+  `RealtimeEngineAudio::setPassByEnabled`: the car loops past a microphone
+  7.5 m off its lane (`realtime-audio.md`, *Trackside microphone*); a
+  pass-by run (top bar, Pass-by) drives it instead.
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.

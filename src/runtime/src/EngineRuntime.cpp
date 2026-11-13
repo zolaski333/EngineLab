@@ -1,4 +1,5 @@
 #include <enginelab/runtime/EngineRuntime.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/runtime/MonotonicPublicationTimeline.hpp>
 #include <enginelab/foundation/ThreadScheduling.hpp>
 #include <algorithm>
@@ -253,6 +254,11 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
         engineState.exhaustValveOpening, 0.0, 1.0)), std::memory_order_relaxed);
     state.vehicleSpeedMps.store(std::isfinite(engineState.vehicleSpeedMps)
         ? static_cast<float>(engineState.vehicleSpeedMps) : 0.0F, std::memory_order_relaxed);
+    state.passByPhase.store(static_cast<int>(engineState.passByPhase), std::memory_order_relaxed);
+    state.passByPositionM.store(std::isfinite(engineState.passByPositionM)
+        ? static_cast<float>(engineState.passByPositionM) : 0.0F, std::memory_order_relaxed);
+    state.passBySoundGain.store(std::isfinite(engineState.passBySoundGain)
+        ? static_cast<float>(std::clamp(engineState.passBySoundGain, 0.0, 1.0)) : 1.0F, std::memory_order_relaxed);
     constexpr double referenceTemperatureK = 288.15;
     constexpr double referencePressureKpa = 101.325;
     // SAE-style compressor corrected flow is referenced at the compressor
@@ -951,6 +957,15 @@ void EngineRuntime::setDynoHoldRpm(double value) noexcept {
         std::memory_order_relaxed);
 }
 
+void EngineRuntime::startPassByRun(const PassByRunSettings& settings) {
+    {
+        const std::scoped_lock lock(passByMutex_);
+        pendingPassBy_ = sanitised(settings);
+    }
+    ignition_.store(true);
+    passByStartRequests_.fetch_add(1, std::memory_order_release);
+}
+
 void EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineState,
                                     double requestedLoad) noexcept {
     drivelineOutput_ = advanceVehicle(driveline_, dtSeconds, engineState, requestedLoad,
@@ -1415,6 +1430,64 @@ void EngineRuntime::run(std::stop_token stopToken) {
         if (cruise_.engaged())
             frameDriver_ = cruise_.apply(simulationDt, vehicleSpeedMps_, frameDriver_,
                                          driveline_.requestedGear() >= 0);
+        // A pass-by run's driver takes the pedals and the gears.
+        {
+            const auto restoreShifting = [&] {
+                if (passByRestoreAutomatic_) driveline_.setAutomaticShifting(*passByRestoreAutomatic_);
+                passByRestoreAutomatic_.reset();
+            };
+            if (const auto stops = passByStopRequests_.load(std::memory_order_acquire);
+                stops != passByStopsConsumed_) {
+                passByStopsConsumed_ = stops;
+                passByDriver_.stop();
+                restoreShifting();
+            }
+            if (const auto starts = passByStartRequests_.load(std::memory_order_acquire);
+                starts != passByStartsConsumed_) {
+                passByStartsConsumed_ = starts;
+                PassByRunSettings settings;
+                {
+                    const std::scoped_lock lock(passByMutex_);
+                    settings = pendingPassBy_;
+                }
+                restoreShifting();
+                // A held gear is the driver's: the gearbox stops choosing.
+                if (settings.gear > 0 && driveline_.automaticShifting()) {
+                    passByRestoreAutomatic_ = true;
+                    driveline_.setAutomaticShifting(false);
+                }
+                const auto calibration = ecu_.calibrationStore()->snapshot();
+                PassByVehicle vehicle;
+                vehicle.idleRpm = config_.idleRpm;
+                vehicle.ceilingRpm = std::min(config_.redlineRpm, activeRevLimitRpm(config_, *calibration));
+                vehicle.gearCount = static_cast<int>(config_.transmission.gearRatios.size());
+                vehicle.automaticGearbox = driveline_.automaticShifting();
+                vehicle.launchControlFitted = calibration->scalarOr(calibration::keys::launchLimit, 0.0) > 0.0;
+                passByDriver_.start(settings, vehicle);
+            }
+            if (dynoActive_ && passByDriver_.phase() != PassByPhase::off) {
+                passByDriver_.stop();
+                restoreShifting();
+            }
+            passByStarter_ = false;
+            if (passByDriver_.driving() && simulationDt > 0.0) {
+                cruise_.cancel();
+                PassByObservation observation;
+                observation.speedMps = vehicleSpeedMps_;
+                observation.rpm = simulator_.state().rpm;
+                observation.requestedGear = driveline_.requestedGear();
+                observation.engagedGear = engagedGear_;
+                observation.shiftInProgress = shiftInProgress_;
+                const auto command = passByDriver_.step(simulationDt, observation);
+                const auto engineBrakeStage = frameDriver_.engineBrakeStage;
+                frameDriver_ = command.inputs;
+                frameDriver_.engineBrakeStage = engineBrakeStage;
+                if (command.requestGear) driveline_.requestGear(*command.requestGear);
+                if (command.shiftUp) driveline_.shiftUp();
+                passByStarter_ = command.starter;
+                if (!passByDriver_.driving()) restoreShifting();
+            }
+        }
         if (!dynoActive_ && simulationDt > 0.0) {
             updateDriveline(simulationDt, simulator_.state(), requestedLoad);
             // Reflect automatic shifts without ever overwriting a concurrent UI
@@ -1448,7 +1521,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         // the driveline's own devices are arbitrated in one place.
         EngineControls controls;
         controls.ignitionEnabled = ignition_.load();
-        controls.starterEngaged = starter_.load();
+        controls.starterEngaged = starter_.load() || passByStarter_;
         controls.exhaustValveMode = exhaustValveMode_.load(std::memory_order_relaxed);
         controls.nitrousArmed = nitrousArmed_.load(std::memory_order_relaxed);
         controls.nitrousButton = nitrousButton_.load(std::memory_order_relaxed);
@@ -1851,6 +1924,10 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.automaticShifting = driveline_.automaticShifting();
             frame.state.cruiseEngaged = cruise_.engaged();
             frame.state.cruiseSetSpeedMps = cruise_.setSpeedMps();
+            frame.state.passByPhase = static_cast<std::uint8_t>(passByDriver_.phase());
+            frame.state.passByPositionM = passByDriver_.positionM();
+            frame.state.passBySeconds = passByDriver_.runSeconds();
+            frame.state.passBySoundGain = passByDriver_.soundGain();
             frame.state.wheelTorqueNm = wheelTorqueNm_;
             frame.state.drivelineLoadTorqueNm = drivelineLoadTorqueNm_;
             frame.state.clutchTorqueNm = -engineClutchTorqueNm_;

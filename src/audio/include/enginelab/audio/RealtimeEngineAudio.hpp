@@ -166,6 +166,18 @@ public:
      */
     void setPassByEnabled(bool enabled) noexcept { passByRequested_.store(enabled, std::memory_order_relaxed); }
     [[nodiscard]] bool passByEnabled() const noexcept { return passByRequested_.load(std::memory_order_relaxed); }
+    /** The trackside microphone's place and ground, and whether its level is
+     *  the real one or held at the lane's distance (PassByMicrophone::
+     *  setGeometry). While a pass-by run is published (RealtimeAudioState::
+     *  passByPhase) the microphone is on and follows the run's car. Any
+     *  thread; the audio thread takes it at its next block. */
+    void setPassByGeometry(double laneDistanceM, double microphoneHeightM, PassByGround ground,
+                           bool normalisedLevel) noexcept {
+        passByLaneM_.store(laneDistanceM, std::memory_order_relaxed);
+        passByMicrophoneHeightM_.store(microphoneHeightM, std::memory_order_relaxed);
+        passByGround_.store(static_cast<int>(ground), std::memory_order_relaxed);
+        passByNormalised_.store(normalisedLevel, std::memory_order_relaxed);
+    }
     /** Where the car is along the lane (m, 0 in front of the microphone). */
     [[nodiscard]] double passByPositionM() const noexcept { return passByPositionM_.load(std::memory_order_relaxed); }
     /**
@@ -649,6 +661,10 @@ private:
     std::array<AcousticPoint3M, 2> authoredMicrophones_ {};
     PassByMicrophone passBy_;
     std::atomic<bool> passByRequested_ { false };
+    std::atomic<double> passByLaneM_ { 7.5 };
+    std::atomic<double> passByMicrophoneHeightM_ { 1.2 };
+    std::atomic<int> passByGround_ { static_cast<int>(PassByGround::asphalt) };
+    std::atomic<bool> passByNormalised_ { false };
     std::atomic<double> passByPositionM_ { 0.0 };
     /** The tailpipe's distance behind the engine for the trackside
      *  microphone: the wheelbase, a front-engined car's estimate. */

@@ -468,6 +468,7 @@ add_executable(EngineLabAudioWorkshopTests
     "${CMAKE_SOURCE_DIR}/src/app/src/FuelEditing.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/FuelWindow.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/EquipmentWindow.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/PassByWindow.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/Theme.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/Widgets.cpp")
 target_include_directories(EngineLabAudioWorkshopTests PRIVATE
@@ -720,6 +721,19 @@ add_executable(EngineLabCruiseControlTests CruiseControlTests.cpp)
 target_link_libraries(EngineLabCruiseControlTests PRIVATE EngineLab::Runtime)
 enginelab_set_warnings(EngineLabCruiseControlTests)
 add_test(NAME EngineLab.CruiseControl COMMAND EngineLabCruiseControlTests)
+
+add_executable(EngineLabPassByRunTests PassByRunTests.cpp)
+target_link_libraries(EngineLabPassByRunTests PRIVATE
+    EngineLab::Runtime EngineLab::Catalog EngineLab::Calibration EngineLab::Simulation EngineLab::Ecu
+    EngineLab::Events EngineLab::Physics EngineLab::Exhaust)
+target_compile_definitions(EngineLabPassByRunTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabPassByRunTests)
+add_test(NAME EngineLab.PassByRun COMMAND EngineLabPassByRunTests)
+set_tests_properties(EngineLab.PassByRun PROPERTIES TIMEOUT 900)
+if(MSVC)
+    target_link_options(EngineLabPassByRunTests PRIVATE /STACK:8388608)
+endif()
 # The real engine and driveline: the toy car of CruiseControlTests has no
 # combustion-to-combustion torque, and the hunting the owner reported
 # (2026-11-05: throttle 0-20 % every 2.5 s, a K20A at 100 km/h) only showed

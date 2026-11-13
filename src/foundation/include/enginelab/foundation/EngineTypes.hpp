@@ -2101,6 +2101,14 @@ struct EngineState final {
     /** Cruise control: engaged, and the speed it holds. */
     bool cruiseEngaged { false };
     double cruiseSetSpeedMps { 0.0 };
+    /** A pass-by run (EngineRuntime::startPassByRun): its phase
+     *  (PassByPhase, 0 off), the car's place along the lane (m, 0 in front of
+     *  the microphone, negative before it), the seconds since it began at the
+     *  start and the sound's share (1, fading to 0 past the end). */
+    std::uint8_t passByPhase { 0 };
+    double passByPositionM { 0.0 };
+    double passBySeconds { 0.0 };
+    double passBySoundGain { 1.0 };
     double airFlowGramsPerSecond { 0.0 };
     double lambda { 1.0 };
     double brakeSpecificFuelConsumptionGPerKwh { 0.0 };

@@ -7,6 +7,8 @@
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
 #include <enginelab/app/FuelEditing.hpp>
 #include <enginelab/app/FuelWindow.hpp>
+#include <enginelab/app/PassByWindow.hpp>
+#include <enginelab/app/Widgets.hpp>
 #include <enginelab/app/Theme.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
@@ -1110,6 +1112,87 @@ int main() {
                     "each tool window shows its own tooltips");
         }
         juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    }
+
+    // The pass-by window: a run's settings, Start/Restart/Stop and Record
+    // WAV handed to the app, the microphone's place and ground, and what the
+    // run is doing in words.
+    {
+        std::vector<std::pair<enginelab::PassByRunSettings, bool>> starts;
+        auto stops = 0;
+        std::vector<enginelab::PassByMicrophoneChoice> microphones;
+        enginelab::PassByWindow::Callbacks callbacks;
+        callbacks.start = [&starts](const enginelab::PassByRunSettings& settings, bool record) {
+            starts.emplace_back(settings, record);
+        };
+        callbacks.stop = [&stops] { ++stops; };
+        callbacks.setMicrophone = [&microphones](const enginelab::PassByMicrophoneChoice& choice) {
+            microphones.push_back(choice);
+        };
+        enginelab::PassByWindow passBy(engine, callbacks);
+        passBy.setVisible(true);
+        auto& root = *passBy.content();
+        std::vector<juce::Component*> all;
+        std::function<void(juce::Component&)> walk = [&](juce::Component& node) {
+            for (auto* child : node.getChildren()) {
+                all.push_back(child);
+                walk(*child);
+            }
+        };
+        walk(root);
+        const auto button = [&](const juce::String& text) -> juce::Button* {
+            for (auto* child : all)
+                if (auto* asButton = dynamic_cast<juce::Button*>(child); asButton != nullptr && asButton->getButtonText() == text)
+                    return asButton;
+            return nullptr;
+        };
+        std::vector<enginelab::ui::SegmentedControl*> segments;
+        std::vector<juce::Slider*> sliders;
+        for (auto* child : all) {
+            if (auto* segment = dynamic_cast<enginelab::ui::SegmentedControl*>(child)) segments.push_back(segment);
+            if (auto* slider = dynamic_cast<juce::Slider*>(child)) sliders.push_back(slider);
+        }
+        require(segments.size() == 3U && sliders.size() == 7U,
+                "the window has its program, ground and level choices and its seven figures");
+        require(!microphones.empty() && microphones.back().ground == enginelab::PassByGround::asphalt
+                    && near(microphones.back().laneDistanceM, 7.5) && !microphones.back().normalisedLevel,
+                "it hands the app ISO 362's microphone over asphalt at the real level");
+        auto* start = button("Start");
+        require(start != nullptr && button("Record WAV") != nullptr && button("Stop") != nullptr,
+                "it has Start, Stop and Record WAV");
+        start->onClick();
+        require(starts.size() == 1U && !starts.back().second
+                    && starts.back().first.program == enginelab::PassByProgram::standingStart
+                    && near(starts.back().first.startDistanceM, 500.0) && near(starts.back().first.endDistanceM, 500.0),
+                "Start asks for a standing start 500 m before the microphone to 500 m past it, unrecorded");
+        segments[0]->setSelected(1, juce::sendNotification);
+        sliders[0]->setValue(300.0, juce::sendNotificationSync);
+        button("Record WAV")->onClick();
+        start->onClick();
+        require(starts.size() == 2U && starts.back().second
+                    && starts.back().first.program == enginelab::PassByProgram::acceleration
+                    && near(starts.back().first.startDistanceM, 300.0),
+                "the program, the distances and Record WAV reach the run");
+        segments[1]->setSelected(3, juce::sendNotification);
+        segments[2]->setSelected(1, juce::sendNotification);
+        require(microphones.back().ground == enginelab::PassByGround::grass && microphones.back().normalisedLevel,
+                "the ground and the level reach the microphone at once");
+        enginelab::EngineState state {};
+        state.passByPhase = static_cast<std::uint8_t>(enginelab::PassByPhase::measuring);
+        state.passByPositionM = -120.0;
+        passBy.setState(state);
+        require(button("Restart") != nullptr && button("Restart")->isEnabled() && button("Stop")->isEnabled(),
+                "while a run drives, Start reads Restart and Stop is on");
+        require(enginelab::describePassBy(state, passBy.runSettings()).contains("Driving past"),
+                "and it says the car is driving past");
+        button("Stop")->onClick();
+        require(stops == 1, "Stop lets the driver go");
+        state.passByPhase = static_cast<std::uint8_t>(enginelab::PassByPhase::finished);
+        state.passBySeconds = 17.8;
+        require(enginelab::describePassBy(state, passBy.runSettings()).contains("17.8 s"),
+                "finished, it gives the run's time");
+        passBy.setLocked(true);
+        require(button("Restart") != nullptr && !button("Restart")->isEnabled(), "the dyno locks it");
     }
 
     std::cout

@@ -7,6 +7,8 @@
 #include <enginelab/app/EcuTunerWindow.hpp>
 #include <enginelab/app/EquipmentWindow.hpp>
 #include <enginelab/app/FuelWindow.hpp>
+#include <enginelab/app/PassByWindow.hpp>
+#include <enginelab/app/WavRecorder.hpp>
 #include <enginelab/app/EngineViewport.hpp>
 #include <enginelab/app/EngineDesignerWindow.hpp>
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
@@ -177,6 +179,13 @@ private:
     void showFuelWindow();
     /** Every optional part: nitrous, the active valve, VTEC, launch control. */
     void showEquipmentWindow();
+    /** A pass-by run: the car, a scripted driver and a trackside microphone. */
+    void showPassByWindow();
+    void startPassByRun(const PassByRunSettings& settings, bool record);
+    void stopPassByRun();
+    /** Closes the run's WAV file once the run is over and its sound has
+     *  reached the microphone; says where it is. */
+    void updatePassByRecording();
     /** The vehicle's figures, in their own window. */
     void showVehicleWindow();
     /** A line in the 3-D view's inspector and in the Fuel window. */
@@ -316,6 +325,14 @@ private:
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
     std::unique_ptr<FuelWindow> fuelWindow_;
     std::unique_ptr<EquipmentWindow> equipmentWindow_;
+    std::unique_ptr<PassByWindow> passByWindow_;
+    PassByMicrophoneChoice passByMicrophone_ {};
+    /** What the speakers play during a run, to a WAV file (getNextAudioBlock). */
+    WavRecorder passByRecorder_;
+    std::atomic<double> outputSampleRateHz_ { 0.0 };
+    /** When the run is over, the file closes this much later (ms, 0: not
+     *  over): the far end's sound is still on its way. */
+    double passByRecordingCloseAtMs_ { 0.0 };
     /** Shows `vehiclePanel_` (not owned: reset before it in the destructor). */
     std::unique_ptr<juce::DocumentWindow> vehicleWindow_;
     std::vector<FuelPreset> fuelPresets_;

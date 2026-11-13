@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-13 — pass-by run and propagation
+
+- Owner plan step 4: `PassByDriver` (runtime) drives a real K20 car rig in `EngineLab.PassByRun`: standing start from 150 m, 113.2 km/h at the microphone after 8.24 s, 8,480 rpm peak, third gear, finished after 17.8 s; launch control holds the staging at 4,057 rpm (limit 4,000); 50 km/h held in second within 0.63 km/h, 57.2 km/h at the microphone on the 10 m full-throttle program.
+- Propagation checked against the exact formulas, not the simulator: ISO 9613-1 (20 C, 70 %) 2.80/4.98/9.02/22.9/76.6 dB/km at 0.5-8 kHz, heard within 0.3 dB from 10 m to 1 km; Delany-Bazley + spherical wave Q (Faddeeva against scipy) within 0.1 dB at band centres for asphalt, gravel and grass at 7.5-500 m.
+- Corrected: the previous trackside test's ISO figures (9.7 dB/km at 2 kHz, 32.8 at 4 kHz) were the 10 C row of the table, not 20 C.
+- Limits: the comb's notches stay where a hard ground puts them (the image is a real reflection, its magnitude at the first notch), the porous part is third-octave levels; no turbulence, refraction, wind or directivity. Not tested: the window on screen, a WAV from the app, a run heard.
+
 ## 2026-11-13 — anti-lag feedback
 
 - Owner plan step 3. Measured first, where the fuel burns (new bookkeeping, `EngineState::exhaustFuelInMgPerSecond` and siblings), 2JZ lifted 2 s from full boost at 5,000 rpm unloaded, 50 % kept: injected 5,999 mg/s, 3,364 into the exhaust unburnt (56 %), 176 burnt there (5 %), 74 of it before the turbine, 3,114 out of the tailpipe.

@@ -124,6 +124,7 @@ MainComponent::MainComponent() {
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
     topBar_.fuelButton.onClick = [this] { showFuelWindow(); };
     topBar_.equipmentButton.onClick = [this] { showEquipmentWindow(); };
+    topBar_.passByButton.onClick = [this] { showPassByWindow(); };
     topBar_.vehicleButton.onClick = [this] { showVehicleWindow(); };
     topBar_.audioButton.onClick = [this] { showAudioWorkshop(); };
     topBar_.moreButton.onClick = [this] { showMoreMenu(); };
@@ -278,6 +279,7 @@ MainComponent::~MainComponent() {
     exhaustDesignerWindow_.reset();
     fuelWindow_.reset();
     equipmentWindow_.reset();
+    passByWindow_.reset();
     vehicleWindow_.reset();
     ecuTunerWindow_.reset();
     shutdownAudio();
@@ -1187,6 +1189,82 @@ void MainComponent::showEquipmentWindow() {
     equipmentWindow_->toFront(true);
 }
 
+void MainComponent::showPassByWindow() {
+    if (!passByWindow_) {
+        auto safe = juce::Component::SafePointer<MainComponent>(this);
+        PassByWindow::Callbacks callbacks;
+        callbacks.start = [safe](const PassByRunSettings& settings, bool record) {
+            if (safe) safe->startPassByRun(settings, record);
+        };
+        callbacks.stop = [safe] { if (safe) safe->stopPassByRun(); };
+        callbacks.setMicrophone = [safe](const PassByMicrophoneChoice& choice) {
+            if (safe) safe->passByMicrophone_ = choice;
+        };
+        passByWindow_ = std::make_unique<PassByWindow>(config_, std::move(callbacks));
+        passByMicrophone_ = passByWindow_->microphone();
+    }
+    passByWindow_->setEngine(config_);
+    passByWindow_->setLocked(runtime_ && runtime_->dynoRunning());
+    passByWindow_->setState(model_.state);
+    passByWindow_->setVisible(true);
+    passByWindow_->toFront(true);
+}
+
+void MainComponent::startPassByRun(const PassByRunSettings& settings, bool record) {
+    if (!runtime_ || runtime_->dynoRunning()) return;
+    passByRecorder_.stop();
+    passByRecordingCloseAtMs_ = 0.0;
+    if (record && passByWindow_) {
+        auto name = juce::File::createLegalFileName(utf8(config_.name)).replaceCharacter(' ', '-');
+        const auto file = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+            .getChildFile("EngineLab recordings")
+            .getChildFile(name + "-pass-by-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".wav");
+        const auto rate = outputSampleRateHz_.load(std::memory_order_relaxed);
+        if (passByRecorder_.start(file, rate, 2))
+            passByWindow_->setRecordingStatus(utf8("Recording to ") + file.getFullPathName());
+        else
+            passByWindow_->setRecordingStatus(rate > 0.0 ? utf8("Cannot write ") + file.getFullPathName()
+                                                         : utf8("No audio device: nothing to record"));
+    } else if (passByWindow_) {
+        passByWindow_->setRecordingStatus({});
+    }
+    runtime_->startPassByRun(settings);
+}
+
+void MainComponent::stopPassByRun() {
+    if (runtime_) runtime_->stopPassByRun();
+    if (passByRecorder_.recording()) {
+        passByRecorder_.stop();
+        passByRecordingCloseAtMs_ = 0.0;
+        if (passByWindow_)
+            passByWindow_->setRecordingStatus(utf8("Stopped; saved ") + passByRecorder_.file().getFullPathName());
+    }
+}
+
+void MainComponent::updatePassByRecording() {
+    if (!passByRecorder_.recording() || !passByWindow_) return;
+    const auto phase = static_cast<PassByPhase>(model_.state.passByPhase);
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    if (phase == PassByPhase::finished || phase == PassByPhase::off) {
+        // The end's sound needs end / c to arrive (1.5 s from 500 m).
+        if (passByRecordingCloseAtMs_ <= 0.0)
+            passByRecordingCloseAtMs_ = now + 1'000.0 * (0.5 + passByWindow_->runSettings().endDistanceM / 343.0);
+    } else {
+        passByRecordingCloseAtMs_ = 0.0;
+    }
+    const auto rate = std::max(1.0, outputSampleRateHz_.load(std::memory_order_relaxed));
+    const auto seconds = static_cast<double>(passByRecorder_.samples()) / rate;
+    if (passByRecordingCloseAtMs_ > 0.0 && now >= passByRecordingCloseAtMs_) {
+        passByRecorder_.stop();
+        passByRecordingCloseAtMs_ = 0.0;
+        passByWindow_->setRecordingStatus(utf8("Saved ") + ui::fixed(seconds, 1) + utf8(" s to ")
+            + passByRecorder_.file().getFullPathName());
+        return;
+    }
+    passByWindow_->setRecordingStatus(utf8("Recording ") + ui::fixed(seconds, 1) + utf8(" s to ")
+        + passByRecorder_.file().getFullPathName());
+}
+
 void MainComponent::showVehicleWindow() {
     if (!vehicleWindow_) {
         vehiclePanel_.setSize(400, vehiclePanel_.preferredHeight());
@@ -1774,10 +1852,15 @@ void MainComponent::removeSavedEngine(const std::filesystem::path& file) {
     refreshEngineChoices();
 }
 
-void MainComponent::prepareToPlay(int blockSize, double sampleRate) { if (audio_) audio_->prepare(sampleRate, blockSize); }
+void MainComponent::prepareToPlay(int blockSize, double sampleRate) {
+    outputSampleRateHz_.store(sampleRate, std::memory_order_relaxed);
+    if (audio_) audio_->prepare(sampleRate, blockSize);
+}
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) {
     if (audio_ && info.buffer != nullptr) audio_->render(*info.buffer, info.startSample, info.numSamples);
     else if (info.buffer != nullptr) info.buffer->clear(info.startSample, info.numSamples);
+    if (info.buffer != nullptr && passByRecorder_.recording())
+        passByRecorder_.write(*info.buffer, info.startSample, info.numSamples);
 }
 void MainComponent::releaseResources() { if (audio_) audio_->release(); }
 
@@ -2127,6 +2210,14 @@ void MainComponent::timerCallback() {
         equipmentWindow_->setEngine(config_, runtime_->calibrationStore());
         equipmentWindow_->setState(model_.state);
     }
+    if (passByWindow_) {
+        passByWindow_->setLocked(running);
+        if (passByWindow_->isVisible()) {
+            passByWindow_->setEngine(config_);
+            passByWindow_->setState(model_.state);
+        }
+        updatePassByRecording();
+    }
     updateModified();
 
     // Each panel repaints only its own area; the static chrome does not
@@ -2143,7 +2234,11 @@ void MainComponent::timerCallback() {
 
 void MainComponent::pushCameraMicrophones() {
     if (!audio_) return;
-    const auto microphones = viewport_.cameraMicrophones();
+    audio_->setPassByGeometry(passByMicrophone_.laneDistanceM, passByMicrophone_.microphoneHeightM,
+                              passByMicrophone_.ground, passByMicrophone_.normalisedLevel);
+    // A pass-by run places its own microphone: none on the camera meanwhile.
+    const auto microphones = model_.state.passByPhase != 0
+        ? std::optional<std::array<AcousticPoint3M, 2>> {} : viewport_.cameraMicrophones();
     const auto same = [](const auto& a, const auto& b) {
         if (a.has_value() != b.has_value()) return false;
         if (!a) return true;

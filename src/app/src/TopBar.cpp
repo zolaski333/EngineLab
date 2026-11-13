@@ -102,6 +102,9 @@ TopBar::TopBar() {
     equipmentButton.setIcon(svgIcon("M14 4l6 6-10 10H4v-6zM12 6l6 6"));
     equipmentButton.setTooltip(utf8("Equipment: fit and set nitrous, anti-lag, an active exhaust valve, VTEC and "
                                     "launch control, and see what each is doing"));
+    passByButton.setIcon(svgIcon("M3 17h18M5 13l3-3h6l3 3M18 6a2 2 0 1 0 0.01 0M18 8v5"));
+    passByButton.setTooltip(utf8("Pass-by: the car drives past a trackside microphone from a standstill or at a "
+                                 "speed, heard there with the delay, the air and the ground; records a WAV"));
     vehicleButton.setTooltip(utf8("Vehicle: mass, drag, tyres, axles and brakes, taken live, and the road load now"));
     ecuButton.setTooltip(utf8("ECU tuner: fuel, ignition and boost tables"));
     audioButton.setTooltip(utf8("AUDIO HQ: mix, voicing and physical calibration"));
@@ -110,8 +113,8 @@ TopBar::TopBar() {
                               "active limits to a CSV file in Documents/EngineLab logs (key 9)"));
     abButton.setTooltip(utf8("A/B: two versions of this engine. Switch to B, change it, then switch back and "
                              "forth to hear the difference; each keeps its own edits (key 7)"));
-    for (auto* button : { &abButton, &logButton, &exhaustButton, &fuelButton, &equipmentButton, &vehicleButton,
-                          &ecuButton, &audioButton, &moreButton })
+    for (auto* button : { &abButton, &logButton, &exhaustButton, &fuelButton, &equipmentButton, &passByButton,
+                          &vehicleButton, &ecuButton, &audioButton, &moreButton })
         addAndMakeVisible(*button);
 }
 
@@ -219,8 +222,8 @@ void TopBar::resized() {
 
     auto tools = area;
     moreButton.setBounds(tools.removeFromRight(36).withSizeKeepingCentre(36, 34));
-    for (auto* button : { &audioButton, &ecuButton, &vehicleButton, &equipmentButton, &fuelButton, &exhaustButton,
-                          &logButton, &abButton }) {
+    for (auto* button : { &audioButton, &ecuButton, &vehicleButton, &passByButton, &equipmentButton, &fuelButton,
+                          &exhaustButton, &logButton, &abButton }) {
         tools.removeFromRight(6);
         const auto width = button->idealWidth();
         button->setBounds(tools.removeFromRight(width).withSizeKeepingCentre(width, 34));

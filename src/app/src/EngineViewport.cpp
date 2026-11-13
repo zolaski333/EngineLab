@@ -2950,7 +2950,7 @@ void EngineViewport::showSettingsMenu() {
     menu.addItem(42, utf8("Live pulses"), use3d, settings_.pressureWaves == ViewSettings::PressureWaves::live);
     menu.addSectionHeader(utf8("Sound"));
     menu.addItem(50, utf8("Microphone on the camera"), use3d && !tracksideMicrophone_, settings_.cameraMicrophone);
-    menu.addItem(51, utf8("Trackside microphone: the car drives past (7.5 m, on the cruise control)"), true,
+    menu.addItem(51, utf8("Trackside microphone: the car loops past it at its speed (a run: top bar, Pass-by)"), true,
                  tracksideMicrophone_);
     menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&settingsButton_),
         [safe = juce::Component::SafePointer<EngineViewport>(this)](int result) {
