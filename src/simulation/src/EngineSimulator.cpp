@@ -3176,12 +3176,21 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     injectionCutThisCycle_[cylinderIndex] = fraction > 0.0
                         && std::floor(static_cast<double>(pulse + 1U) * fraction)
                             > std::floor(static_cast<double>(pulse) * fraction);
-                    // Anti-lag's ignition cut, the same sequence: its charge
-                    // is injected and leaves unlit.
+                    // Anti-lag's ignition cut: its charge is injected and
+                    // leaves unlit. Each cylinder cuts its own share of its
+                    // own cycles (the error diffusion on its cycle count),
+                    // the cylinders staggered by golden-ratio phases. The
+                    // sequence above over the engine's firings locks a fixed
+                    // set of cylinders when its period shares a factor with
+                    // the cylinder count: at 90 % a 2JZ lit only cylinders 1,
+                    // 3 and 2, an I5 only cylinder 1 (journal 2026-11-14).
+                    constexpr double goldenRatioConjugate = 0.6180339887498949;
                     const auto sparkFraction = std::clamp(ecuCommand.sparkCutFraction, 0.0, 1.0);
+                    const auto ownCycle = static_cast<double>(injectionStartCount_[cylinderIndex]);
+                    const auto stagger = std::fmod(static_cast<double>(place) * goldenRatioConjugate, 1.0);
                     sparkCutThisCycle_[cylinderIndex] = sparkFraction > 0.0
-                        && std::floor(static_cast<double>(pulse + 1U) * sparkFraction)
-                            > std::floor(static_cast<double>(pulse) * sparkFraction);
+                        && std::floor((ownCycle + 1.0) * sparkFraction + stagger)
+                            > std::floor(ownCycle * sparkFraction + stagger);
                     ++injectionStartCount_[cylinderIndex];
                 }
                 injectedFuelMolesThisCycle_[cylinderIndex] = 0.0;
@@ -3221,12 +3230,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // 328, 287; transfers 18, 127, 192), and the pulse it sized was
             // for the event before last. Five lean misfires stalled the
             // launch from a settled idle at 100 mm cells (journal 2026-10-16).
+            // Anti-lag cuts up to 90 % of the sparks with the fuel kept, so
+            // the charge a cylinder retains is mostly an unlit one, its fuel
+            // with it. The trapped oxygen counted that retained air as new:
+            // the 2JZ's lift trapped 720 mg for 560 delivered and its fresh
+            // charge ran at AFR 10.4 for 13.2 asked (journal 2026-11-14). It
+            // is fuelled as a speed-density ECU fuels, for the air its
+            // valve delivered, as a two-stroke is above.
+            const auto antiLagFreshAirReference = !twoStroke && ecuCommand.antiLagActive
+                && deliveredAirMgPerCycle_[cylinderIndex] > 0.0;
             const TrappedChargeReference chargeReference = twoStroke
                 ? TrappedChargeReference {
                     std::max(0.0, reedInflowMgLastFill_[intakePathIndex]),
                     chargeSourcePressureKpa, chargeSourceTemperatureK }
                 : TrappedChargeReference {
-                    trappedAirMassMgLastCycle_[cylinderIndex],
+                    antiLagFreshAirReference ? deliveredAirMgPerCycle_[cylinderIndex]
+                        : trappedAirMassMgLastCycle_[cylinderIndex],
                     trappedAirSourcePressureKpaLastCycle_[cylinderIndex],
                     trappedAirSourceTemperatureKLastCycle_[cylinderIndex] };
             const auto instantaneousPredictedPortChargeMassMg =
@@ -3280,7 +3299,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // A two-stroke's closed chamber holds its retained charge: once a
             // delivered reference exists, its oxygen is never a floor.
             const auto resolvedChargeFloorMg =
-                (twoStroke || valveTrain.intakeLiftMm > 0.01
+                (twoStroke || antiLagFreshAirReference || valveTrain.intakeLiftMm > 0.01
                     || valveTrain.exhaustLiftMm > 0.01)
                     && chargeReference.freshAirMassMg > 0.0
                 ? 0.0 : oxygenEquivalentAirMassMg;
@@ -3314,6 +3333,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     sampledPredictedPortChargeMassMg,
                     highSpeedAcousticSamplingBlend);
             const auto measuredChargeMassMg = config_.injection.mode == InjectionMode::direct
+                    && !antiLagFreshAirReference
                 ? oxygenEquivalentAirMassMg
                 : predictedPortChargeMassMg;
             // Fuel adaptation belongs to an operating region, not to an entire
@@ -5456,6 +5476,32 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 for (std::size_t turbocharger = 0; turbocharger < maximumTurbochargers; ++turbocharger)
                     networkTurbinePowerW_[turbocharger] = workJ[turbocharger] / networkAdvance.advancedTimeSeconds;
                 networkTurbineOutletPressureKpa_ = outletPressureKpa;
+                // The EGT probe at the turbine inlet: the gas beside each face.
+                auto inletTemperatureK = 0.0;
+                auto inletShare = 0.0;
+                for (const auto& face : exhaustTurbineFaces_) {
+                    const auto& inlet = physicalExhaustNetwork.layout()
+                        .interfaces()[face.interfaceIndex].upstream;
+                    auto temperatureK = 0.0;
+                    if (inlet.type == gasdynamics::ExhaustEndpointType::junction) {
+                        if (const auto primitive = physicalExhaustNetwork.mixtureModel().primitiveFromConservative(
+                                physicalExhaustNetwork.junctionState(inlet.elementIndex)))
+                            temperatureK = primitive->temperatureK;
+                    } else {
+                        const auto cells = physicalExhaustNetwork.duct(inlet.elementIndex).cellPrimitives();
+                        if (!cells.empty())
+                            temperatureK = inlet.type == gasdynamics::ExhaustEndpointType::ductOutlet
+                                ? cells.back().temperatureK : cells.front().temperatureK;
+                    }
+                    if (!(temperatureK > 0.0) || !std::isfinite(temperatureK)) continue;
+                    inletTemperatureK += face.cylinderShare * temperatureK;
+                    inletShare += face.cylinderShare;
+                }
+                constexpr double egtProbeRatePerSecond = 2.0;
+                if (inletShare > 0.0)
+                    state_.turbineInletTemperatureC = smooth(state_.turbineInletTemperatureC,
+                        inletTemperatureK / inletShare - 273.15, networkAdvance.advancedTimeSeconds,
+                        egtProbeRatePerSecond);
             }
             exhaustAdvanceDurationSeconds = networkAdvance.advancedTimeSeconds;
             exhaustNetworkAcceptedSubsteps += networkAdvance.acceptedSubsteps;
@@ -6272,6 +6318,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.coolingFanOn = false;
         }
         state_.exhaustTemperatureC = smooth(state_.exhaustTemperatureC, exhaustTarget, subDt, 0.18);
+        if (exhaustTurbineFaces_.empty()) state_.turbineInletTemperatureC = state_.exhaustTemperatureC;
         // Over-revving is measured against the limiter the ECU applies now,
         // with 2 % for its own overshoot: under its own power the engine
         // stays there, only a driven engine (a missed downshift) goes past.
@@ -7150,6 +7197,7 @@ void EngineSimulator::reset() noexcept {
     state_.oilTemperatureC = config_.ambientTemperatureC;
     applyRegulatedTemperatures();
     state_.exhaustTemperatureC = config_.ambientTemperatureC;
+    state_.turbineInletTemperatureC = config_.ambientTemperatureC;
     state_.manifoldPressureKpa = config_.ambientPressureKpa;
     state_.boostPressureRatio = 1.0;
     state_.forcedInductionShaftSpeedRpm = 0.0;

@@ -175,7 +175,7 @@ A turbocharged petrol engine's tables carry `antilag.enabled` (0, off),
 `antilag.mode` (0 rally, 1 launch), `antilag.braking_kept_percent` (50),
 `antilag.aggressiveness_percent` (70), `antilag.min_rpm` (0.45 x redline),
 `antilag.max_rpm` (0.90 x redline), `antilag.max_time_s` (4),
-`antilag.egt_limit_c` (1,000), `antilag.air_percent` (40),
+`antilag.egt_limit_c` (1,050), `antilag.air_percent` (40),
 `antilag.spark_atdc_deg` (25), `antilag.lambda` (0.90) and
 `antilag.cut_percent` (33); a zero exit is no exit. The tuner shows them as
 one page, the Equipment window as two sliders (braking kept, aggressiveness)
@@ -185,9 +185,16 @@ Armed, the exhaust's reaction model runs, its rich limit widened with the
 gas temperature (Zabetakis: 1.80 x (1 + 7.21e-4 (T - 298 K)), about 2.3 at
 700 K; US Bureau of Mines Bulletin 627). While it works the ECU fires the
 spark `spark_atdc_deg` after top dead centre, targets `lambda`, cuts the
-spark of at least `cut_percent` of the firings (spread in firing order) with
-their fuel kept, keeps the overrun fuel cut and overrun afterfire off and does
-not learn lambda.
+spark of at least `cut_percent` of the firings with their fuel kept, keeps
+the overrun fuel cut and overrun afterfire off and does not learn lambda.
+Each cylinder cuts its own share of its own cycles, offset along the firing
+order by the golden ratio, so every cylinder fires in turn (a pattern counted
+over the engine's firings locked a fixed set of cylinders: at 90 % a 2JZ lit
+only cylinders 1, 3 and 2, an I5 only cylinder 1). A four-stroke is fuelled
+for the air its valve delivered, as a speed-density ECU fuels: the oxygen
+trapped at intake close counts a cut cycle's retained charge as new air
+(2JZ: 720 mg trapped for 560 delivered), and it ran AFR 10.4 for 13.2 asked
+(now 13.5).
 
 - **Rally** works with the driver's throttle at or under 5 %. Its cut and
   air are a feedback, not a fixed setting: the ECU models the engine's drag
@@ -200,10 +207,10 @@ not learn lambda.
   upper half keeps it open and gives firings back down to `cut_percent`. A
   lift starts at the middle: all the air, 90 % cut. Like a rally system it
   holds its air and kills the torque with cut firings, whose charges burn in
-  the manifold; 2JZ lifted 2 s at 5,000 rpm, 50 % kept: 151 kPa in the
-  manifold over the last second, the turbo at 91 % of its loaded speed
-  (16 kPa and 53 % disarmed). 100 % kept brakes as without it; 0 % holds the
-  speed.
+  the manifold; 2JZ lifted 2 s at 5,000 rpm, 50 % kept, no exhaust limit:
+  143 kPa in the manifold over the last second, the turbo at 95 % of its
+  loaded speed (16 kPa and 53 % disarmed), 1,160 C at the turbine inlet.
+  100 % kept brakes as without it; 0 % holds the speed.
 - **Launch** works only while launch control holds the engine (foot down,
   standing): the limiter decides fuel and spark, anti-lag adds its late spark,
   mixture and cut.
@@ -213,7 +220,15 @@ reason) under `min_rpm` or over `max_rpm`; in neutral or with the clutch out
 longer than 1 s; after `max_time_s` on one lift, until the throttle passes
 30 % again (rally) or launch control lets go (launch); over `egt_limit_c`,
 working again 50 C below it; at the rev limiter (rally), on the overboost cut
-or a broken engine.
+or a broken engine. The limit reads `EngineState::turbineInletTemperatureC`,
+a probe at the turbine inlet (0.5 s), where the cut charges burn; the
+cylinders' mean read 420-570 C and never let go. 1,050 C is Garrett's
+G-Series rating (stainless housing, Mar-M wheel); the 2JZ reads ~1,020 C
+after a full-boost pull, and with 0-50 % kept reaches 1,050 C within ~1 s of
+a lift, so it lets go and comes back about every 0.5 s. When rally anti-lag
+lets go with the pedal shut, the overrun fuel cut starts at once: the plate
+it held closes over ~0.3 s, and the boosted manifold fired normal charges
+(2JZ: +530-850 rpm on a lift).
 
 ### Idle and fuel-cut strategies (not tunable)
 

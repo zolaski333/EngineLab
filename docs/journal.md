@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — anti-lag audit: cut locked on cylinders, rich mixture, exhaust limit read in the wrong place, surge on letting go
+
+- `EngineLabAntiLagTests` (2JZ, I5; lift at 5,000 rpm after 3 s of full boost). Cut: the pattern over the engine's firings locked whole cylinders (90 %: 2JZ lit only 1, 3, 2; I5 only 1). Now each cylinder cuts its own cycles, golden-ratio staggered: every cylinder lit 0.28-0.38 of its cycles (`--cut`).
+- Mixture: the oxygen at intake close counted a cut cycle's retained charge as air (720 mg trapped for 560 delivered): AFR 10.4 for 13.2. Fuelled on the delivered air: 13.5 (`--mixture`). Refuted: holding the trim at 1 instead (AFR 12.2).
+- Exhaust limit: it read the cylinders' mean (420-570 C), never let go. Now a turbine-inlet probe (0.5 s): 1,019 C after a full-boost pull, so 1,000 C held anti-lag off on every lift; default 1,050 C (Garrett G-Series housing and wheel rating). At 0-50 % kept the 2JZ reaches it ~1 s into a lift.
+- Letting go there (or at any exit) with the pedal shut, the plate it held closed over 0.3 s and the boosted manifold fired normal charges: +370 N.m, the engine +530-854 rpm. The overrun fuel cut now starts at once: 0 rpm (the new assert fails at +854 before).
+- Refuted: opening less air over the last 50 C (50 % kept: -29.8 N.m for -18.5 asked; a plain exit -20.4 for -19.6). The controller asserts now run with no limit; 90 % kept reaches 1,340 C there.
+- Not checked: the sound, the screen, other engines, a measured turbine-inlet temperature under anti-lag (the simulated 1,019 C at full boost may be high).
+
 ## 2026-11-14 — the active valve's branch has its own tailpipe; opening it does not lower the K20A's back pressure
 
 - Owner: each branch its own outlet. `EngineLab.ExhaustValve`, K20A, mean port pressure at 4,000 rpm full throttle (absorber held). Before (bypass merged after the silencer): shut 109.1, open 104.2 kPa. Now: stock 99.63, shut 99.62, open 100.96 (6,000 rpm: 99.44 stock, 99.52 shut, 100.84 open).

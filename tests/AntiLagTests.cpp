@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -124,6 +125,10 @@ struct LiftOff final {
     double targetTorqueNm { 0.0 };
     double authority { 0.0 };
     double activeSeconds { 0.0 };
+    /** The hottest readings over the lift: the cylinders' mean exhaust and
+     *  the probe at the turbine inlet. */
+    double peakExhaustC { 0.0 };
+    double peakTurbineInletC { 0.0 };
     std::uint32_t blockersAtEnd { 0U };
     bool activeAtEnd { false };
     bool activeSeen { false };
@@ -136,6 +141,10 @@ struct LiftOptions final {
     double lift { 2.0 };
     /** Neutral or the clutch out over the whole lift. */
     bool decoupled { false };
+    /** Called with each lifted frame's state, from 0.4 s into the lift. */
+    std::function<void(const EngineState&)> settled {};
+    /** Called with every lifted frame's state and its time into the lift. */
+    std::function<void(const EngineState&, double)> lifted {};
 };
 
 /** Started, full throttle held at `rpm` by the dyno for `spool` seconds,
@@ -177,6 +186,7 @@ LiftOff liftOff(Rig& rig, const LiftOptions& options) {
         result.trace.push_back(sample(step.state));
         if (lifted) {
             const auto& state = step.state;
+            if (options.lifted) options.lifted(state, (frame - spoolFrames + 1) * frameSeconds);
             result.reactionKw += state.exhaustAfterfireHeatReleaseKw / liftFrames;
             result.injectedMgPerS += state.fuelFlowGramsPerSecond * 1'000.0 / liftFrames;
             result.exhaustInMgPerS += state.exhaustFuelInMgPerSecond / liftFrames;
@@ -186,8 +196,11 @@ LiftOff liftOff(Rig& rig, const LiftOptions& options) {
             result.activeSeen = result.activeSeen || state.antiLagActive;
             result.armedSeen = result.armedSeen || state.antiLagArmed;
             result.peakRpm = std::max(result.peakRpm, state.rpm);
+            result.peakExhaustC = std::max(result.peakExhaustC, state.exhaustTemperatureC);
+            result.peakTurbineInletC = std::max(result.peakTurbineInletC, state.turbineInletTemperatureC);
             if (state.antiLagActive) result.activeSeconds += frameSeconds;
             if (frame >= settledFrame) {
+                if (options.settled) options.settled(state);
                 ++settledFrames;
                 result.meanTorqueNm += state.torqueNm;
                 result.targetTorqueNm += state.antiLagTargetTorqueNm;
@@ -218,7 +231,8 @@ void print(const std::string& name, const LiftOff& run) {
               << run.after.manifoldKpa << " kPa, torque " << run.meanTorqueNm << " N.m (target "
               << run.targetTorqueNm << "), opening " << run.authority << ", worked " << run.activeSeconds
               << " s, blockers " << run.blockersAtEnd << ", reaction " << run.reactionKw << " kW, misfires "
-              << run.misfireShare << std::endl;
+              << run.misfireShare << ", hottest exhaust " << run.peakExhaustC << " C (cylinders), "
+              << run.peakTurbineInletC << " C (turbine inlet)" << std::endl;
 }
 
 void tablesCarryItOff() {
@@ -264,8 +278,12 @@ void rallyKeepsItsShareOfTheBraking() {
     auto offRig = std::make_unique<Rig>(jz);
     const auto off = liftOff(*offRig, {});
     print("off", off);
+    // The controller, with no exhaust limit: at the default 1,050 C the
+    // 2JZ's turbine inlet reaches it within ~1 s of a lift, and each exit
+    // brakes with the whole drag (exitsLetItGo tests it).
     auto defaultRig = std::make_unique<Rig>(jz);
     defaultRig->arm();
+    defaultRig->set(calibration::keys::antiLagExhaustLimit, 0.0);
     const auto armed = liftOff(*defaultRig, {});
     print("armed, 50 % kept", armed);
     std::cout << "fuel over the lift, armed, mg/s: injected " << armed.injectedMgPerS << ", into the exhaust unburnt "
@@ -273,12 +291,14 @@ void rallyKeepsItsShareOfTheBraking() {
               << armed.burntBeforeTurbineMgPerS << "), out of the tailpipe " << armed.tailpipeMgPerS << std::endl;
     auto holdRig = std::make_unique<Rig>(jz);
     holdRig->arm();
+    holdRig->set(calibration::keys::antiLagExhaustLimit, 0.0);
     holdRig->set(calibration::keys::antiLagBrakingKept, 0.0);
     holdRig->set(calibration::keys::antiLagAggressiveness, 100.0);
     const auto hold = liftOff(*holdRig, {});
     print("armed, 0 % kept, full aggressiveness", hold);
     auto brakeRig = std::make_unique<Rig>(jz);
     brakeRig->arm();
+    brakeRig->set(calibration::keys::antiLagExhaustLimit, 0.0);
     brakeRig->set(calibration::keys::antiLagBrakingKept, 90.0);
     const auto brake = liftOff(*brakeRig, {});
     print("armed, 90 % kept", brake);
@@ -355,6 +375,54 @@ void exitsLetItGo() {
                 "an exhaust over its limit holds it");
     }
     {
+        // The limit is read at the turbine inlet, where the cut charges
+        // burn: 850 C is under it after a full-boost pull, over the
+        // cylinders' mean (journal 2026-11-14: ~420-570 C, which never let go).
+        auto rig = std::make_unique<Rig>(jz);
+        rig->arm();
+        rig->set(calibration::keys::antiLagExhaustLimit, 850.0);
+        const auto run = liftOff(*rig, {});
+        print("exhaust limit 850 C", run);
+        require(run.peakExhaustC < 850.0 && run.peakTurbineInletC > 850.0,
+                "the cylinders' mean stays under 850 C, the turbine inlet goes over it");
+        require(run.activeSeconds < 1.9 && (run.blockersAtEnd & bit(AntiLagBlocker::exhaustTooHot)) != 0U,
+                "the turbine inlet over its limit lets it go");
+    }
+    {
+        // Letting go on boost, at the default limit with no braking kept:
+        // the engine speed while it is let go, up to 0.4 s after each exit,
+        // against its speed then. The plate it held closes over ~0.3 s, and the boosted
+        // manifold fired normal charges until it had: the 2JZ gained 530 rpm
+        // (journal 2026-11-14).
+        auto rig = std::make_unique<Rig>(jz);
+        rig->arm();
+        rig->set(calibration::keys::antiLagBrakingKept, 0.0);
+        rig->set(calibration::keys::antiLagAggressiveness, 100.0);
+        auto exits = 0;
+        auto wasActive = false;
+        auto exitRpm = 0.0;
+        auto exitSeconds = -1.0;
+        auto surgeRpm = 0.0;
+        LiftOptions options;
+        options.lifted = [&](const EngineState& state, double seconds) {
+            if (wasActive && !state.antiLagActive
+                    && (state.antiLagBlockers & bit(AntiLagBlocker::exhaustTooHot)) != 0U) {
+                ++exits;
+                exitRpm = state.rpm;
+                exitSeconds = seconds;
+            }
+            if (!state.antiLagActive && exitSeconds >= 0.0 && seconds - exitSeconds <= 0.4)
+                surgeRpm = std::max(surgeRpm, state.rpm - exitRpm);
+            wasActive = state.antiLagActive;
+        };
+        const auto run = liftOff(*rig, options);
+        print("default exhaust limit, 0 % kept", run);
+        std::cout << "default exhaust limit, 0 % kept: " << exits << " exits, the engine up at most " << surgeRpm
+                  << " rpm while let go" << std::endl;
+        require(exits > 0, "on boost with no braking kept, the turbine inlet reaches the default limit");
+        require(surgeRpm < 50.0, "letting go adds no speed: the overrun fuel cut starts at once");
+    }
+    {
         auto rig = std::make_unique<Rig>(jz);
         rig->arm();
         rig->set(calibration::keys::antiLagMaximumRpm, 2'500.0);
@@ -425,6 +493,46 @@ void launchBuildsBoostOnTheLine() {
     require(b.rpm < 4'400.0, "launch control still holds the speed");
 }
 
+void cutTurnsOverTheCylinders() {
+    // Its cut, as many firings as asked, comes round every cylinder: a
+    // sequence over the engine's firings locked a fixed set at 90 % (2JZ
+    // cylinders 5, 6 and 4 never lit, an I5 lit only cylinder 1).
+    for (const auto* name : { "2JZ", "I5" }) {
+        auto rig = std::make_unique<Rig>(catalogueEngine(name));
+        rig->arm();
+        const auto cylinders = rig->config.cylinders.size();
+        std::vector<int> cycles(cylinders, 0), fired(cylinders, 0);
+        std::vector<double> phase(cylinders, -1.0), misfired(cylinders, 0.0);
+        LiftOptions options;
+        options.settled = [&](const EngineState& state) {
+            for (std::size_t i = 0; i < cylinders; ++i) {
+                const auto& c = state.cylinderStates[i];
+                // The frame before the cycle wraps holds this cycle's spark.
+                if (phase[i] >= 0.0 && c.cyclePhaseDegrees < phase[i]) {
+                    ++cycles[i];
+                    if (misfired[i] < 0.5) ++fired[i];
+                }
+                phase[i] = c.cyclePhaseDegrees;
+                misfired[i] = c.misfireProbability;
+            }
+        };
+        const auto run = liftOff(*rig, options);
+        print(std::string(name) + " cut by cylinder", run);
+        auto total = 0.0;
+        for (std::size_t i = 0; i < cylinders; ++i) total += static_cast<double>(fired[i]) / std::max(1, cycles[i]);
+        const auto mean = total / static_cast<double>(cylinders);
+        std::cout << "  lit share by cylinder:";
+        for (std::size_t i = 0; i < cylinders; ++i)
+            std::cout << ' ' << rig->config.cylinders[i].id << '=' << static_cast<double>(fired[i]) / std::max(1, cycles[i]);
+        std::cout << std::endl;
+        require(mean > 0.05, std::string(name) + ": some firings are lit");
+        for (std::size_t i = 0; i < cylinders; ++i)
+            require(static_cast<double>(fired[i]) / std::max(1, cycles[i]) > 0.5 * mean,
+                    std::string(name) + ": every cylinder takes its turn to fire (cylinder "
+                        + std::to_string(rig->config.cylinders[i].id) + ")");
+    }
+}
+
 void pocketVariant() {
     // Measurement only: the same lift with the unlit charges carried as
     // pockets (the backfire profile's 40 ms) instead of mixed at once.
@@ -447,10 +555,10 @@ void leverSweep() {
         double cut;
         double air;
     };
-    for (const auto& variant : { Variant { "default (25 deg ATDC, 33 % cut, 20 % air)", 25.0, 33.0, 20.0 },
-                                 Variant { "spark 45 deg ATDC", 45.0, 33.0, 20.0 },
-                                 Variant { "cut 60 %", 25.0, 60.0, 20.0 },
-                                 Variant { "air 40 %", 25.0, 33.0, 40.0 } }) {
+    for (const auto& variant : { Variant { "default (25 deg ATDC, 33 % cut, 40 % air)", 25.0, 33.0, 40.0 },
+                                 Variant { "spark 45 deg ATDC", 45.0, 33.0, 40.0 },
+                                 Variant { "cut 60 %", 25.0, 60.0, 40.0 },
+                                 Variant { "air 20 %", 25.0, 33.0, 20.0 } }) {
         auto rig = std::make_unique<Rig>(catalogueEngine("2JZ"));
         rig->arm();
         rig->set(calibration::keys::antiLagRetard, variant.spark);
@@ -460,9 +568,86 @@ void leverSweep() {
     }
 }
 
+void mixtureBalance(const std::string& engine, double coolantC) {
+    // Measurement only: where anti-lag's mixture leaves its lambda. Per
+    // cylinder over the settled lift: the ECU's air reference (trapped
+    // oxygen), the fresh air the valve delivered, the fuel asked and
+    // delivered, the trim, and the cycle's chamber AFR.
+    auto config = catalogueEngine(engine);
+    if (coolantC > 0.0) {
+        config.thermal.regulated = true;
+        config.thermal.regulatedCoolantTemperatureC = coolantC;
+    }
+    auto rig = std::make_unique<Rig>(config);
+    rig->arm();
+    const auto cylinders = rig->config.cylinders.size();
+    std::vector<double> trapped(cylinders), delivered(cylinders), requested(cylinders), injected(cylinders), metered(cylinders),
+        afr(cylinders), trim(cylinders);
+    double target = 0.0, correction = 0.0, coolant = 0.0;
+    auto frames = 0;
+    LiftOptions options;
+    options.settled = [&](const EngineState& state) {
+        ++frames;
+        target += state.targetAirFuelRatio;
+        correction += state.ecuFuelCorrection;
+        coolant += state.coolantTemperatureC;
+        for (std::size_t i = 0; i < cylinders; ++i) {
+            const auto& c = state.cylinderStates[i];
+            trapped[i] += c.trappedFreshAirMassMg;
+            delivered[i] += c.deliveredFreshAirMassMgPerCycle;
+            requested[i] += c.requestedFuelMgPerCycle;
+            injected[i] += c.deliveredFuelMgPerCycle;
+            metered[i] += c.meteredFuelMgPerCycle;
+            afr[i] += c.airFuelRatio;
+            trim[i] += c.closedLoopFuelTrim;
+        }
+    };
+    const auto run = liftOff(*rig, options);
+    print(engine + " mixture", run);
+    const auto n = static_cast<double>(std::max(1, frames));
+    std::cout << "target AFR " << target / n << ", ECU fuel correction " << correction / n << ", coolant "
+              << coolant / n << " C\n";
+    for (std::size_t i = 0; i < cylinders; ++i)
+        std::cout << "  cylinder " << rig->config.cylinders[i].id << ": trapped air " << trapped[i] / n
+                  << " mg, delivered air " << delivered[i] / n << " mg, fuel asked " << requested[i] / n
+                  << " mg, metered " << metered[i] / n << " mg, in the chamber " << injected[i] / n << " mg, trim " << trim[i] / n << ", AFR " << afr[i] / n
+                  << ", trapped/asked " << trapped[i] / std::max(1.0e-9, requested[i]) << ", delivered/asked "
+                  << delivered[i] / std::max(1.0e-9, requested[i]) << std::endl;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string_view(argv[1]) == "--trace") {
+        // Measurement only: a lift every 50 ms, at a braking kept (argv[2]).
+        auto rig = std::make_unique<Rig>(catalogueEngine("2JZ"));
+        rig->arm();
+        if (argc > 2) rig->set(calibration::keys::antiLagBrakingKept, std::atof(argv[2]));
+        if (argc > 3) rig->set(calibration::keys::antiLagExhaustLimit, std::atof(argv[3]));
+        if (argc > 4) rig->set(calibration::keys::antiLagAggressiveness, std::atof(argv[4]));
+        LiftOptions options;
+        auto frame = 0;
+        options.lifted = [&](const EngineState& state, double seconds) {
+            if (frame++ % 12 != 0) return;
+            std::cout << seconds << " s: " << state.rpm << " rpm, torque " << state.torqueNm << ", manifold "
+                      << state.manifoldPressureKpa << " kPa, shaft " << state.forcedInductionShaftSpeedRpm
+                      << ", active " << state.antiLagActive << ", blockers " << state.antiLagBlockers
+                      << ", opening " << state.antiLagAuthority << ", turbine inlet " << state.turbineInletTemperatureC
+                      << " C, cylinders " << state.exhaustTemperatureC << " C, DFCO " << state.ecuFuelEnabled
+                      << std::endl;
+        };
+        print("trace", liftOff(*rig, options));
+        return 0;
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--cut") {
+        cutTurnsOverTheCylinders();
+        return 0;
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--mixture") {
+        const auto engine = argc > 2 ? std::string(argv[2]) : std::string("2JZ");
+        mixtureBalance(engine, argc > 3 ? std::atof(argv[3]) : 0.0);
+        return 0;
+    }
     if (argc > 1 && std::string_view(argv[1]) == "--pockets") {
         pocketVariant();
         return 0;
@@ -474,6 +659,7 @@ int main(int argc, char** argv) {
     tablesCarryItOff();
     offIsTheEngineWithoutIt();
     rallyKeepsItsShareOfTheBraking();
+    cutTurnsOverTheCylinders();
     exitsLetItGo();
     launchBuildsBoostOnTheLine();
     std::cout << "PASS: anti-lag off is the engine without it; armed it keeps its share of the braking, never adds "

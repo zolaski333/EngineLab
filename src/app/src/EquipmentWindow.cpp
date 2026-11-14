@@ -672,7 +672,8 @@ public:
             return;
         }
         setStatus(describeAntiLag(state, table(calibration::keys::antiLagMinimumRpm).value_or(0.0),
-                                  table(calibration::keys::antiLagMaximumRpm).value_or(0.0)));
+                                  table(calibration::keys::antiLagMaximumRpm).value_or(0.0),
+                                  table(calibration::keys::antiLagMode).value_or(0.0) >= 0.5));
     }
 
     void setLocked(bool locked) override {
@@ -757,16 +758,16 @@ public:
 
 // --------------------------------------------------------------------------
 
-juce::String describeAntiLag(const EngineState& state, double minimumRpm, double maximumRpm) {
+juce::String describeAntiLag(const EngineState& state, double minimumRpm, double maximumRpm, bool launchMode) {
     if (!state.antiLagArmed) return utf8("Off: switch it on here or in Drive.");
     if (state.antiLagActive)
-        return state.antiLagTargetTorqueNm < 0.0 || state.antiLagAuthority < 1.0
+        return launchMode
+            ? utf8("Working on the line.")
             // The lower half of its authority opens the air, the upper half
             // gives cut firings back with all of it open.
-            ? utf8("Working: ") + juce::String(std::min(1.0, 2.0 * state.antiLagAuthority) * 100.0, 0)
+            : utf8("Working: ") + juce::String(std::min(1.0, 2.0 * state.antiLagAuthority) * 100.0, 0)
                 + utf8(" % of its air, holding the engine to ") + juce::String(state.antiLagTargetTorqueNm, 0)
-                + utf8(" N.m.")
-            : utf8("Working on the line.");
+                + utf8(" N.m.");
     const auto has = [&state](AntiLagBlocker blocker) {
         return (state.antiLagBlockers & static_cast<std::uint32_t>(blocker)) != 0U;
     };

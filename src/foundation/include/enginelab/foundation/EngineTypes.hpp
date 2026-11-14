@@ -786,8 +786,6 @@ enum class AfterfireBlocker : std::uint32_t {
  *  the same words for the same state. */
 [[nodiscard]] const char* afterfireBlockerName(std::uint32_t mask) noexcept;
 
-/** Why a fitted nitrous kit is not spraying: bits of
- *  `EngineState::nitrousBlockers`, every one that holds. Telemetry only. */
 /** What holds anti-lag back, one bit each (`EngineState::antiLagBlockers`):
  *  zero while it works, or while it is off (`antiLagArmed` false). */
 enum class AntiLagBlocker : std::uint32_t {
@@ -807,6 +805,8 @@ enum class AntiLagBlocker : std::uint32_t {
     protection = 1U << 8,
 };
 
+/** Why a fitted nitrous kit is not spraying: bits of
+ *  `EngineState::nitrousBlockers`, every one that holds. Telemetry only. */
 enum class NitrousBlocker : std::uint32_t {
     notArmed = 1U << 0,
     /** Its push button is not held. */
@@ -1907,7 +1907,14 @@ struct EngineState final {
     double cycleAveragedTorqueNm { 0.0 };
     double coolantTemperatureC { 22.0 };
     double oilTemperatureC { 22.0 };
+    /** The cylinders' mean exhaust temperature (5.6 s time constant). */
     double exhaustTemperatureC { 22.0 };
+    /** An EGT probe at the turbine inlet: the gas in the element before each
+     *  turbine face, by its cylinders' share, read with a 3 mm probe's
+     *  ~0.5 s lag. What anti-lag's exhaust limit reads: with its sparks cut,
+     *  the cylinders send cool unlit charges that burn in the manifold. The
+     *  cylinders' mean without a turbine face in the gas network. */
+    double turbineInletTemperatureC { 22.0 };
     double knockLevel { 0.0 };
     double misfireRate { 0.0 };
     /** Monotonic physical event counters. `misfireRate` is deliberately

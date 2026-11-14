@@ -666,6 +666,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto afterStartPhase =
         postStartAirOpening_.load(std::memory_order_relaxed) > 0.05
         && !overrunAfterfireArmed;
+    // When rally anti-lag lets go (its time, its exhaust limit), the plate it
+    // held open takes ~0.3 s to close, and the boosted manifold fired normal
+    // charges at the mapped spark: +370 N.m for 0.2 s, the 2JZ up 530 rpm on
+    // a lift (journal 2026-11-14). The pedal is shut, so the overrun cut
+    // starts at once. Never set with anti-lag off.
+    auto antiLagLeftPlateOpen = antiLagLeftPlateOpen_.load(std::memory_order_relaxed);
+    if (state.throttle < 0.02 || effectiveThrottle > 0.02) antiLagLeftPlateOpen = false;
+    antiLagLeftPlateOpen_.store(antiLagLeftPlateOpen, std::memory_order_relaxed);
     // A two-stroke keeps its fuel on overrun, as its carburettor's pilot
     // circuit does. Cut, it scavenges the cylinder clean, so every resume
     // fires a full fresh charge: the RD350 swung between the 1.50 and 1.65 x
@@ -676,7 +684,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             || (afterStartPhase && !driverRevvedSinceStart)
             || state.rpm < decelerationFuelResumeRpm) {
         decelerationFuelCut = false;
-    } else if (state.throttle < 0.02 && state.rpm > decelerationFuelCutRpm) {
+    } else if ((state.throttle < 0.02 || antiLagLeftPlateOpen) && state.rpm > decelerationFuelCutRpm) {
         // Stop metering fuel on closed-throttle overrun so port film and
         // residual chamber inventory cannot flood the charge that must catch
         // the engine at idle. Hysteresis keeps the injector command stable.
@@ -881,14 +889,16 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             calibration::ecuLimits::maximumAntiLagExhaustLimitC);
         const auto dt = idleDt;
         // The latched exits: the time on this lift until the driver presses
-        // the throttle again, the exhaust 50 C under its limit.
+        // the throttle again, the exhaust 50 C under its limit. The exhaust
+        // is read at the turbine inlet, where its cut charges burn: the
+        // cylinders' mean read ~420 C with 90 % of them unlit.
         auto timedOut = antiLagTimedOut_.load(std::memory_order_relaxed);
         if (controls.throttle > calibration::ecuLimits::antiLagRearmThrottle && !launchMode) timedOut = false;
         if (launchMode && !launchActive) timedOut = false;
         auto tooHot = antiLagTooHot_.load(std::memory_order_relaxed);
         if (!(exhaustLimitC > 0.0)) tooHot = false;
-        else if (state.exhaustTemperatureC > exhaustLimitC) tooHot = true;
-        else if (state.exhaustTemperatureC < exhaustLimitC - 50.0) tooHot = false;
+        else if (state.turbineInletTemperatureC > exhaustLimitC) tooHot = true;
+        else if (state.turbineInletTemperatureC < exhaustLimitC - 50.0) tooHot = false;
         const auto decoupledSeconds = controls.drivelineDecoupled
             ? antiLagDecoupledSeconds_.load(std::memory_order_relaxed) + dt : 0.0;
         antiLagDecoupledSeconds_.store(decoupledSeconds, std::memory_order_relaxed);
@@ -914,6 +924,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         antiLagTimedOut_.store(timedOut, std::memory_order_relaxed);
         antiLagTooHot_.store(tooHot, std::memory_order_relaxed);
         const auto wasActive = antiLagWasActive_.exchange(active, std::memory_order_relaxed);
+        if (wasActive && !active && !launchMode) antiLagLeftPlateOpen_.store(true, std::memory_order_relaxed);
         if (active) {
             const auto airShare = setting(calibration::keys::antiLagAir, 0.0, 0.0, 100.0) / 100.0;
             const auto sparkAtdc = setting(calibration::keys::antiLagRetard, 0.0, 0.0,
@@ -940,7 +951,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
                         * breathingDisplacementLitres(config) * 1.0e-3 / (cyclePerRevolution * std::numbers::pi));
                 const auto kept = setting(calibration::keys::antiLagBrakingKept, 50.0, 0.0, 100.0) / 100.0;
                 const auto ceiling = setting(calibration::keys::antiLagAggressiveness, 100.0, 0.0, 100.0) / 100.0;
-                const auto targetNm = -kept * dragNm;
+                // Zero, not -0 (shown as "-0 N.m"), when none is kept.
+                const auto targetNm = kept > 0.0 ? -kept * dragNm : 0.0;
                 // How much it lets the engine burn, 0-1: a PI on the torque
                 // over 50 ms, normalised by the drag (1.5 per second of a
                 // whole drag's error, 0.3 at once). Its lower half opens the

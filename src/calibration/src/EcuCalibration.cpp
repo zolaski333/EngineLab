@@ -143,9 +143,14 @@ constexpr double seaLevelPressureKpa = 101.325;
                    CalibrationUnit::second, 0.0, ecuLimits::maximumAntiLagSeconds, 1),
           4.0 },
         { metadata(std::string(keys::antiLagExhaustLimit), "Anti-lag exhaust temperature limit",
-                   "Above this exhaust temperature it lets go, and works again 50 C below it. Zero: no limit.",
+                   "Above this exhaust temperature at the turbine inlet it lets go, and works again 50 C below "
+                   "it. Zero: no limit. 1,050 C is what a turbine's stainless housing and nickel-alloy wheel "
+                   "are rated to.",
                    CalibrationUnit::degreeCelsius, 0.0, ecuLimits::maximumAntiLagExhaustLimitC, 0),
-          1'000.0 },
+          // Garrett's G-Series rating (stainless housing, Mar-M wheel). The
+          // 2JZ's turbine inlet reads ~1,020 C after a full-boost pull, so
+          // 1,000 C held anti-lag off on the lift it is for.
+          1'050.0 },
     } };
 }
 

@@ -97,9 +97,10 @@ file formats, always with an in-memory migration).
 - **Anti-lag.** A turbocharged petrol engine's ECU tables carry it, off;
   the Equipment window, the tuner or its Drive switch arms it. With the foot
   off it holds the throttle open, fires late, runs its own mixture and cuts
-  sparks with their fuel kept; the cut charges burn in the hot manifold,
-  before the turbine, so the boost stays up and the turbo keeps spinning
-  (2JZ: 1.5 bar and 91 % of its speed after 2 s off the throttle). How many
+  sparks with their fuel kept, every cylinder in turn; the cut charges burn
+  in the hot manifold, before the turbine, so the boost stays up and the
+  turbo keeps spinning (2JZ: 1.4 bar and 95 % of its speed after 2 s off the
+  throttle, with no exhaust limit). How many
   sparks it cuts, and only then how far it closes the throttle, keeps a
   chosen share of the engine braking (*Engine braking kept*, 50 %;
   *Aggressiveness* caps the opening): it never makes the engine gain
@@ -107,7 +108,10 @@ file formats, always with an in-memory migration).
   while launch control holds the car on the line, to build boost before the
   start. It lets go in neutral or with the clutch out, over its maximum
   speed, after its maximum time (the throttle re-arms it), over its exhaust
-  temperature limit and at the limiter. The Equipment window says why it
+  temperature limit at the turbine inlet (1,050 C, a turbine's rating: the
+  2JZ reaches it about a second into a lift and comes back 50 C lower) and
+  at the limiter; letting go with the foot off, it cuts the fuel at once, so
+  the boosted manifold gives no surge. The Equipment window says why it
   waits. Off, nothing changes.
 
 - **An Equipment window** (top bar, *Equipment*): every optional part in

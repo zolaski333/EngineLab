@@ -152,6 +152,9 @@ private:
     mutable std::atomic<bool> antiLagWasActive_ { false };
     mutable std::atomic<bool> antiLagTimedOut_ { false };
     mutable std::atomic<bool> antiLagTooHot_ { false };
+    // Rally anti-lag let go while it held the plate open: the overrun fuel
+    // cut reads the driver's shut pedal until the plate has closed.
+    mutable std::atomic<bool> antiLagLeftPlateOpen_ { false };
     mutable std::atomic<bool> driverRevvedSinceStart_ { false };
 };
 } // namespace enginelab

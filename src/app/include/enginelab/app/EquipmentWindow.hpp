@@ -62,8 +62,9 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EquipmentWindow)
 };
 
-/** What anti-lag is doing or waits for, in words. */
-[[nodiscard]] juce::String describeAntiLag(const EngineState& state, double minimumRpm, double maximumRpm);
+/** What anti-lag is doing or waits for, in words, in rally or launch mode. */
+[[nodiscard]] juce::String describeAntiLag(const EngineState& state, double minimumRpm, double maximumRpm,
+                                           bool launchMode);
 
 /** What a nitrous kit waits for, in words ("" when it sprays or none). */
 [[nodiscard]] juce::String describeNitrousBlockers(std::uint32_t blockers, const NitrousConfig& kit);
