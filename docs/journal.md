@@ -5,6 +5,19 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — the active valve's branch has its own tailpipe; opening it does not lower the K20A's back pressure
+
+- Owner: each branch its own outlet. `EngineLab.ExhaustValve`, K20A, mean port pressure at 4,000 rpm full throttle (absorber held). Before (bypass merged after the silencer): shut 109.1, open 104.2 kPa. Now: stock 99.63, shut 99.62, open 100.96 (6,000 rpm: 99.44 stock, 99.52 shut, 100.84 open).
+- So the old 4.9 kPa came from the merge, not the silencer: the K20A's silencer restricts 0.25 (~0.2 kPa mean), and the split loses more than that. The bypass's tailpipe first took the default outlet's 300 mm; now a twin of the branch's own (70 mm bore, 0 mm).
+- The test now asserts shut = stock within 0.05 kPa and open moves it by > 0.5. Not checked: the sound open against shut, a real silencer's restriction (no reference).
+
+## 2026-11-14 — 3-D: real-scale chamber, journals, V stagger, collectors that face their primaries, two-stroke chambers apart
+
+- `EngineLabSceneExport` route counts over the catalogue (clash, self, engine, tight bend, stretched): before 11, 4, 0, 51, 7; after 4, 4, 0, 46, 6. The head on its real clearance (stroke / (CR - 1), was 1.5 mm): 2JZ +2 clashes +1 bend, its 6-into-1 moved; a flat-6's runners 8 % long until the plenum's reach counts the S its runners make (0.81 L^2 - (1.1 offset)^2).
+- A collector with 3+ primaries and ports beyond its mouth turns its mouth across when every primary reaches it (lead + entry + 1.2 x distance <= length); a turbo one feeds the turbine straight. I5: 2, 4, 1 -> 0; TDI 1 clash 1 bend -> 0. The 2JZ's end primaries (430 mm) need 479: it keeps its place.
+- Chambers of separate paths spaced by the widest part of their straight run (not the header cone): designed V4 two-stroke (54 x 54, 90 deg) 14 clashes -> 1-3, none past the ports (the check fails at 12 without it); RD350 6 -> 0; no other catalogue duct moved.
+- Designed V8 shared pins: banks 0.23 bore apart (was a throw); V6 separate pins 0.49. Not looked at on screen; the camera microphone hears the drawn outlets, so the I5 (~110 mm) and the RD350 (50-90 mm) tailpipes move what it hears a little.
+
 ## 2026-11-14 — gearboxes: an automated manual cuts fuel and spark before its clutch opens; the automatic changes down on demand
 
 - Automated manual, owner report "the engine keeps accelerating while it shifts". `TruckDriveTests`, K20A and 2JZ given an automatic AMT, flat out 20 s. Before (throttle cut alone, clutch opened on the timer, controller starting a third of the shift early): K20A clutch open at 8,215-8,303 rpm, then +220-310 rpm free, the limiter hit for 17-25 ms on every shift.

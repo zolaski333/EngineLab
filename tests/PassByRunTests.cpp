@@ -290,7 +290,9 @@ void settingsHeld() {
     require(held.endDistanceM == PassByRunSettings::minimumDistanceM, "the end to 20 m at least");
     require(held.approachSpeedKmh == 50.0, "a non-finite speed is its default");
     require(held.fullThrottleBeforeM == held.startDistanceM, "the full-throttle point lies within the run");
-    require(held.gear == 12, "a gear past the gearbox is held");
+    // No cap on a gearbox's gears (owner 2026-11-14): the run keeps the
+    // gear asked for and the driver stops at the box's top (start()).
+    require(held.gear == 40, "a gear is not capped by the run's settings");
 }
 
 /** The running application's path: EngineRuntime's own thread drives the

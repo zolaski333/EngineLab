@@ -60,8 +60,11 @@ file formats, always with an in-memory migration).
 
 - **An active exhaust valve.** In the exhaust designer, right-click a
   silencer (or any part with one part before and one after) and pick
-  **Bypass it with an active valve**: a pipe around it opens behind a valve.
-  Any pipe fed by another part can take one (**Active valve at its inlet**).
+  **Bypass it with an active valve**: a pipe beside it, ending in a tailpipe
+  of its own, opens behind a valve; the 3-D view draws the split and both
+  tailpipes. Any pipe fed by another part can take one (**Active valve at
+  its inlet**). A two-stroke is not offered one: its exhaust is its
+  expansion chamber (the nitrous kit stays).
   Drive gets a switch and a key (`-`): automatic opens it above an engine
   speed or a throttle (3,500 rpm or 50 % by default, set in **Valve actuator
   settings...**), shut and open hold it. It takes 0.3 s to move, does not
@@ -112,7 +115,8 @@ file formats, always with an in-memory migration).
   live line saying what it is doing or what it waits for: the nitrous kit
   ("Armed, waiting for 95 % throttle, over 3000 rpm"), the active exhaust
   valve (*Fit a bypass valve* puts it around the silencer nearest the
-  tailpipe; its mode and actuator settings; how far open it is), VTEC (fit
+  tailpipe; its mode and actuator settings; how far open it is; not on a
+  two-stroke), VTEC (fit
   the cams, the switch and its settings; which cylinders run the high cam)
   and launch control. The Drive panel scrolls when the window is shorter
   than it, so a fitted option's switch is never cut off.
@@ -131,6 +135,23 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- **An automated manual gearbox shifts like one.** On an upshift it cuts the
+  spark and the fuel first and opens its clutch only once the engine has
+  stopped driving (at most 0.15 s later), so the engine no longer flares
+  into the limiter between gears (a K20A flared 220-310 rpm and hit it on
+  every shift; now 33 rpm at most).
+- **An automatic gearbox changes down when you ask for power or brake**,
+  not only when the engine lugs: pressing the pedal raises the speed it
+  shifts at, and braking changes down early to hold the engine in its band.
+- **The number of gears is typed in**, with no cap (the inspector's
+  *Forward gears*); the ratios are spread between first and top as before.
+- **The 3-D view's combustion chamber follows the compression ratio** at
+  real scale: the head stands above the piston at top dead centre by the
+  clearance volume's height, so raising the ratio lowers the head.
+- **The I5's and the TDI's exhaust collectors face their primaries**: a
+  collector with ports beyond its mouth turns to take them straight across
+  (a turbo collector sends its gas on into the turbine), instead of the far
+  primaries turning back and looping through the others.
 - **The ECU tuner shows a group of single settings as one page**: the
   anti-lag's six settings, VTEC's four and the limits (rev limit, launch
   control, overboost) are each one entry of the selector, one row per
@@ -145,6 +166,18 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **3-D view: no connecting rod passes through the crankshaft.** The main
+  journals are drawn only between the throws; across a throw there is only
+  its pin, where the big end swings.
+- **3-D view: a V's banks stand as their rods put them.** Rods side by side
+  on a shared pin set the banks one rod width apart; rods on pins of their
+  own, a throw's width; fork-and-blade or articulated rods line the banks
+  up. A designed V8 with shared pins stood a whole throw apart.
+- **3-D view: a two-stroke's power-valve housing sits on its barrel**, just
+  above the exhaust port, instead of floating over the pipe.
+- **3-D view: a V4 two-stroke's expansion chambers no longer run through
+  each other** (nor the RD350's two): chambers side by side are spaced by
+  their bellies' width, both sides moving outwards alike.
 - **Tooltips show in the tool windows** (ECU, Exhaust designer, Audio,
   Fuel, Vehicle, New engine): only the main window had a tooltip window, and
   it shows none over another window.

@@ -468,14 +468,16 @@ int main() {
 
         // An automated manual: one clutch, worked by the gearbox. It
         // ignores the pedal and starts on its own clutch, as a dual clutch
-        // does; its upshift opens that clutch, so the drive has a manual's
-        // gap; it blips down and refuses an over-revving downshift.
+        // does; its upshift cuts fuel and spark, then opens that clutch, so
+        // the drive has a manual's gap without the engine running free
+        // (owner 2026-11-14); it blips down and refuses an over-revving
+        // downshift.
         std::printf("automated manual (one clutch, no pedal)\n");
         const auto jzAutomated = measureUpshift(jz, enginelab::ShiftStyle::automatedManual);
         require(jzAutomated.syncSeconds > 0.0 && jzAutomated.syncErrorShare < 0.03,
             "an automated-manual 2JZ must end in second, at its speed");
-        require(jzAutomated.gapSeconds > 0.05 && jzAutomated.cutSeconds == 0.0,
-            "an automated manual's upshift has a clutch shift's torque gap, no ignition cut");
+        require(jzAutomated.gapSeconds > 0.05 && jzAutomated.cutSeconds > 0.05,
+            "an automated manual's upshift cuts the ignition and has a clutch shift's torque gap");
         checkDualClutchCreep(jz, enginelab::ShiftStyle::automatedManual);
         const auto automatedDown = measureDownshift(cp2, true, enginelab::ShiftStyle::automatedManual);
         require(automatedDown.peakBlip > 0.2 && automatedDown.engagedRpmShare > 0.95,
