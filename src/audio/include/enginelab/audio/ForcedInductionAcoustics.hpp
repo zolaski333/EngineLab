@@ -17,6 +17,10 @@ namespace enginelab {
  */
 class ForcedInductionAcoustics final {
 public:
+    /** A turbocharger compressor's tonal efficiency grows as the tip speed to
+     * this power (sound ~U^5.5, aerodynamic power ~U^3; Raitor and Neise,
+     * J. Sound Vib. 314, 2008). */
+    static constexpr double compressorToneEfficiencyTipSpeedExponent = 2.5;
     struct Input final {
         float shaftSpeedRpm {};
         float correctedAirFlowKgPerSecond {};

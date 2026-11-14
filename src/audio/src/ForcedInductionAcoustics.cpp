@@ -283,8 +283,18 @@ float ForcedInductionAcoustics::process(const Input& input) noexcept {
             config_.compressorBladeCount);
         const auto turbinePassHz = shaftHz * static_cast<double>(
             config_.turbineBladeCount);
+        // Raitor and Neise (J. Sound Vib. 314, 2008) measured a centrifugal
+        // compressor's sound power growing as the tip speed to the 5-6th
+        // power, its aerodynamic power as the cube: the conversion efficiency
+        // itself grows as U^2.5. With no wheel diameter in the configuration,
+        // the shaft speed over the design speed stands for the tip speed, and
+        // the authored efficiency holds at the design speed.
+        const auto designShaftRpm = std::max(1.0, config_.designShaftSpeedRpm);
+        const auto tipSpeedRatio = std::clamp(
+            static_cast<double>(source.shaftSpeedRpm) / designShaftRpm, 0.0, 2.0);
         const auto compressorTonePowerW = std::max(0.0F,
-            source.compressorPowerWatts) * config_.tonalAcousticEfficiency;
+            source.compressorPowerWatts) * config_.tonalAcousticEfficiency
+            * std::pow(tipSpeedRatio, compressorToneEfficiencyTipSpeedExponent);
         const auto turbineTonePowerW = std::max(0.0F,
             source.turbinePowerWatts) * config_.tonalAcousticEfficiency;
         pressurePa += pressurePeakFromPower(compressorTonePowerW, rho, c)
