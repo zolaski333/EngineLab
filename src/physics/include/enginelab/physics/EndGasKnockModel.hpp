@@ -75,10 +75,15 @@ public:
     [[nodiscard]] static EndGasKnockResult advance(EndGasKnockState& state,
                                                     const EndGasConditions& conditions,
                                                     double dtSeconds) noexcept;
-    /** Douaud and Eyzat (SAE 780080), for the unburned zone's temperature. */
+    /** Douaud and Eyzat (SAE 780080), for the unburned zone's temperature,
+     * lengthened on the lean side as Gauthier, Davidson and Hanson measured
+     * (Combust. Flame 139, 2004): `equivalenceRatio` below 1 only. */
     [[nodiscard]] static double autoIgnitionDelaySeconds(double pressureBar,
                                                          double unburnedTemperatureK,
-                                                         double octaneRating) noexcept;
+                                                         double octaneRating,
+                                                         double equivalenceRatio = 1.0) noexcept;
+    /** The delay's lean-side exponent: tau ~ phi^-0.64 below phi 1. */
+    static constexpr double leanDelayExponent = 0.64;
     /** Molar cp of an unburned fuel-air-residual mixture, J/(mol K). */
     [[nodiscard]] static double unburnedMolarHeatCapacityCp(double temperatureK,
                                                             double fuelMoleFraction,

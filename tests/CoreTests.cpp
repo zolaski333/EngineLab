@@ -666,6 +666,15 @@ int main() {
         require(EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 105.0)
                     > 1.3 * EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 95.0),
                 "ten octane numbers lengthen the delay by (105/95)^3.4");
+        // Gauthier, Davidson and Hanson (2004): phi 0.5 ignites 1.56 times
+        // later than phi 1 on the mean of their four gasoline points; rich
+        // is left as Douaud and Eyzat fitted it.
+        const auto stoichiometricDelay = EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 95.0, 1.0);
+        require(std::abs(EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 95.0, 0.5)
+                    / stoichiometricDelay - 1.56) < 0.01,
+                "a lean end gas (phi 0.5) ignites 1.56 times later than a stoichiometric one");
+        require(EndGasKnockModel::autoIgnitionDelaySeconds(20.0, 850.0, 95.0, 1.2) == stoichiometricDelay,
+                "a rich end gas keeps Douaud and Eyzat's delay");
         // Ideal-gas tables: air 3.50 R at 300 K and 3.98 R at 1,000 K.
         constexpr double r = 8.31446261815324;
         require(std::abs(EndGasKnockModel::unburnedMolarHeatCapacityCp(300.0, 0.0, 0.0) / r - 3.50) < 0.03
@@ -3043,6 +3052,28 @@ int main() {
             static_cast<double>(toneSamples[200] - toneSamples[199]));
         require(telemetryBoundaryDelta <= naturalAdjacentDelta * 2.0,
                 "forced-induction telemetry steps must not create an audio discontinuity");
+
+        // Raitor and Neise (2008): at equal aerodynamic power, a compressor
+        // at half its design tip speed radiates (1/2)^2.5 of the tonal
+        // power, so 0.42 of the tone's pressure.
+        const auto settledTonePeak = [&](float shaftRpm) {
+            auto config = toneConfig;
+            config.designShaftSpeedRpm = 100'000.0;
+            enginelab::ForcedInductionAcoustics compressor(config);
+            require(compressor.prepare(48'000.0), "tip-speed fixture must prepare");
+            enginelab::ForcedInductionAcoustics::Input input;
+            input.shaftSpeedRpm = shaftRpm;
+            input.compressorPowerWatts = 2'000.0F;
+            double peak = 0.0;
+            for (int sample = 0; sample < 9'600; ++sample) {
+                const auto value = std::abs(static_cast<double>(compressor.process(input)));
+                if (sample >= 4'800) peak = std::max(peak, value);
+            }
+            return peak;
+        };
+        const auto tipSpeedPressureRatio = settledTonePeak(50'000.0F) / settledTonePeak(100'000.0F);
+        require(std::abs(tipSpeedPressureRatio - std::pow(0.5, 1.25)) < 0.02,
+                "a compressor's tone efficiency grows as its tip speed to the 2.5th power");
 
         enginelab::ForcedInductionConfig splitConfig;
         splitConfig.enabled = true;

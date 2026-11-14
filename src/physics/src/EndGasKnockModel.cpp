@@ -30,7 +30,8 @@ double EndGasKnockModel::unburnedMolarHeatCapacityCp(double temperatureK,
 
 double EndGasKnockModel::autoIgnitionDelaySeconds(double pressureBar,
                                                   double unburnedTemperatureK,
-                                                  double octaneRating) noexcept {
+                                                  double octaneRating,
+                                                  double equivalenceRatio) noexcept {
     // Douaud and Eyzat, fitted on primary reference fuels in a knocking
     // engine: tau = 17.68 ms (ON/100)^3.402 p[atm]^-1.7 exp(3800/T). Its
     // prefactor is the constant users recalibrate to their engine; here it is
@@ -42,8 +43,20 @@ double EndGasKnockModel::autoIgnitionDelaySeconds(double pressureBar,
     const auto temperatureK = std::clamp(unburnedTemperatureK, 300.0, 1'500.0);
     const auto pressureAtm = std::clamp(pressureBar, 0.5, 250.0) / 1.01325;
     const auto octane = std::clamp(octaneRating, 60.0, 130.0);
+    // Douaud and Eyzat have no mixture term: they fitted stoichiometric
+    // and rich knocking engines. Gauthier, Davidson and Hanson's shock tube
+    // (gasoline RD387, 15-60 atm, 850-1,280 K) measured phi 0.5 against
+    // phi 1: 1.27-1.97 times the delay at four state points, a mean of 1.56,
+    // so phi^-0.64. Rich (phi 2) changed nothing at 20 atm and shortened the
+    // delay at 55 atm; with one point each way, the rich side is left as
+    // Douaud and Eyzat fitted it. Their 20-30 % EGR lengthened phi 1's delay,
+    // but an engine fit already holds its residuals, so that is not added.
+    const auto phi = std::isfinite(equivalenceRatio)
+        ? std::clamp(equivalenceRatio, 0.3, 1.0) : 1.0;
+    const auto leanFactor = std::pow(phi, -leanDelayExponent);
     return std::clamp(35.4e-3 * std::pow(octane / 100.0, 3.402)
-        * std::pow(pressureAtm, -1.7) * std::exp(3'800.0 / temperatureK), 1.0e-6, 10.0);
+        * std::pow(pressureAtm, -1.7) * std::exp(3'800.0 / temperatureK) * leanFactor,
+        1.0e-6, 10.0);
 }
 
 EndGasKnockResult EndGasKnockModel::advance(EndGasKnockState& state,
@@ -96,7 +109,8 @@ EndGasKnockResult EndGasKnockModel::advance(EndGasKnockState& state,
     }
     result.unburnedTemperatureK = state.unburnedTemperatureK;
     result.autoIgnitionDelaySeconds = autoIgnitionDelaySeconds(
-        pressureBar, state.unburnedTemperatureK, conditions.octaneRating);
+        pressureBar, state.unburnedTemperatureK, conditions.octaneRating,
+        conditions.equivalenceRatio);
 
     // The integral runs from ignition. Douaud and Eyzat fitted their delay
     // to knock onsets, in the end gas the flame compresses; read below that,
