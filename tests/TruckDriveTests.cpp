@@ -9,6 +9,7 @@
 // - Flat out it changes up near the engine's peak power, not at its torque
 //   plateau's start.
 
+#include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -154,6 +156,43 @@ int main() {
             if (throttle == 1.0)
                 require(shift.openRpm > 0.75 * limit, label + "flat out it changes up near its peak power (redline "
                         + std::to_string(limit) + ", the clutch opened at " + std::to_string(shift.openRpm) + ")");
+        }
+    }
+    // A petrol car through the same gearbox (owner 2026-11-14: "the engine
+    // keeps accelerating while the gearbox changes"). Its controller cut the
+    // throttle alone and opened the clutch on a timer: the full manifold kept
+    // firing into the open clutch.
+    const auto catalog = loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+    for (const auto* name : { "K20A", "2JZ" }) {
+        const auto found = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [name](const auto& entry) { return entry.config.name.find(name) != std::string::npos; });
+        require(found != catalog.entries.end(), std::string("the catalogue holds the ") + name);
+        auto car = found->config;
+        car.transmission.shiftStyle = ShiftStyle::automatedManual;
+        car.transmission.automaticShifting = true;
+        car.vehicle.tyreGripLimitEnabled = false;
+        normaliseEngineConfig(car);
+        const auto drive = driveAway(car, 1.0, 20.0);
+        const auto limit = car.ignition.revLimitRpm;
+        std::cout << "CarDrive " << name << ": " << drive.shifts.size() << " upshifts, limit " << limit << '\n';
+        for (const auto& shift : drive.shifts)
+            std::cout << "  " << shift.from + 1 << "->" << shift.to + 1 << ": from " << shift.startRpm << " rpm, peak "
+                      << shift.peakRpm << ", landed " << shift.landedRpm << ", limiter " << shift.limiterSeconds
+                      << " s; clutch open from " << shift.openRpm << " rpm, peak there " << shift.openPeakRpm << '\n';
+        require(drive.shifts.size() >= 2, std::string(name) + " changes up flat out");
+        for (const auto& shift : drive.shifts) {
+            const auto label = std::string(name) + " " + std::to_string(shift.from + 1) + " to "
+                + std::to_string(shift.to + 1) + ": ";
+            require(shift.openRpm > 0.0, label + "the clutch opens for the shift");
+            require(shift.limiterSeconds == 0.0, label + "the engine never reaches its limiter during a shift");
+            // The clutch opens on an engine that no longer drives: it can
+            // only slow down there.
+            require(shift.openPeakRpm <= shift.openRpm + 0.005 * limit,
+                    label + "the engine does not climb while the clutch is open (opened at "
+                        + std::to_string(shift.openRpm) + ", peak " + std::to_string(shift.openPeakRpm) + ")");
+            require(shift.peakRpm <= shift.startRpm + 0.02 * limit,
+                    label + "the engine does not climb through the shift (from " + std::to_string(shift.startRpm)
+                        + ", peak " + std::to_string(shift.peakRpm) + ")");
         }
     }
     return EXIT_SUCCESS;

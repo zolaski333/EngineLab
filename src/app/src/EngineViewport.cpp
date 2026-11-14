@@ -1230,6 +1230,7 @@ void EngineViewport::applyCamshaftEdit(const std::vector<double>& values, bool g
 void EngineViewport::applyPartEdit(const std::vector<double>& values) {
     if (!scene_ || !configEditor_ || !partEditor_ || selectedPart_ < 0) return;
     auto edited = scene_->config();
+    partEditSelects_.reset();
     if (const auto error = partEditor_(edited, values); !error.empty()) {
         inspector_.setEditStatus(juce::String::fromUTF8(error.c_str()));
         return;
@@ -1238,8 +1239,9 @@ void EngineViewport::applyPartEdit(const std::vector<double>& values) {
         inspector_.setEditStatus(juce::String::fromUTF8(invalid->c_str()));
         return;
     }
-    // The part keeps its index: these edits resize, they add nothing.
-    reselect_ = Reselect { 0, 0, selectedPart_ };
+    // The part keeps its index: these edits resize, they add nothing; one
+    // that adds parts names the role to select again.
+    reselect_ = partEditSelects_ ? Reselect { 0, 0, -1, partEditSelects_ } : Reselect { 0, 0, selectedPart_ };
     if (!configEditor_(edited)) {
         reselect_.reset();
         inspector_.setEditStatus("The engine did not take the edit.");
@@ -1687,6 +1689,7 @@ void EngineViewport::updateInspector() {
     partChoice_ = {};
     partSecondChoice_ = {};
     partChoiceSelects_.reset();
+    partEditSelects_.reset();
     partChoiceDeselects_ = false;
     std::vector<PartInspector::Row> rows;
     const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
@@ -2583,39 +2586,18 @@ void EngineViewport::updateInspector() {
             edit->value("Final drive", transmission.finalDriveRatio, utf8(" : 1"), 3, 0.1, 0.01, 0.5, 20.0);
             edit->value("Clutch capacity", std::round(transmission.maxClutchTorqueNm), utf8(" N\xc2\xb7m"), 0, 10.0, 1.0,
                         10.0, 10'000.0);
+            // How many forward gears, typed in, with no cap (owner,
+            // 2026-11-14). A new count restarts the engine: first and top
+            // keep their ratios and the gears between are spread with an
+            // equal step, as a gearbox's are. A CVT's two "gears" are its
+            // variator's ends: no count.
+            if (style != ShiftStyle::cvt)
+                edit->value("Forward gears", static_cast<double>(gears), "", 0, 1.0, 1.0, 1.0, 1.0e6);
             // validateEngineConfig's bounds: a truck's first gear is 16.7.
             for (int index = 0; index < gears; ++index)
                 edit->value("Gear " + juce::String(index + 1),
                             transmission.gearRatios[static_cast<std::size_t>(index)], utf8(" : 1"), 3, 0.05, 0.005,
                             0.05, 25.0);
-            // How many gears, a restart: first and top keep their ratios
-            // and the ones between are spread evenly in proportion, as a
-            // gearbox's steps are. A CVT's are its variator's two ends.
-            if (style != ShiftStyle::cvt) {
-                static constexpr int mostGears = 16;  // DrivelineModel's schedule holds 16
-                std::vector<juce::String> counts;
-                for (int count = 1; count <= mostGears; ++count)
-                    counts.push_back(juce::String(count) + (count == 1 ? " gear" : " gears"));
-                edit->secondChoice = PartInspector::Edit::Choice { std::move(counts),
-                    "How many forward gears, and the engine restarts: first and top keep their ratios, and the "
-                    "gears between are spread with an equal step from one to the next (a 12-speed truck box's "
-                    "is about 1.29). Ratios set by hand in between are lost; a single gear is first.",
-                    std::clamp(gears, 1, mostGears) - 1 };
-                partSecondChoice_ = [this](EngineConfig& edited, int index) {
-                    auto& ratios = edited.transmission.gearRatios;
-                    if (ratios.empty()) throw std::runtime_error("The gearbox has no gears to spread.");
-                    const auto count = static_cast<std::size_t>(std::clamp(index + 1, 1, mostGears));
-                    const auto first = ratios.front();
-                    const auto top = ratios.size() > 1U ? ratios.back() : first;
-                    std::vector<double> spread(count);
-                    for (std::size_t step = 0; step < count; ++step)
-                        spread[step] = count == 1U ? first
-                            : first * std::pow(top / first, static_cast<double>(step) / static_cast<double>(count - 1));
-                    ratios = std::move(spread);
-                    // The gearbox stays the one selected.
-                    partChoiceSelects_ = render::PartRole::gearbox;
-                };
-            }
             edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over, an "
                          "automated manual's torque gap). "
                          "Ignition cut: the quickshifter's, on the way up. Ratios: input over output, the final "
@@ -2649,17 +2631,31 @@ void EngineViewport::updateInspector() {
                 if (choice >= 1 && choice <= 3) box.autoBlipper = choice != 1;
                 if (choice == 4 || choice == 5) box.centrifugalClutch = choice == 5;
             };
-            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+            partEditor_ = [this, counted = style != ShiftStyle::cvt](EngineConfig& edited,
+                                                                       const std::vector<double>& values) {
                 const auto shiftMs = values[0];
                 const auto cutMs = values[1];
                 auto& box = edited.transmission;
                 box.shiftDurationSeconds = shiftMs / 1'000.0;
                 box.quickshifterCutSeconds = cutMs / 1'000.0;
-                if (values.size() != 4 + box.gearRatios.size()) return std::string("The gearbox changed meanwhile.");
+                const std::size_t first = counted ? 5U : 4U;
+                if (values.size() != first + box.gearRatios.size()) return std::string("The gearbox changed meanwhile.");
                 box.finalDriveRatio = values[2];
                 box.maxClutchTorqueNm = values[3];
+                if (counted) {
+                    const auto typed = values[4];
+                    if (!std::isfinite(typed) || typed < 1.0 || typed != std::floor(typed))
+                        return std::string("A gearbox has a whole number of forward gears, one or more.");
+                    const auto count = static_cast<std::size_t>(typed);
+                    if (count != box.gearRatios.size()) {
+                        box.gearRatios = spreadGearRatios(box.gearRatios, count);
+                        // The gearbox stays the one selected.
+                        partEditSelects_ = render::PartRole::gearbox;
+                        return std::string();
+                    }
+                }
                 for (std::size_t gearIndex = 0; gearIndex < box.gearRatios.size(); ++gearIndex) {
-                    box.gearRatios[gearIndex] = values[4 + gearIndex];
+                    box.gearRatios[gearIndex] = values[first + gearIndex];
                     // Each gear taller than the one below: the scheduler and
                     // the shift protection count on it.
                     if (gearIndex > 0 && box.gearRatios[gearIndex] >= box.gearRatios[gearIndex - 1])

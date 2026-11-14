@@ -44,7 +44,8 @@ PassByRunSettings sanitised(PassByRunSettings settings) noexcept {
                                            PassByRunSettings::maximumApproachKmh);
     settings.fullThrottleBeforeM = std::clamp(finiteOr(settings.fullThrottleBeforeM, defaults.fullThrottleBeforeM),
                                               0.0, settings.startDistanceM);
-    settings.gear = std::clamp(settings.gear, 0, 12);
+    // The gearbox's own count caps it (start()); no other limit.
+    settings.gear = std::max(settings.gear, 0);
     return settings;
 }
 

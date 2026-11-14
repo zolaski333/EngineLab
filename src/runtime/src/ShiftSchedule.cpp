@@ -44,12 +44,23 @@ double ShiftSchedule::upshiftRpm(const ShiftScheduleInput& input) noexcept {
     return light + (full - light) * pedalShape(input.driverThrottle);
 }
 
-double ShiftSchedule::downshiftRpm(const ShiftScheduleInput& input) noexcept {
-    const auto coast = input.coastDownshiftRpm > 0.0 ? input.coastDownshiftRpm : 1.3 * idleOf(input);
-    // Flat out, anything under about half the upshift speed asks for a
-    // lower gear: that is the kickdown.
-    const auto kickdown = std::max(coast, 0.55 * fullThrottleUpshift(input));
-    return coast + (kickdown - coast) * pedalShape(input.driverThrottle);
+double ShiftSchedule::luggingRpm(const ShiftScheduleInput& input) noexcept {
+    return input.coastDownshiftRpm > 0.0 ? input.coastDownshiftRpm : 1.3 * idleOf(input);
+}
+
+double ShiftSchedule::downshiftLandingRpm(const ShiftScheduleInput& input) noexcept {
+    // A road speed a quarter under the upshift line at the same pedal, as
+    // production schedules space their lines (their 3-2 line near 0.7 x the
+    // 2-3 one at part throttle; not fitted to one car). Read in the lower
+    // gear, that speed is 0.72 x the upshift point.
+    constexpr double downshiftLine = 0.72;
+    const auto demand = downshiftLine * upshiftRpm(input);
+    // Braking: from that line up to half the full-throttle upshift speed at
+    // half the brake pedal, where the engine brakes the car well without
+    // nearing its limit.
+    const auto brake = std::isfinite(input.brake) ? std::clamp(input.brake / 0.5, 0.0, 1.0) : 0.0;
+    const auto braking = demand + (0.5 * fullThrottleUpshift(input) - demand) * brake;
+    return std::max(demand, braking);
 }
 
 int ShiftSchedule::chooseGear(const ShiftScheduleInput& input) noexcept {
@@ -59,21 +70,30 @@ int ShiftSchedule::chooseGear(const ShiftScheduleInput& input) noexcept {
         || !std::isfinite(input.wheelRadPerSecond))
         return engaged;
     const auto up = upshiftRpm(input);
-    const auto down = downshiftRpm(input);
-    // An upshift must land clear of the downshift point, or the next frame
-    // would change back down.
+    const auto landingCeiling = downshiftLandingRpm(input);
+    const auto lugging = luggingRpm(input);
+    const auto braking = std::isfinite(input.brake) && input.brake > 0.02;
+    // An upshift lands clear of the lugging speed, and leaves the engine
+    // above the downshift line (or the next frame would change back down);
+    // braking never changes up.
     constexpr double upshiftLandingMargin = 1.15;
-    if (input.engineRpm >= up && engaged + 1 < gearCount
-        && landingRpm(input, engaged + 1) >= down * upshiftLandingMargin)
+    if (!braking && input.engineRpm >= up && engaged + 1 < gearCount
+        && input.engineRpm > landingCeiling * 1.05
+        && landingRpm(input, engaged + 1) >= lugging * upshiftLandingMargin)
         return engaged + 1;
-    // A downshift must land under the upshift point, with the same kind of
-    // margin; kickdown carries on down while the gear reached still lugs.
+    // A downshift lands under the upshift point with a margin (under the
+    // full-throttle one while braking, which never changes up); it carries
+    // on down while the next gear also lands under the line, or while the
+    // gear reached still lugs.
     constexpr double downshiftLandingMargin = 0.9;
+    const auto overRev = downshiftLandingMargin * (braking ? fullThrottleUpshift(input) : up);
     auto gear = engaged;
     auto rpm = input.engineRpm;
-    while (gear > 0 && rpm <= down && landingRpm(input, gear - 1) <= downshiftLandingMargin * up) {
+    while (gear > 0) {
+        const auto lower = landingRpm(input, gear - 1);
+        if (lower > overRev || (lower > landingCeiling && rpm > lugging)) break;
         --gear;
-        rpm = landingRpm(input, gear);
+        rpm = lower;
     }
     return gear;
 }

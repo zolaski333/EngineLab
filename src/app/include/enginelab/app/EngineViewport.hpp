@@ -434,6 +434,9 @@ private:
     /** When the choice adds or removes parts (a turbo): the role to select
         once the engine is back, instead of the same part index. */
     std::optional<render::PartRole> partChoiceSelects_;
+    /** Set by a part editor whose edit changes the parts (a gearbox given
+     *  more gears): the part to select afterwards, by role. */
+    std::optional<render::PartRole> partEditSelects_;
     /** When the choice moves every part's index (an airbox fitted or taken
         off): nothing is selected once the engine is back. */
     bool partChoiceDeselects_ {};

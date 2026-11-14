@@ -20,23 +20,36 @@ struct ShiftScheduleInput final {
     double revLimitRpm { 6'500.0 };
     /** Full-throttle upshift speed; 0 derives it from the rev limit. */
     double fullThrottleUpshiftRpm { 0.0 };
-    /** Foot-off downshift speed; 0 derives it from the idle. */
+    /** Speed under which the engaged gear lugs and the gearbox changes down
+     *  whatever the pedal; 0 derives it from the idle. */
     double coastDownshiftRpm { 0.0 };
+    /** The driver's brake pedal (0-1): braking changes down early, for the
+     *  engine's braking, and never changes up. */
+    double brake { 0.0 };
 };
 
 /** Shift points of an automatic gearbox, from the pedal: a light foot shifts
- * up early and a heavy one late, near the limiter; pressing the pedal hard
- * at a low engine speed shifts down (kickdown), several gears at once if
- * they all land under the upshift point.
+ * up early and a heavy one late, near the limiter. It changes down when the
+ * road speed falls a quarter under the speed it would change up at with
+ * that pedal: pressing harder raises that line, so the pedal asks for a
+ * lower gear (several at once, kickdown, as long as they land under the
+ * upshift point), and braking raises it further, for the engine's braking.
+ * Under the lugging speed it changes down whatever the pedal.
  *
- * Hysteresis keeps it from hunting: an upshift must land above the
- * downshift point with a margin, a downshift below the upshift point.
- * The caller adds the time hysteresis (no new choice right after a shift)
- * and keeps it out of a launch and of the driver's clutch. */
+ * Hysteresis keeps it from hunting: the downshift line is a quarter of the
+ * road speed under the upshift line, an upshift must land clear of both, and
+ * it never changes up while braking. The caller adds the time hysteresis (no
+ * new choice right after a shift) and keeps it out of a launch and of the
+ * driver's clutch. */
 class ShiftSchedule final {
 public:
     [[nodiscard]] static double upshiftRpm(const ShiftScheduleInput&) noexcept;
-    [[nodiscard]] static double downshiftRpm(const ShiftScheduleInput&) noexcept;
+    /** The highest speed the next gear down may land at for the gearbox to
+     *  change down to it: the downshift line, read in the lower gear. */
+    [[nodiscard]] static double downshiftLandingRpm(const ShiftScheduleInput&) noexcept;
+    /** Under this speed the engaged gear lugs: it changes down whatever the
+     *  pedal. */
+    [[nodiscard]] static double luggingRpm(const ShiftScheduleInput&) noexcept;
     /** The gear to be in: the engaged one, one higher, or one or more lower. */
     [[nodiscard]] static int chooseGear(const ShiftScheduleInput&) noexcept;
 };

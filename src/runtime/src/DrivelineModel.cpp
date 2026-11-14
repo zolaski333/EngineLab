@@ -26,6 +26,7 @@ DrivelineModel::DrivelineModel(const EngineConfig& config) : config_(config) {
     clutchTemperatureC_ = config_.ambientTemperatureC;
     engineInertiaKgM2_ = std::max(0.001, effectiveRotatingInertiaKgM2(config_));
     variatorRatio_ = variatorLowestRatio();
+    scheduleRatios_.assign(config_.transmission.gearRatios.size(), 0.0);
 }
 
 bool DrivelineModel::replaceVehicle(const TransmissionConfig& transmission, const VehicleConfig& vehicle) {
@@ -242,17 +243,17 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     if (transmission.automaticShifting && !continuouslyVariable() && !shiftInProgress_ && engagedGear_ >= 0
         && requestedGear_ == engagedGear_ && secondsSinceShift_ >= scheduleHoldSeconds
         && (!driverClutchConnected() || clutchPedal >= 0.5)) {
-        std::array<double, 16> overall {};
+        // Sized with the gearbox (any count): no allocation in a frame.
+        auto& overall = scheduleRatios_;
         const auto count = std::min(overall.size(), transmission.gearRatios.size());
         for (std::size_t gear = 0; gear < count; ++gear) overall[gear] = ratioForGear(static_cast<int>(gear));
         ShiftScheduleInput schedule;
         schedule.engineRpm = engineState.rpm;
-        // An automated manual's controller changes up on the speed the engine
-        // will have reached when its clutch is open, a third of the way
-        // through the shift: a loaded truck in first climbs 1,000 rpm/s, and
-        // changing up at the point itself took it into its governor's cut.
-        if (transmission.shiftStyle == ShiftStyle::automatedManual)
-            schedule.engineRpm += std::max(0.0, engineRpmRate_) * 0.35 * transmission.shiftDurationSeconds;
+        // An automated manual changes up at the point itself: its fuel and
+        // spark go at the start of the shift, so the engine no longer climbs
+        // while the clutch opens. (On a throttle lift alone it did, 1,000
+        // rpm/s in a loaded truck's first, and the controller had to start a
+        // third of the shift early.)
         schedule.driverThrottle = driverThrottle_ >= 0.0 ? driverThrottle_ : engineState.throttle;
         schedule.engagedGear = engagedGear_;
         schedule.overallRatios = std::span<const double>(overall.data(), count);
@@ -262,6 +263,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             ? engineState.activeRevLimitRpm : config_.ignition.revLimitRpm;
         schedule.fullThrottleUpshiftRpm = transmission.automaticUpshiftRpm;
         schedule.coastDownshiftRpm = transmission.automaticDownshiftRpm;
+        schedule.brake = brakePressure;
         if (const auto gear = ShiftSchedule::chooseGear(schedule); gear != engagedGear_)
             requestGear(std::min(gear, maximumGear));
     }
@@ -284,6 +286,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         resyncReferenceSlipRpm_ = 0.0;
         shiftAction_ = chooseShiftAction(clutchPedal);
         handOverReferenceSlipRadPerSecond_ = 0.0;
+        automatedTorqueGone_ = !(transmission.shiftStyle == ShiftStyle::automatedManual
+            && shiftAction_ == ShiftAction::timed && shiftFromGear_ >= 0
+            && shiftTargetGear_ > shiftFromGear_);
+        automatedTorqueOffSeconds_ = 0.0;
     }
     double shiftProgress = 0.0;
     double effectiveClutch = clutchPedal;
@@ -371,6 +377,22 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             effectiveClutch = clutchPedal;
             finishShift();
         }
+    } else if (shiftInProgress_ && !automatedTorqueGone_) {
+        // An automated manual's upshift: its controller cuts fuel and spark
+        // with the clutch still shut, so the engine's torque leaves the
+        // driveline while the car still holds the engine's speed; the clutch
+        // opens only once that torque has gone. Opened first on a throttle
+        // lift alone, the manifold's charge kept firing into an open clutch
+        // and the engine flared (owner 2026-11-14). The completed-cycle
+        // torque lags a cycle; a cut that has not taken it away in
+        // automatedTorqueOffLimitSeconds opens the clutch anyway.
+        constexpr double automatedTorqueOffLimitSeconds = 0.15;
+        automatedTorqueOffSeconds_ += dt;
+        output.ignitionCut = true;
+        output.torqueCutMultiplier = 0.0;
+        shiftProgress = 0.0;
+        if (engineDriveTorque <= 0.0 || automatedTorqueOffSeconds_ >= automatedTorqueOffLimitSeconds)
+            automatedTorqueGone_ = true;
     } else if (shiftInProgress_) {
         shiftElapsedSeconds_ += dt;
         shiftProgress = std::clamp(shiftElapsedSeconds_ / transmission.shiftDurationSeconds, 0.0, 1.0);
@@ -402,11 +424,12 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         const auto cutDepth = automated ? 1.0 : std::clamp(
             transmission.shiftTorqueCutFraction, 0.0, 1.0);
         const auto cutFloor = 1.0 - cutDepth;
-        constexpr double automatedTorqueOffProgress = 0.20;
+        // Its fuel and spark stay cut while the clutch is open (the torque
+        // went before it opened, above) and come back as it closes, the
+        // throttle then following the clutch's slip.
+        if (automated && forwardUpshift && shiftProgress < 0.60) output.ignitionCut = true;
         if (automated && forwardUpshift && !(shiftProgress > 0.50 && resyncReferenceSlipRpm_ > lockBandRpm)) {
-            output.torqueCutMultiplier = shiftProgress < 0.50
-                ? std::clamp(1.0 - shiftProgress / automatedTorqueOffProgress, 0.0, 1.0)
-                : cutFloor;
+            output.torqueCutMultiplier = cutFloor;
         } else if (forwardUpshift && shiftProgress > 0.50
             && resyncReferenceSlipRpm_ > lockBandRpm) {
             // Do not restore engine torque merely because a wall-clock shift

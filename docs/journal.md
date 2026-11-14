@@ -5,6 +5,21 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — gearboxes: an automated manual cuts fuel and spark before its clutch opens; the automatic changes down on demand
+
+- Automated manual, owner report "the engine keeps accelerating while it shifts". `TruckDriveTests`, K20A and 2JZ given an automatic AMT, flat out 20 s. Before (throttle cut alone, clutch opened on the timer, controller starting a third of the shift early): K20A clutch open at 8,215-8,303 rpm, then +220-310 rpm free, the limiter hit for 17-25 ms on every shift.
+- After: fuel and spark cut at the start with the clutch shut, the clutch opens once the cycle torque is gone (at most 0.15 s), the cut held while it is open, the throttle back with the slip as before; the controller changes up at the point itself. K20A open at 8,125-8,175, at most +33 rpm free, no limiter; 2JZ +3 rpm; the designed truck keeps its gates (open at 1,797-1,846 for a 2,200 limit, no flare). New asserts fail before.
+- Automatic: a downshift line at 0.72 x the pedal's upshift point (production 3-2 lines sit near 0.7 x the 2-3, not fitted to one car), raised by the brake to half the full-throttle upshift; lugging stays the floor. Half pedal in sixth at 1,600 rpm now takes fourth (it held fifth); braking in fourth at 1,600 takes third or lower. A light pedal at 2,000 rpm holds sixth. Not checked on screen.
+- Gear count typed, no cap (the validator capped 12, the menu offered 16): a 20-gear box validates and reaches its 19th flat out in 30 s.
+
+## 2026-11-14 — real time since 0.8.1: the engine runtime has not slowed (nothing changed)
+
+- Owner report: real time "strongly degraded" on four- and two-strokes since recent changes. `RealtimeBudgetHarness --free-run --warmup 2 --seconds 4`, each version built alone on 14.44 (worktrees, harness target only), interleaved, order alternated, the first pair discarded, best kept.
+- 0.9.1 (0921d78) -> HEAD (94312ea), 5,000 rpm, catalogue: K20A 1.601 -> 1.581, 2JZ 1.620 -> 1.591, RD350 1.830 -> 1.833, I5 1.482 -> 1.490.
+- Same at 1,000 rpm with `--with-audio --gas-view` (the app's audio and 3-D gas view): K20A 2.863 -> 2.792, 2JZ 3.094 -> 3.163, RD350 3.034 -> 2.927.
+- 0.8.1 (c0b4639, its own catalogue) -> HEAD: K20A 1.543 -> 1.516, 2JZ 1.554 -> 1.513, RD350 1.772 -> 1.769, I5 1.471 -> 1.478. Every pair within 2-3 %, the harness's noise.
+- So the simulation thread, the audio renderer and the gas view cost what they did. Not measured: the application's own threads (UI, OpenGL), the optional fittings (exhaust valve, nitrous, anti-lag, pass-by microphone) and designed engines. The application shows no capacity figure from a command line, so its cost needs the window.
+
 ## 2026-11-14 — anti-lag holds boost
 
 - Owner report: nothing like a real one. 2JZ lifted 2 s from full boost at 5,000 rpm, 50 % kept, before: manifold 20-110 kPa hunting (37 at the end), shaft 64 %, 1.2 % of the fuel burnt before the turbine. Where its fuel sat (fuel-weighted, before the turbine): 65 % too rich (phi 1.97 > 1.80), 33 % cold (761 K), 1 % burning. A cold rig: walls 334 K 4.5 s after the start (764 K after 40 s at full load, the EGT 894 C), so the hot run is the one to judge by.

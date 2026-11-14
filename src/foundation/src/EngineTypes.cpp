@@ -1233,8 +1233,9 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         config.solver.mechanicalFrequencyHz * static_cast<double>(config.solver.gasSubsteps));
     if (config.solver.maximumMechanicalFrequencyHz + 1.0e-9 < requiredSolverFrequency)
         return "Solver maximum frequency cannot satisfy the configured crank-angle resolution at the rev limit";
-    if (config.transmission.gearRatios.empty() || config.transmission.gearRatios.size() > 12)
-        return "Transmission must contain between 1 and 12 forward gears";
+    // No cap on the count (owner, 2026-11-14): a user may build any gearbox.
+    if (config.transmission.gearRatios.empty())
+        return "Transmission must contain at least one forward gear";
     for (const auto gearRatio : config.transmission.gearRatios)
         if (!inRange(gearRatio, 0.05, 25.0)) return "Transmission gear ratios must be between 0.05 and 25";
     // Zero derives a shift speed from the engine (ShiftSchedule).
@@ -1901,6 +1902,17 @@ const char* afterfireBlockerName(std::uint32_t mask) noexcept {
     if (afterfireBlocked(mask, AfterfireBlocker::revLimiterActive)) return "rev limiter active";
     if (afterfireBlocked(mask, AfterfireBlocker::fuelCutInactive)) return "not in overrun fuel cut";
     return "";
+}
+
+std::vector<double> spreadGearRatios(const std::vector<double>& ratios, std::size_t count) {
+    if (ratios.empty() || count == 0U) return {};
+    const auto first = ratios.front();
+    const auto top = ratios.size() > 1U ? ratios.back() : first;
+    std::vector<double> spread(count);
+    for (std::size_t step = 0; step < count; ++step)
+        spread[step] = count == 1U ? first
+            : first * std::pow(top / first, static_cast<double>(step) / static_cast<double>(count - 1U));
+    return spread;
 }
 
 const char* shiftStyleName(ShiftStyle style) noexcept {

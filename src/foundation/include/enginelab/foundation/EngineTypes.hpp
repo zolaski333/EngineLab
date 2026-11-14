@@ -997,7 +997,9 @@ struct TransmissionConfig final {
     /** Full-throttle upshift speed; 0 places it just under the active rev
      * limit. Part throttle shifts earlier. */
     double automaticUpshiftRpm { 0.0 };
-    /** Foot-off downshift speed; 0 places it at 1.3 x idle. */
+    /** Lugging speed: under it the gearbox changes down whatever the pedal;
+     * 0 places it at 1.3 x idle. Above it, the pedal and the brake place the
+     * downshift (ShiftSchedule). */
     double automaticDownshiftRpm { 0.0 };
     double reverseRatio { 3.20 };
     double gearboxInputInertiaKgM2 { 0.08 };
@@ -2494,6 +2496,11 @@ struct DynoRun final {
 
 /** "manual", "sequential" or "dual_clutch", as in the engine files. */
 [[nodiscard]] const char* shiftStyleName(ShiftStyle) noexcept;
+/** `count` forward gears from `ratios`: the first and the top keep their
+ *  ratios and the gears between are spread with an equal step from one to
+ *  the next, as a gearbox's steps are; one gear is the first. Empty if
+ *  `ratios` is empty or `count` is 0. */
+[[nodiscard]] std::vector<double> spreadGearRatios(const std::vector<double>& ratios, std::size_t count);
 [[nodiscard]] std::optional<ShiftStyle> parseShiftStyle(const std::string&) noexcept;
 
 [[nodiscard]] EngineConfig makeDefaultInlineFour();

@@ -17,37 +17,31 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**The owner's plan of 2026-11-13** (validated in full, autonomous, reported
-at the end), fixing the ergonomics of the 2026-11-11 features: (1) one
-*Equipment* window (top bar) to fit and set every option (nitrous,
-anti-lag, active valve, VTEC, launch control), a scrolling Drive panel, and
-a live status saying what an option waits for; nitrous sprays armed at full
-throttle, its push button an option; (2) the tuner shows a group of
-single-value settings (`antilag.*`, `vtec.*`) as one page; (3) anti-lag
-with a speed feedback (it never adds speed, it keeps a chosen share of the
-engine braking), a Rally or Launch mode, exits (clutch, neutral, maximum
-speed and time, EGT), after measuring where its fuel burns; (4) a real
-pass-by run: from a standstill at a chosen distance, a scripted driver
-(launch, constant speed, lift at the microphone), a top-down strip and a
-WAV recording, with the sound right at 500 m (delay line, air absorption,
-ground impedance, real or normalised level). Off by default, default sound
-unchanged.
+**The owner's report of 2026-11-14** (plan validated in full, autonomous,
+reported at the end), in this order: (1) the real-time regression since
+0.9.1, measured and bisected before any fix; (2) gearboxes: the automated
+manual cuts its torque by fuel and spark and opens its clutch only once the
+torque is gone; the automatic downshifts on pedal demand and when braking,
+not only when lugging; the gear count is typed in, with no cap; (3) the 3-D
+mechanism: main journals only between the throws (no rod through the
+shaft), a V's bank stagger of one rod width (none with articulated rods),
+the chamber drawn from the compression ratio at real scale, a two-stroke
+power valve's housing on its barrel; (4) the 3-D exhaust: the active valve
+drawn as a split, each branch with its own outlet (the topology changes
+too); the collector oriented to untangle its primaries; a V4 two-stroke's
+chambers clear of each other; (5) the active exhaust valve hidden on a
+two-stroke (nitrous stays). Default sound unchanged.
 
-Done before it: **the owner's plan of 2026-11-11** (validated in full, autonomous, reported
-at the end), in this order: (1) the turbo boost that runs away when the
-stoichiometric AFR is lowered (fuel energy per kg of oxygen, a turbo speed
-limit, an ECU overboost cut); (2) the exhaust designer: deleting a path or
-moving a cylinder, a cylinder feeding any part, drag-to-connect, undo;
-(3) VTEC (that name, no coolant condition) fitted, tuned and switched live
-from EngineLab, made robust, no sound or curve measured; (4) one engine file
-with its ECU maps, and drag-and-drop; (5) menus and dialogs inside their
-window, so a capture sees everything; (6) a loop-pack export for BeamNG
-(loops only); (7) an active exhaust valve; (8) a trackside pass-by
-microphone; (9) a nitrous kit, hidden until fitted, unlimited if wanted;
-(10) physical turbo anti-lag. Every new feature is off by default. Refused:
-macOS, automatic spark calibration, performance timers. Open: a lean dyno
-(crank/wheel, maker points), gamepad and wheel input. Owner: run a full
-build or `ctest` only when it is really needed.
+Done before it: **the owner's plans of 2026-11-13** (an Equipment window,
+tuner group pages, anti-lag by feedback, a pass-by run) **and 2026-11-11**:
+(1) the turbo runaway on a lowered stoichiometric AFR; (2) the exhaust
+designer's edits; (3) VTEC; (4) one engine file with its ECU maps; (5) menus
+inside their window; (6) a loop pack for BeamNG; (7) an active exhaust valve;
+(8) a trackside microphone; (9) a nitrous kit; (10) physical anti-lag. Every
+new feature is off by default. Refused: macOS, automatic spark calibration,
+performance timers. Open: a lean dyno (crank/wheel, maker points), gamepad
+and wheel input. Owner: run a full build or `ctest` only when it is really
+needed.
 
 Released before it, up to 0.9.1: the history is in `CHANGELOG.md`. 13B power
 is a named exception; so is the flat-6's early-blip dip (0.70 x idle, chaotic

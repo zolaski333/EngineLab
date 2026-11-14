@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <enginelab/foundation/EngineTypes.hpp>
 
 #include <algorithm>
@@ -136,6 +138,8 @@ private:
     bool launchClutchLocked_ { false };
     // A CVT's variator ratio (gearbox only, without the final drive).
     double variatorRatio_ { 0.0 };
+    /** Overall ratio of each forward gear, for the automatic schedule. */
+    std::vector<double> scheduleRatios_;
     // Engine + flywheel rotating inertia, cached so the locked-clutch constraint can
     // share one acceleration between the crank and the driveline.
     double engineInertiaKgM2_ { 0.24 };
@@ -154,6 +158,11 @@ private:
     int shiftFromGear_ { -1 };
     double shiftElapsedSeconds_ { 0.0 };
     bool shiftInProgress_ { false };
+    // An automated manual's upshift begins with its clutch shut while fuel
+    // and spark are cut: the clutch opens only once the engine's own torque
+    // has gone (or after automatedTorqueOffLimitSeconds), not on a timer.
+    bool automatedTorqueGone_ { true };
+    double automatedTorqueOffSeconds_ { 0.0 };
     // Post-timer clutch resynchronisation on a forward upshift: the reference
     // slip captured when the sync-aware torque hold begins (0 while not holding),
     // and the clutch slip carried from the previous advance() so the hold can be

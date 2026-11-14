@@ -57,10 +57,10 @@ void scheduleProperties() {
     for (int step = 0; step <= 20; ++step) {
         input.driverThrottle = step / 20.0;
         const auto up = enginelab::ShiftSchedule::upshiftRpm(input);
-        const auto down = enginelab::ShiftSchedule::downshiftRpm(input);
+        const auto down = enginelab::ShiftSchedule::downshiftLandingRpm(input);
         require(up >= previousUp, "the upshift point must rise with the pedal");
         require(up < 7'000.0, "the upshift point must stay under the limiter");
-        require(down < 0.6 * up, "the downshift point must stay well under the upshift point");
+        require(down < 0.8 * up, "the downshift line must stay under the upshift point");
         previousUp = up;
     }
     input.driverThrottle = 1.0;
@@ -73,8 +73,10 @@ void scheduleProperties() {
     // No hunting: wherever the schedule changes gear, the gear it lands in
     // must not send it back the other way at the same pedal and road speed.
     int changes = 0;
-    for (int pedal = 0; pedal <= 10; ++pedal) {
-        input.driverThrottle = pedal / 10.0;
+    for (int pedal = 0; pedal <= 13; ++pedal) {
+        // Pedals 11-13 are the brake (foot off the throttle).
+        input.driverThrottle = pedal <= 10 ? pedal / 10.0 : 0.0;
+        input.brake = pedal <= 10 ? 0.0 : (pedal - 10) / 3.0;
         for (int gear = 0; gear < static_cast<int>(overall.size()); ++gear) {
             for (double rpm = 600.0; rpm <= 7'200.0; rpm += 50.0) {
                 input.engagedGear = gear;
@@ -92,13 +94,14 @@ void scheduleProperties() {
                 const auto next = enginelab::ShiftSchedule::chooseGear(landed);
                 require(chosen > gear ? next >= chosen : next <= chosen,
                         "a gear the schedule lands in must not send it back the other way (hunting)");
-                if (chosen < gear)
+                if (chosen < gear && input.brake == 0.0)
                     require(landed.engineRpm < enginelab::ShiftSchedule::upshiftRpm(input),
                             "a downshift must land under the upshift point");
             }
         }
     }
     require(changes > 100, "the sweep must exercise the schedule");
+    input.brake = 0.0;
 
     // Kickdown: flat out in sixth at 1,800 rpm, it drops several gears.
     input.driverThrottle = 1.0;
@@ -107,12 +110,36 @@ void scheduleProperties() {
     input.wheelRadPerSecond = omegaFor(1'800.0, overall[5]);
     require(enginelab::ShiftSchedule::chooseGear(input) <= 3,
             "flat out at a low speed in top gear, the gearbox must kick down at least two gears");
+    // Owner 2026-11-14: it changed down only once the engine lugged. Half
+    // the pedal in sixth at 1,600 rpm asks for a lower gear: fourth, which
+    // lands near 2,300 rpm (it stopped in fifth, 1,900).
+    input.driverThrottle = 0.5;
+    input.engagedGear = 5;
+    input.engineRpm = 1'600.0;
+    input.wheelRadPerSecond = omegaFor(1'600.0, overall[5]);
+    require(enginelab::ShiftSchedule::chooseGear(input) <= 3,
+            "half the pedal at a low speed in top gear must change down to fourth");
+    // Braking in fourth at 1,600 rpm, foot off: it changes down for the
+    // engine's braking (it held fourth down to 990 rpm).
+    input.driverThrottle = 0.0;
+    input.brake = 0.6;
+    input.engagedGear = 3;
+    input.wheelRadPerSecond = omegaFor(1'600.0, overall[3]);
+    require(enginelab::ShiftSchedule::chooseGear(input) <= 2, "braking must change down before the engine lugs");
+    input.engineRpm = 2'500.0;
+    input.wheelRadPerSecond = omegaFor(2'500.0, overall[3]);
+    require(enginelab::ShiftSchedule::chooseGear(input) <= 3, "braking never changes up");
+    input.brake = 0.0;
     // Cruising at a light pedal in sixth at 2,000 rpm: it stays.
     input.driverThrottle = 0.15;
+    input.engagedGear = 5;
     input.engineRpm = 2'000.0;
     input.wheelRadPerSecond = omegaFor(2'000.0, overall[5]);
-    require(enginelab::ShiftSchedule::chooseGear(input) == 5,
-            "cruising at a light pedal, the gearbox must hold top gear");
+    const auto cruising = enginelab::ShiftSchedule::chooseGear(input);
+    require(cruising == 5, "cruising at a light pedal, the gearbox must hold top gear (chose "
+                               + std::to_string(cruising + 1) + ", up " + std::to_string(
+                                   enginelab::ShiftSchedule::upshiftRpm(input)) + ", line " + std::to_string(
+                                   enginelab::ShiftSchedule::downshiftLandingRpm(input)) + ")");
 }
 
 class Rig final {
@@ -224,6 +251,29 @@ void drivenTwoJz(const enginelab::EngineConfig& base) {
     require(tick.drive.engagedGear == 0, "stopped, an automatic gearbox must be back in first");
     require(lowestRpm > 0.6 * config.idleRpm, "braking to a stop must not stall the engine");
 }
+/** Owner 2026-11-14: the gear count is typed in, with no cap (it stopped at
+ * 12, and the automatic schedule saw 16). Twenty gears validate, and the
+ * automatic gearbox changes up past the sixteenth. */
+void manyGears(const enginelab::EngineConfig& base) {
+    auto config = base;
+    config.transmission.gearRatios = enginelab::spreadGearRatios(base.transmission.gearRatios, 20);
+    require(config.transmission.gearRatios.size() == 20, "twenty gears spread");
+    require(config.transmission.gearRatios.front() == base.transmission.gearRatios.front()
+                && std::abs(config.transmission.gearRatios.back() - base.transmission.gearRatios.back()) < 1.0e-12,
+            "a spread keeps the first and the top ratio");
+    for (std::size_t gear = 1; gear < config.transmission.gearRatios.size(); ++gear)
+        require(config.transmission.gearRatios[gear] < config.transmission.gearRatios[gear - 1],
+                "each spread gear is taller than the one below");
+    config.transmission.shiftStyle = enginelab::ShiftStyle::dualClutch;
+    config.transmission.automaticShifting = true;
+    config.vehicle.tyreGripLimitEnabled = false;
+    enginelab::normaliseEngineConfig(config);
+    const auto invalid = enginelab::validateEngineConfig(config);
+    require(!invalid.has_value(), "a twenty-gear box must validate: " + invalid.value_or(""));
+    const auto flatOut = drive(config, 1.0, 30.0);
+    std::cout << "twenty gears flat out for 30 s: highest gear " << flatOut.highestGear + 1 << '\n';
+    require(flatOut.highestGear >= 16, "the automatic gearbox must change up past its sixteenth gear");
+}
 } // namespace
 
 int main() {
@@ -233,6 +283,7 @@ int main() {
         [](const auto& entry) { return entry.config.name.find("2JZ") != std::string::npos; });
     require(found != catalog.entries.end(), "the catalogue must hold the 2JZ");
     drivenTwoJz(found->config);
+    manyGears(found->config);
     std::cout << "EngineLab shift schedule tests passed\n";
     return EXIT_SUCCESS;
 }
