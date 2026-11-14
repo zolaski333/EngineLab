@@ -5,6 +5,30 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-15 — anti-lag: one torque sample decided the first 150 ms of a lift
+
+- After the flame fix, `ctest -j 4` 107/108: `EngineLab.AntiLag` (alone too), 0 % kept 4,998 -> 5,027 rpm. Traced (`--trace 0 0 100`) with and without the fix: the PI seeded its filtered torque on the lift frame's `state.torqueNm`, +940 N.m (a firing) before, -7 after. On +940 the air stayed shut 150 ms, the manifold fell 190 -> 115 kPa and the engine lost 500 rpm; the test passed on that.
+- Now seeded on the target (air open, most firings cut, as the code's comment says). 2 s after the lift: 0 % kept 4,938 rpm, 50 % 3,830, 90 % 3,154; shaft kept 0.987. Test passes; the rest of the suite was not rerun (the branch only runs with anti-lag armed and active).
+
+## 2026-11-14 — flame: the front was diluted by its own products; Poulos-Heywood measured, not kept
+
+- `FlamePhysicsModel::advance` recomputed the speed each step from the cylinder's mean burned fraction, which climbs with the flame's own products (products-only ~0.27 by the end). The dilution now reads the unburned charge at ignition (`FlameEvent`). CatalogReference: +0.5 to +2.9 % (flat-6 the largest), TDI identical; test fails without it.
+- Poulos and Heywood SAE 830334 (S_L x (1 - 4.062 f + 4.706 f^2), on Heywood's residual = products-only x 3.766 for gasoline) as a multiplier on the whole flame speed: -0.1 to -8.7 %, worst on the turbos (2JZ power -10.9 -> -18.7 % against its maker, past the 15 % tolerance). Not kept: it is a law on S_L, and this model has no burn-up time (lambda/S_L) for it to act through. Applied before the freeze it gave -45 to -75 % (the products counted as residual).
+- The load term (0.28 + 0.72 load) stays. Tabaczynski SAE 770647 has u' following the piston, not the load, so it is a stand-in for part-load dilution; removing it is not measurable on makers' points (full load) and nothing here is a part-load reference. Its replacement is the full entrainment/burn-up model.
+
+## 2026-11-14 — exhaust noise: jet at ambient rho0/c0 without the x100; muffler flow noise
+
+- Tanna (JSV 50, 1977) and Viswanathan (JFM 516, 2004): a hot jet radiates into the ambient, W = K rho0 A U^8 / c0^5. The code used the hot rho and c, (Tj/T0)^4 too low (+9 dB at 500 K, +19 at 900), and an authored x100 made it up. Now ambient, K 1e-4, no x100.
+- Green and Smith (1988) via Onorati (Winterbone and Pearson 1999, 6.12): each silencer element radiates W = eta (rho u^3/2)(pi D^2/4) M^1.5 from its tailpipe, eta from Figs 6.43/6.45 (perforate porosity held to the measured 4.2-27 %), pink 44 Hz-11.3 kHz (`MufflerFlowNoise`). Checked against eq. 6.36 within 0.1 dB.
+- AudioRenderHarness catalogue (rms / brightness): I5 0.0410/0.092 -> 0.0463/0.155, 2JZ 0.0311/0.076 -> 0.0321/0.105, Big Twin 0.0179/0.031 -> 0.0188/0.125, CP2 0.0179/0.054 -> 0.0186/0.092; open stacks' jets drop (flat-6 6.6 -> 1.5 Pa). PASS, max similarity 0.530. Not listened to.
+- Unknown: how much a packed lining absorbs this noise (Green and Smith tested dry elements).
+
+## 2026-11-14 — turbo tone, lean knock, two-stroke scavenging against their sources
+
+- Turbo: Raitor and Neise (JSV 314, 2008): compressor sound grows as U^5-6 against aero power U^3, so the tone's efficiency now scales with (tip-speed ratio)^2.5. 2JZ transient fiPa 0.927 -> 0.934 Pa, rms unchanged. The absolute level (1e-6) stays unsourced; designed turbos have no blade count, so no whine.
+- Knock: Gauthier, Davidson and Hanson (Combust. Flame 139, 2004) print no correlation; a fit of their Table 4 gives the delay x phi^-0.64 below phi 1 (now in `EndGasKnockModel`). Catalogue makers' points bit-identical (none runs lean). Their EGR effect is not added.
+- Scavenging: Sher (PECS 16, 1990) and Sweeney et al. (SAE 850178) have SE a function of scavenge ratio and porting, the ranking constant with speed. The model's front is the delivered volume over Cd A L, so it is that already; only its header said otherwise (fixed). RD350: trapped-charge SE 0.79-0.83 over 3,000-9,000 rpm at DR 0.73-0.96, flat in speed. Sweeney's DT250 cylinder 1 reads 0.70 at SR 0.9 on swept volume, a different reference volume; the loop length (1.8 bore) is still unverified.
+
 ## 2026-11-14 — the lean misfire draw: a knee at lambda 1.60, full in 0.13
 
 - Owner's papers. Quader SAE 741055 (CFR, propane/isooctane): the limit is 0.5-0.8 % motored cycles; CR 6 -> 10 moves it lambda 1.22 -> 1.45; at the limit the burn takes 72-80 deg CA whatever moved it; 1,500 -> 600 rpm only 1.45 -> 1.54. Shiomoto SAE 780235 (CFR, natural gas, WOT, 900 rpm): COV of IMEP flat to a knee at 1.65, then linear, no brake power at 1.79 (0.13 further). Quader SAE 760760: at the limit, ignition and partial burn limits meet.

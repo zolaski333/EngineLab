@@ -172,8 +172,20 @@ file formats, always with an in-memory migration).
   do the boxes over the 3-D view: inside the window they were cut short or
   hidden under the 3-D view. To film those, capture the screen. The file
   pickers stay the system's own.
+- **A silenced exhaust hisses with its flow.** Each silencer now radiates
+  the broadband noise its gas flow makes through it, rising steeply with
+  speed (Green and Smith's measurements), and the tailpipe jet's noise is
+  computed against the outside air instead of the hot gas, without the
+  former x100 fudge. Silenced engines sound brighter at high load (an
+  I5's brightness 0.09 -> 0.16), open stacks lose some jet hiss.
+- **A turbo's whine grows with the shaft speed** faster than its air power,
+  as measured compressor noise does.
 
 ### Fixed
+
+- **A combustion flame no longer slows itself down.** Its speed was diluted
+  by its own burned gas as it spread; it now burns into the charge as it was
+  at the spark. Full-load torque is up 0.5-2.9 %.
 
 - **A stalled engine is no longer destroyed standing still.** Stopped at
   full load past its firing-pressure limit (a dyno brake that stalls it),

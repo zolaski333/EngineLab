@@ -297,7 +297,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   Woschni's combustion term on spark engines against the over-efficiency
   (BSFC +2-7 %, EGT down, 13B -15 %: the cause is the gas's gamma); a 3 s
   post-resume lambda-learning hold against the flat-6's early-blip dip (LS3,
-  Big Twin, 13B fall under their gates).
+  Big Twin, 13B fall under their gates); Poulos-Heywood's S_L dilution as a
+  multiplier on the whole turbulent flame speed (2JZ power -18.7 % against
+  its maker; journal 2026-11-14): it needs a burn-up time to act through.
 - **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
   constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
   octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363
