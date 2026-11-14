@@ -141,9 +141,9 @@ file formats, always with an in-memory migration).
 
 - **The target AFR map goes to 30 (lambda 2.04)**, from 18 (lambda 1.22).
   Tables saved before keep their values and take the new limit when they
-  load. The combustion misfires more and more lean of lambda 1.40 (it
-  started at 1.12, which left a lean-burn build without power; 1.40 is
-  where a published lean-burn single cylinder still ran without misfires).
+  load. The combustion misfires lean of lambda 1.60 and loses most cycles
+  by 1.73, as published lean-limit measurements do (it started at 1.12,
+  which left a lean-burn build without power).
 - **An automated manual gearbox shifts like one.** On an upshift it cuts the
   spark and the fuel first and opens its clutch only once the engine has
   stopped driving (at most 0.15 s later), so the engine no longer flares

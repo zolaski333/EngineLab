@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — the lean misfire draw: a knee at lambda 1.60, full in 0.13
+
+- Owner's papers. Quader SAE 741055 (CFR, propane/isooctane): the limit is 0.5-0.8 % motored cycles; CR 6 -> 10 moves it lambda 1.22 -> 1.45; at the limit the burn takes 72-80 deg CA whatever moved it; 1,500 -> 600 rpm only 1.45 -> 1.54. Shiomoto SAE 780235 (CFR, natural gas, WOT, 900 rpm): COV of IMEP flat to a knee at 1.65, then linear, no brake power at 1.79 (0.13 further). Quader SAE 760760: at the limit, ignition and partial burn limits meet.
+- So the 1.40-over-0.35 draw (41 % at 1.6) contradicts Kolodziej's chamber, which still ran at 1.6. Now flat to 1.60, 72 % at 1.73. Not done (a second factor): the onset's CR and charge-temperature dependence (Quader: ~0.06 lambda per unit of CR on 1970s chambers).
+- RC8 (`--saved-ecu --step 1000`): lambda 0.905 504 ch, 1.22 367, 1.40 300, 1.60 240, all at 3.5 bar. At 0.905 it burns ~30 g/s, over the 26.4 g/s of 95 kg/h; 610 hp on 26.4 g/s needs ~212 g/kWh, the model gives 270-290. So the efficiency, not misfire, is now the gap. The 2,000 rpm point of the lean runs is the harness's boosted free-rev start (MAP 580-615 kPa), not a result.
+- Against the 1.40 rule: catalogue dyno 74 of 111 rows moved, 1 over 0.5 % (K20 7,000 -0.72 %), 12 over 0.1 %; drive pulls identical; renders: 21 identical, Hayabusa, RD350 and idle-start within 0.02 dB RMS, octaves 0.2 dB.
+- `ctest -j 4` 107/108: `EngineLab.AntiLag`'s 850 C limit asserted the blocker on the lift's last frame. Traced under both rules: the 50 C band cycles it (on 1.1 s, off 1.5, on 1.6, off 1.9-2.0); the old rule ended off by phase. Now asserts a working anti-lag let go by the heat (fails with the let-go path removed); passes.
+
 ## 2026-11-14 — the lean misfire draw starts at lambda 1.40 (sourced), not 1.12
 
 - Source (open access): Kolodziej et al., SAE 2017-01-0671 (OSTI 1501899), port-injected single cylinder, CR 12.1, 1,500 rpm, 5.6 bar IMEPn, tumble 0.6/1.5: at lambda 1.4 COV of IMEP 2.1-2.6 % for every fuel (so under ~0.1 % misfires); at 1.6 the slowest fuel at low tumble no longer ran. The onset moves 1.12 -> 1.40; the slope (0.72 per 0.35 lambda) stays unsourced.

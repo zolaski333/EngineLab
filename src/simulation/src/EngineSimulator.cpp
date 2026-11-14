@@ -3933,16 +3933,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         : 0.0;
                 }
                 const auto stoichiometricAfr = config_.fuelProperties.stoichiometricAirFuelRatio;
-                // The lean draw starts at lambda 1.40. A port-injected
-                // single cylinder (CR 12.1, 1,500 rpm, 5.6 bar IMEP, tumble
-                // 0.6 or 1.5) ran every gasoline-range fuel there at a COV of
-                // IMEP of 2.1-2.6 %, so under ~0.1 % misfires; at 1.6 the
-                // slowest fuel at low tumble no longer ran (Kolodziej et al.,
-                // SAE 2017-01-0671, OSTI 1501899). From 1.12 it drew 58 % at
-                // 1.40 and left a lean-burn build without power (journal
-                // 2026-11-14). The slope is unsourced and unchanged.
+                // The lean draw is flat to a knee at lambda 1.60, then rises
+                // to 72 % over 0.13 of lambda. A port-injected single
+                // cylinder (CR 12.1, 1,500 rpm, 5.6 bar IMEP, tumble 0.6 or
+                // 1.5) ran every gasoline-range fuel at lambda 1.4 at a COV
+                // of IMEP of 2.1-2.6 %, so under ~0.1 % misfires, and only
+                // the slowest fuel at low tumble stopped at 1.6 (Kolodziej et
+                // al., SAE 2017-01-0671, OSTI 1501899). The COV of IMEP stays
+                // flat until a knee, then rises linearly, and brake power is
+                // gone 0.13 of lambda past it (Shiomoto, Sawyer, Kelly, SAE
+                // 780235; Quader, SAE 741055, puts the limit at 0.5-0.8 %
+                // motored cycles). From 1.40 over 0.35 it drew 41 % at 1.6,
+                // where that chamber still ran (journal 2026-11-14).
                 const auto flammabilityPenalty = std::max(0.0,
-                    mixtureAfr - stoichiometricAfr * 1.40) / (stoichiometricAfr * 0.35)
+                    mixtureAfr - stoichiometricAfr * 1.60) / (stoichiometricAfr * 0.13)
                     + std::max(0.0, stoichiometricAfr * 0.68 - mixtureAfr)
                         / (stoichiometricAfr * 0.28);
                 // The dilution limit: a kernel in a charge that is mostly burned

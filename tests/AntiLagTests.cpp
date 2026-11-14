@@ -381,11 +381,25 @@ void exitsLetItGo() {
         auto rig = std::make_unique<Rig>(jz);
         rig->arm();
         rig->set(calibration::keys::antiLagExhaustLimit, 850.0);
-        const auto run = liftOff(*rig, {});
+        // Working, then held by the heat on the next frame. Not the state
+        // at the lift's end: the 50 C band cycles it on and off (on at
+        // 1.1 s, off at 1.5, on at 1.6, off near 1.9-2.0 s), so the last
+        // frame's phase shifts with any combustion change (journal
+        // 2026-11-14).
+        LiftOptions options {};
+        auto wasActive = false;
+        auto letGoByHeat = false;
+        options.lifted = [&](const EngineState& state, double) {
+            letGoByHeat = letGoByHeat
+                || (wasActive && !state.antiLagActive
+                    && (state.antiLagBlockers & bit(AntiLagBlocker::exhaustTooHot)) != 0U);
+            wasActive = state.antiLagActive;
+        };
+        const auto run = liftOff(*rig, options);
         print("exhaust limit 850 C", run);
         require(run.peakExhaustC < 850.0 && run.peakTurbineInletC > 850.0,
                 "the cylinders' mean stays under 850 C, the turbine inlet goes over it");
-        require(run.activeSeconds < 1.9 && (run.blockersAtEnd & bit(AntiLagBlocker::exhaustTooHot)) != 0U,
+        require(run.activeSeconds < 1.9 && letGoByHeat,
                 "the turbine inlet over its limit lets it go");
     }
     {
