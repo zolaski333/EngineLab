@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — the lean misfire draw starts at lambda 1.40 (sourced), not 1.12
+
+- Source (open access): Kolodziej et al., SAE 2017-01-0671 (OSTI 1501899), port-injected single cylinder, CR 12.1, 1,500 rpm, 5.6 bar IMEPn, tumble 0.6/1.5: at lambda 1.4 COV of IMEP 2.1-2.6 % for every fuel (so under ~0.1 % misfires); at 1.6 the slowest fuel at low tumble no longer ran. The onset moves 1.12 -> 1.40; the slope (0.72 per 0.35 lambda) stays unsourced.
+- Owner's RC8 (`--saved-ecu --step 1000`): lambda 0.905 ~504 ch (unchanged within noise); 1.22 367 ch max (was 269); 1.40 297 ch at 6,000 (was 83), the 2,000 rpm point stalls. BSFC 291 g/kWh at 6,000, 536 at 9,000 (real ~210); knock 0.8-0.9 at 8-9k even lean (Douaud-Eyzat has no lambda term). Those two are the gaps left.
+- Catalogue dyno (`--step 1000`): 94 of 111 rows moved, torque mostly within +-0.5 %, no sign (2JZ 3,000 -0.44 %, I5 2,000 +0.46 %): lean warm-up cycles now fire, so the warm start differs. Drive pulls: 2JZ, I5, EJ25, Flat-6 differ; K20 identical.
+- Sound (`AudioRenderHarness`, bit-deterministic run to run): 21 of 24 renders differ from ~1.1 s on; catalogue RMS within +-0.11 dB, octave bands 63-8k within +-0.5 dB, worst 0.5 s segment 0.9 dB (Merlin, RD350). Not catalogue: EL-20 I4 +1.2..+2.7 dB at 2-8 kHz. Not listened to.
+- `ctest -j 4` 108/108 (EJ25 tip-in `StandingStartSettledIdle`, `Core` misfire test included).
+
 ## 2026-11-14 — a lean DTM engine: no boost runaway, a stalled engine destroyed standing still, the lean misfire draw
 
 - Owner's RC8 at the published specs, AFR 18 in the boosted cells: MAP read 4.2-6.4 bar. Traced (temporary): the dyno's absorber stalled the misfiring engine (35 % at AFR 18.3-19.7) from 10,300 rpm in 0.15 s; the turbo, still at 1.2x its design speed, held 6.5-7.7 bar against a stopped engine. Not a wastegate fault.

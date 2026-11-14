@@ -92,7 +92,8 @@ The canonical bounds are shared by validation, the generated metadata and the
 ECU: 9 to 30 for AFR (petrol AFR, lambda 0.61 to 2.04; a generated map
 stays at 10.5 or leaner; tables saved under the former 18 are widened when
 they load, values untouched; what still fires that lean is the combustion's
-call, whose lean misfire draw starts at lambda 1.12), -10° to 55° for advance, 150 to 25,000 rpm for the
+call, whose lean misfire draw starts at lambda 1.40, Kolodziej et al. SAE
+2017-01-0671), -10° to 55° for advance, 150 to 25,000 rpm for the
 rev limiter, 50 to 3,000 rpm for the idle target, 0 to 125 g per cycle for a
 diesel's fuel, 0 to 40° per unit of knock for the knock gain, 0 to 510 kPa for
 the boost target (a pressure ratio of 6, the configuration's ceiling). A cell accepted by the tuner is therefore no longer silently

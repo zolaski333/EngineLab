@@ -3933,8 +3933,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         : 0.0;
                 }
                 const auto stoichiometricAfr = config_.fuelProperties.stoichiometricAirFuelRatio;
+                // The lean draw starts at lambda 1.40. A port-injected
+                // single cylinder (CR 12.1, 1,500 rpm, 5.6 bar IMEP, tumble
+                // 0.6 or 1.5) ran every gasoline-range fuel there at a COV of
+                // IMEP of 2.1-2.6 %, so under ~0.1 % misfires; at 1.6 the
+                // slowest fuel at low tumble no longer ran (Kolodziej et al.,
+                // SAE 2017-01-0671, OSTI 1501899). From 1.12 it drew 58 % at
+                // 1.40 and left a lean-burn build without power (journal
+                // 2026-11-14). The slope is unsourced and unchanged.
                 const auto flammabilityPenalty = std::max(0.0,
-                    mixtureAfr - stoichiometricAfr * 1.12) / (stoichiometricAfr * 0.35)
+                    mixtureAfr - stoichiometricAfr * 1.40) / (stoichiometricAfr * 0.35)
                     + std::max(0.0, stoichiometricAfr * 0.68 - mixtureAfr)
                         / (stoichiometricAfr * 0.28);
                 // The dilution limit: a kernel in a charge that is mostly burned
