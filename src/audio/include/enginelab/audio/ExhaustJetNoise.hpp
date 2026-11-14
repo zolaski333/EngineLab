@@ -4,39 +4,37 @@
 
 namespace enginelab {
 
-/** Semi-empirical turbulent mixing noise from one exhaust outlet.
+/** Turbulent mixing noise from one exhaust outlet.
  *
  * The source is deliberately outside the gas solver: it converts the resolved
  * mean outlet flow into far-field pressure without returning any invented wave
- * to the pipe. Acoustic power follows the classical compact subsonic-jet law
+ * to the pipe. Acoustic power follows Lighthill's compact subsonic-jet law
  *
- *   W = K * rho * A * U^8 / c^5
+ *   W = K * rho0 * A * U^8 / c0^5
  *
- * and the broadband peak follows Strouhal fD/U = 0.2. The coefficient is the
- * published low-speed-jet order of magnitude, not engine-specific measured
- * data, so this renderer is explicitly semi-empirical.
+ * with U the jet's own velocity and rho0, c0 the AMBIENT air the sound
+ * radiates into, and the broadband peak follows Strouhal fD/U = 0.2. Tanna
+ * (J. Sound Vib. 50, 1977) and Viswanathan (J. Fluid Mech. 516, 2004) scale
+ * hot and cold jets alike on Vj/a0: at a given U, heating the jet moves the
+ * power by about +-2 dB. Evaluated on the hot gas instead, rho/c^5 and the
+ * radiation impedance made it (Tj/T0)^4 too quiet: 15 dB at 700 K. Their data
+ * start at Vj/a0 0.5; a tailpipe runs at 0.05-0.3.
  *
  * configure() is block-rate and may evaluate transcendentals. process() is
  * allocation-free and contains no transcendentals, locks, or random services.
  */
 class ExhaustJetNoise final {
 public:
-    /** Clean free-jet reference from the classical low-speed correlation. */
-    static constexpr double cleanJetAcousticPowerCoefficient { 1.0e-4 };
-    /** Authored hot-engine correction for upstream turbulence.
-     *
-     * Low-speed engine jets are measurably louder than clean laboratory nozzles
-     * because their inflow is already turbulent. Keeping the correction named
-     * and separate prevents the listening calibration from being mistaken for
-     * a universal fluid constant. The current +20 dB power correction keeps the
-     * source below the physical blowdown bus while making it resolvable in an
-     * instrumented same-binary A/B. It is not a loudness target.
-     */
-    static constexpr double engineOutletTurbulencePowerMultiplier { 100.0 };
-    static constexpr double acousticPowerCoefficient {
-        cleanJetAcousticPowerCoefficient
-            * engineOutletTurbulencePowerMultiplier
-    };
+    /** Lighthill's coefficient on the exit area, the low-speed-jet order of
+     * magnitude (acoustic efficiency 2 K M^5: 1.2e-4 at M 0.9). It is the
+     * jet's alone: a silencer's flow noise, which an outlet also radiates,
+     * is MufflerFlowNoise, and replaces the x100 "upstream turbulence"
+     * multiplier this coefficient used to carry. */
+    static constexpr double acousticPowerCoefficient { 1.0e-4 };
+    /** Ambient air when no far-field density is supplied: 20 C, 101.3 kPa. */
+    static constexpr double standardAmbientDensityKgPerM3 { 1.204 };
+    /** Ambient sound speed (20 C): within 3.5 % from -20 to 40 C, 0.6 dB. */
+    static constexpr double ambientSoundSpeedMps { 343.2 };
     static constexpr double peakStrouhalNumber { 0.2 };
     explicit ExhaustJetNoise(std::uint32_t seed = 0x6d2b79f5U) noexcept;
 
@@ -47,13 +45,15 @@ public:
     /** Set the next block's physical operating point.
      *
      * massFlowKgPerSecond is the flow assigned to this outlet. outletAreaM2,
-     * density and sound speed describe the local hot jet. acousticTimeScale
-     * moves the spectrum for slow-motion auditioning but does not alter power.
+     * density and sound speed describe the local hot jet, which sets U; the
+     * ambient density is the air it radiates into. acousticTimeScale moves
+     * the spectrum for slow-motion auditioning but does not alter power.
      */
     void configure(double massFlowKgPerSecond,
                    double outletAreaM2,
                    double densityKgPerM3,
                    double soundSpeedMps,
+                   double ambientDensityKgPerM3,
                    double acousticTimeScale = 1.0) noexcept;
 
     /** Snap live coefficients to the configured target at initialisation. */
@@ -84,7 +84,8 @@ public:
         double acousticTimeScale = 1.0) noexcept;
     [[nodiscard]] static double acousticPowerWatts(
         double massFlowKgPerSecond, double outletAreaM2,
-        double densityKgPerM3, double soundSpeedMps) noexcept;
+        double densityKgPerM3, double soundSpeedMps,
+        double ambientDensityKgPerM3) noexcept;
 
 private:
     [[nodiscard]] float nextUnitRmsWhiteNoise() noexcept;

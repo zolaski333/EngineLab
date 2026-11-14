@@ -48,7 +48,7 @@ bool ExhaustJetNoise::prepare(double sampleRateHz) noexcept {
     prepared_ = std::isfinite(sampleRateHz) && sampleRateHz > 1'000.0;
     if (!prepared_) return false;
     sampleRateHz_ = sampleRateHz;
-    configure(0.0, 0.001, 1.2, 343.0);
+    configure(0.0, 0.001, 1.2, 343.0, standardAmbientDensityKgPerM3);
     snapToTarget();
     reset();
     return true;
@@ -97,13 +97,15 @@ double ExhaustJetNoise::centreFrequencyHz(
 
 double ExhaustJetNoise::acousticPowerWatts(
     double massFlowKgPerSecond, double outletAreaM2,
-    double densityKgPerM3, double soundSpeedMps) noexcept {
+    double densityKgPerM3, double soundSpeedMps,
+    double ambientDensityKgPerM3) noexcept {
     const auto velocity = limitedJetVelocityMps(
         massFlowKgPerSecond, outletAreaM2, densityKgPerM3, soundSpeedMps);
-    if (!(velocity > 0.0)) return 0.0;
-    const auto power = acousticPowerCoefficient * densityKgPerM3
+    if (!(velocity > 0.0) || !positiveFinite(ambientDensityKgPerM3))
+        return 0.0;
+    const auto power = acousticPowerCoefficient * ambientDensityKgPerM3
         * outletAreaM2 * std::pow(velocity, 8.0)
-        / std::pow(soundSpeedMps, 5.0);
+        / std::pow(ambientSoundSpeedMps, 5.0);
     return std::isfinite(power) ? std::max(0.0, power) : 0.0;
 }
 
@@ -122,15 +124,15 @@ void ExhaustJetNoise::computeBandTargets(double centreHz) noexcept {
 void ExhaustJetNoise::configure(
     double massFlowKgPerSecond, double outletAreaM2,
     double densityKgPerM3, double soundSpeedMps,
-    double acousticTimeScale) noexcept {
+    double ambientDensityKgPerM3, double acousticTimeScale) noexcept {
     targetCentreFrequencyHz_ = centreFrequencyHz(
         massFlowKgPerSecond, outletAreaM2, densityKgPerM3,
         soundSpeedMps, acousticTimeScale);
-    const auto powerWatts = acousticPowerWatts(
-        massFlowKgPerSecond, outletAreaM2, densityKgPerM3, soundSpeedMps);
-    // W = 4*pi*r^2*p_rms^2/(rho*c), evaluated at r=1 m.
+    const auto powerWatts = acousticPowerWatts(massFlowKgPerSecond,
+        outletAreaM2, densityKgPerM3, soundSpeedMps, ambientDensityKgPerM3);
+    // W = 4*pi*r^2*p_rms^2/(rho0*c0), evaluated at r=1 m in ambient air.
     targetPressureRmsPa_ = powerWatts > 0.0
-        ? std::sqrt(powerWatts * densityKgPerM3 * soundSpeedMps
+        ? std::sqrt(powerWatts * ambientDensityKgPerM3 * ambientSoundSpeedMps
             / (4.0 * std::numbers::pi))
         : 0.0;
     meanVolumeVelocityTargetM3PerS_ =
@@ -139,15 +141,14 @@ void ExhaustJetNoise::configure(
         ? static_cast<float>(massFlowKgPerSecond / densityKgPerM3) : 0.0F;
     inverseOutletAreaTargetM2_ = positiveFinite(outletAreaM2)
         ? static_cast<float>(1.0 / outletAreaM2) : 0.0F;
-    // p_rms(1 m) = rho*sqrt(K*A/(4*pi))/c^2 * U^4.
+    // p_rms(1 m) = rho0*sqrt(K*A/(4*pi))/c0^2 * U^4.
     pressurePerVelocityFourthTarget_ =
         positiveFinite(outletAreaM2)
-            && positiveFinite(densityKgPerM3)
-            && positiveFinite(soundSpeedMps)
-        ? static_cast<float>(densityKgPerM3 * std::sqrt(
+            && positiveFinite(ambientDensityKgPerM3)
+        ? static_cast<float>(ambientDensityKgPerM3 * std::sqrt(
             acousticPowerCoefficient * outletAreaM2
                 / (4.0 * std::numbers::pi))
-            / (soundSpeedMps * soundSpeedMps))
+            / (ambientSoundSpeedMps * ambientSoundSpeedMps))
         : 0.0F;
     if (targetCentreFrequencyHz_ > 0.0)
         computeBandTargets(targetCentreFrequencyHz_);

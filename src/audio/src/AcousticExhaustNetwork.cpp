@@ -2,6 +2,7 @@
 
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExhaustCrossoverScattering.hpp>
+#include <enginelab/audio/MufflerFlowNoise.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/PorousLinerLoss.hpp>
@@ -139,6 +140,13 @@ struct AcousticExhaustNetwork::Impl final {
         FreeFieldObserver observer;
         FreeFieldObserver jetNoiseObserver;
         ExhaustJetNoise jetNoise;
+        /** The silencers' flow noise this tailpipe radiates, through the same
+         *  observer as the jet. */
+        MufflerFlowNoise flowNoise;
+        /** This block's outflow through the mouth, kg/s, and the silencer
+         *  flow-noise power it carries out, W. */
+        double assignedMassFlowKgPerSecond { 0.0 };
+        double flowNoisePowerW { 0.0 };
         double radiationDensityKgPerM3 { 1.2 };
         double radiationSoundSpeedMps { 343.0 };
         double radiationTargetDensityKgPerM3 { 1.2 };
@@ -162,6 +170,18 @@ struct AcousticExhaustNetwork::Impl final {
         float complianceIncidentPressurePa {};
     };
 
+    /** A silencer element that sheds flow noise (MufflerFlowNoise). */
+    struct MufflerSource final {
+        std::size_t layoutDuctIndex {};
+        std::uint32_t pathIndex {};
+        double efficiencyDb {};
+        /** The duct whose mean velocity drives it: the inlet pipe of a
+         *  chamber, the perforated duct of a straight-through. */
+        double ductDiameterM {};
+        /** The outlets downstream of it, which carry its flow and its noise. */
+        std::vector<std::size_t> outlets;
+    };
+
     struct ReactionTarget final {
         std::uint32_t nodeId {};
         bool duct { true };
@@ -175,6 +195,7 @@ struct AcousticExhaustNetwork::Impl final {
     std::vector<Junction> junctions;
     std::vector<CylinderPort> cylinderPorts;
     std::vector<Outlet> outlets;
+    std::vector<MufflerSource> mufflerSources;
     std::vector<SideBranchTerminal> sideBranchTerminals;
     std::vector<ReactionTarget> reactionTargets;
     std::vector<EndpointOwner> owners;
@@ -774,6 +795,10 @@ struct AcousticExhaustNetwork::Impl final {
                 0x9e3779b9U ^ (outletIndex + 1U) * 0x85ebca6bU
                 ^ (static_cast<std::size_t>(outlet.pathIndex) + 1U)
                     * 0xc2b2ae35U));
+            compiled.flowNoise.setSeed(static_cast<std::uint32_t>(
+                0x7f4a7c15U ^ (outletIndex + 1U) * 0x27d4eb2fU
+                ^ (static_cast<std::size_t>(outlet.pathIndex) + 1U)
+                    * 0x165667b1U));
             if (outlet.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction) {
                 compiled.virtualTerminal = true;
                 compiled.endpointOrJunction = nodeFor(
@@ -786,6 +811,53 @@ struct AcousticExhaustNetwork::Impl final {
                         OwnerType::outlet, outletIndex)) return;
             }
             outlets.push_back(std::move(compiled));
+        }
+
+        // Silencers: each one's flow leaves by the outlets it reaches.
+        for (std::size_t layoutIndex = 0;
+             layoutIndex < layout.ducts().size(); ++layoutIndex) {
+            const auto& descriptor = layout.ducts()[layoutIndex];
+            if (descriptor.sourceType != ExhaustNodeType::muffler) continue;
+            // A dry muffler is a chamber only where its section steps up from
+            // the inlet pipe: the scalar geometry's "no silencer" is a muffler
+            // node of the collector's own bore, a straight pipe.
+            if (!descriptor.perforatedCoreMuffler
+                && !(descriptor.flowAreaM2
+                    > 1.5 * descriptor.inletConnectionAreaM2)) continue;
+            MufflerSource source;
+            source.layoutDuctIndex = layoutIndex;
+            source.pathIndex = descriptor.pathIndex;
+            source.ductDiameterM = 2.0 * std::sqrt(std::max(1.0e-10,
+                descriptor.inletConnectionAreaM2) / std::numbers::pi);
+            const auto lengthOverDiameter = descriptor.lengthM
+                / source.ductDiameterM;
+            source.efficiencyDb = descriptor.perforatedCoreMuffler
+                ? MufflerFlowNoise::perforateEfficiencyDb(
+                    100.0 * descriptor.perforatedOpenAreaRatio,
+                    lengthOverDiameter)
+                : MufflerFlowNoise::expansionChamberEfficiencyDb(
+                    lengthOverDiameter);
+            std::vector<std::uint32_t> frontier { descriptor.nodeId };
+            std::vector<std::uint32_t> reached;
+            while (!frontier.empty()) {
+                const auto node = frontier.back();
+                frontier.pop_back();
+                if (std::find(reached.begin(), reached.end(), node)
+                        != reached.end()) continue;
+                reached.push_back(node);
+                for (const auto& edge : graph.edges())
+                    if (edge.from == node) frontier.push_back(edge.to);
+            }
+            for (std::size_t index = 0; index < outlets.size(); ++index)
+                if (std::find(reached.begin(), reached.end(),
+                        outlets[index].nodeId) != reached.end())
+                    source.outlets.push_back(index);
+            if (source.outlets.empty())
+                for (std::size_t index = 0; index < outlets.size(); ++index)
+                    if (outlets[index].pathIndex == source.pathIndex)
+                        source.outlets.push_back(index);
+            if (!source.outlets.empty())
+                mufflerSources.push_back(std::move(source));
         }
 
         sideBranchTerminals.reserve(sideBranchPlans.size());
@@ -1095,7 +1167,8 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
             || !outlet.jetNoiseObserver.prepare(sampleRateHz, radiusM,
                 outlet.acousticPositionM, outlet.acousticAxis,
                 outlet.acousticTermination, impl_->observerConfig)
-            || !outlet.jetNoise.prepare(sampleRateHz))
+            || !outlet.jetNoise.prepare(sampleRateHz)
+            || !outlet.flowNoise.prepare(sampleRateHz))
             return false;
         // The same quasi-steady vorticity resistance already used by the
         // intake mouth belongs at a sharp exhaust edge too. It is passive and
@@ -1172,6 +1245,7 @@ void AcousticExhaustNetwork::reset() noexcept {
         outlet.observer.reset();
         outlet.jetNoiseObserver.reset();
         outlet.jetNoise.reset();
+        outlet.flowNoise.reset();
     }
     for (auto& junction : impl_->junctions) {
         junction.complianceAdmittanceM3PerPaSecond = 0.0F;
@@ -1276,6 +1350,10 @@ void AcousticExhaustNetwork::beginBlock(
             duct.linerLoss = duct.linerLossTarget;
         }
     }
+    // Outlet noise radiates into the ambient air, not the exhaust gas.
+    const auto ambientDensity = impl_->farFieldDensityKgPerM3 > 0.0
+        ? impl_->farFieldDensityKgPerM3
+        : ExhaustJetNoise::standardAmbientDensityKgPerM3;
     std::array<double, maximumPaths> totalOutletAreaM2 {};
     for (const auto& outlet : impl_->outlets) {
         const auto path = std::min<std::size_t>(
@@ -1332,9 +1410,10 @@ void AcousticExhaustNetwork::beginBlock(
             ? massFlow
             : (totalOutletAreaM2[path] > 0.0
                 ? massFlow * outlet.areaM2 / totalOutletAreaM2[path] : 0.0);
+        outlet.assignedMassFlowKgPerSecond = assignedFlow;
         outlet.jetNoise.configure(
             assignedFlow, outlet.areaM2, medium.densityKgPerM3,
-            medium.soundSpeedMps, timeScale);
+            medium.soundSpeedMps, ambientDensity, timeScale);
         if (snap) {
             outlet.radiationDensityKgPerM3 = medium.densityKgPerM3;
             outlet.radiationSoundSpeedMps = medium.soundSpeedMps;
@@ -1345,6 +1424,33 @@ void AcousticExhaustNetwork::beginBlock(
                 outlet.radiationDensityKgPerM3, outlet.radiationSoundSpeedMps);
             outlet.jetNoise.snapToTarget();
         }
+    }
+    // Each silencer's flow is what leaves by the outlets it feeds; its noise
+    // leaves by them too, shared as that flow is. Power to pressure at 1 m
+    // in the ambient air: p^2 = W rho0 c0 / (4 pi).
+    for (auto& outlet : impl_->outlets) outlet.flowNoisePowerW = 0.0;
+    for (const auto& source : impl_->mufflerSources) {
+        auto massFlow = 0.0;
+        for (const auto index : source.outlets)
+            massFlow += impl_->outlets[index].assignedMassFlowKgPerSecond;
+        if (!(massFlow > 0.0)) continue;
+        auto medium = impl_->mediaTarget[std::min<std::size_t>(
+            source.pathIndex, impl_->mediaTarget.size() - 1U)];
+        if (source.layoutDuctIndex < ductMedia.size()
+                && usable(ductMedia[source.layoutDuctIndex]))
+            medium = ductMedia[source.layoutDuctIndex];
+        const auto powerW = MufflerFlowNoise::soundPowerWatts(
+            source.efficiencyDb, massFlow, source.ductDiameterM,
+            medium.densityKgPerM3, medium.soundSpeedMps);
+        for (const auto index : source.outlets)
+            impl_->outlets[index].flowNoisePowerW += powerW
+                * impl_->outlets[index].assignedMassFlowKgPerSecond / massFlow;
+    }
+    for (auto& outlet : impl_->outlets) {
+        outlet.flowNoise.setTargetPressureRmsPa(std::sqrt(outlet.flowNoisePowerW
+            * ambientDensity * ExhaustJetNoise::ambientSoundSpeedMps
+            / (4.0 * std::numbers::pi)));
+        if (snap) outlet.flowNoise.snapToTarget();
     }
     for (auto& junction : impl_->junctions) {
         const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
@@ -1584,7 +1690,8 @@ AcousticExhaustNetwork::process(
                 static_cast<float>(radiation.farFieldPressurePa));
             auto observedJet = StereoPressure {};
             if (impl_->jetNoiseEnabled) {
-                const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp);
+                const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp)
+                + outlet.flowNoise.process(ramp);
                 observedJet = outlet.jetNoiseObserver.process(
                     jetPressureAtOneMetre);
             }
@@ -1615,7 +1722,8 @@ AcousticExhaustNetwork::process(
             static_cast<float>(radiation.farFieldPressurePa));
         auto observedJet = StereoPressure {};
         if (impl_->jetNoiseEnabled) {
-            const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp);
+            const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp)
+                + outlet.flowNoise.process(ramp);
             observedJet = outlet.jetNoiseObserver.process(
                 jetPressureAtOneMetre);
         }

@@ -3,6 +3,7 @@
 #include <enginelab/audio/AcousticIntakeNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/ExhaustJetNoise.hpp>
+#include <enginelab/audio/MufflerFlowNoise.hpp>
 #include <enginelab/audio/ExhaustCrossoverScattering.hpp>
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/FreeFieldObserver.hpp>
@@ -401,22 +402,36 @@ void exhaustJetNoiseRegression() {
                 massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps)
             - Jet::peakStrouhalNumber * velocity / diameter) < 1.0e-9,
         "outlet-noise centre frequency must retain Strouhal scaling");
+    constexpr double ambientDensity = 1.204;
     const auto lowPower = Jet::acousticPowerWatts(
-        massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps);
+        massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps,
+        ambientDensity);
     const auto doubledPower = Jet::acousticPowerWatts(
-        2.0 * massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps);
+        2.0 * massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps,
+        ambientDensity);
     require(lowPower > 0.0
             && std::abs(doubledPower / lowPower - 256.0) < 1.0e-8,
         "subsonic outlet acoustic power must follow the documented U^8 law");
+    // Lighthill radiates into the ambient air: at the same jet velocity a hot
+    // jet (half the density, the flow halved to keep U) and a cold one radiate
+    // the same power, rho0 A U^8 / c0^5.
+    const auto hotPower = Jet::acousticPowerWatts(0.5 * massFlowKgPerSecond,
+        areaM2, 0.5 * densityKgPerM3, soundSpeedMps * std::sqrt(2.0),
+        ambientDensity);
+    require(std::abs(hotPower / lowPower - 1.0) < 1.0e-12
+            && std::abs(lowPower - Jet::acousticPowerCoefficient
+                * ambientDensity * areaM2 * std::pow(velocity, 8.0)
+                / std::pow(Jet::ambientSoundSpeedMps, 5.0)) < 1.0e-12 * lowPower,
+        "jet noise power must use the ambient density and sound speed");
 
     Jet first(0x12345678U);
     Jet second(0x12345678U);
     require(first.prepare(sampleRate) && second.prepare(sampleRate),
         "valid outlet-noise renderers must prepare");
     first.configure(massFlowKgPerSecond, areaM2, densityKgPerM3,
-        soundSpeedMps);
+        soundSpeedMps, ambientDensity);
     second.configure(massFlowKgPerSecond, areaM2, densityKgPerM3,
-        soundSpeedMps);
+        soundSpeedMps, ambientDensity);
     first.snapToTarget();
     second.snapToTarget();
     auto energy = 0.0;
@@ -436,7 +451,8 @@ void exhaustJetNoiseRegression() {
         "normalised jet spectrum must retain the acoustic-power RMS");
 
     first.reset();
-    first.configure(0.0, areaM2, densityKgPerM3, soundSpeedMps);
+    first.configure(0.0, areaM2, densityKgPerM3, soundSpeedMps,
+        ambientDensity);
     first.snapToTarget();
     for (std::size_t sample = 0; sample < 4'096; ++sample)
         require(first.process(1.0F) == 0.0F,
@@ -507,6 +523,133 @@ void exhaustJetNoiseRegression() {
     require(signedFlowEnergy(-0.18F) == 0.0
             && signedFlowEnergy(0.18F) > 1.0e-10,
         "outlet reversion must not fabricate a downstream jet, while positive outflow must");
+}
+
+void mufflerFlowNoiseRegression() {
+    using Noise = enginelab::MufflerFlowNoise;
+    // Onorati's curves (Winterbone and Pearson 1999, Figs 6.43 and 6.45).
+    require(std::abs(Noise::expansionChamberEfficiencyDb(0.0) - 65.0) < 0.5
+            && std::abs(Noise::expansionChamberEfficiencyDb(2.0) - 80.5) < 1.0
+            && std::abs(Noise::expansionChamberEfficiencyDb(4.0) - 81.5) < 1.0,
+        "an expansion chamber's flow-noise efficiency must follow Fig. 6.43");
+    require(std::abs(Noise::perforateEfficiencyDb(4.2, 0.0) - 65.8) < 1.0e-9
+            && std::abs(Noise::perforateEfficiencyDb(5.9, 0.0) - 70.0) < 0.01
+            && std::abs(Noise::perforateEfficiencyDb(20.0, 0.0) - 74.8) < 0.01
+            && std::abs(Noise::perforateEfficiencyDb(27.0, 2.0) - 85.95) < 1.0e-9,
+        "a perforate's flow-noise efficiency must follow eq. 6.37 and Fig. 6.45");
+    // eq. 6.36, in its own units: L_W = eta_w + 10 log p[mmHg] - 17.5 log T
+    // + 20 log D + 45 log u - 26.9, with air (R 287, gamma 1.4).
+    constexpr double pressurePa = 101'325.0;
+    constexpr double temperatureK = 600.0;
+    constexpr double diameterM = 0.05;
+    constexpr double velocityMps = 60.0;
+    const auto density = pressurePa / (287.0 * temperatureK);
+    const auto soundSpeed = std::sqrt(1.4 * 287.0 * temperatureK);
+    const auto massFlow = density * velocityMps * 0.25 * std::numbers::pi
+        * diameterM * diameterM;
+    const auto powerW = Noise::soundPowerWatts(80.0, massFlow, diameterM,
+        density, soundSpeed);
+    const auto levelDb = 10.0 * std::log10(powerW / 1.0e-12);
+    const auto bookDb = 80.0 + 10.0 * std::log10(pressurePa / 133.322)
+        - 17.5 * std::log10(temperatureK) + 20.0 * std::log10(diameterM)
+        + 45.0 * std::log10(velocityMps) - 26.9;
+    require(std::abs(levelDb - bookDb) < 0.1,
+        "a silencer's flow-noise power must equal Green and Smith's eq. 6.36");
+    require(std::abs(Noise::soundPowerWatts(80.0, 2.0 * massFlow, diameterM,
+                density, soundSpeed) / powerW - std::pow(2.0, 4.5)) < 1.0e-9,
+        "a silencer's flow noise must grow as u^4.5");
+
+    // The renderer: deterministic, at its RMS, with a flat octave spectrum.
+    constexpr double sampleRate = 48'000.0;
+    Noise first(0x1234U);
+    Noise second(0x1234U);
+    require(first.prepare(sampleRate) && second.prepare(sampleRate),
+        "flow-noise renderers must prepare");
+    first.setTargetPressureRmsPa(0.5);
+    first.snapToTarget();
+    second.setTargetPressureRmsPa(0.5);
+    second.snapToTarget();
+    constexpr std::size_t samples = 4 * 48'000;
+    std::vector<double> rendered(samples);
+    auto energy = 0.0;
+    for (std::size_t sample = 0; sample < samples; ++sample) {
+        const auto a = first.process(1.0F);
+        require(a == second.process(1.0F) && std::isfinite(a),
+            "equal flow-noise seeds must render sample-exactly");
+        rendered[sample] = a;
+        energy += static_cast<double>(a) * a;
+    }
+    const auto rms = std::sqrt(energy / static_cast<double>(samples));
+    require(std::abs(rms / 0.5 - 1.0) < 0.10,
+        "the flow-noise renderer must hold its target RMS");
+    // Octave energies through constant-Q band-passes: flat within 2 dB over
+    // the 125 Hz to 4 kHz octaves.
+    const auto octaveEnergy = [&](double centreHz) {
+        const auto w0 = 2.0 * std::numbers::pi * centreHz / sampleRate;
+        const auto alpha = std::sin(w0) / (2.0 * 1.414);
+        const auto a0 = 1.0 + alpha;
+        const auto b0 = alpha / a0;
+        const auto a1 = -2.0 * std::cos(w0) / a0;
+        const auto a2 = (1.0 - alpha) / a0;
+        double x1 {}, x2 {}, y1 {}, y2 {}, sum {};
+        for (std::size_t sample = 0; sample < samples; ++sample) {
+            const auto x = rendered[sample];
+            const auto y = b0 * x - b0 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1;
+            x1 = x;
+            y2 = y1;
+            y1 = y;
+            if (sample >= 4'800) sum += y * y;
+        }
+        return 10.0 * std::log10(sum);
+    };
+    const auto reference = octaveEnergy(500.0);
+    for (const auto centre : { 125.0, 250.0, 1'000.0, 2'000.0, 4'000.0 })
+        require(std::abs(octaveEnergy(centre) - reference) < 2.0,
+            "silencer flow noise must have a flat octave spectrum");
+
+    // Integration: a silenced exhaust carries the noise out of its tailpipe,
+    // scaled as u^4.5, a bare one has only its jet, and no flow is silent.
+    auto config = enginelab::makeDefaultInlineFour();
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    const auto outletEnergy = [&](float pathFlow, bool silencer) {
+        auto variant = config;
+        variant.exhaust.mufflerChamberDiameterMm = silencer ? 120.0 : 0.0;
+        variant.exhaust.mufflerChamberLengthMm = silencer ? 300.0 : 0.0;
+        const auto graph = enginelab::ExhaustGraph::makeForEngine(variant);
+        auto acoustics = std::make_unique<enginelab::AcousticExhaustNetwork>(
+            graph, cylinderIds);
+        require(acoustics->valid() && acoustics->prepare(sampleRate),
+            "the flow-noise network fixture must compile and prepare");
+        const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+            { 0.6F, 480.0F } }};
+        const std::array<float, 1> flow {{ pathFlow }};
+        acoustics->beginBlock(medium, 1.0, flow);
+        const std::array<float, 4> sources {};
+        const std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4>
+            boundaries {};
+        auto sum = 0.0;
+        for (std::size_t sample = 0; sample < 48'000; ++sample) {
+            const auto output = acoustics->process(sources, boundaries, 1.0F);
+            if (sample >= 4'800)
+                sum += static_cast<double>(output[0].leftPa) * output[0].leftPa;
+        }
+        return sum;
+    };
+    require(outletEnergy(0.0F, true) == 0.0,
+        "a silencer without flow must be silent");
+    const auto silencedLow = outletEnergy(0.05F, true);
+    const auto silencedHigh = outletEnergy(0.10F, true);
+    const auto bareHigh = outletEnergy(0.10F, false);
+    // At 0.1 kg/s through a 120 x 300 mm chamber the flow noise (u^4.5)
+    // outweighs the bare tailpipe's slow jet (U^8) many times over.
+    require(silencedHigh > 10.0 * bareHigh,
+        "a silencer's flow noise must dominate a slow jet at the outlet");
+    const auto ratio = silencedHigh / silencedLow;
+    require(ratio > std::pow(2.0, 4.5) * 0.8 && ratio < std::pow(2.0, 4.5) * 1.6,
+        "the radiated silencer flow noise must grow as u^4.5");
 }
 
 void reactionInjectionRegression() {
@@ -3592,6 +3735,7 @@ int main(int argc, char** argv) {
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         exhaustJetNoiseRegression();
+        mufflerFlowNoiseRegression();
         crossoverScatteringRegression();
         thermoacousticHeatReleaseSourceRegression();
         reactionCrackRegression();

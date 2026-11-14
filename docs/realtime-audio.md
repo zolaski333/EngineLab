@@ -283,14 +283,16 @@ sample**. It also checks the buffer bounds and the silence of inactive buses.
 
 `ExhaustJetNoise` adds a causal broadband source at the outlet, derived from
 the flow, density, speed of sound and diameter already solved. Its power
-follows the subsonic `U^8` law and its spectral centre `St = 0.2`. The audio
+follows the subsonic `U^8` law in the ambient air (`rho0`, `c0`) and its
+spectral centre `St = 0.2`. A silencer's flow noise (`MufflerFlowNoise`,
+Green and Smith's `u^4.5` law, pink) leaves by the same outlet and observer. The audio
 modulation comes from the volume flow of the radiation load; it is never fed
 back into the gas network.
 
 The source goes through the same stereo observer and the same IR as the outlet.
-It is deterministic and does no allocation in the callback. Its driving
-coefficient remains semi-empirical and still has to pass a blind listening
-vote.
+It is deterministic and does no allocation in the callback. Both laws are
+sourced (`docs/thermoacoustic-architecture.md` section 26); neither has been
+judged against a recording.
 
 A/B sound check:
 

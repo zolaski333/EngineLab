@@ -1323,13 +1323,34 @@ created no turbulent mixing source where the hot jet meets the outside air.
 `ExhaustJetNoise` fills only that role:
 
 - mean flow shared between the outlets by area;
-- velocity `m_dot/(rho*A)` and power `K*rho*A*U^8/c^5`;
+- velocity `m_dot/(rho*A)` from the hot gas, power `K*rho0*A*U^8/c0^5`
+  radiated into the ambient air (Tanna 1977, Viswanathan 2004: jets scale on
+  `Vj/a0`, temperature moves the power by about 2 dB);
 - spectral centre at `St = 0.2`;
 - causal modulation by the audio volume flow of the termination;
 - a subsonic bound and a `4.5 ×` bound on the instantaneous excursion;
 - stereo observer, directivity, distance and IR identical to the outlet;
 - no feedback into the gas solver.
 
-The driving power multiplier `100` is an authored value, isolated from the jet's
-own coefficient `1e-4`. It does not claim to be a measured physical constant. A
-zero setting cuts the whole layer for sound and CPU comparisons.
+`K = 1e-4`, Lighthill's low-speed order of magnitude. Until 2026-11-14 the
+power used the hot gas's `rho/c^5` and a `x100` "upstream turbulence"
+multiplier: the first made the jet `(Tj/T0)^4` too quiet (15 dB at 700 K), the
+second stood in for it and for the silencer's own flow noise, which the
+outlet now carries separately (`MufflerFlowNoise`):
+
+- each muffler that is a real chamber (section over 1.5x its inlet pipe) or
+  a packed perforated core is a source, `W = eta (rho u^3/2)(pi D^2/4) M^1.5`
+  (Green and Smith 1988, via Onorati in Winterbone and Pearson, *Design
+  Techniques for Engine Manifolds*, 1999, 6.12);
+- `eta_w = 10 log eta + 120`: a chamber 65-81.5 dB against L/D of its inlet
+  pipe (Fig. 6.43), a perforate `eta_w0(sigma) + 4 L/D` (Fig. 6.45, 3 mm holes,
+  porosity held to the measured 27 % at most);
+- `u`, `rho`, `c` are the muffler duct's own block-mean gas state, the flow the
+  outlets downstream of it carry;
+- radiated by those outlets, shared as their flow, as pink noise flat per octave
+  over 63 Hz-8 kHz, through the jet's observer.
+
+Kunz and Garcia (SAE 950546) measured the same efficiencies with hot exhaust.
+Not known: how much a packed can's lining absorbs of its own flow noise (the
+efficiencies are for unpacked elements). `setOutletJetNoiseEnabled(false)`
+cuts both sources for sound and CPU comparisons.
