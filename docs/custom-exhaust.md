@@ -383,10 +383,17 @@ The graphical designer exposes both diameters. Older documents without
 `inlet_valve: true` puts a valve at a pipe's inlet: the face between the
 pipe and the one part feeding it (a cylinder cannot feed it; a terminal side
 branch takes none). **Bypass it with an active valve** builds the usual
-layout in one click: a splitter before the part, a merge after it, and
-between them a straight pipe of the part's length and bore with the valve.
-Shut, the gas goes through the part and the bypass is a closed branch that
-resonates; open, most of it takes the bypass.
+layout in one click: a splitter before the part and, beside it, a straight
+pipe of the part's bore with the valve, as long as the way from the part to
+its tailpipe and ending in a twin of that tailpipe: each branch has its own
+outlet, nothing merges them again. Shut, the gas goes through the part
+exactly as without the bypass (the K20A's mean port pressure at 4,000 rpm
+full throttle: 99.63 kPa stock, 99.62 shut) and the bypass is a closed branch
+that resonates; open, both tailpipes flow. Opening does not always lower the
+back pressure: the K20A's silencer restricts little (0.25), less than the
+split loses, and open reads 1.3 kPa above shut. A two-stroke takes no valve
+(its exhaust is its expansion chamber; the designer and the Equipment window
+do not offer one).
 
 The valve is a face, not a short duct. Open, it is the plain face, bit for
 bit (no loss, no cost: `EngineLab.ExhaustValve` compares 720 frames with the

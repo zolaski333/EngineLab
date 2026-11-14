@@ -821,6 +821,8 @@ std::string ExhaustNetworkEditor::connectComponents(ExhaustNetworkConfig& networ
 }
 
 std::string ExhaustNetworkEditor::fitSilencerBypass(EngineConfig& config) {
+    if (config.cycle == EngineCycle::twoStroke)
+        return "A two-stroke's exhaust is its expansion chamber: it takes no active valve.";
     if (config.exhaustPaths.empty()) return "This engine's exhaust has no path to fit a valve to.";
     auto edited = config;
     std::size_t fitted = 0;
@@ -889,16 +891,40 @@ std::string ExhaustNetworkEditor::addValvedBypass(ExhaustNetworkConfig& network,
     if (inputs.size() != 1 || outputs.size() != 1)
         return "A bypass needs one part feeding this one and one part after it.";
     const auto diameterMm = component->diameterMm >= 4.0 ? component->diameterMm : 50.0;
-    const auto lengthMm = component->lengthMm >= 1.0 ? component->lengthMm : 300.0;
+    // As long as the way from the component to its tailpipe, so both
+    // tailpipes end side by side, and ending in a twin of that tailpipe.
+    auto lengthMm = 0.0;
+    std::optional<ExhaustComponentConfig> tailpipe;
+    {
+        auto at = componentId;
+        for (std::size_t guard = 0; guard <= network.components.size(); ++guard) {
+            const auto* part = findComponent(network, at);
+            if (part != nullptr && part->type == ExhaustComponentType::outlet) tailpipe = *part;
+            if (part == nullptr || part->type == ExhaustComponentType::outlet) break;
+            lengthMm += part->lengthMm > 0.0 ? part->lengthMm : 0.0;
+            const auto next = std::find_if(network.connections.begin(), network.connections.end(),
+                [at](const ExhaustComponentConnectionConfig& connection) { return connection.fromComponentId == at; });
+            if (next == network.connections.end()) break;
+            at = next->toComponentId;
+        }
+    }
+    if (!(lengthMm >= 1.0)) lengthMm = component->lengthMm >= 1.0 ? component->lengthMm : 300.0;
 
     auto splitter = defaultComponent(ExhaustComponentType::splitter, nextComponentId(network));
     splitter.diameterMm = diameterMm;
     network.components.push_back(splitter);
-    auto merge = defaultComponent(ExhaustComponentType::merge, nextComponentId(network));
-    merge.diameterMm = diameterMm;
-    network.components.push_back(merge);
+    auto outlet = defaultComponent(ExhaustComponentType::outlet, nextComponentId(network));
+    if (tailpipe) {
+        const auto id = outlet.id;
+        outlet = *tailpipe;
+        outlet.id = id;
+    } else {
+        outlet.diameterMm = diameterMm;
+        outlet.lengthMm = 0.0;
+    }
+    network.components.push_back(outlet);
     auto pipe = defaultComponent(ExhaustComponentType::pipe, nextComponentId(network));
-    if (splitter.id == 0 || merge.id == 0 || pipe.id == 0) {
+    if (splitter.id == 0 || outlet.id == 0 || pipe.id == 0) {
         network.components.resize(network.components.size() - 2);
         return "This path has no component id left.";
     }
@@ -907,20 +933,16 @@ std::string ExhaustNetworkEditor::addValvedBypass(ExhaustNetworkConfig& network,
     pipe.inletValve = true;
     network.components.push_back(pipe);
 
-    // Upstream -> splitter -> part -> merge -> downstream, and splitter ->
-    // valved pipe -> merge; the outer edges keep their ports (an X-pipe's).
+    // Upstream -> splitter -> part -> (on to its tailpipe), and splitter ->
+    // valved pipe -> a tailpipe of its own; the inlet edge keeps its port (an
+    // X-pipe's).
     auto& in = network.connections[inputs.front()];
     const auto upstream = in.fromComponentId;
     const auto upstreamPort = in.fromPort;
     in = { upstream, splitter.id, upstreamPort, unspecifiedExhaustComponentPort };
-    auto& out = network.connections[outputs.front()];
-    const auto downstream = out.toComponentId;
-    const auto downstreamPort = out.toPort;
-    out = { merge.id, downstream, unspecifiedExhaustComponentPort, downstreamPort };
     network.connections.push_back({ splitter.id, componentId });
-    network.connections.push_back({ componentId, merge.id });
     network.connections.push_back({ splitter.id, pipe.id });
-    network.connections.push_back({ pipe.id, merge.id });
+    network.connections.push_back({ pipe.id, outlet.id });
     if (bypassPipeId != nullptr) *bypassPipeId = pipe.id;
     return {};
 }

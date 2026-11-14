@@ -92,10 +92,12 @@ public:
 
     /** A silencer bypass with an active valve, in one click: the component
      *  (a silencer, or any part with one part in and one out) gets a splitter
-     *  before it, a merge after it and, between them, a straight pipe of its
-     *  length and bore with a valve at its inlet. Shut, the gas goes through
-     *  the component and the bypass is a closed branch; open, most of it
-     *  takes the bypass. Empty, or why not; `bypassPipeId` gets the pipe. */
+     *  before it and, beside it, a straight pipe of its bore with a valve at
+     *  its inlet and a tailpipe of its own (owner 2026-11-14: each branch has
+     *  its own outlet), as long as the way from the component to its
+     *  tailpipe. Shut, the gas goes through the component and the bypass is
+     *  a closed branch; open, most of it takes the bypass. Empty, or why
+     *  not; `bypassPipeId` gets the pipe. */
     [[nodiscard]] static std::string addValvedBypass(ExhaustNetworkConfig& network, std::uint32_t componentId,
                                                      std::uint32_t* bypassPipeId = nullptr);
 

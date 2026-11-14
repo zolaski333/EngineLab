@@ -375,6 +375,9 @@ public:
 
     void setEngine(const EngineConfig& config, const std::shared_ptr<calibration::CalibrationStore>&) override {
         config_ = config;
+        // A two-stroke's exhaust is its expansion chamber, tuned to its
+        // stinger: no valved bypass (its power valve is in the cylinder).
+        setVisible(config.cycle != EngineCycle::twoStroke);
         fields_.setValues({ config.exhaustValve.openAboveRpm, config.exhaustValve.openAboveThrottle * 100.0,
                             config.exhaustValve.travelSeconds });
         const auto fitted = exhaustValveFitted(config);
@@ -840,6 +843,9 @@ private:
         const auto width = std::max(200, viewport_.getMaximumVisibleWidth());
         auto y = 20;
         for (auto* section : sections()) {
+            // A section an engine cannot carry is not shown (the active
+            // exhaust valve on a two-stroke).
+            if (!section->isVisible()) continue;
             section->setBounds(20, y, width - 40, section->preferredHeight());
             y += section->preferredHeight() + sectionGap;
         }

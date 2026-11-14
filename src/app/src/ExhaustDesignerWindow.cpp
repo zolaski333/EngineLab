@@ -1264,8 +1264,11 @@ private:
             && component->type != ExhaustComponentType::splitter
             && component->type != ExhaustComponentType::crossover
             && component->type != ExhaustComponentType::outlet;
-        menu.addItem(101, "Bypass it with an active valve", bypassable);
-        if (component->type == ExhaustComponentType::pipe)
+        // A two-stroke's expansion chamber takes no active valve (owner,
+        // 2026-11-14); one already there (an old file) can still come off.
+        const auto twoStroke = working_.cycle == EngineCycle::twoStroke;
+        if (!twoStroke) menu.addItem(101, "Bypass it with an active valve", bypassable);
+        if (component->type == ExhaustComponentType::pipe && (!twoStroke || component->inletValve))
             menu.addItem(102, "Active valve at its inlet", true, component->inletValve);
         if (exhaustValveFitted(working_)) menu.addItem(103, "Valve actuator settings...");
         menu.addItem(100, "Delete");

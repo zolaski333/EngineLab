@@ -1,7 +1,8 @@
 // The active exhaust valve: a silencer bypass with a valve at its inlet.
 // Open, the exhaust is the same exhaust without a valve, bit for bit, in the
 // gas network and in the audio network; shut, the gas goes through the
-// silencer (more back pressure) and the bypass is a closed branch; the
+// silencer as on the stock engine and the bypass, which ends in a tailpipe
+// of its own, is a closed branch; the
 // butterfly takes its travel time to move, automatic mode follows speed and
 // throttle with a hysteresis, the sound has no click when it moves, and the
 // engine file keeps the valve and its actuator.
@@ -40,18 +41,19 @@ void require(bool condition, const std::string& message) {
 
 constexpr double frameSeconds = 1.0 / 240.0;
 
+/** The catalogue's K20A, as it ships. */
+enginelab::EngineConfig stockEngine() {
+    const auto catalog = enginelab::loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
+    for (const auto& entry : catalog.entries)
+        if (entry.config.name.find("K20") != std::string::npos) return entry.config;
+    require(false, "the K20A is in the catalogue");
+    return {};
+}
+
 /** The K20A with a valved bypass around its first path's silencer, and the
  *  bypass pipe's id. */
 std::pair<enginelab::EngineConfig, std::uint32_t> makeBypassedEngine() {
-    const auto catalog = enginelab::loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
-    const enginelab::EngineConfig* found = nullptr;
-    for (const auto& entry : catalog.entries)
-        if (entry.config.name.find("K20") != std::string::npos) {
-            found = &entry.config;
-            break;
-        }
-    require(found != nullptr, "the K20A is in the catalogue");
-    auto config = *found;
+    auto config = stockEngine();
     require(!config.exhaustPaths.empty(), "the K20A has an exhaust path");
     auto& path = config.exhaustPaths.front();
     if (!path.network) path.network = enginelab::makeEditableExhaustNetwork(path);
@@ -59,6 +61,7 @@ std::pair<enginelab::EngineConfig, std::uint32_t> makeBypassedEngine() {
     for (const auto& component : path.network->components)
         if (component.type == enginelab::ExhaustComponentType::muffler) silencer = component.id;
     require(silencer != 0, "the K20A's exhaust has a silencer");
+    const auto before = *path.network;
     std::uint32_t bypass = 0;
     const auto error = enginelab::ExhaustNetworkEditor::addValvedBypass(
         *path.network, silencer, &bypass);
@@ -67,6 +70,27 @@ std::pair<enginelab::EngineConfig, std::uint32_t> makeBypassedEngine() {
     const auto invalid = enginelab::validateEngineConfig(config);
     require(!invalid, "the bypassed engine is valid: " + invalid.value_or(""));
     require(enginelab::exhaustValveFitted(config), "the engine reports its valve");
+    // Each branch has its own tailpipe (owner 2026-11-14): the bypass pipe
+    // ends in an outlet of its own and nothing merges the two again.
+    const auto count = [&](enginelab::ExhaustComponentType type) {
+        return std::count_if(path.network->components.begin(), path.network->components.end(),
+            [type](const enginelab::ExhaustComponentConfig& component) { return component.type == type; });
+    };
+    const auto countBefore = [&](enginelab::ExhaustComponentType type) {
+        return std::count_if(before.components.begin(), before.components.end(),
+            [type](const enginelab::ExhaustComponentConfig& component) { return component.type == type; });
+    };
+    require(count(enginelab::ExhaustComponentType::outlet) == countBefore(enginelab::ExhaustComponentType::outlet) + 1,
+            "the bypass ends in a tailpipe of its own");
+    require(count(enginelab::ExhaustComponentType::merge) == countBefore(enginelab::ExhaustComponentType::merge),
+            "nothing merges the bypass back into the silenced branch");
+    bool toOutlet = false;
+    for (const auto& connection : path.network->connections)
+        if (connection.fromComponentId == bypass)
+            for (const auto& component : path.network->components)
+                if (component.id == connection.toComponentId)
+                    toOutlet = component.type == enginelab::ExhaustComponentType::outlet;
+    require(toOutlet, "the bypass pipe runs straight to its tailpipe");
     return { config, bypass };
 }
 
@@ -144,24 +168,44 @@ double meanBackPressure(Rig& rig, enginelab::DynoAbsorberController& absorber,
     return sum / std::max(1, count);
 }
 
-void checkShutAndTravel(const enginelab::EngineConfig& withValve) {
-    auto rig = std::make_unique<Rig>(withValve);
+/** A started engine held at 4,000 rpm at full throttle by its absorber. */
+struct HeldEngine final {
+    std::unique_ptr<Rig> rig;
+    std::unique_ptr<enginelab::DynoAbsorberController> absorber;
+};
+
+HeldEngine startHeld(const enginelab::EngineConfig& config) {
+    HeldEngine held { std::make_unique<Rig>(config), nullptr };
     for (int frame = 0; frame < static_cast<int>(1.5 / frameSeconds); ++frame)
-        static_cast<void>(rig->simulator->step(frameSeconds,
+        static_cast<void>(held.rig->simulator->step(frameSeconds,
             startControls(frame * frameSeconds, 0.3, enginelab::ExhaustValveMode::closed)));
-    require(rig->simulator->state().rpm > 600.0, "the bypassed engine runs");
-    enginelab::DynoAbsorberController absorber(withValve);
-    absorber.reset(rig->simulator->state().rpm, rig->simulator->state().torqueNm);
-    const auto shut = meanBackPressure(*rig, absorber, enginelab::ExhaustValveMode::closed, 3.0);
+    require(held.rig->simulator->state().rpm > 600.0, "the engine runs");
+    held.absorber = std::make_unique<enginelab::DynoAbsorberController>(config);
+    held.absorber->reset(held.rig->simulator->state().rpm, held.rig->simulator->state().torqueNm);
+    return held;
+}
+
+void checkShutAndTravel(const enginelab::EngineConfig& withValve, const enginelab::EngineConfig& stock) {
+    auto plain = startHeld(stock);
+    const auto original = meanBackPressure(*plain.rig, *plain.absorber, enginelab::ExhaustValveMode::closed, 3.0);
+    auto held = startHeld(withValve);
+    auto& rig = held.rig;
+    const auto shut = meanBackPressure(*rig, *held.absorber, enginelab::ExhaustValveMode::closed, 3.0);
     require(rig->simulator->state().exhaustValveStroke == 0.0
             && rig->simulator->state().exhaustValveOpening == 0.0,
         "closed mode holds the valve shut");
     std::vector<double> strokes;
-    const auto open = meanBackPressure(*rig, absorber, enginelab::ExhaustValveMode::open, 3.0, &strokes);
-    std::cout << "back pressure at 4,000 rpm full throttle: shut " << shut
+    const auto open = meanBackPressure(*rig, *held.absorber, enginelab::ExhaustValveMode::open, 3.0, &strokes);
+    std::cout << "back pressure at 4,000 rpm full throttle: stock " << original << " kPa, shut " << shut
               << " kPa, open " << open << " kPa\n";
-    require(shut > open + 0.5,
-        "shut, the gas goes through the silencer: more back pressure than open");
+    // Shut, the gas takes the stock way through the silencer to the stock
+    // tailpipe; the bypass is a dead branch. (The K20A's silencer restricts
+    // little, 0.25: opening the bypass adds the split's loss and takes away
+    // less, so open reads 1.3 kPa above shut. The 4.9 kPa the other way
+    // before 2026-11-14 was the merge that rejoined the branches.)
+    require(std::abs(shut - original) < 0.05,
+        "shut, the exhaust is the stock exhaust: the silenced branch is untouched");
+    require(std::abs(open - shut) > 0.5, "open, the bypass carries gas: the back pressure moves");
     // 0.3 s from shut to open at a constant rate: 72 frames.
     const auto travel = withValve.exhaustValve.travelSeconds;
     for (std::size_t frame = 0; frame < strokes.size(); ++frame) {
@@ -370,7 +414,7 @@ int main() {
     auto without = withValve;
     setValve(without, pipe, false);
     checkOpenIsNoValve(withValve, without);
-    checkShutAndTravel(withValve);
+    checkShutAndTravel(withValve, stockEngine());
     checkAutomatic(withValve);
     checkAcoustic(withValve, without);
     checkFiles(withValve, pipe);
