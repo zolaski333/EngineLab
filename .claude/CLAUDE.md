@@ -303,8 +303,10 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363
   N.m); the I5 at 2.1 bar; Douaud-Eyzat's prefactor at x1.5 under the
   thermally perfect gas (NA maps reach their limit, 2JZ/EJ25 makers' points
-  -4 %; journal 2026-11-03). A weaker Douaud-Eyzat pressure exponent has no
-  source (pressure matters more in the NTC band).
+  -4 %; journal 2026-11-03). Douaud-Eyzat over-predicting knock under high
+  boost: as used (x2, from the spark) its delay at 118-250 bar is 1.4-2.7x
+  Hoepke's and 2.5-2.8x McKenzie-Cheng's (journal 2026-11-14); a weaker
+  pressure exponent has no consensus (1.34, 1.73, 2.37 in three sources).
 - **The other simulator's ingredients, one at a time** (journal 2026-10-13/14):
   output stage, pressure-release outlet, valve-area noise, mild room IR -- none
   kept (blind listening or measurement). Its fine mesh is not shown to matter.

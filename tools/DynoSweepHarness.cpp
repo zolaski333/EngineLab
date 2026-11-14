@@ -12,6 +12,7 @@
 // settle time can be shorter than a cold measurePoint. Absolutes still come
 // from here, not from the --trace instrument, which changes substep structure.
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/calibration/CalibrationStore.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -46,6 +47,9 @@ namespace {
 double frameSeconds = 1.0 / 240.0;
 // --exhaust-whole: a two-stroke's pipes as one network, one CFL step for all.
 std::optional<bool> partitionExhaustNetworkOverride;
+// --saved-ecu: a saved engine runs on the ECU tables saved with it, as the
+// application runs it, instead of the calibration its configuration implies.
+std::optional<enginelab::calibration::CalibrationDraft> savedCalibration;
 // --pipe-temperature: the first exhaust path's mean gas temperature, element by
 // element (port to outlet), on stderr after each point. A pipe's resonance
 // moves with the speed of sound in it, so this says how hot the gas is where a
@@ -473,7 +477,9 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
                          double couplingMicroseconds) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
-    enginelab::SimpleEcuModel ecu;
+    auto calibrations = std::make_shared<enginelab::calibration::CalibrationStore>();
+    if (savedCalibration) (void)calibrations->publish(*savedCalibration);
+    enginelab::SimpleEcuModel ecu(calibrations);
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
@@ -691,9 +697,11 @@ int main(int argc, char** argv) {
     // the physics does not meet yet still reports its score.
     auto referenceReportOnly = false;
     // An engine the user saved (`<name>.json`), swept instead of the
-    // catalogue; its saved ECU tables are not read (the sweep's ECU follows
-    // the configuration, as for a catalogue engine).
+    // catalogue; its saved ECU tables are read only with `--saved-ecu`
+    // (otherwise the sweep's ECU follows the configuration, as for a
+    // catalogue engine).
     std::filesystem::path savedEngineFile;
+    auto useSavedEcu = false;
     std::string filter;
     auto stepRpm = 500.0;
     auto schemaOnly = false;
@@ -725,6 +733,7 @@ int main(int argc, char** argv) {
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
         else if (argument == "--saved-engine" && index + 1 < argc) savedEngineFile = argv[++index];
+        else if (argument == "--saved-ecu") useSavedEcu = true;
         else if (argument == "--step" && index + 1 < argc) stepRpm = std::stod(argv[++index]);
         else if (argument == "--reference-file" && index + 1 < argc)
             referenceFile = argv[++index];
@@ -759,7 +768,7 @@ int main(int argc, char** argv) {
             exhaustPortPlateauOverride = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--saved-engine file.json] [--step rpm]"
+                         " [--filter name-fragment] [--saved-engine file.json [--saved-ecu]] [--step rpm]"
                          " [--reference-file csv] [--report-only] [--schema-only]"
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
@@ -803,6 +812,13 @@ int main(int argc, char** argv) {
         if (!saved.engine) {
             std::cerr << "saved engine: " << saved.error << '\n';
             return EXIT_FAILURE;
+        }
+        if (useSavedEcu) {
+            if (!saved.engine->calibration) {
+                std::cerr << "--saved-ecu: " << savedEngineFile.string() << " carries no ECU calibration\n";
+                return EXIT_FAILURE;
+            }
+            savedCalibration = saved.engine->calibration;
         }
         engines.push_back(std::move(saved.engine->config));
     } else {

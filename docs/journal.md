@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — knock under high boost: Douaud-Eyzat is not what stops the owner's 610 hp DTM engine
+
+- Owner's saved "Audi RC8" (2.0 I4 turbo, CR 12.5, 2.5 bar abs, knock control off, no intercooler): knock 0.8-0.9 at every speed, 444 ch; `DynoSweepHarness --saved-engine --saved-ecu` (new: the file's own ECU tables). Control on and intercooler 0.7: ~500 ch. At the published specs (CR 15, 3.5 bar, RON 102, control on) it still knocks with the 12 deg authority spent: 506 ch.
+- Onset traced (temporary, removed): spark ~4 deg ATDC, autoignition 15-45 deg ATDC at 115-275 bar and 775-1,030 K, 20-60 % of the charge unburnt. Turbulence x1.5: 588 ch, onset earlier and higher, still knocking.
+- Delay as the model uses it (D-E x2, RON 102) against boosted-engine correlations (Cho et al., Energies 2019, Table 1; all within 15 % of D-E x1 at 40 bar/800 K): at 118-250 bar it is 1.4-2.7x Hoepke 2012's, 2.5-2.8x McKenzie-Cheng 2016's, 5-7x Chen 2014's. The model is already more lenient than any of them; no change made.
+- Not settled: the real engine's lambda (fuel flow 95 kg/h suggests ~1.4, unverified), burn rate and IVC. A lean test was impossible: the gasoline AFR limit is 18.0 (lambda 1.22), and AFR 18 in the boosted cells ran MAP to 4.2-6.4 bar for 3.5 (engine lost) -- a boost-control lead, not looked into.
+
 ## 2026-11-14 — anti-lag audit: cut locked on cylinders, rich mixture, exhaust limit read in the wrong place, surge on letting go
 
 - `EngineLabAntiLagTests` (2JZ, I5; lift at 5,000 rpm after 3 s of full boost). Cut: the pattern over the engine's firings locked whole cylinders (90 %: 2JZ lit only 1, 3, 2; I5 only 1). Now each cylinder cuts its own cycles, golden-ratio staggered: every cylinder lit 0.28-0.38 of its cycles (`--cut`).
