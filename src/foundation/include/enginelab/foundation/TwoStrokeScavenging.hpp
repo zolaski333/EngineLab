@@ -25,15 +25,19 @@
  * is exactly this: displacement, then mixing). The simulator was pinned to the
  * lower bound.
  *
- * What puts an engine between the bounds is the race between the front's
- * travel and the port window: the front needs one loop length to reach the
- * exhaust port, and the window lasts `transferOpenDegrees / (6 * rpm)`
- * seconds. Raising engine speed shortens the window without making the jet
- * proportionally faster, so the displacement phase occupies a *larger* share
- * of a faster window -- which is why a real two-stroke scavenges better near
- * its tuned speed and is dirty and inefficient when lugged. That is the
- * engine-speed dependence the model had no mechanism for, and it falls out of
- * the geometry rather than being a fitted curve.
+ * What puts an engine between the bounds is how much charge it has delivered
+ * when the front reaches the exhaust port. The front needs one loop length of
+ * travel; travel is the time integral of the jet velocity, and the delivered
+ * volume is that same integral times the transfer ports' Cd*A. So the front
+ * arrives at a fixed delivered volume, Cd*A*loop length, whatever the engine
+ * speed: the model makes scavenging efficiency a function of the scavenge
+ * ratio and the porting, as single-cycle rigs measure it (Sher, Prog. Energy
+ * Combust. Sci. 16, 1990; Sweeney et al., SAE 850178: a cylinder's ranking
+ * and its SE spread hold at every speed). A real two-stroke scavenges better
+ * near its tuned speed because the pipe delivers more there, not through a
+ * race against the port window. Measured on the catalogue RD350 (journal
+ * 2026-11-14): trapped-charge SE 0.79-0.83 over 3,000-9,000 rpm at delivery
+ * ratios 0.73-0.96, flat in speed.
  *
  * The front's progress is *integrated*, not predicted from one sample. An
  * earlier version took the jet velocity once, at the instant the transfers
