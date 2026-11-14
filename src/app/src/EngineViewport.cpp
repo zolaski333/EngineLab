@@ -505,6 +505,8 @@ constexpr int inspectorEditButtons = 30;
 constexpr int inspectorEditHeader = 24;
 constexpr int inspectorStepperWidth = 26;
 constexpr int inspectorValueWidth = 78;
+constexpr int inspectorWidth = 280;
+constexpr int inspectorScrollBarWidth = 8;
 } // namespace
 
 PartInspector::Field& PartInspector::Edit::length(juce::String label, double millimetres, double step,
@@ -627,6 +629,8 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
     }
     edit_ = std::move(edit);
     const auto fieldCount = edit_ ? edit_->fields.size() : 0U;
+    // One stepper pair per field, made once and kept: a gearbox of many
+    // gears makes many (no cap, owner 2026-11-14).
     while (downButtons_.size() < fieldCount) {
         const auto index = downButtons_.size();
         auto& down = downButtons_.emplace_back(std::make_unique<ActionButton>("-", ActionButton::Style::compact));
@@ -666,6 +670,7 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
     updateEditButtons();
     if (resize) setSize(getWidth(), idealHeight());
     resized();
+    if (resize && onHeightChanged) onHeightChanged();
 }
 
 juce::String PartInspector::formatValue(std::size_t index, double value, bool withUnit, bool difference) const {
@@ -691,6 +696,7 @@ void PartInspector::setEditStatus(juce::String status) {
     setSize(getWidth(), idealHeight());
     resized();
     repaint();
+    if (onHeightChanged) onHeightChanged();
 }
 
 void PartInspector::stepEdit(std::size_t index, double direction) {
@@ -825,6 +831,7 @@ void PartInspector::setScope(std::optional<Scope> scope) {
     scope_ = std::move(scope);
     if (resize) setSize(getWidth(), idealHeight());
     repaint();
+    if (resize && onHeightChanged) onHeightChanged();
 }
 
 void PartInspector::show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note) {
@@ -835,6 +842,7 @@ void PartInspector::show(juce::String title, juce::String subtitle, std::vector<
     note_ = std::move(note);
     if (resize) setSize(getWidth(), idealHeight());
     repaint();
+    if (resize && onHeightChanged) onHeightChanged();
 }
 
 juce::TextLayout PartInspector::noteLayout(const juce::String& note, juce::Colour colour, float width) const {
@@ -1157,10 +1165,21 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     inspector_.onChoice = [this](int index) { applyPartChoice(index); };
     inspector_.onSecondChoice = [this](int index) { applyPartChoice(index, true); };
     inspector_.onDoneTyping = [this] { if (onClaimKeyboard) onClaimKeyboard(); };
+    inspector_.onHeightChanged = [this] { layoutInspector(); };
+    // A gearbox of 16 gears (or a million) is taller than the view: its
+    // last ratios scroll into reach instead of hanging below the window.
+    inspectorScroll_.setViewedComponent(&inspector_, false);
+    inspectorScroll_.setScrollBarsShown(true, false);
+    inspectorScroll_.setScrollBarThickness(inspectorScrollBarWidth);
+    // A click in the panel must not take the keys from the engine (a
+    // juce::Viewport wants the focus, and its arrows would scroll).
+    inspectorScroll_.setWantsKeyboardFocus(false);
+    // setViewedComponent shows it; it waits for a part.
+    inspector_.setVisible(false);
 
     addChildComponent(cutaway_);
     addChildComponent(legend_);
-    addChildComponent(inspector_);
+    addChildComponent(inspectorScroll_);
     for (auto* overlay : std::initializer_list<juce::Component*> { &layers_, &views_, &shading_, &speed_,
                                                                    &playback_, &settingsButton_, &cycle_ })
         addAndMakeVisible(overlay);
@@ -1366,7 +1385,7 @@ void EngineViewport::setEngine(const EngineConfig& config) {
     gasField_ = {};
     gasFieldBinding_.clear();
     selectedPart_ = -1;
-    inspector_.setVisible(false);
+    showInspector(false);
     pressureScalePa_ = 0.0F;
     resized();
     cutaway_.repaint();
@@ -1658,6 +1677,8 @@ bool EngineViewport::showFuel() {
 }
 
 void EngineViewport::setSelectedPart(int part) {
+    // Another part reads from its top; the same one keeps its place.
+    if (part != selectedPart_) inspectorScroll_.setViewPosition(0, 0);
     selectedPart_ = part;
     gasProbe_ = {};
     inspector_.setScope(std::nullopt);
@@ -1666,8 +1687,28 @@ void EngineViewport::setSelectedPart(int part) {
         shared_.selectedPart = part;
     }
     updateInspector();
-    inspector_.setVisible(part >= 0);
+    showInspector(part >= 0);
     resized();
+}
+
+void EngineViewport::showInspector(bool shown) {
+    inspector_.setVisible(shown);
+    inspectorScroll_.setVisible(shown);
+}
+
+void EngineViewport::layoutInspector() {
+    // From under the toolbar down to the playback row.
+    constexpr auto top = 12 + 32 + 10;
+    const auto room = std::max(inspectorRowHeight * 4, playback_.getY() - 10 - top);
+    const auto height = inspector_.idealHeight();
+    const auto scrolls = height > room;
+    const auto bar = scrolls ? inspectorScrollBarWidth : 0;
+    if (inspector_.getWidth() != inspectorWidth || inspector_.getHeight() != height)
+        inspector_.setSize(inspectorWidth, height);
+    // The bar sits to the right of the panel, which keeps its width (its
+    // notes wrap to it).
+    inspectorScroll_.setBounds(getWidth() - 12 - inspectorWidth - bar, top, inspectorWidth + bar,
+                               std::min(height, room));
 }
 
 void EngineViewport::updateInspector() {
@@ -3116,7 +3157,7 @@ void EngineViewport::resized() {
     const auto cycleHeight = cycle_.idealHeight();
     cycle_.setBounds(12, getHeight() - 12 - cycleHeight, 250, cycleHeight);
     legend_.setBounds((getWidth() - 300) / 2, getHeight() - 12 - 58, 300, 58);
-    inspector_.setBounds(getWidth() - 12 - 280, 12 + 32 + 10, 280, inspector_.idealHeight());
+    layoutInspector();
 }
 
 // ------------------------------------------------------------ OpenGL thread

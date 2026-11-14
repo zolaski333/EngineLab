@@ -190,6 +190,9 @@ public:
     /** Called when a typed value is applied or cancelled, to hand the
         keyboard back. */
     std::function<void()> onDoneTyping;
+    /** Called after the inspector resized itself to new contents (a row, a
+        field or a note more or less), so its frame can follow. */
+    std::function<void()> onHeightChanged;
     /** `note`, if any, is a short paragraph under the rows. */
     void show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note = {});
     /** Shows a trace under the rows, or none. */
@@ -403,6 +406,10 @@ private:
     /** Applies the selected part's partChoice_ through configEditor_. */
     void applyPartChoice(int index, bool second = false);
     void updateLegend();
+    /** Sizes the inspector to its contents and its frame to the room left. */
+    void layoutInspector();
+    /** Shows or hides the inspector with its frame. */
+    void showInspector(bool shown);
 
     const DashboardModel& model_;
     EngineCutawayView cutaway_;
@@ -415,6 +422,10 @@ private:
     CyclePanel cycle_;
     WaveLegend legend_;
     PartInspector inspector_;
+    /** The inspector's frame: taller than the room under the toolbar (a
+        gearbox of many gears), it scrolls. Declared after the inspector,
+        which it shows without owning. */
+    juce::Viewport inspectorScroll_;
     std::function<bool()> wheelModifierActive_;
     std::function<bool(double, GasFieldSnapshot&)> gasFieldSource_;
     std::function<bool(std::int32_t, std::uint8_t, GasProbeTrace&)> gasProbeSource_;

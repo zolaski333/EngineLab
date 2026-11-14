@@ -170,6 +170,10 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **The part inspector scrolls when it is taller than the view.** A gearbox
+  of many gears (16, say) hung its last ratios, its Reset and its style
+  button below the window, out of reach; the panel now stops above the
+  playback row and scrolls with the wheel.
 - **3-D view: no connecting rod passes through the crankshaft.** The main
   journals are drawn only between the throws; across a throw there is only
   its pin, where the big end swings.
