@@ -972,7 +972,12 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
                 auto torqueNm = antiLagTorqueNm_.load(std::memory_order_relaxed);
                 auto authority = antiLagAuthority_.load(std::memory_order_relaxed);
                 if (!wasActive) {
-                    torqueNm = state.torqueNm;
+                    // Seeded on the target, not on this frame's torque: one
+                    // instantaneous sample lands on a firing or between two
+                    // (2JZ at the lift: +940 or -7 N.m), and a firing kept
+                    // the air shut for 150 ms, emptied the manifold and took
+                    // 500 rpm off a lift that keeps no braking.
+                    torqueNm = targetNm;
                     authority = 0.5;
                 }
                 torqueNm += (state.torqueNm - torqueNm) * std::clamp(dt / torqueFilterSeconds, 0.0, 1.0);
