@@ -959,6 +959,19 @@ void checkEngine(const EngineConfig& config) {
     checkExhaustResize(model);
     checkInjectors(model);
 
+    // No rod's big end swings through a main journal: across a throw only its
+    // pin lies between the webs (owner 2026-11-14: every rod went through the
+    // crank, the I5's included). The big end drawn is 0.22 bore wide.
+    if (config.cycle != EngineCycle::rotary)
+        for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+            if (config.cylinders[c].connectingRodType == ConnectingRodType::articulated) continue;
+            const auto z = model.probe(c, 0.0).bigEnd.z;
+            const auto half = 0.11F * static_cast<float>(config.cylinders[c].boreMm);
+            for (const auto& journal : model.mainJournals())
+                require(journal.zEnd <= z - half || journal.zStart >= z + half,
+                        name + " cylinder " + std::to_string(c + 1) + ": its big end swings clear of the main journals");
+        }
+
     std::vector<SceneInstance> instances;
     for (int step = 0; step < 72; ++step) {
         const auto angle = 10.0 * step;
@@ -1309,6 +1322,36 @@ void checkTwoStrokeDrawing(EngineConfig config) {
             const auto& b = shut[blade].transform.m;
             const auto travel = dot(Vec3 { b[12] - a[12], b[13] - a[13], b[14] - a[14] }, axis);
             require(travel < -1.0F, label + "shut, the power valve's blade drops into the port's roof");
+            // Its housing is cast with the barrel (owner 2026-11-14: a grey
+            // box floated over the pipe): every solid the valve adds reaches
+            // into the barrel's wall (0.70 bore from the axis).
+            auto bare = config;
+            bare.twoStroke.powerValveClosedExhaustPortOpenDegrees = 0.0;
+            const EngineModel3D unvalved(bare);
+            int added = 0;
+            for (const auto& solid : model.solids()) {
+                const auto known = std::any_of(unvalved.solids().begin(), unvalved.solids().end(),
+                    [&solid](const EngineSolid& other) { return length(other.centre - solid.centre) < 0.01F; });
+                if (known || solid.shape != EngineSolid::Shape::box) continue;
+                const auto offset = solid.centre - crank;
+                const auto radial = offset - axis * dot(offset, axis);
+                if (length(radial) < 1.0e-3F) continue;
+                const auto outward = normalise(radial);
+                auto innermost = length(radial);
+                for (int k = 0; k < 3; ++k)
+                    innermost -= std::abs(dot(solid.axes[static_cast<std::size_t>(k)], outward))
+                        * (k == 0 ? solid.half.x : k == 1 ? solid.half.y : solid.half.z);
+                // Only this cylinder's: a twin's other barrel stands 1.5 bores
+                // along the crank, a V's other bank elsewhere.
+                const auto along = normalise(cross(axis, side));
+                if (length(radial) > 2.0F * bore || std::abs(dot(offset, axis)) > 3.0F * bore
+                    || std::abs(dot(offset, along)) > 0.6F * bore)
+                    continue;
+                ++added;
+                require(innermost < 0.70F * bore, label + "the power valve's housing is cast with the barrel ("
+                        + std::to_string(innermost / bore) + " bore from the axis)");
+            }
+            require(added > 0, label + "the power valve's housing is drawn");
         }
     }
     config.twoStroke.powerValveClosedExhaustPortOpenDegrees = 0.0;
@@ -1474,6 +1517,93 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    // The compression ratio moves the head: above the crown at top dead
+    // centre stands the clearance volume over the bore's area (owner
+    // 2026-11-14: a new ratio changed nothing in the picture).
+    for (const auto ratio : { 8.0, 12.0 }) {
+        auto config = catalogue.entries.front().config;
+        for (auto& cylinder : config.cylinders) cylinder.compressionRatio = ratio;
+        const EngineModel3D model(config);
+        const auto& cylinder = config.cylinders.front();
+        double topDeadCentre = 0.0;
+        float lowest = std::numeric_limits<float>::max();
+        for (int step = 0; step < 7200; ++step) {
+            const auto probe = model.probe(0, 0.1 * step);
+            const auto gap = dot(probe.deckCentre - probe.crownCentre, probe.axis);
+            if (gap < lowest) { lowest = gap; topDeadCentre = 0.1 * step; }
+        }
+        const auto expected = static_cast<float>(cylinder.strokeMm / (ratio - 1.0));
+        std::cout << "EngineModel3D: compression " << ratio << ":1, crown to head at TDC " << lowest << " mm (flat "
+                  << expected << " mm, at " << topDeadCentre << " deg)\n";
+        require(std::abs(lowest - expected) < 0.02F * expected + 0.1F,
+                "the head stands the clearance volume's height above the crown at top dead centre");
+    }
+    // A designed V8 with one pin per row: the two rods side by side on it put
+    // its banks one rod width apart, not a whole throw's (owner 2026-11-14:
+    // "one per row (shared)", the left bank stood off the right one). With a
+    // pin per cylinder (a 90 deg V6's, split to fire evenly), a throw's width.
+    for (const auto pins : { CrankPins::shared, CrankPins::separate }) {
+        EngineSpec spec;
+        spec.name = "Designed V";
+        spec.cycle = EngineCycle::fourStroke;
+        spec.use = EngineUse::roadCar;
+        spec.layout = EngineLayout::vLayout;
+        spec.cylinderCount = pins == CrankPins::shared ? 8U : 6U;
+        spec.bankAngleDegrees = 90.0;
+        spec.boreMm = 100.0;
+        spec.strokeMm = 92.0;
+        spec.crankPins = pins;
+        const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+        require(designed.config.has_value(), "a V8 designs: " + designed.error);
+        const EngineModel3D model(*designed.config);
+        const auto bore = static_cast<float>(designed.config->cylinders.front().boreMm);
+        float widest = 0.0F, narrowest = std::numeric_limits<float>::max();
+        for (std::size_t a = 0; a < model.cylinderCount(); ++a)
+            for (std::size_t b = a + 1U; b < model.cylinderCount(); ++b) {
+                const auto apart = std::abs(model.probe(a, 0.0).bigEnd.z - model.probe(b, 0.0).bigEnd.z);
+                // Neighbours of one row: well under a cylinder pitch apart.
+                if (apart < 0.6F * bore) {
+                    widest = std::max(widest, apart);
+                    narrowest = std::min(narrowest, apart);
+                }
+            }
+        const auto shared = pins == CrankPins::shared;
+        std::cout << "EngineModel3D: V" << model.cylinderCount() << " " << (shared ? "shared" : "separate") << " pins, banks stand "
+                  << widest / bore << " bore apart\n";
+        require(shared ? widest > 0.0F && widest < 0.3F * bore && narrowest > 0.22F * bore
+                       : narrowest > 0.45F * bore,
+                shared ? "a V8's banks stand one rod width apart on their shared pins"
+                       : "a V6's banks stand a throw apart on pins of their own");
+    }
+    // A designed V4 two-stroke: each chamber has its own path, two to a side,
+    // and they ran through each other along their whole length, parted only
+    // by their header cones' width (owner 2026-11-14). Past the ports, where
+    // the headers cross, nothing touches.
+    for (const auto use : { EngineUse::sportMotorcycle, EngineUse::roadMotorcycle }) {
+        EngineSpec spec;
+        spec.name = "Designed V4 two-stroke";
+        spec.cycle = EngineCycle::twoStroke;
+        spec.use = use;
+        spec.layout = EngineLayout::vLayout;
+        spec.cylinderCount = 4U;
+        spec.bankAngleDegrees = 90.0;
+        spec.boreMm = 54.0;
+        spec.strokeMm = 54.0;
+        const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+        require(designed.config.has_value(), "a V4 two-stroke designs: " + designed.error);
+        const EngineModel3D model(*designed.config);
+        const auto routes = checkRoutes(model);
+        float portsEnd = -std::numeric_limits<float>::max();
+        for (std::size_t c = 0; c < model.cylinderCount(); ++c)
+            portsEnd = std::max(portsEnd, model.probe(c, 0.0).bigEnd.z);
+        std::size_t chambers = 0;
+        for (const auto& issue : routes.issues)
+            if (issue.kind == RouteIssueKind::ductClash && issue.where.z > portsEnd + 2.0F * spec.boreMm) ++chambers;
+        std::cout << "EngineModel3D: V4 two-stroke (" << (use == EngineUse::sportMotorcycle ? "sport" : "road")
+                  << "): " << chambers << " clashes past the ports, " << routes.count(RouteIssueKind::ductClash)
+                  << " in all\n";
+        require(chambers == 0, "a V4 two-stroke's expansion chambers clear each other");
+    }
     checkRotaryExhausts(catalogue);
     for (const auto& entry : catalogue.entries)
         if (entry.config.cycle == EngineCycle::twoStroke) checkTwoStrokeDrawing(entry.config);
@@ -1658,8 +1788,9 @@ int main() {
     // Measured 2026-10-05: the four 140 mm pipes of the X of the LS3, which
     // must cross between the banks, the end primary of the I5, and the two
     // end primaries of the 2JZ, whose 430 mm cannot reach a collector they
-    // must enter along its axis.
-    require(stretchedPipes <= 7, "no more exhaust pipes are drawn longer than authored than when measured ("
+    // must enter along its axis. 2026-11-14: 6, the I5's collector turned to
+    // face its primaries.
+    require(stretchedPipes <= 6, "no more exhaust pipes are drawn longer than authored than when measured ("
                                      + std::to_string(stretchedPipes) + ")");
     // Route check over the catalogue, measured 2026-10-05 with the router
     // (before it: 107 clashes, 51 self-clashes, 0, 259 tight bends, 6).
@@ -1677,7 +1808,11 @@ int main() {
     // passage's own body, and the rear rotor's primary winds to its length.
     // 2026-10-30: the passage is the port inside the housing and the
     // collector stands back: the 13B-like at 0 clashes and 7 tight bends.
-    const std::array<std::size_t, 5> measured { 11, 4, 0, 51, 7 };
+    // 2026-11-14: 4, 4, 0, 46, 6. The heads stand on their real combustion
+    // chambers (2JZ +2 clashes, +1 bend); the I5's and the TDI's collectors
+    // turn to face their primaries (I5 2, 4, 1 -> 0; TDI 1 clash, 1 bend
+    // -> 0); the RD350's chambers part by their bellies' width (6 -> 0).
+    const std::array<std::size_t, 5> measured { 4, 4, 0, 46, 6 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

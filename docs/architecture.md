@@ -550,7 +550,15 @@ this view.
   (r + gap/2) / sin(π/N)). A collector fed by primaries sits behind the last
   port when every primary still reaches it (long tubes), else as far back as
   the shortest allows; the junctions of one path that would overlap (the two
-  Y pieces of a 4-2-1) sit side by side across the trunk. An outlet is the open end of the pipe before it: with no authored
+  Y pieces of a 4-2-1) sit side by side across the trunk. A collector of
+  three or more primaries with ports beyond its mouth turns the mouth across
+  to face them, level with their middle, when every primary still reaches it
+  (lead, entry and 1.2 times the straight distance within its length): the
+  pipe after it bends onto the trunk in a quarter turn, or the gas goes
+  straight on into the turbine of a turbo collector (the I5 and the TDI;
+  the 2JZ's end primaries are too short). The straight runs of separate
+  paths stand apart by their widest part, each moving away from the
+  crankshaft (two-stroke chambers side by side). An outlet is the open end of the pipe before it: with no authored
   length it is only a short collar with a rolled lip, and the inside of an
   open opaque tube is shaded dark, so the opening reads as a hole.
 - **Intake.** Each runner has its length and taper, from the port to a
@@ -581,11 +589,11 @@ points half a diameter either side), a pipe drawn more than 3 % longer than
 authored. Joints are not clashes: near an end that plugs into a port, a box
 or another duct, within two radii. Over the 16 catalogue engines, before the
 router: 107 clashes, 51 self-clashes, 0 through the engine, 259 tight bends,
-6 stretched; with it: 7, 4, 0, 48, 7. `EngineLab.EngineModel3D` keeps every
-count from growing. A pipe that must span more than its length is drawn
-longer: the four 140 mm pipes of the LS3's X, the end primary of the I5, and
-the two end primaries of the 2JZ, whose 430 mm cannot reach a collector they
-must enter along its axis. `EngineLabSceneExport` writes the scene and the
+6 stretched; with it: 7, 4, 0, 48, 7; over the 18 of 2026-11-14: 4, 4, 0,
+46, 6. `EngineLab.EngineModel3D` keeps every count from growing. A pipe
+that must span more than its length is drawn longer: the four 140 mm pipes
+of the LS3's X and the two end primaries of the 2JZ, whose 430 mm cannot
+reach a collector they must enter along its axis. `EngineLabSceneExport` writes the scene and the
 issues as JSON, to look at them outside the app.
 
 **Turbocharger.** The gas solver's turbine is a restriction face on the

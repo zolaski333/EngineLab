@@ -244,6 +244,14 @@ public:
         float rodLengthMm {};
     };
     [[nodiscard]] CylinderProbe probe(std::size_t cylinder, double crankAngleDegrees) const noexcept;
+    /** A main journal drawn on a crankshaft, along +Z (world mm): tests check
+        that no rod's big end swings through one. */
+    struct JournalSpan final {
+        float zStart {};
+        float zEnd {};
+        float radius {};
+    };
+    [[nodiscard]] const std::vector<JournalSpan>& mainJournals() const noexcept { return mainJournals_; }
 
     [[nodiscard]] PartIdentity identify(std::uint16_t part) const noexcept;
     /** The camshafts that drive a cylinder's valves (its bank's, or the engine's). */
@@ -279,6 +287,8 @@ private:
             crankcase, barrel and port windows the structure is drawn round. */
         Vec3 crankCentre;
         Vec3 exhaustWindowCentre;
+        /** A two-stroke: the exhaust port's roof, on the cylinder axis. */
+        Vec3 exhaustPortRoof;
         Vec3 intakeWindowCentre;
         Vec3 transferWindowCentre;
         Vec3 transferFacing;
@@ -341,6 +351,7 @@ private:
     float inputSense_ { 1.0F };
     /** Where the flywheel ends along +Z, its radius; set by buildCrankshaft(). */
     float flywheelEndZ_ { -1.0e9F };
+    std::vector<JournalSpan> mainJournals_;
     /** A two-stroke's crankcase: round, just clear of the crank's webs. */
     float crankcaseRadius_ {};
     float flywheelRadius_ {};

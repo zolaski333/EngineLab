@@ -107,12 +107,14 @@ template <typename Profile>
     return found == ports.end() ? nullptr : &*found;
 }
 
-/** Point in the plane across the trunk, `index` of `count`, around `centre`. */
-[[nodiscard]] Vec3 slot(Vec3 centre, std::size_t index, std::size_t count, float radius, Vec3 spread) {
+/** Point in the plane across `axis` (the trunk unless given), `index` of
+    `count`, around `centre`. */
+[[nodiscard]] Vec3 slot(Vec3 centre, std::size_t index, std::size_t count, float radius, Vec3 spread,
+                        Vec3 axis = zAxis) {
     if (count <= 1U) return centre;
     if (count == 2U) return centre + spread * (index == 0 ? -radius : radius);
     const auto angle = 2.0F * pi * static_cast<float>(index) / static_cast<float>(count);
-    const auto other = normalise(cross(zAxis, spread));
+    const auto other = normalise(cross(axis, spread));
     return centre + (spread * std::cos(angle) + other * std::sin(angle)) * radius;
 }
 
@@ -131,6 +133,15 @@ struct Node final {
     bool routed {};
     bool stack {};
     bool firstJunction {};
+    /** A first collector whose mouth faces its ports rather than back along
+        the trunk: its primaries come in along `mouthAxis` (across the
+        crankshaft, away from the ports) into the mouth at `mouthCentre`, and
+        the pipe after it bends onto the trunk. Fixed along the trunk, the
+        mouth made the primaries of ports beyond it turn back and loop to
+        reach it (an I5's, owner 2026-11-14). */
+    bool turned {};
+    Vec3 mouthCentre;
+    Vec3 mouthAxis { zAxis };
     /** Position across the trunk (x, y); z unused. For a routed pipe, the
         lane it comes from. */
     Vec3 lane;
@@ -370,8 +381,18 @@ void buildNodes(PathLayout& layout) {
 }
 
 [[nodiscard]] Vec3 slotPosition(const Node& node, std::size_t index) {
+    if (node.turned)
+        return slot(node.mouthCentre, index, throughIns(node) + node.cylinders.size(), slotRadius(node), node.spread,
+                    node.mouthAxis);
     return slot(at(node.lane, node.zIn), index, throughIns(node) + node.cylinders.size(), slotRadius(node), node.spread);
 }
+
+/** The way the inputs of `node` come into it. */
+[[nodiscard]] Vec3 entryAxis(const Node& node) noexcept { return node.turned ? node.mouthAxis : zAxis; }
+
+/** Radius of the bend that takes the pipe after a turned collector from the
+    collector's axis onto the trunk: wide enough not to kink it. */
+[[nodiscard]] float turnRadius(const Node& pipe) noexcept { return 1.6F * std::max(pipe.diameter, pipe.body); }
 
 /** Where a side branch meets `node`: on its flank, halfway along it, facing
     `toward`; `direction` is the way out of the junction. */
@@ -469,8 +490,9 @@ void placeTurbo(const PathLayout& layout, Node& node, const TurboSpec& spec, Tur
     turbo.compressorOuterRadius = 2.15F * rk;
     const auto bearing = rt + 12.0F;
 
-    // Out, away from the engine; the volute below the bend if it can be.
-    const Vec3 out { node.spread.y, -node.spread.x, 0.0F };
+    // Out, away from the engine; the volute below the bend if it can be. A
+    // turned collector already sends its gas out along its axis.
+    const Vec3 out = node.turned ? node.mouthAxis : Vec3 { node.spread.y, -node.spread.x, 0.0F };
     const auto lane = Vec3 { node.lane.x, node.lane.y, 0.0F };
     Vec3 across = normalise(cross(zAxis, out));
     const auto score = [&](Vec3 n) {
@@ -485,13 +507,22 @@ void placeTurbo(const PathLayout& layout, Node& node, const TurboSpec& spec, Tur
     const auto reach = std::max(bend, std::sqrt(std::max(0.0F, need * need - volute * volute)));
 
     std::vector<Vec3> path;
-    constexpr int bendSteps = 10;
-    for (int k = 0; k <= bendSteps; ++k) {
-        const auto a = 0.5F * pi * static_cast<float>(k) / bendSteps;
-        path.push_back(inlet + out * (bend * (1.0F - std::cos(a))) + zAxis * (bend * std::sin(a)));
+    Vec3 entry;
+    if (node.turned) {
+        // Straight on, until the compressor beside the volute is past the
+        // collector's end.
+        path.push_back(inlet);
+        entry = inlet + out * (turbo.compressorOuterRadius + 10.0F);
+        path.push_back(entry);
+    } else {
+        constexpr int bendSteps = 10;
+        for (int k = 0; k <= bendSteps; ++k) {
+            const auto a = 0.5F * pi * static_cast<float>(k) / bendSteps;
+            path.push_back(inlet + out * (bend * (1.0F - std::cos(a))) + zAxis * (bend * std::sin(a)));
+        }
+        entry = inlet + out * reach + zAxis * bend;
+        if (reach > bend + 1.0F) path.push_back(entry);
     }
-    const auto entry = inlet + out * reach + zAxis * bend;
-    if (reach > bend + 1.0F) path.push_back(entry);
     const auto centre = entry + across * volute;
     // Round the wheel, narrowing as the volute feeds it.
     const auto toEntry = across * -1.0F;
@@ -614,6 +645,17 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         node.lane = lanes > 0 ? laneSum * (1.0F / static_cast<float>(lanes)) : Vec3 {};
         node.zIn = z;
         node.zOut = z + node.drawLength;
+        if (throughIns(node) == 1U && nodes[node.ins.front()].turned && !nodes[node.ins.front()].turbo) {
+            // After a turned collector: a quarter bend from its axis onto
+            // the trunk, then straight on; the bend spends its share of the
+            // length.
+            const auto& parent = nodes[node.ins.front()];
+            const auto radius = turnRadius(node);
+            const auto bent = parent.lane + parent.mouthAxis * radius;
+            node.lane = { bent.x, bent.y, 0.0F };
+            node.zIn = parent.zOut + radius;
+            node.zOut = node.zIn + std::max(0.2F * node.drawLength, node.drawLength - 0.5F * pi * radius);
+        }
         if (node.turbo && !node.turboAtInlet && turbos != nullptr)
             placeTurbo(layout, node, spec, (*turbos)[node.turboSlot]);
     }
@@ -683,7 +725,7 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         return true;
     }
     at = outSlot(layout, parent, k);
-    direction = zAxis;
+    direction = entryAxis(parent);
     return true;
 }
 
@@ -714,7 +756,7 @@ void assignSlots(PathLayout& layout, const std::vector<PortAnchor>& ports) {
             float total = 0.0F;
             for (std::size_t j = 0; j < routed.size(); ++j) {
                 const auto& upstream = layout.nodes[node.ins[routed[j]]];
-                total += length(slotPosition(node, order[j]) - zAxis * endLead(upstream) - from[j]);
+                total += length(slotPosition(node, order[j]) - entryAxis(node) * endLead(upstream) - from[j]);
             }
             if (total < shortest - 1.0e-3F) {
                 shortest = total;
@@ -904,20 +946,110 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         }
         if (found) unitPlaced[unit] = true;
     }
+    // The straight run that carries on from a junction along its lane, to
+    // the next junction: its widest part and where it ends. A two-stroke's
+    // chamber is three times as wide as the header cone that starts it, and
+    // a V4's two chambers on one side ran through each other along their
+    // whole length (owner 2026-11-14).
+    struct Run final {
+        float widest {};
+        float zEnd {};
+    };
+    const auto runFrom = [&](const Junction& junction) {
+        const auto& nodes = layouts[junction.path].nodes;
+        const auto* node = &nodes[junction.node];
+        Run run { node->body, node->zIn };
+        for (std::size_t guard = 0; guard <= nodes.size(); ++guard) {
+            run.widest = std::max({ run.widest, node->body, node->diameter });
+            run.zEnd += node->drawLength;
+            if (node->outs.size() != 1U) break;
+            const auto& next = nodes[node->outs.front()];
+            if (next.routed || next.stack || next.ins.size() != 1U || next.turbo) break;
+            node = &next;
+        }
+        return run;
+    };
     for (std::size_t a = 0; a < junctions.size(); ++a) {
         auto& node = layouts[junctions[a].path].nodes[junctions[a].node];
+        const auto own = runFrom(junctions[a]);
+        float step = 1.6F * node.body;
         for (int attempt = 0; attempt < 8; ++attempt) {
             bool clash = false;
             for (std::size_t b = 0; b < a; ++b) {
                 if (junctions[b].path == junctions[a].path) continue;
                 const auto& other = layouts[junctions[b].path].nodes[junctions[b].node];
-                const auto reach = 1.5F * std::max(node.body, other.body);
-                if (length(other.lane - node.lane) < reach && node.zIn < other.zOut + reach && other.zIn < node.zOut + reach)
+                const auto theirs = runFrom(junctions[b]);
+                const auto apart = 0.5F * (own.widest + theirs.widest) + 10.0F;
+                const auto reach = std::max(1.5F * std::max(node.body, other.body), apart);
+                if (length(other.lane - node.lane) < reach && node.zIn < theirs.zEnd + reach
+                    && other.zIn < own.zEnd + reach) {
                     clash = true;
+                    step = std::max(step, apart);
+                }
             }
             if (!clash) break;
-            node.lane += node.spread * (1.6F * node.body);
+            // Away from the crankshaft, so both sides of a V move out alike.
+            const auto away = dot(node.spread, Vec3 { node.lane.x, node.lane.y, 0.0F }) < 0.0F ? -1.0F : 1.0F;
+            node.lane += node.spread * (away * step);
         }
+    }
+    // A collector of three or more primaries whose mouth, facing back along
+    // the trunk, has ports beyond it turns its mouth to face them: the
+    // primaries then come straight across into it instead of looping back,
+    // and the pipe after it bends onto the trunk -- or, on a collector that
+    // carries its turbo, the gas goes straight on into the volute, whose
+    // exducer already faces along the trunk. Only where that pipe is long
+    // enough to bend without a kink; a rotary's collectors keep their
+    // places.
+    for (const auto& junction : junctions) {
+        auto& nodes = layouts[junction.path].nodes;
+        auto& node = nodes[junction.node];
+        if (config.cycle == EngineCycle::rotary || node.turboAtInlet || !node.cylinders.empty()
+            || throughIns(node) < 3U || node.sideIns != 0U || throughOuts(node) != 1U)
+            continue;
+        auto& after = nodes[node.outs.front()];
+        if (!node.turbo
+            && (after.routed || after.component->type != ExhaustComponentType::pipe || throughIns(after) != 1U
+                || after.drawLength < 1.6F * turnRadius(after)))
+            continue;
+        Vec3 centroid {};
+        std::size_t count = 0;
+        bool behind = false;
+        for (const auto in : node.ins) {
+            const auto& primary = nodes[in];
+            for (const auto cylinder : primary.cylinders)
+                if (const auto* port = portOf(ports, cylinder)) {
+                    centroid += port->position;
+                    ++count;
+                    behind = behind || port->position.z > node.zIn - endLead(primary);
+                }
+        }
+        if (count < 3U || !behind) continue;
+        centroid = centroid * (1.0F / static_cast<float>(count));
+        const auto mouth = at(node.lane, centroid.z);
+        const auto across = Vec3 { mouth.x - centroid.x, mouth.y - centroid.y, 0.0F };
+        if (length(across) < 1.0F) continue;
+        // Every primary must still reach the turned mouth with room to bend
+        // (as collectorZ asks of one along the trunk); else it keeps its place.
+        const auto axis = normalise(across);
+        bool reached = true;
+        for (const auto in : node.ins) {
+            const auto& primary = nodes[in];
+            const auto* port = primary.cylinders.empty() ? nullptr : portOf(ports, primary.cylinders.front());
+            if (port == nullptr) continue;
+            const auto lead = startLead(primary, true);
+            const auto entry = endLead(primary);
+            const auto from = port->position + port->direction * lead;
+            const auto to = mouth - axis * entry;
+            reached = reached && lead + entry + 1.2F * length(to - from) <= primary.drawLength;        }
+        if (!reached) continue;
+        node.turned = true;
+        node.mouthCentre = mouth;
+        node.mouthAxis = normalise(across);
+        node.spread = zAxis;
+        const auto end = mouth + node.mouthAxis * node.drawLength;
+        node.lane = { end.x, end.y, 0.0F };
+        node.zIn = node.zOut = mouth.z;
     }
 
     std::vector<DuctPiece> pieces;
@@ -960,7 +1092,23 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             const auto inlet = at(node.lane, node.zIn);
             const auto outlet = at(node.lane, node.zOut);
             std::vector<Vec3> points { inlet, outlet };
-            if (node.ins.size() == 1U && node.cylinders.empty() && !nodes[node.ins.front()].routed) {
+            if (node.turned) {
+                points = { node.mouthCentre, outlet };
+            } else if (node.ins.size() == 1U && node.cylinders.empty() && nodes[node.ins.front()].turned
+                       && !nodes[node.ins.front()].turbo) {
+                // The quarter bend from the collector's axis onto the trunk.
+                const auto& parent = nodes[node.ins.front()];
+                const auto start = outSlot(layout, parent, indexIn(parent.outs, i));
+                const auto radius = turnRadius(node);
+                points.clear();
+                constexpr int steps = 12;
+                for (int s = 0; s <= steps; ++s) {
+                    const auto angle = 0.5F * pi * static_cast<float>(s) / static_cast<float>(steps);
+                    points.push_back(start + parent.mouthAxis * (radius * std::sin(angle))
+                                     + zAxis * (radius * (1.0F - std::cos(angle))));
+                }
+                if (node.zOut > node.zIn + 1.0F) points.push_back(outlet);
+            } else if (node.ins.size() == 1U && node.cylinders.empty() && !nodes[node.ins.front()].routed) {
                 const auto& parent = nodes[node.ins.front()];
                 const auto start = outSlot(layout, parent, indexIn(parent.outs, i));
                 if (length(start - inlet) > 1.0F) {
@@ -1017,6 +1165,7 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             if (joins) {
                 const auto& downstream = nodes[node.outs.front()];
                 const auto k = indexIn(downstream.ins, i);
+                dirB = entryAxis(downstream);
                 if (downstream.turboAtInlet) {
                     // Onto the turbine, along the trunk.
                     b = downstream.turboInlet;
@@ -1579,8 +1728,14 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             for (const auto& runner : runners)
                 widestAcross = std::max(widestAcross, std::abs(dot(runner.port->position - centre, lateral)));
             const auto residual = (1.0F - keepAcross) * widestAcross;
+            // The straight line spends 0.9 of the runner; one that also has
+            // to come across turns twice on the way (an S), so its offset
+            // counts a little over its length: a flat-6's runners came out
+            // 8 % long once its heads stood off by their real combustion
+            // chamber.
+            const auto sideways = 1.1F * residual;
             const auto reach = std::sqrt(std::max(0.0625F * shortest * shortest,
-                                                  0.81F * shortest * shortest - residual * residual));
+                                                  0.81F * shortest * shortest - sideways * sideways));
             float zMin = std::numeric_limits<float>::max(), zMax = -zMin, latMin = zMin, latMax = -zMin;
             for (std::size_t i = 0; i < runners.size(); ++i) {
                 const auto offset = runners[i].port->position - centre;

@@ -347,12 +347,32 @@ void EngineModel3D::buildCylinders() {
         }
         station[i] = position;
         lastStation = std::max(lastStation, position);
-        // Two banks sharing crank throws sit side by side, one rod width apart,
-        // as their rods do on a shared pin.
         if (config_.banks.size() == 2U && !radialLike_)
-            shift[i] = (bankIndex == 0 ? -0.28F : 0.28F) * static_cast<float>(cylinder.boreMm);
+            shift[i] = bankIndex == 0 ? -1.0F : 1.0F;  // scaled below
         else if (bank != nullptr && bankIndex < bankShift.size())
             shift[i] = bankShift[bankIndex];
+    }
+    // A V's two banks: rods side by side on one pin put the banks one rod
+    // width apart (the big end below is 0.22 bore wide, plus a little side
+    // clearance); rods on pins of their own, each throw's width (pin and two
+    // webs); fork-and-blade or master-and-link rods share one plane, so the
+    // banks line up.
+    if (config_.banks.size() == 2U && !radialLike_) {
+        bool aligned = false;
+        bool sharedPins = true;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (config_.cylinders[i].connectingRodType != ConnectingRodType::conventional) aligned = true;
+            const auto k = evaluateCylinderKinematics(config_, reference_, i, 0.0, 0.0);
+            for (std::size_t j = 0; j < count; ++j) {
+                if (j == i || station[j] != station[i] || shift[j] == shift[i]) continue;
+                const auto other = evaluateCylinderKinematics(config_, reference_, j, 0.0, 0.0);
+                const auto apart = std::hypot(k.crankPinXMm - other.crankPinXMm, k.crankPinYMm - other.crankPinYMm);
+                if (k.crankshaftId != other.crankshaftId || apart >= 0.5) sharedPins = false;
+            }
+        }
+        const auto halfGap = aligned ? 0.0F : sharedPins ? 0.5F * (0.22F + 0.01F) : 0.5F * (0.28F + 0.2F + 0.01F);
+        for (std::size_t i = 0; i < count; ++i)
+            shift[i] *= halfGap * static_cast<float>(config_.cylinders[i].boreMm);
     }
 
     for (std::size_t i = 0; i < count; ++i) {
@@ -369,9 +389,16 @@ void EngineModel3D::buildCylinders() {
         const auto axis = cylinder.axis;
         cylinder.compressionHeight = config.compressionHeightMm > 0.0
             ? static_cast<float>(config.compressionHeightMm) : 0.42F * b;
-        const auto gap = std::max(1.2F, 0.015F * b);
+        // The head stands above the crown at top dead centre by the clearance
+        // volume over the bore's area, as the simulator counts it (swept /
+        // (ratio - 1), MechanicalKinematics): a flat chamber of the real
+        // volume, at real scale (owner 2026-11-14), so the compression ratio
+        // moves the head. A real chamber's dome or bowl holds some of it.
+        const auto stroke = length(topWrist - bottomWrist);
+        const auto ratio = std::isfinite(config.compressionRatio) ? std::max(1.05, config.compressionRatio) : 10.5;
+        const auto gap = std::max(0.5F, stroke / static_cast<float>(ratio - 1.0));
         cylinder.deckCentre = topWrist + axis * (cylinder.compressionHeight + gap);
-        cylinder.chamberCentre = cylinder.deckCentre - axis * (0.1F * b);
+        cylinder.chamberCentre = cylinder.deckCentre - axis * (0.5F * gap);
         cylinder.crankOffsetDegrees = config.crankOffsetDegrees;
         const auto* bank = bankFor(config_, config);
         cylinder.cams = bank != nullptr ? &bank->camshafts : &config_.camshafts;
@@ -477,6 +504,7 @@ void EngineModel3D::buildCylinders() {
             const auto exhaustTop = crownAt(ports.exhaustPortOpenDegrees);
             const auto exhaustWidth = exhaustPortWidthMm(ports, config);
             cylinder.exhaustWindowCentre = window(exhaust, side, exhaustWidth, exhaustTop, atBottom);
+            cylinder.exhaustPortRoof = exhaustTop;
             cylinder.intakeValvePart = addPart(std::move(transfers), SceneMaterial::intakeValve, layerValves);
             cylinder.exhaustValvePart = addPart(std::move(exhaust), SceneMaterial::exhaustValve, layerValves);
             if (hasPowerValve(ports)) {
@@ -613,7 +641,32 @@ void EngineModel3D::buildCrankshaft() {
         }
         Mesh shaft;
         const auto start = zMin - pitch_ * 0.5F, end = zMax + pitch_ * 0.5F;
-        appendShaft(shaft, {}, start, end - start, 0.23F * b, 32);
+        // Main journals between the throws only: across a throw there is
+        // nothing but its pin between the webs, which is where the rod's big
+        // end swings (a shaft drawn through it put every rod through the
+        // crank at bottom dead centre, owner 2026-11-14).
+        std::vector<std::pair<float, float>> spans;
+        for (std::size_t t = 0; t < throws_.size(); ++t) {
+            const auto& group = groups[t];
+            if (group.crankshaftId != id) continue;
+            const auto halfWidth = 0.5F * (group.zMax - group.zMin) + 0.14F * group.bore + 0.10F * group.bore;
+            const auto centre = 0.5F * (group.zMin + group.zMax);
+            spans.emplace_back(centre - halfWidth, centre + halfWidth);
+        }
+        std::sort(spans.begin(), spans.end());
+        auto journalFrom = start;
+        for (const auto& [front, back] : spans) {
+            // The web overlaps the journal a little, so the two read as one forging.
+            if (front + 0.02F * b > journalFrom) {
+                appendShaft(shaft, {}, journalFrom, front + 0.02F * b - journalFrom, 0.23F * b, 32);
+                mainJournals_.push_back({ journalFrom, front + 0.02F * b, 0.23F * b });
+            }
+            journalFrom = std::max(journalFrom, back - 0.02F * b);
+        }
+        if (end > journalFrom) {
+            appendShaft(shaft, {}, journalFrom, end - journalFrom, 0.23F * b, 32);
+            mainJournals_.push_back({ journalFrom, end, 0.23F * b });
+        }
         // Nose pulley with a timing mark, flywheel with a ring gear and bolts:
         // round parts, so the marks are what shows the rotation.
         const auto pulleyLength = 0.3F * b;
@@ -763,10 +816,20 @@ void EngineModel3D::buildTwoStrokeStructure() {
         const auto flange = bottom + axis * (0.2F * radius + 0.03F * b);
         appendBox(block, Mat4::basis(side, axis, tangent, flange), { 1.55F * b, 0.06F * b, 1.4F * b });
         if (c.powerValvePart != 0xFFFFU) {
-            // The valve's housing and actuator over the exhaust spigot.
-            const auto housing = c.exhaustWindowCentre + side * (0.78F * b) + axis * (0.36F * b);
-            appendBox(block, Mat4::basis(tangent, side, axis, housing), { 0.9F * b, 0.32F * b, 0.26F * b });
-            solids_.push_back(boxSolid(tangent, side, axis, housing, { 0.9F * b, 0.32F * b, 0.26F * b }));
+            // The valve's housing, cast with the barrel just above the
+            // exhaust port's roof (its blade slides in the wall there), and
+            // the actuator's round cover on its end. It stood 0.58 bore out
+            // from the barrel, a grey box floating over the pipe (owner
+            // 2026-11-14).
+            const auto inner = c.barrelRadius - 0.08F * b;
+            const auto outer = c.barrelRadius + 0.22F * b;
+            const auto housing = c.exhaustPortRoof + axis * (0.14F * b) + side * (0.5F * (inner + outer));
+            const Vec3 size { 0.9F * b, outer - inner, 0.22F * b };
+            appendBox(block, Mat4::basis(tangent, side, axis, housing), size);
+            solids_.push_back(boxSolid(tangent, side, axis, housing, size));
+            const auto cover = housing + tangent * (0.45F * b);
+            appendCylinder(block, Mat4::frameAlongY(cover, tangent), 0.11F * b, 0.11F * b, 0.10F * b, 24);
+            solids_.push_back(cylinderSolid(cover, tangent, 0.11F * b, 0.10F * b));
         }
         constexpr float headHeight = 0.26F;
         appendCylinder(heads, cylinderFrame(c.deckCentre, axis), 0.72F * b, 0.64F * b, headHeight * b, 40);
