@@ -139,6 +139,9 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- **The target AFR map goes to 30 (lambda 2.04)**, from 18 (lambda 1.22).
+  Tables saved before keep their values and take the new limit when they
+  load. The combustion still misfires more and more lean of lambda 1.12.
 - **An automated manual gearbox shifts like one.** On an upshift it cuts the
   spark and the fuel first and opens its clutch only once the engine has
   stopped driving (at most 0.15 s later), so the engine no longer flares
@@ -170,6 +173,10 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **A stalled engine is no longer destroyed standing still.** Stopped at
+  full load past its firing-pressure limit (a dyno brake that stalls it),
+  it kept counting its last cycle's peak as damage and broke within
+  seconds at 0 rpm.
 - **The part inspector scrolls when it is taller than the view.** A gearbox
   of many gears (16, say) hung its last ratios, its Reset and its style
   button below the window, out of reach; the panel now stops above the

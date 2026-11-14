@@ -311,7 +311,32 @@ void testDefaultEcuMapsAndFileHotReload() {
 
 } // namespace
 
+/** A petrol AFR table saved when its limit was 18.0 (lambda 1.22) loads
+ *  with today's limit, its values untouched, so a lean cell can be entered. */
+void testSavedAfrLimitIsWidened() {
+    const auto config = enginelab::makeDefaultInlineFour();
+    auto saved = makeDefaultEcuCalibration(config);
+    const auto* generated = std::get_if<CalibrationTable2D>(saved.find(keys::targetAirFuelRatio));
+    require(generated != nullptr, "generated maps hold a target AFR table");
+    require(generated->metadata.hardLimits.maximum == ecuLimits::maximumGasolineAirFuelRatio
+                && ecuLimits::maximumGasolineAirFuelRatio >= 25.0,
+            "a petrol map is generated with a limit lean of lambda 1.7");
+    auto old = *generated;
+    old.metadata.hardLimits.maximum = 18.0;
+    saved.set(old);
+    addMissingDefaultSettings(saved, config);
+    const auto* loaded = std::get_if<CalibrationTable2D>(saved.find(keys::targetAirFuelRatio));
+    require(loaded != nullptr && loaded->metadata.hardLimits.maximum == ecuLimits::maximumGasolineAirFuelRatio,
+            "a table saved under the 18.0 limit takes today's limit");
+    require(loaded->values == old.values, "widening the limit leaves the values");
+    auto lean = *loaded;
+    lean.values.back() = 20.6;
+    saved.set(lean);
+    require(validate(saved).empty(), "a lambda 1.4 cell validates");
+}
+
 int main() {
+    testSavedAfrLimitIsWidened();
     testAxisValidationAndInterpolation();
     testInvalidDraftNeverPublishes();
     testKnownEcuContractRejectsSilentlyIgnoredMaps();

@@ -6337,9 +6337,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto severeKnock = std::max(0.0, state_.knockLevel - 0.45) / 0.55;
         // A firing pressure over the structural limit loads the head gasket,
         // ring lands and bearings beyond their design: 10 % over takes about
-        // 17 min to "damaged", 30 % about 2 min, 50 % about 40 s.
-        const auto overPressure = std::max(0.0,
-            state_.peakCylinderPressureBar / peakCylinderPressureLimitBar(config_) - 1.0);
+        // 17 min to "damaged", 30 % about 2 min, 50 % about 40 s. The peak is
+        // the last completed cycle's, and nothing replaces it once the crank
+        // stops: an engine stalled at full load (a dyno brake past its torque)
+        // kept its last firing peak and was destroyed standing still. Below
+        // the speed at which it fires (220 rpm) it takes no such load.
+        const auto overPressure = state_.rpm >= 220.0
+            ? std::max(0.0, state_.peakCylinderPressureBar / peakCylinderPressureLimitBar(config_) - 1.0)
+            : 0.0;
         const auto damageRate = severeKnock * state_.throttle * 0.0012 + overrev * overrev * 0.022
                               + std::max(0.0, state_.coolantTemperatureC - 115.0) * 0.000025 + oilStarvation * 0.002
                               + excessivePistonAcceleration * excessivePistonAcceleration * 0.002

@@ -122,6 +122,44 @@ void overPressureDamages() {
     require(overloaded.peakPressureDiagnostic, "the over-pressure is diagnosed");
 }
 
+/** A stopped engine fires no cycle, so it takes no pressure damage: the last
+ *  cycle's peak stays published (nothing replaces it), and the damage once
+ *  read it for ever. A designed DTM engine stalled by the dyno with a 508 bar
+ *  last peak went from 0.02 to destroyed in 3 s standing still. */
+void aStoppedEngineTakesNoPressureDamage() {
+    auto config = catalogueEngine("K20");
+    config.peakFiringPressureLimitBar = 40.0;
+    auto rig = std::make_unique<Rig>(config);
+    EngineState last;
+    auto rpm = 0.0;
+    auto damageAtStop = -1.0;
+    auto stoppedPeakBar = 0.0;
+    for (auto frame = 0; frame < 14 * 240; ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = t < 1.5;
+        controls.throttle = t >= 2.0 ? 1.0 : 0.0;
+        // Stalled at full throttle by a brake far past its torque, as a
+        // dyno's absorber can: the last completed cycle is a firing one.
+        if (t >= 2.0)
+            controls.dynamometerTorqueNm = t < 5.0
+                ? std::max(0.0, 2.0 * (rpm - 0.6 * config.redlineRpm))
+                : (rpm > 1.0 ? 3'000.0 : 0.0);
+        last = rig->simulator->step(frameSeconds, controls).state;
+        rpm = last.rpm;
+        if (t >= 9.0 && damageAtStop < 0.0) {
+            damageAtStop = last.damage;
+            stoppedPeakBar = last.peakCylinderPressureBar;
+        }
+    }
+    std::cout << "  K20 overloaded then stalled at full throttle: damage " << damageAtStop << " at rest (last peak "
+              << stoppedPeakBar << " bar, " << last.rpm << " rpm), " << last.damage << " 5 s later\n";
+    require(damageAtStop > 0.0 && damageAtStop < 1.0, "the overload damaged the engine without destroying it");
+    require(last.rpm < 1.0, "the engine is at rest");
+    require(last.damage == damageAtStop, "an engine at rest takes no more damage");
+}
+
 /** A diesel's mixing burn follows its rail pressure: at half the rail
  *  pressure, with the injector flow raised so its capacity is unchanged, the
  *  burn is slower and the firing peak lower. */
@@ -166,6 +204,8 @@ int main() {
     std::cout << "default limits: ok\n";
     overPressureDamages();
     std::cout << "over-pressure damage: ok\n";
+    aStoppedEngineTakesNoPressureDamage();
+    std::cout << "no pressure damage at rest: ok\n";
     railPressureDrivesTheDieselBurn();
     std::cout << "diesel rail pressure: ok\n";
     startOfInjectionSetsTheDieselBurn();

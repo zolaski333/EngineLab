@@ -313,6 +313,18 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
 
 void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config) {
     (void)syncVtecSettings(draft, config);
+    // A table saved under a narrower AFR limit keeps the limit it was saved
+    // with (the file carries it): widen it to today's, values untouched.
+    if (const auto* afr = draft.find(keys::targetAirFuelRatio)) {
+        const auto widest = config.fuel == FuelType::diesel
+            ? ecuLimits::maximumDieselSmokeLimitAirFuelRatio : ecuLimits::maximumGasolineAirFuelRatio;
+        const auto& stored = metadataOf(*afr).hardLimits.maximum;
+        if (stored && *stored < widest) {
+            auto widened = *afr;
+            std::visit([widest](auto& entry) { entry.metadata.hardLimits.maximum = widest; }, widened);
+            draft.set(std::move(widened));
+        }
+    }
     if (antiLagCapable(config))
         for (auto& setting : antiLagSettings(config))
             if (draft.find(setting.metadata.id) == nullptr) draft.set(std::move(setting));

@@ -75,7 +75,10 @@ inline constexpr double minimumAirFuelRatio = 9.0;
 // The richest cell a generated (default) map holds, unchanged since the
 // limit above was 10.5: the shipped engines keep their maps.
 inline constexpr double minimumDefaultMapAirFuelRatio = 10.5;
-inline constexpr double maximumGasolineAirFuelRatio = 18.0;
+// Lambda 2.04: a pre-chamber lean-burn engine runs near 2, a fuel-flow-limited
+// racing engine lean of 1.3. Was 18.0 (lambda 1.22), under what a user may
+// build; the combustion decides what still fires, not the map.
+inline constexpr double maximumGasolineAirFuelRatio = 30.0;
 inline constexpr double maximumDieselSmokeLimitAirFuelRatio = 40.0;
 inline constexpr double maximumAirFuelRatio =
     maximumDieselSmokeLimitAirFuelRatio;

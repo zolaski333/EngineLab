@@ -10,7 +10,8 @@ namespace enginelab::calibration {
 
 /** Adds to tables saved before them the settings whose absence already meant
  *  their default, so the engine runs exactly as before and the tuner shows
- *  them: the overboost cut of a turbocharged engine. */
+ *  them: the overboost cut of a turbocharged engine. Widens a target-AFR
+ *  limit saved narrower than today's (18.0 before 2026-11-14). */
 void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config);
 
 /** Puts the tables' VTEC settings (`vtec.*`) in step with the engine: adds

@@ -5,12 +5,19 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-14 — a lean DTM engine: no boost runaway, a stalled engine destroyed standing still, the lean misfire draw
+
+- Owner's RC8 at the published specs, AFR 18 in the boosted cells: MAP read 4.2-6.4 bar. Traced (temporary): the dyno's absorber stalled the misfiring engine (35 % at AFR 18.3-19.7) from 10,300 rpm in 0.15 s; the turbo, still at 1.2x its design speed, held 6.5-7.7 bar against a stopped engine. Not a wastegate fault.
+- Then damage rose 0.02 -> 1 in 3 s at 0 rpm: the over-pressure term read the last completed cycle's peak (508 bar), which nothing replaces once the crank stops. Now counted only at 220 rpm and above (where it fires). `EngineLab.PeakPressure`: a K20 stalled at full throttle on a 40 bar limit kept 0.143 at rest (the test fails before). Catalogue K20, 2JZ, I5 sweeps bit-identical.
+- Petrol AFR limit 18 -> 30 (lambda 2.04); saved tables widened on load. A hand-edited file still validates against its own stored limit before the widening.
+- Then RC8 at lambda 1.22: 269 ch max (506 at 0.905); at lambda 1.40: 83 ch, nothing at 8,700. The cause is the lean misfire draw (`EngineSimulator.cpp`, from the first commit, unsourced): 0 at lambda 1.12, 0.72 x (lambda - 1.12) / 0.35, so 21 % at 1.22, 58 % at 1.40, the 0.92 cap at 1.57. Production homogeneous lean-burn engines ran near 1.4-1.5 (not sourced here); Quader SAE 741055/760760 and Shiomoto SAE 780235 are paywalled. Not changed: the EJ25's tip-in recovery rests on it (journal entry "AFR ~19.7, misfire chance 45 %").
+
 ## 2026-11-14 — knock under high boost: Douaud-Eyzat is not what stops the owner's 610 hp DTM engine
 
 - Owner's saved "Audi RC8" (2.0 I4 turbo, CR 12.5, 2.5 bar abs, knock control off, no intercooler): knock 0.8-0.9 at every speed, 444 ch; `DynoSweepHarness --saved-engine --saved-ecu` (new: the file's own ECU tables). Control on and intercooler 0.7: ~500 ch. At the published specs (CR 15, 3.5 bar, RON 102, control on) it still knocks with the 12 deg authority spent: 506 ch.
 - Onset traced (temporary, removed): spark ~4 deg ATDC, autoignition 15-45 deg ATDC at 115-275 bar and 775-1,030 K, 20-60 % of the charge unburnt. Turbulence x1.5: 588 ch, onset earlier and higher, still knocking.
 - Delay as the model uses it (D-E x2, RON 102) against boosted-engine correlations (Cho et al., Energies 2019, Table 1; all within 15 % of D-E x1 at 40 bar/800 K): at 118-250 bar it is 1.4-2.7x Hoepke 2012's, 2.5-2.8x McKenzie-Cheng 2016's, 5-7x Chen 2014's. The model is already more lenient than any of them; no change made.
-- Not settled: the real engine's lambda (fuel flow 95 kg/h suggests ~1.4, unverified), burn rate and IVC. A lean test was impossible: the gasoline AFR limit is 18.0 (lambda 1.22), and AFR 18 in the boosted cells ran MAP to 4.2-6.4 bar for 3.5 (engine lost) -- a boost-control lead, not looked into.
+- Not settled: the real engine's lambda (fuel flow 95 kg/h suggests ~1.4, unverified), burn rate and IVC. The lean test is the entry above.
 
 ## 2026-11-14 — anti-lag audit: cut locked on cylinders, rich mixture, exhaust limit read in the wrong place, surge on letting go
 
