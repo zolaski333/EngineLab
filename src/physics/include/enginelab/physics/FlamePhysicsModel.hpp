@@ -28,6 +28,11 @@ struct FlameEvent final {
     double flameSpeedMps { 0.0 };
     double efficiency { 0.0 };
     double initialBurnableFuelMoles { 0.0 };
+    /** The unburned charge's products-only fraction at ignition. The flame
+     *  burns into that mixture all the way; the cylinder's mean fraction,
+     *  which climbs as the flame's own products accumulate, is not what
+     *  dilutes the gas ahead of the front. */
+    double unburnedBurnedProductFraction { 0.0 };
     double elapsedSeconds { 0.0 };
     bool active { false };
 };

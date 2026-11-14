@@ -860,6 +860,21 @@ int main() {
         require(enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, dilutedConditions)
                     < enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, cleanConditions),
                 "residual-gas dilution must attenuate flame speed even at low turbulence");
+        {
+            // The front burns into the charge as it was at ignition. The
+            // cylinder's mean burned fraction climbs with the flame's own
+            // products; those sit behind the front and must not slow it.
+            enginelab::FlameEvent burning;
+            auto atSpark = cleanConditions;
+            atSpark.burnedGasFraction = 0.03;
+            flame.ignite(burning, fuel, atSpark, 1.0e-4);
+            auto midBurn = atSpark;
+            midBurn.burnedGasFraction = 0.20;
+            const auto step = flame.advance(burning, fuel, midBurn, 1.0e-5);
+            require(step.flameSpeedMps
+                        == enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, atSpark),
+                    "a flame must not be diluted by its own products");
+        }
         auto tumbleConditions = cleanConditions;
         tumbleConditions.meanPistonSpeedMps = 8.0;
         tumbleConditions.chamberTurbulenceIntensityRatio = 1.6;

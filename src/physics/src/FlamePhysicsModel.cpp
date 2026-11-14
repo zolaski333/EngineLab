@@ -105,6 +105,7 @@ void FlamePhysicsModel::ignite(FlameEvent& event, const FuelConfig& fuel,
     event.flameSpeedMps = turbulentFlameSpeedMps(fuel, conditions);
     event.efficiency = combustionEfficiency(conditions);
     event.initialBurnableFuelMoles = burnableFuelMoles;
+    event.unburnedBurnedProductFraction = conditions.burnedGasFraction;
     event.active = true;
 }
 
@@ -123,7 +124,12 @@ FlameStepResult FlamePhysicsModel::advance(FlameEvent& event, const FuelConfig& 
         event.axialTravelM = std::clamp(event.axialTravelM * expansion, 0.0, axialLimit);
     }
 
-    event.flameSpeedMps = turbulentFlameSpeedMps(fuel, conditions);
+    // The front burns into the charge as it was at ignition: its own
+    // products, which raise the cylinder's mean burned fraction as it goes,
+    // sit behind it and do not dilute what lies ahead.
+    auto unburned = conditions;
+    unburned.burnedGasFraction = event.unburnedBurnedProductFraction;
+    event.flameSpeedMps = turbulentFlameSpeedMps(fuel, unburned);
     const auto travel = event.flameSpeedMps * dtSeconds;
     event.radialTravelM = std::min(radialLimit, event.radialTravelM + travel);
     event.axialTravelM = std::min(axialLimit, event.axialTravelM + travel);
