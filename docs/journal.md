@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-16 — port film tau from Curtis et al. adopted on `exp/port-film-tau`: resume fixed, two tests fail
+
+- Applied (4aa40c3): the three port styles' tau x6.5 (0.26 / 0.17 / 0.49 s) and the serializers' port default 0.040 -> 0.26; the 13B and the two-strokes keep their authored film.
+- The I5's rich resume: its first charges took 51-53 mg for a 28-34 mg request while a 60 mm footprint held 35 mg against a 10 mg target (the film kept evaporating through the cut). The resume prime is now signed, a wet footprint comes off the pulse: `--dfco-tip-in` rich peaks I5 36.1 -> 34.5 % (inside 0.35), EJ25 17.0 -> 15.5, CP3 15.5 -> 13.6; the catalogue DFCO test passes.
+- Refuted: no prime at all (I5 35.2 %, CP4 38.5 % lean); counting the surplus over the charge's swept runner (I5 35.4 %); crediting the film over one cycle period (I5 36.9 %, 6.2 % misfires).
+- Suite at `-j 4`: 104/108; `LoadedAccelerationCatalogDfcoResume` and `AudioRender` timed out and pass alone. Two fail alone and pass with the old tau and the signed prime:
+- `Vtec`, the W16 torture engine's start: chaotic already with the old tau (flare to 1,500 rpm, idle ~550 for 750, trim 0.635); with the new tau the trim pins at its 0.559 floor, AFR 11.1 for 13.8, stall at 2.5 s. An over-fuelled start the long film exposes, not one it creates.
+- `AntiLag`, 2JZ armed at 0 % kept, full aggressiveness: torque +3.66 N.m against a limit of 1.18 (2 % of the 58.9 N.m drag off): the film feeds charges through the anti-lag's cut.
+- Not done: either fix; a listening A/B (both builds delivered to the owner, `EngineLab-essai-film-*`); a port-wall temperature law.
+
 ## 2026-11-15 — exhaust port heat: the pipe correlation is half of Caton-Heywood, and the mesh cannot hold a port
 
 - Caton & Heywood (IJHMT 24, 1981), CFR single, 1,000 rpm, IMEP 414 kPa: gas ~1,027 K in the cylinder, ~810-823 K mass-averaged at the port exit 114 mm from the valve (Table 4); turbulent pipe correlations, even with developing flow and roughness, underestimate that loss by more than 2x (fit coefficient 2.2); jet-driven `Nu = 0.35 Re_j^0.6` fits.
