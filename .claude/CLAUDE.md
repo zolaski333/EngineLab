@@ -241,7 +241,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   geometry, 12-14 dB); CFL 0.9; MUSCL-Hancock; third-order faces; one-sided open
   ends; deepening the muffler's single chamber (16 dB notch on the EJ25
   fundamental); the exhaust valve's flow as a four-valve superbike's missing
-  power (Cd 0.90 and plateau 1.5 give the designed CBR +3 %).
+  power (Cd 0.90 and plateau 1.5 give the designed CBR +3 %), or as the
+  turbos' high-speed pumping (plateau 0.65: at most +0.8 %; the fitted
+  turbine area is what sets it, journal 2026-11-15).
 - **Performance**: fork-join per cylinder with woken threads (the resident pool
   runs the pass since 2026-10-20); AVX/AVX2 (dependent-division latency); a
   telemetry cache for listening; state-variable valve-flow reconstruction

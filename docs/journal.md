@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-15 — turbos at high speed: the fitted turbine, not the exhaust valve
+
+- `DynoCurveHarness`, three turbos, full load: the I5 loses 32 N.m from 4,000 to 5,600 rpm at flat gross IMEP (25.5-25.8 bar), all of it pumping (-0.67 -> -2.22 bar); mean port back pressure only 0.93-1.15 x boost, but the cylinder's exhaust-stroke mean is 1.4 bar over it at 5,600. EJ25 falls 12 % from 4,000 to 6,000 (maker 6 %), the 2JZ 4 % (maker 4.5 %): the two generic heads (`turbo_street`, derived valves) fall too steeply, the benched 2JZ does not. BSFC 270-335 g/kWh at lambda 0.82-0.88: not over-efficient.
+- Exhaust port plateau 0.51 -> 0.65 (`DynoSweepHarness --exhaust-port-plateau`): at most +0.8 % (I5 6,000 rpm), EJ25 +0.2 %. The valve is not the cause.
+- Turbine area 700 mm2 (the default) for the fitted 450 / 500 / 600: I5 +5.5 to +8.8 % from 4,400 rpm (pumping -0.3, gross +1.2-1.5 bar), EJ25 +4-6 %, 2JZ +1.5-2 %; but the I5 holds 145 kPa at 2,000 rpm for 248 (shaft 0.54 of design). The areas were fitted (not measured) to the makers' low-speed torque, and that fit costs the top end.
+- Lead, not proven: the turbine is one isentropic orifice (`restrictionOrificeFlux`), choked from a pressure ratio of ~1.9. A radial turbine (nozzle and rotor in series) chokes near 3 and passes much less at low ratios for the same choked flow, so a real one spools early and still swallows rated flow. Needs a turbine map law (Watson and Janota 1982; Payri et al., Energy Convers. Manag. 55, 2012) and a refit of every turbo: nothing changed.
+
 ## 2026-11-15 — turbos at rated power: the spark map retarded boost twice
 
 - Makers' points at HEAD: 2JZ -10.9 / -9.8 %, EJ25 -9.2 / -13.7 %, I5 -6.4 / -12.8 %. One factor at a time (`DynoCurveHarness`, `KnockLimitCalibration`, sweeps with `--octane` and `--advance-offset`): the 2JZ burned at CA50 19-23 deg ATDC with no knock; +4 deg gave +2-3 % with none, knock from +8.
