@@ -577,12 +577,107 @@ void transferOracleRegression() {
               << junctionVolumeShapeDistanceDb << " dB\n";
 }
 
+/** A cone must carry no more power than it is given.
+ *
+ * A 27 mm pipe, a 100 mm cone to 66 mm, a 66 mm pipe and its open end. Far
+ * below the first resonance what lies downstream of the cone's mouth is a
+ * lumped inertance, rho times the sum of L/S plus the end correction, and the
+ * volume flow through the end radiates as a monopole: the transfer from the
+ * mouth to a microphone at r is rho0 / (4 pi r rho sum(L/S)), whatever drives
+ * it (a plane-wave transfer matrix agrees within 0.15 dB at 40 Hz). Each
+ * section of a cone once scattered with its inlet area at one end and its
+ * outlet area at the other, so a forward wave gained power across it: +3.3 dB
+ * here, +9 dB on the ACME single's radiated transfer (journal 2026-11-15).
+ */
+void taperPassivityRegression() {
+    auto config = makeFixture(FixtureTopology::straight);
+    // Microphones exactly 1 m down the outlet's axis, as authored.
+    config.acousticObserver.leftMicrophoneM = { 0.0, 1.0, 0.0 };
+    config.acousticObserver.rightMicrophoneM = { 0.0, 1.0, 0.0 };
+    config.acousticObserver.listeningDistanceM = 0.0;
+    enginelab::ExhaustNetworkConfig network;
+    const auto cylinderId = config.cylinders.front().id;
+    network.components.push_back(component(
+        100, enginelab::ExhaustComponentType::pipe, 200.0, 27.0));
+    auto cone = component(101, enginelab::ExhaustComponentType::pipe, 100.0, 27.0);
+    cone.outletDiameterMm = 66.0;
+    network.components.push_back(cone);
+    network.components.push_back(component(
+        102, enginelab::ExhaustComponentType::pipe, 300.0, 66.0));
+    auto outlet = component(200, enginelab::ExhaustComponentType::outlet, 50.0, 66.0);
+    outlet.acousticPositionM = { 0.0, 0.0, 0.0 };
+    network.components.push_back(outlet);
+    network.cylinderConnections.push_back({ cylinderId, 100 });
+    network.connections.push_back({ 100, 101 });
+    network.connections.push_back({ 101, 102 });
+    network.connections.push_back({ 102, 200 });
+    config.exhaustPaths.front().network = network;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    require(graph.diagnostics().empty(), "the cone fixture must compile without fallbacks");
+    const std::array<std::uint32_t, 1> cylinderIds { cylinderId };
+    enginelab::AcousticExhaustNetwork acoustic(graph, cylinderIds);
+    require(acoustic.valid() && acoustic.prepare(sampleRateHz),
+        "the cone fixture must compile and prepare for audio");
+    acoustic.setOutletJetNoiseEnabled(false);
+    constexpr double ambientDensityKgPerM3 = 1.2;
+    acoustic.setOutletFarFieldDensity(ambientDensityKgPerM3);
+    auto tapped = false;
+    for (const auto& node : graph.nodes()) {
+        if (node.sourceComponentId != 100U) continue;
+        tapped = acoustic.setPressureTap(node.id, 1.0F);
+        if (tapped) break;
+    }
+    require(tapped, "the cone fixture's first pipe must carry a pressure tap at its end");
+    const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+        { gasDensityKgPerM3, soundSpeedMps } }};
+    acoustic.beginBlock(medium, 1.0);
+
+    constexpr std::size_t samples = 96'000;
+    std::vector<double> tap(samples);
+    std::vector<double> microphone(samples);
+    std::array<float, 1> source {};
+    std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 1> boundary {};
+    for (std::size_t sample = 0; sample < samples; ++sample) {
+        source[0] = sample == 0 ? 1'000.0F : 0.0F;
+        const auto output = acoustic.process(source, boundary, 1.0F);
+        tap[sample] = acoustic.lastTapPressurePa();
+        microphone[sample] = output[0].leftPa;
+    }
+    const auto magnitudeAt = [](const std::vector<double>& signal, double frequencyHz) {
+        std::complex<double> sum {};
+        const auto step = std::polar(1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRateHz);
+        std::complex<double> rotation { 1.0, 0.0 };
+        for (const auto value : signal) {
+            sum += value * rotation;
+            rotation *= step;
+        }
+        return std::abs(sum);
+    };
+    constexpr double frequencyHz = 40.0;
+    const auto measuredDb = 20.0 * std::log10(
+        magnitudeAt(microphone, frequencyHz) / magnitudeAt(tap, frequencyHz));
+    const auto area = [](double diameterM) {
+        return std::numbers::pi * diameterM * diameterM / 4.0;
+    };
+    const auto inertancePerDensity = 0.100 / (std::numbers::pi / 4.0 * 0.027 * 0.066)
+        + (0.300 + 0.050 + 0.6133 * 0.033) / area(0.066);
+    // The fixture's observer sits at its 1 m listening distance.
+    const auto expectedDb = 20.0 * std::log10(ambientDensityKgPerM3
+        / (4.0 * std::numbers::pi * 1.0 * gasDensityKgPerM3 * inertancePerDensity));
+    std::cout << "Taper passivity: transfer at 40 Hz " << measuredDb
+              << " dB, lumped inertance " << expectedDb << " dB\n";
+    require(std::abs(measuredDb - expectedDb) < 0.5,
+        "a cone in the audio network must transmit what its inertance passes, not gain power ("
+            + std::to_string(measuredDb) + " dB against " + std::to_string(expectedDb) + " dB)");
+}
+
 } // namespace
 
 namespace enginelab::tests {
 
 void exhaustTransferRegression() {
     transferOracleRegression();
+    taperPassivityRegression();
 }
 
 } // namespace enginelab::tests

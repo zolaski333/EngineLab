@@ -196,6 +196,14 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **An exhaust cone no longer makes sound out of nothing.** In the audio
+  exhaust a tapered pipe (a megaphone, a two-stroke's expansion chamber, the
+  Merlin's stacks) passed its pressure wave unchanged from its narrow end to
+  its wide one, so the wave came out with more power than it went in with:
+  the ACME single read 6-9 dB over its published measurement, and now reads
+  within 1.3 dB. The Merlin is about 6 dB quieter; the RD350 is 5-6 dB
+  quieter at idle and low speed and 1-2 dB louder at the top. Engines
+  without a cone sound exactly as before.
 - **A combustion flame no longer slows itself down.** Its speed was diluted
   by its own burned gas as it spread; it now burns into the charge as it was
   at the spark. Full-load torque is up 0.5-2.9 %.

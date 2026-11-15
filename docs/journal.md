@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-15 — the ACME's radiated excess was the audio network's cones gaining power, not missing damping
+
+- Tools: `--exhaust-tap` (the network's own pressure in a render) and `AcousticTransferProbe` (the network alone, impulse at the port, tap-to-microphone transfer). Against a plane-wave transfer matrix (Munjal; 40-section cone, Levine-Schwinger end, ambient rho0) the ACME (b) network's transfer from the transducer to 0.5 m read +9.0 dB at 25-200 Hz, +11-13 dB at 350-750: a constant at frequencies where the downstream system is a plain inertance, so a gain, not a Q.
+- Cause: each section of a taper scattered with its inlet area at one end and its outlet area at the other while its line carries pressure unchanged, so a forward wave gained power by A_out/A_in (x6 across the 27-66 mm cone) and a returning one lost it. Fix (`sound/taper-passive`): each section is the cylinder of its frustum's volume (staircase); straight ducts are untouched. The network then matches the transfer matrix within 0.05 dB below 500 Hz, its peaks at 315 / 785 Hz on the matrix's 315 / 790.
+- ACME at 0.5 m, overall: (a) +5.6 -> -0.1, (b) +9.3 -> -1.3, (c) +6.1 -> -0.5 dB against the book. Bands still off: (a) 500-1000 Hz -9 dB, (c) -12 dB (the scan's page curve may hold some of it), (b) below 250 Hz -5 dB.
+- Catalogue: only the Merlin (12 tapered ducts) and the RD350 (6) change; K20A bit-identical (showcase render, master). Merlin exhaust -6 dB throughout, least above 1 kHz; RD350 -5 to -6 dB at idle and low speed (63 Hz octave -15), +1 to +2 dB at 9,600 rpm. Same number of lines and junctions: real time not measured, nothing to cost. The owner judges by ear: both builds delivered.
+- Not kept: an interior tap reads the raw lines while the junction sees them wall-filtered; near an open end at low frequency that read was 9 dB off. A tap at a duct's end is exact (`5820773`). The ACME matrix comparison used an interior tap (60 mm in, away from such a cancellation); the test cone's was checked at its ends, and the overall levels use no tap.
+
 ## 2026-11-15 — ACME diesel single against Winterbone & Pearson: the pipe is right, the radiated sound 6-9 dB loud
 
 - Case: the ACME-ADN 43W (426 cc, CR 19) with the three silencers of Winterbone & Pearson (1999) 6.6.2, `tests/reference-data/winterbone-acme/` (book: engine, valve events, every pipe, rated 6.5 kW, the 0.5 m / 45 deg microphone; estimated and named in the file: lifts, intake, injection, load). Model 7.0-7.2 kW at the book's speeds. Book spectra read off Figs 6.12-6.14 (+-2 dB; the scan's page curve may lower Fig 6.13 above 800 Hz by up to 8 dB).

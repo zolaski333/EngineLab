@@ -510,7 +510,11 @@ characteristic guides. The historical metrics `audio_volume`,
 transmission do not colour the SI boundary. Firing order, pressure, flow,
 temperature and geometry are enough to produce the acoustic characteristics.
 
-Each component of finite length becomes a bidirectional delay line. Direct
+Each component of finite length becomes a bidirectional delay line. A cone
+(a pipe with an `outlet_diameter_mm`) becomes up to four delay lines, each the
+cylinder of its frustum's volume: a line carries its pressure wave unchanged,
+so its two ends must share one area, or a wave crossing a cone gains or loses
+power (journal 2026-11-15). Direct
 interfaces, merges and splitters use passive admittance scattering; a crossover
 uses its passive, matched four-port matrix. Trunk lengths carried by a branch
 stay ducts, and each outlet keeps its own radiation load, position and axis. A

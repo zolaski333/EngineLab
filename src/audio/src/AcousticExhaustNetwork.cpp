@@ -338,8 +338,22 @@ struct AcousticExhaustNetwork::Impl final {
                 duct.lengthM = descriptor.lengthM
                     / static_cast<double>(sectionCount);
                 duct.areaM2 = std::max(1.0e-10, sectionAreaM2);
-                duct.inletAreaM2 = std::max(1.0e-10, sectionInletAreaM2);
-                duct.outletAreaM2 = std::max(1.0e-10, sectionOutletAreaM2);
+                // A delay line carries its pressure wave unchanged, so both of
+                // its ends must present one characteristic admittance. A
+                // section scattering with its inlet area at one end and its
+                // outlet area at the other made a forward wave gain power by
+                // A_out/A_in and a returning one lose it: x6 across the ACME
+                // single's 27-66 mm cone, +9 dB on its radiated transfer
+                // against the plane-wave transfer matrix (journal
+                // 2026-11-15). Each section of a taper is the cylinder of its
+                // frustum's volume, the staircase of the transfer-matrix
+                // codes (Munjal 1987): the steps between sections scatter, and
+                // a scattering step is lossless. A straight duct is untouched.
+                const auto uniform = sectionInletAreaM2 != sectionOutletAreaM2;
+                duct.inletAreaM2 = std::max(1.0e-10,
+                    uniform ? sectionAreaM2 : sectionInletAreaM2);
+                duct.outletAreaM2 = std::max(1.0e-10,
+                    uniform ? sectionAreaM2 : sectionOutletAreaM2);
                 duct.radiusM = descriptor.homogenisedCatalystMonolith
                     ? 0.5 * descriptor.hydraulicDiameterM
                     : std::sqrt(duct.areaM2 / std::numbers::pi);
