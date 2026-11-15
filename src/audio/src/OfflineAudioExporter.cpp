@@ -737,6 +737,20 @@ OfflineAudioExportResult exportOfflineAudio(
         if (result.loadedImpulseResponses != 0)
             std::this_thread::sleep_for(
                 std::chrono::milliseconds(300));
+        if (request.exhaustPressureTap) {
+            const auto tapGraph = ExhaustGraph::makeForEngine(config);
+            auto tapped = false;
+            for (const auto& node : tapGraph.nodes()) {
+                if (node.sourceComponentId
+                    != request.exhaustPressureTap->componentId) continue;
+                tapped = renderer->setExhaustPressureTap(node.id,
+                    static_cast<float>(request.exhaustPressureTap->axialFraction),
+                    static_cast<std::size_t>(totalFrames) + 4'096U);
+                if (tapped) break;
+            }
+            if (!tapped)
+                return fail("No audio exhaust duct carries the tapped component.");
+        }
 
         for (const auto& finalWave : finalWavePaths) {
             const auto partial = partialPathFor(finalWave);
@@ -1326,6 +1340,15 @@ OfflineAudioExportResult exportOfflineAudio(
             std::filesystem::rename(partial, finalFile);
         }
         result.files = std::move(finalFiles);
+        if (request.exhaustPressureTap) {
+            const auto tapPath = request.outputDirectory / "exhaust_tap_pa.f32";
+            const auto& recording = renderer->exhaustTapRecording();
+            std::ofstream tap(tapPath, std::ios::binary | std::ios::trunc);
+            tap.write(reinterpret_cast<const char*>(recording.data()),
+                static_cast<std::streamsize>(recording.size() * sizeof(float)));
+            if (!tap) return fail("Could not write exhaust_tap_pa.f32.");
+            result.files.push_back(tapPath);
+        }
         result.success = true;
         return result;
     } catch (const std::exception& exception) {

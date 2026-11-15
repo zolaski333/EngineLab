@@ -223,6 +223,10 @@ struct AcousticExhaustNetwork::Impl final {
     double farFieldDensityKgPerM3 { 0.0 };
     bool outletPressureRelease { false };
     bool mediaInitialised { false };
+    /** Diagnostic pressure tap (setPressureTap). */
+    std::size_t tapDuct { invalidEndpoint };
+    float tapFraction { 0.0F };
+    float tapPressurePa { 0.0F };
     double sampleRateHz { 48'000.0 };
     double maximumDelayScale { 12.5 };
     // Note: the observer distance is validated as an API contract in prepare()
@@ -1764,6 +1768,16 @@ AcousticExhaustNetwork::process(
             ? nextComplianceIncident : 0.0F;
     }
 
+    if (impl_->tapDuct < impl_->ducts.size()) {
+        const auto& duct = impl_->ducts[impl_->tapDuct];
+        const auto forwardDelay = std::max(
+            1.0F, impl_->tapFraction * duct.delaySamples);
+        const auto reverseDelay = std::max(
+            1.0F, (1.0F - impl_->tapFraction) * duct.delaySamples);
+        impl_->tapPressurePa =
+            impl_->readDelayed(duct.forward, duct.write, forwardDelay, 0.0F, true)
+            + impl_->readDelayed(duct.reverse, duct.write, reverseDelay, 0.0F, true);
+    }
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
         auto& duct = impl_->ducts[index];
         duct.forward[duct.write] = std::isfinite(impl_->outgoing[index * 2U])
@@ -1877,6 +1891,23 @@ std::array<StereoPressure, AcousticExhaustNetwork::maximumPaths>
 AcousticExhaustNetwork::lastOutletJetNoisePressure() const noexcept {
     return impl_ ? impl_->lastJetNoise
                  : std::array<StereoPressure, maximumPaths> {};
+}
+
+bool AcousticExhaustNetwork::setPressureTap(
+    std::uint32_t nodeId, float axialFraction) noexcept {
+    if (!impl_ || !std::isfinite(axialFraction)) return false;
+    for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
+        if (impl_->ducts[index].nodeId != nodeId) continue;
+        impl_->tapDuct = index;
+        impl_->tapFraction = std::clamp(axialFraction, 0.0F, 1.0F);
+        impl_->tapPressurePa = 0.0F;
+        return true;
+    }
+    return false;
+}
+
+float AcousticExhaustNetwork::lastTapPressurePa() const noexcept {
+    return impl_ ? impl_->tapPressurePa : 0.0F;
 }
 
 bool AcousticExhaustNetwork::valid() const noexcept {

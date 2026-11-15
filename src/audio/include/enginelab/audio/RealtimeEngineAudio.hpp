@@ -285,6 +285,22 @@ public:
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletPressureRelease(enabled);
     }
+    /** Diagnostic: every sample the compiled exhaust network runs, append its
+     * pressure at `axialFraction` of graph node `nodeId` to a recording of
+     * at most `capacitySamples` (AcousticExhaustNetwork::setPressureTap).
+     * Allocates: call after prepare(), never against a running callback.
+     * False without a compiled network or a duct for that node. */
+    bool setExhaustPressureTap(std::uint32_t nodeId, float axialFraction,
+                               std::size_t capacitySamples) {
+        exhaustTapRecording_.clear();
+        exhaustTapRecording_.reserve(capacitySamples);
+        exhaustTapCapacity_ = capacitySamples;
+        return acousticExhaustNetwork_
+            && acousticExhaustNetwork_->setPressureTap(nodeId, axialFraction);
+    }
+    [[nodiscard]] const std::vector<float>& exhaustTapRecording() const noexcept {
+        return exhaustTapRecording_;
+    }
     /** Turbulent fluctuation of each exhaust valve's effective area
      * (ValveTurbulenceNoise), off by default. Same threading rule as above. */
     void setValveTurbulenceNoiseEnabled(bool enabled) noexcept {
@@ -623,6 +639,9 @@ private:
     /** Complete compiled DAG used by production engines. Null only for legacy
      * producers/tests that did not supply topology. */
     std::unique_ptr<AcousticExhaustNetwork> acousticExhaustNetwork_;
+    /** Diagnostic recording (setExhaustPressureTap); empty in production. */
+    std::vector<float> exhaustTapRecording_;
+    std::size_t exhaustTapCapacity_ { 0 };
     /** A compiled exhaust on its way in, with the rate it was prepared at. */
     struct ExhaustNetworkHandoff final {
         std::unique_ptr<AcousticExhaustNetwork> network;

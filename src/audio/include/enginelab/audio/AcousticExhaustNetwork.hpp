@@ -135,6 +135,15 @@ public:
     [[nodiscard]] std::array<StereoPressure, maximumPaths>
     lastOutletJetNoisePressure() const noexcept;
 
+    /** Diagnostic: after each process() the plane-wave pressure, Pa, at
+     * `axialFraction` (0 inlet, 1 outlet) of the first audio duct compiled
+     * from graph node `nodeId`, the forward and reverse lines read at their
+     * partial delays. It never feeds the output. False when no duct
+     * carries that node. */
+    [[nodiscard]] bool setPressureTap(std::uint32_t nodeId,
+                                      float axialFraction) noexcept;
+    [[nodiscard]] float lastTapPressurePa() const noexcept;
+
     [[nodiscard]] bool valid() const noexcept;
     [[nodiscard]] std::size_t ductCount() const noexcept;
     [[nodiscard]] std::size_t junctionCount() const noexcept;

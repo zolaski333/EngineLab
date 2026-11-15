@@ -41,6 +41,7 @@ void printUsage() {
         << "  [--intake <0..2>] [--mechanical <0..2>]\n"
         << "  [--overwrite]\n"
         << "  [--exhaust-cell-mm <mm>]  (a measurement mesh, not the application's)\n"
+        << "  [--exhaust-tap <component>:<fraction>]  (the audio network's own pressure there, exhaust_tap_pa.f32)\n"
         << "  [--loop-pack [--loop-step <rpm>] [--loop-seconds <s>] [--ogg]]\n"
         << "      seamless loops for a game instead of the showcase (48 kHz)\n"
         << "  --list-engines\n";
@@ -81,6 +82,7 @@ int main(int argc, char** argv) {
     double loopStep = 500.0;
     double loopSeconds = 2.0;
     std::optional<double> exhaustCellMm;
+    std::optional<enginelab::OfflineAudioExportRequest::ExhaustPressureTap> exhaustTap;
     enginelab::OfflineAudioMix mix;
     struct MixOverrides final {
         std::optional<double> volume;
@@ -220,6 +222,18 @@ int main(int argc, char** argv) {
                 return 1;
             }
             exhaustCellMm = parsed;
+        } else if (option == "--exhaust-tap") {
+            const std::string text(value);
+            const auto colon = text.find(':');
+            double fraction {};
+            if (colon == std::string::npos || colon == 0
+                || !parseDouble(text.substr(colon + 1).c_str(), fraction)
+                || fraction < 0.0 || fraction > 1.0) {
+                std::cerr << "Exhaust tap is <component id>:<fraction 0..1>.\n";
+                return 1;
+            }
+            exhaustTap = enginelab::OfflineAudioExportRequest::ExhaustPressureTap {
+                static_cast<std::uint32_t>(std::stoul(text.substr(0, colon))), fraction };
         } else if (option == "--mechanical") {
             double parsed {};
             if (!parseDouble(value, parsed)
@@ -348,6 +362,7 @@ int main(int argc, char** argv) {
     request.writeStems = writeStems;
     request.overwriteExistingFiles = overwrite;
     if (exhaustCellMm) request.exhaustCellLengthM = *exhaustCellMm * 1.0e-3;
+    request.exhaustPressureTap = exhaustTap;
 
     std::cout << "Engine: " << request.engine.name << '\n'
               << "Scenario: " << request.scenario.name << '\n'

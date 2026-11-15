@@ -250,3 +250,9 @@ target_link_libraries(EngineLabPressureProbeHarness PRIVATE
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 target_compile_definitions(EngineLabPressureProbeHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabPressureProbeHarness)
+
+add_executable(EngineLabAcousticTransferProbe AcousticTransferProbe.cpp)
+target_link_libraries(EngineLabAcousticTransferProbe PRIVATE
+    EngineLab::Audio EngineLab::Exhaust EngineLab::Catalog EngineLab::Foundation)
+target_compile_definitions(EngineLabAcousticTransferProbe PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabAcousticTransferProbe)

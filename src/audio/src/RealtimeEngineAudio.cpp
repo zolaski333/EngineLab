@@ -2115,6 +2115,9 @@ void RealtimeEngineAudio::renderSynthesis(
                 std::span<const float>(cylinderExhaustPulse.data(), activeCylinderCount),
                 std::span<const PortBoundary>(portBoundary_.data(), activeCylinderCount),
                 controlRampCoefficient_);
+            if (exhaustTapRecording_.size() < exhaustTapCapacity_)
+                exhaustTapRecording_.push_back(
+                    acousticExhaustNetwork_->lastTapPressurePa());
             auto jetNoisePressure =
                 acousticExhaustNetwork_->lastOutletJetNoisePressure();
             if (swappingExhaustNetwork_ != nullptr) {

@@ -63,6 +63,15 @@ struct OfflineAudioExportRequest final {
      *  published pipe; absent keeps the production mesh the application runs
      *  (EngineSimulator::productionExhaustCellLengthM). */
     std::optional<double> exhaustCellLengthM;
+    /** Diagnostic: the audio exhaust network's own pressure, Pa, at
+     *  `axialFraction` of authored component `componentId`, written every
+     *  synthesis sample to exhaust_tap_pa.f32 (raw little-endian float32 at
+     *  the render rate). Nothing else in the render changes. */
+    struct ExhaustPressureTap final {
+        std::uint32_t componentId {};
+        double axialFraction {};
+    };
+    std::optional<ExhaustPressureTap> exhaustPressureTap;
 };
 
 /** Speed actually reached inside one scenario stage.
