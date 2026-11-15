@@ -11,7 +11,9 @@ sequential_port:
   rail_pressure_bar: 4.0
   reference_pressure_bar: 4.0
   wall_film_fraction: 0.22
-  vaporisation_time_constant_s: 0.040
+  # EXPERIMENT exp/port-film-tau: x6.5 (Curtis et al. SAE 961186, ~0.6 s
+  # effective at a warm port; the model divides by (T_runner-240)/120 ~ 0.45).
+  vaporisation_time_constant_s: 0.26
   latent_heat_kj_per_kg: 350
   port_charge_cooling_efficiency: 0.28
 
@@ -24,7 +26,7 @@ high_flow_port:
   rail_pressure_bar: 4.5
   reference_pressure_bar: 4.5
   wall_film_fraction: 0.16
-  vaporisation_time_constant_s: 0.026
+  vaporisation_time_constant_s: 0.17
   latent_heat_kj_per_kg: 350
   port_charge_cooling_efficiency: 0.32
 
@@ -37,7 +39,7 @@ continuous_manifold:
   rail_pressure_bar: 2.0
   reference_pressure_bar: 2.0
   wall_film_fraction: 0.38
-  vaporisation_time_constant_s: 0.075
+  vaporisation_time_constant_s: 0.49
   latent_heat_kj_per_kg: 350
   port_charge_cooling_efficiency: 0.22
 
