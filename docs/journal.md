@@ -5,6 +5,21 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-15 — exhaust port heat: the pipe correlation is half of Caton-Heywood, and the mesh cannot hold a port
+
+- Caton & Heywood (IJHMT 24, 1981), CFR single, 1,000 rpm, IMEP 414 kPa: gas ~1,027 K in the cylinder, ~810-823 K mass-averaged at the port exit 114 mm from the valve (Table 4); turbulent pipe correlations, even with developing flow and roughness, underestimate that loss by more than 2x (fit coefficient 2.2); jet-driven `Nu = 0.35 Re_j^0.6` fits.
+- Here every exhaust cell, port included, uses fully developed Gnielinski (no entrance term). Hand estimate at Caton's base case with the mean flow: ~1/5 of the measured 870 W; pulsation brings it nearer Caton's 1/2.
+- Not measured in the simulator, for structural reasons: the production four-stroke mesh is 360 mm a cell (a 114 mm port is a third of one), and the port wall is the primary's steel (K20A WOT 1,800 rpm: peak wall 159 C after 30 s, drifting +3.4 C/s), not a water-cooled head.
+- Lead, not a fix: a port element with a coolant-held wall and Caton's jet correlation would cool the gas the primaries carry (EGT, speed of sound, turbine energy): a default-sound change, for the owner.
+
+## 2026-11-15 — port fuel film: tau is 7-9x shorter than Curtis et al. measure; experiment on `exp/port-film-tau`
+
+- Curtis et al. (SAE 961186), 1.6 L PFI I4, 1,800 rpm, MAP 50 -> 80 kPa in 1 s, metered AFR held: tip-in lean peak x1.13 at a 299 K port skin, x1.05 at 349 K, back in ~1 s (x1.25 with valve deposits). Aquino (SAE 810494, central injection) gives X 0.3-1.0 and tau 0.1 s hot.
+- The model (`parts/injections.yaml`, unsourced since 92a01f2): X 0.22, tau 0.040 s divided by (T_runner-240)/120. K20A WOT 1,800 rpm: runner 19 C, so tau_eff 0.09 s, film 12.7 mg a cylinder. On Curtis's ramp, uncompensated: x1.009. X 0.22 fits the 349 K point with tau_eff ~0.8 s.
+- Experiment (one factor: the three styles' tau x6.5, tau_eff ~0.6 s): `LoadedAccelerationHarness --dfco-tip-in` lean resume peaks fall (LS3 26.8 -> 1.2 %, flat-6 16.8 -> 0.4, EJ25 23.8 -> 3.7, K20A 20.7 -> 5.8); rich peaks rise (I5 15.2 -> 36.1 %, over the 0.35 envelope; 2JZ 14.8 -> 19.1, 4.8 % misfire peak). `IdleStabilityRegression` passes (674 s); `ShiftStyle` and both `AudioShiftTransient` pass; DCT 1->2 sync I5 4,341 -> 4,436 rpm, 2JZ unchanged.
+- The ECU compensates with the physics' own X and tau, so steady and tip-in fuelling do not move; what moves is every cut (DFCO, shift, limiter): a sound change. The rich I5 resume is the resume logic tuned to the old tau (4 tau settling, fourth-root trim), not the film.
+- Not measured: the full suite, sound A/B, a port-wall temperature law (Curtis: the skin temperature sets tau; the model uses the runner's gas).
+
 ## 2026-11-15 — the ACME's radiated excess was the audio network's cones gaining power, not missing damping
 
 - Tools: `--exhaust-tap` (the network's own pressure in a render) and `AcousticTransferProbe` (the network alone, impulse at the port, tap-to-microphone transfer). Against a plane-wave transfer matrix (Munjal; 40-section cone, Levine-Schwinger end, ambient rho0) the ACME (b) network's transfer from the transducer to 0.5 m read +9.0 dB at 25-200 Hz, +11-13 dB at 350-750: a constant at frequencies where the downstream system is a plain inertance, so a gain, not a Q.
