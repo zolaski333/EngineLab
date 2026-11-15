@@ -299,7 +299,10 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   post-resume lambda-learning hold against the flat-6's early-blip dip (LS3,
   Big Twin, 13B fall under their gates); Poulos-Heywood's S_L dilution as a
   multiplier on the whole turbulent flame speed (2JZ power -18.7 % against
-  its maker; journal 2026-11-14): it needs a burn-up time to act through.
+  its maker; journal 2026-11-14). As S_L^(2/3) on the turbulent part (Hires
+  et al., SAE 780232) it holds full load but loses the catalogue's idles at
+  their 30 % residual (journal 2026-11-15, `exp/hires-dilution`): it needs
+  an idle recalibration the owner decides on.
 - **Knock** (journal 2026-10-13, -22): end gas at the MEAN temperature, or at
   constant cv (1,000-1,200 K); proportional or integral control; Kalghatgi's
   octane index (boost gains 1-3 octane); an ECU boost cut on knock (I5 363

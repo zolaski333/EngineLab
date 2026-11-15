@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-15 — flame: Poulos-Heywood felt as S_L^(2/3) holds full load, loses the idles (not kept)
+
+- Hires, Tabaczynski and Novak (SAE 780232, eqs. 19, 30): an eddy burns in lambda/S_L, so the burn rate goes as (u' S_L)^(2/3). Built: laminar part x Poulos-Heywood, turbulent part x its 2/3 power, coefficient 1.12 -> 1.29, five anchored engines re-anchored at their measured residual (`residual_spark` x 3.766): flat-6 0.50, Big Twin 0.55, radial 1.15, RD350 3.00, EJ25 1.68 (at 6,000 rpm, 9.4 %; anchored at 4,000 its power read -15.2 %). Local branch `exp/hires-dilution` (c610727).
+- Full load: CatalogReference -1.9 / +1.6 % against the freeze, all PASS; turbos -1.8 % at rated power (back-pressure residual). Off the list, Merlin/radial/13B/CP2 full/lab twin -0.1 / +0.7 %, RD350 -0.9 / -1.5 %. CombustionPhasing CA10/50/90 within 2 deg of HEAD.
+- Idle (`IdleStabilityRegression`, alone): with the load term 22 failures (flat-6 427 rpm for 780). Without it (Tabaczynski: u' follows the piston; Hires: part load is slow through its residual) 13: flat-6 509 rpm at 30.5 % residual (`--idle-firing`), S_L x 0.20 there; blip minimum 2JZ 631 -> 547, Hayabusa 1,242 -> 940, CP4 1,348 -> 1,009; RD350 idles 1,431 for 1,300. HEAD passes.
+- The catalogue's idles were calibrated on the unsourced law (0.78 x products-only fraction, x0.96 at idle, with the load term x0.4). Keeping the sourced law means recalibrating several idles, so every idle sound moves: an owner's decision. Nothing changed.
+- Winterbone and Pearson (Theory, 6.1, 6.3) for the exhaust's joints: the area step is Benson's model, already built and set aside on 2026-11-04 (aafd3e3); the constant-pressure junction is their accepted default, and the solver's 2-into-1 reads K 0.14-0.16. Nothing changed.
+
 ## 2026-11-15 — anti-lag: one torque sample decided the first 150 ms of a lift
 
 - After the flame fix, `ctest -j 4` 107/108: `EngineLab.AntiLag` (alone too), 0 % kept 4,998 -> 5,027 rpm. Traced (`--trace 0 0 100`) with and without the fix: the PI seeded its filtered torque on the lift frame's `state.torqueNm`, +940 N.m (a firing) before, -7 after. On +940 the air stayed shut 150 ms, the manifold fell 190 -> 115 kPa and the engine lost 500 rpm; the test passed on that.
