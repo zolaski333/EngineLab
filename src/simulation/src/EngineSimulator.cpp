@@ -3534,8 +3534,21 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                 portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex],
                                 resumeSettlingSeconds);
                     }
-                    portFuelPrimeDeficitMoles = dfcoResumeTransportActive
-                        ? footprintDeficitMoles : 0.0;
+                    // Signed during the resume epoch: a footprint wetter than
+                    // the target is fuel the next charge sweeps in, so it comes
+                    // off the pulse as a dry one adds to it. With a measured
+                    // film time constant (Curtis et al., SAE 961186: ~0.6 s
+                    // warm) the film keeps evaporating through the cut, and the
+                    // I5's first charges took 51-53 mg for a 28-34 mg request
+                    // while a footprint held 35 mg against a 10 mg target.
+                    // Measured: I5 resume rich peak 36.1 -> 34.5 %, EJ25 17.0
+                    // -> 15.5, CP3 15.5 -> 13.6. Counting the surplus over the
+                    // charge's swept volume of runner instead moved nothing
+                    // (I5 35.4 %), and no prime at all left the I5 at 35.2 %
+                    // and the CP4 38.5 % lean (journal 2026-11-15).
+                    portFuelPrimeDeficitMoles =
+                        dfcoResumeTransportActive && cylinderFuelEnabled
+                        ? targetInventoryMoles - footprintFuelMoles : 0.0;
                 }
             }
             auto& injectionTarget = portInjection

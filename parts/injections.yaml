@@ -11,8 +11,12 @@ sequential_port:
   rail_pressure_bar: 4.0
   reference_pressure_bar: 4.0
   wall_film_fraction: 0.22
-  # EXPERIMENT exp/port-film-tau: x6.5 (Curtis et al. SAE 961186, ~0.6 s
-  # effective at a warm port; the model divides by (T_runner-240)/120 ~ 0.45).
+  # Curtis, Aquino, Trumpy and Davis (SAE 961186) measured a warm PFI port's
+  # tip-in excursion settling in ~1 s; X 0.22 fits their warmest point with an
+  # effective tau of ~0.6-0.8 s. The model divides this value by
+  # (T_runner - 240)/120, ~0.45 at a 19 C runner, so 0.26 s is ~0.6 s
+  # effective. The other two port styles keep their ratio to this one
+  # (x6.5 together; 0.040, 0.026 and 0.075 before, unsourced).
   vaporisation_time_constant_s: 0.26
   latent_heat_kj_per_kg: 350
   port_charge_cooling_efficiency: 0.28

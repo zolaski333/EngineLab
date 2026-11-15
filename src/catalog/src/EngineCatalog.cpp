@@ -725,7 +725,7 @@ template <typename T>
         value.railPressureBar = 4.0;
         value.referencePressureBar = 4.0;
         value.wallFilmFraction = 0.22;
-        value.vaporisationTimeConstantSeconds = 0.040;
+        value.vaporisationTimeConstantSeconds = 0.26;
     }
     else if (mode == "direct") value.mode = InjectionMode::direct;
     else throw std::runtime_error("Unknown injection mode: " + mode);

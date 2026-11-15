@@ -36,7 +36,7 @@
       "intake_centerline_deg": 110.0,
       "exhaust_centerline_deg": 112.0
     },
-    "injection": { "mode": "port", "start_angle_deg": 260.0, "end_angle_deg": 610.0, "injector_flow_mg_s": 8000.0, "fuel_temperature_c": 25.0, "rail_pressure_bar": 4.0, "reference_pressure_bar": 4.0, "wall_film_fraction": 0.22, "vaporisation_time_constant_s": 0.04, "latent_heat_kj_per_kg": 350.0, "port_charge_cooling_efficiency": 0.28 },
+    "injection": { "mode": "port", "start_angle_deg": 260.0, "end_angle_deg": 610.0, "injector_flow_mg_s": 8000.0, "fuel_temperature_c": 25.0, "rail_pressure_bar": 4.0, "reference_pressure_bar": 4.0, "wall_film_fraction": 0.22, "vaporisation_time_constant_s": 0.26, "latent_heat_kj_per_kg": 350.0, "port_charge_cooling_efficiency": 0.28 },
     "solver": { "mechanical_frequency_hz": 2000.0, "maximum_frequency_hz": 60000.0, "maximum_crank_deg_per_step": 2.0, "gas_substeps": 1 },
     "exhaust": {
       "primary_length_mm": 480.0,

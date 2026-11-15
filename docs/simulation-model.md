@@ -473,7 +473,11 @@ the instantaneous cylinder back-pressure is subtracted.
   Halving the TDI's rail pressure at full load (3,000 rpm) lowers its firing
   peak from 136 to 123 bar with the injector capacity held.
 - With port injection, a fraction joins a persistent liquid film on the port.
-  Its evaporation depends on temperature and a time constant.
+  Its evaporation depends on temperature and a time constant: X 0.22 and
+  about 0.6 s at a warm runner, the warmest tip-in of Curtis et al. (SAE
+  961186, lean x1.05 settling in ~1 s). The temperature is the runner gas's,
+  not the port wall's that Curtis show sets the time constant; a cold port is
+  therefore not slower here than a warm one at the same air temperature.
 
 The commanded mass, the film, the vapour available at spark and the fuel
 actually consumed stay separate. A window that is too short, an undersized
@@ -483,7 +487,10 @@ With port injection, the pulse is sized once per cycle, at the first sub-step
 of the window: the charge's need, minus the film available before spark
 (X-tau) and the fuel of a chamber that misfired, divided by the share of the
 fresh pulse that is available. The port vapour is not credited: it is a
-stationary reservoir, not fuel for the next charge.
+stationary reservoir, not fuel for the next charge. During a fuel-cut resume
+the 60 mm footprint at the valve is balanced against its target both ways: a
+dry one adds to the pulse, a wet one (the film evaporating through the cut)
+comes off it.
 
 Gas pushed back past the throttle is kept in the airbox (`airbox_volume_l`) and
 drawn back in first. Without an airbox, the fuel it carries is lost.

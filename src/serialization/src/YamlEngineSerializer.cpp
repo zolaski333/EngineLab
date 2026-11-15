@@ -1304,7 +1304,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 config.injection.railPressureBar = 4.0;
                 config.injection.referencePressureBar = 4.0;
                 config.injection.wallFilmFraction = 0.22;
-                config.injection.vaporisationTimeConstantSeconds = 0.040;
+                config.injection.vaporisationTimeConstantSeconds = 0.26;
             }
             else if (mode == "direct") config.injection.mode = InjectionMode::direct;
             else return { std::nullopt, "Unknown injection mode: " + mode };

@@ -943,9 +943,10 @@ struct InjectionConfig final {
     double referencePressureBar { 200.0 };
     // Fraction of a port-injection pulse that wets the port wall as liquid
     // film instead of vaporising in flight (the X of the X-tau wall-film
-    // model; Aquino). Port-injection literature puts it at 0.3-0.6 warm and
-    // higher cold; the catalogue loader applies 0.22 to port-injected
-    // engines. Note, measured: the film does NOT by itself prevent the
+    // model; Aquino, SAE 810494). The catalogue loader applies 0.22 and
+    // 0.26 s to port-injected engines: with an effective tau of ~0.6 s that
+    // matches the warmest tip-in of Curtis et al. (SAE 961186, x1.05 at a
+    // 349 K port). Note, measured: the film does NOT by itself prevent the
     // flooded-misfire lock-in a big-cylinder engine can enter at idle catch
     // with a resolved 1-D runner (the V12 flooded identically at 0.22), so
     // do not reach for this knob to fix an idle. DI ignores this field.
