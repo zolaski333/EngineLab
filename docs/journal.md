@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-15 — turbos at rated power: the spark map retarded boost twice
+
+- Makers' points at HEAD: 2JZ -10.9 / -9.8 %, EJ25 -9.2 / -13.7 %, I5 -6.4 / -12.8 %. One factor at a time (`DynoCurveHarness`, `KnockLimitCalibration`, sweeps with `--octane` and `--advance-offset`): the 2JZ burned at CA50 19-23 deg ATDC with no knock; +4 deg gave +2-3 % with none, knock from +8.
+- Cause: the generated ignition map took 5 deg per bar above load 1, an unsourced rule older than the end-gas model and its control. Removed (9732f60): 2JZ +3.3 / +3.5 % at 4,000 / 5,600 (advance 9.6 -> 14.0, 10.8 -> 15.2, EGT -17 C, knock 0), Merlin +1.1 / +2.6 %, Hayabusa and CP4 within 0.2 %, atmospheric engines identical. EJ25 is held by knock control (4-5 deg retard, CA50 12-13), the I5 by its `knock_limit_curve`.
+- I5 curve re-measured on today's physics: 2.5-7.4 deg more advance, sweep +0.5 to +4.2 %, knock 0. Not kept here (`exp/i5-knock-limit`): `AudioRender`'s dyno cannot hold a 24 bar engine (integral 1.2/s, 4 s), so the I5 ends the render at 4,638 rpm for its 3,905 target (4,148 before) and crosses the 130 dB gate. Faster or scheduled absorber gains move every other engine's render: refuted as the fix.
+- Tests: the 2JZ runaway fixture is 3.59 bar (3.84 before) and now asserts past the bounds the line must hold; anti-lag at 0 and 50 % kept both end at the wastegate's shaft speed (131,163 / 131,448), so their order is asserted within 1 %, the 90 % run below both.
+- Open: high-rpm exhaust-stroke pumping rises on all three (I5 -1.93 -> -3.27 bar), with back-pressure only 1.0-1.15 x boost. Full-load sound of the 2JZ and Merlin was not compared before/after.
+
 ## 2026-11-15 — flame: Poulos-Heywood felt as S_L^(2/3) holds full load, loses the idles (not kept)
 
 - Hires, Tabaczynski and Novak (SAE 780232, eqs. 19, 30): an eddy burns in lambda/S_L, so the burn rate goes as (u' S_L)^(2/3). Built: laminar part x Poulos-Heywood, turbulent part x its 2/3 power, coefficient 1.12 -> 1.29, five anchored engines re-anchored at their measured residual (`residual_spark` x 3.766): flat-6 0.50, Big Twin 0.55, radial 1.15, RD350 3.00, EJ25 1.68 (at 6,000 rpm, 9.4 %; anchored at 4,000 its power read -15.2 %). Local branch `exp/hires-dilution` (c610727).

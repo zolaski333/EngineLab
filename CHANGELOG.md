@@ -139,6 +139,13 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- **Boosted engines make more of their power.** The generated spark map took
+  5 degrees off for every bar of boost on top of the knock model and its
+  control, which already retard a charge that knocks, so a turbo engine ran
+  late twice over. The map now holds its full-load advance under boost: the
+  2JZ gains 3.3-3.5 % with no knock, the Merlin 1.1-2.6 %; the EJ25 and
+  the I5 are held by their knock limit and do not move. The 2JZ's and the
+  Merlin's full-load sound moves with them. A saved ECU keeps its map.
 - **The target AFR map goes to 30 (lambda 2.04)**, from 18 (lambda 1.22).
   Tables saved before keep their values and take the new limit when they
   load. The combustion misfires lean of lambda 1.60 and loses most cycles

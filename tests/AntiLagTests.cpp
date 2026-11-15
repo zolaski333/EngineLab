@@ -329,7 +329,14 @@ void rallyKeepsItsShareOfTheBraking() {
         require(std::abs(run->meanTorqueNm - run->targetTorqueNm) < 0.2 * std::abs(off.meanTorqueNm),
                 "the engine's torque meets the braking asked for");
     require(armed.after.shaftRpm > 1.1 * off.after.shaftRpm, "the turbo keeps more of its speed");
-    require(hold.after.shaftRpm > armed.after.shaftRpm, "less braking kept, more turbo speed kept");
+    // Braking costs turbo speed where it closes the air (90 % kept: the
+    // manifold near 60 kPa). At 0 and 50 % both runs end at or above their
+    // loaded speed, where the wastegate holds the shaft, so their order is
+    // within 1 % and flips with any change to the loaded state (the spark
+    // map's boost retard removed: 129,331 / 128,483 became 131,163 / 131,448).
+    require(brake.after.shaftRpm < armed.after.shaftRpm && brake.after.shaftRpm < hold.after.shaftRpm,
+            "more braking kept, less turbo speed kept");
+    require(hold.after.shaftRpm > 0.99 * armed.after.shaftRpm, "keeping no braking costs no turbo speed");
     // The owner's report: nothing like the real thing. A rally anti-lag
     // keeps boost with the foot off and the turbo near its loaded speed,
     // the charges it cuts burning in the manifold. Before: the manifold

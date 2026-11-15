@@ -489,7 +489,7 @@ void topSpeedLineCostsEfficiency() {
  *  oxygen, 2.5 times any real fuel, as an owner's Fuel edit made it -- ran
  *  its turbocharger to 3.5 x its design speed and ten bar at 6,000 rpm
  *  (journal 2026-11-11). Without a top speed line or an overboost cut it
- *  still runs away (3.85 bar, 1.8 x design, at 5,000 rpm); with the line the shaft is held near it (and the wheel takes
+ *  still runs away (3.59 bar, 1.33 x its line, at 5,000 rpm); with the line the shaft is held near it (and the wheel takes
  *  damage); with the ECU's cut set to 40 kPa (it is off by default) the
  *  boost stays by its target. */
 void runawayFuelIsHeld() {
@@ -519,7 +519,11 @@ void runawayFuelIsHeld() {
               << lined.shaftRpmMax << " rpm, wheel damage " << lined.wheelDamage << "; with the overboost cut: boost "
               << guarded.boostMax << ", shaft " << guarded.shaftRpmMax << " rpm, cut "
               << (guarded.overboostCut ? "yes" : "no") << '\n';
-    require(free.boostMax > 3.6, "without the line or the cut the fixture runs away (else this proves nothing)");
+    // Runs away = past both bounds the line must hold below (3.84 bar before
+    // the spark map stopped retarding boost; its fuller burn leaves the
+    // turbine less, 3.59 bar and 1.33 x the line after).
+    require(free.boostMax > 3.0 && free.shaftRpmMax > 1.3 * topRpm,
+            "without the line or the cut the fixture runs away (else this proves nothing)");
     require(lined.boostMax < 3.0 && lined.shaftRpmMax < 1.3 * topRpm,
         "the top speed line holds the shaft near it and the boost under 3.0");
     require(lined.wheelDamage > 0.0, "and a wheel held past its line is damaged");
