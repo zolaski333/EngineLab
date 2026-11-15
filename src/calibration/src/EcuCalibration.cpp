@@ -177,9 +177,16 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         const auto afrLoadCorrection = normalizedLoad <= 1.0
             ? 0.45 - 1.40 * normalizedLoad
             : -0.95 - 0.65 * (normalizedLoad - 1.0);
+        // Above atmospheric load the map holds the full-load advance. It used
+        // to pull a further 5 deg per bar of boost, an unsourced rule written
+        // before the end-gas knock model and its control existed: those retard
+        // a charge that knocks, so the map retarded every boosted engine a
+        // second time (2JZ at 1.9 bar: CA50 21 deg ATDC with no knock at all,
+        // +3.3 % torque once removed). An engine's measured limit belongs in
+        // `ignition.knock_limit_curve`, which still clamps this table.
         const auto timingLoadCorrection = normalizedLoad <= 1.0
             ? 7.0 - 9.0 * normalizedLoad
-            : -2.0 - 5.0 * (normalizedLoad - 1.0);
+            : -2.0;
         for (const auto rpm : speed.breakpoints) {
             const auto highSpeedEnrichment = rpm > config.redlineRpm * 0.78 ? 0.35 : 0.0;
             if (config.fuel == FuelType::diesel) {

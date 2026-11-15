@@ -25,6 +25,31 @@ void requireNear(double actual, double expected, double tolerance, const char* m
 
 int main() {
     auto config = enginelab::makeDefaultInlineFour();
+    {
+        // Boost does not take spark off the generated map: the knock model
+        // and its control retard a charge that knocks, and a map that also
+        // pulled 5 deg per bar retarded every boosted engine twice (the 2JZ
+        // burned at CA50 21 deg ATDC with no knock at all).
+        enginelab::SimpleEcuModel generated;
+        generated.initialiseCalibration(config);
+        generated.beginFrame();
+        enginelab::EngineState boostState;
+        boostState.rpm = 4'000.0;
+        boostState.coolantTemperatureC = 90.0;
+        enginelab::EngineControls wideOpen;
+        wideOpen.ignitionEnabled = true;
+        wideOpen.throttle = 1.0;
+        const auto advanceAt = [&](double pressureRatio) {
+            boostState.manifoldPressureKpa = config.ambientPressureKpa * pressureRatio;
+            (void)generated.evaluate(config, boostState, wideOpen);
+            return generated.evaluate(config, boostState, wideOpen).ignitionAdvanceDegrees;
+        };
+        const auto atmospheric = advanceAt(1.0);
+        requireNear(advanceAt(2.0), atmospheric, 1.0e-9,
+                    "the generated spark map must not retard a boosted charge on its own");
+        requireNear(advanceAt(3.0), atmospheric, 1.0e-9,
+                    "the generated spark map must not retard a boosted charge on its own");
+    }
     enginelab::SimpleEcuModel ecu;
     ecu.initialiseCalibration(config);
     auto draft = enginelab::calibration::makeDraft(*ecu.calibrationStore()->snapshot());
