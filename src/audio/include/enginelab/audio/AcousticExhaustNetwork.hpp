@@ -139,7 +139,10 @@ public:
      * `axialFraction` (0 inlet, 1 outlet) of the first audio duct compiled
      * from graph node `nodeId`, the forward and reverse lines read at their
      * partial delays. It never feeds the output. False when no duct
-     * carries that node. */
+     * carries that node. At 0 or 1 it is exact, the end's incident plus
+     * scattered wave. Inside a duct it is approximate: the line's wall loss
+     * acts at its far end only, and where the two waves nearly cancel (low
+     * frequencies near an open end) that read was 9 dB off. */
     [[nodiscard]] bool setPressureTap(std::uint32_t nodeId,
                                       float axialFraction) noexcept;
     [[nodiscard]] float lastTapPressurePa() const noexcept;

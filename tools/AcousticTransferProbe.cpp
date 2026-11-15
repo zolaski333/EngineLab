@@ -43,13 +43,15 @@ struct Settings final {
     double seconds { 4.0 };
     double maxHz { 2'000.0 };
     double stepHz { 5.0 };
+    // The first samples of the tap's and the microphone's impulse responses, to stderr.
+    std::size_t dumpSamples { 0 };
 };
 
 [[noreturn]] void usage() {
     std::cerr << "usage: EngineLabAcousticTransferProbe --filter exact-key --component id"
                  " [--fraction 0..1] [--catalog-root dir] [--density kg/m3]"
                  " [--sound-speed m/s] [--mean-flow kg/s] [--far-field-density kg/m3] [--seconds s]"
-                 " [--max-hz hz] [--step-hz hz]\n";
+                 " [--max-hz hz] [--step-hz hz] [--dump samples]\n";
     std::exit(EXIT_FAILURE);
 }
 
@@ -72,6 +74,7 @@ Settings parse(int argc, char** argv) {
         else if (arg == "--seconds") s.seconds = std::stod(next());
         else if (arg == "--max-hz") s.maxHz = std::stod(next());
         else if (arg == "--step-hz") s.stepHz = std::stod(next());
+        else if (arg == "--dump") s.dumpSamples = std::stoul(next());
         else usage();
     }
     if (s.filter.empty() || s.componentId == 0 || !(s.seconds > 0.0)
@@ -151,6 +154,11 @@ int main(int argc, char** argv) {
             const auto output = network->process(source, boundaries, 1.0F);
             tap[sample] = network->lastTapPressurePa();
             microphone[sample] = output[0].leftPa;
+        }
+        if (settings.dumpSamples > 0) {
+            const auto count = std::min(samples, settings.dumpSamples);
+            for (std::size_t sample = 0; sample < count; ++sample)
+                std::cerr << sample << ',' << tap[sample] << ',' << microphone[sample] << '\n';
         }
         const auto tail = std::max(std::abs(microphone.back()), std::abs(tap.back()));
 

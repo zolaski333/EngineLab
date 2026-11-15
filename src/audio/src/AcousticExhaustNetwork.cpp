@@ -1770,13 +1770,20 @@ AcousticExhaustNetwork::process(
 
     if (impl_->tapDuct < impl_->ducts.size()) {
         const auto& duct = impl_->ducts[impl_->tapDuct];
-        const auto forwardDelay = std::max(
-            1.0F, impl_->tapFraction * duct.delaySamples);
-        const auto reverseDelay = std::max(
-            1.0F, (1.0F - impl_->tapFraction) * duct.delaySamples);
-        impl_->tapPressurePa =
-            impl_->readDelayed(duct.forward, duct.write, forwardDelay, 0.0F, true)
-            + impl_->readDelayed(duct.reverse, duct.write, reverseDelay, 0.0F, true);
+        if (impl_->tapFraction <= 0.0F || impl_->tapFraction >= 1.0F) {
+            // An end: the very waves its junction scattered this sample.
+            const auto key = impl_->tapDuct * 2U
+                + (impl_->tapFraction >= 1.0F ? 1U : 0U);
+            impl_->tapPressurePa = impl_->incident[key] + impl_->outgoing[key];
+        } else {
+            const auto forwardDelay = std::max(
+                1.0F, impl_->tapFraction * duct.delaySamples);
+            const auto reverseDelay = std::max(
+                1.0F, (1.0F - impl_->tapFraction) * duct.delaySamples);
+            impl_->tapPressurePa =
+                impl_->readDelayed(duct.forward, duct.write, forwardDelay, 0.0F, true)
+                + impl_->readDelayed(duct.reverse, duct.write, reverseDelay, 0.0F, true);
+        }
     }
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
         auto& duct = impl_->ducts[index];
