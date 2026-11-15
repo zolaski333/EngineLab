@@ -136,6 +136,12 @@ file formats, always with an in-memory migration).
   apply, a lean kit runs lean, and the bottle cools and loses pressure as it
   empties without its heater. Saved with the engine; nothing changes on an
   engine without a kit.
+- `EngineLabPressureProbeHarness`: a pressure transducer in an exhaust (the
+  cycle and its harmonics in dB SPL at one place of a component, and what the
+  outlets' flow radiates at a distance), and
+  `EngineLabOfflineAudioExporter --exhaust-cell-mm` for a render on a
+  measurement mesh. `tests/reference-data/winterbone-acme/` is the ACME
+  diesel single with the three silencers measured in Winterbone & Pearson.
 
 ### Changed
 

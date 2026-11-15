@@ -80,7 +80,9 @@ limits in `docs/physical-afterfire.md`, reopened only on a measured lead).
 (`docs/physical-afterfire.md`) and the plane-mode cutoff
 (`docs/thermoacoustic-architecture.md` 25.2), judged against any real
 recording at a known speed (`docs/recording-protocol.md`). No fix may require
-a per-engine recording.
+a per-engine recording. Measured, not fixed: the audio exhaust network radiates
+6-9 dB over the ACME single's 0.5 m measurement on its own resonance peaks,
+while the solver's in-pipe pressure agrees (journal 2026-11-15).
 
 ## Working rules
 

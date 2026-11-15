@@ -40,6 +40,7 @@ void printUsage() {
         << "  [--combustion <0..2>] [--exhaust <0..2>]\n"
         << "  [--intake <0..2>] [--mechanical <0..2>]\n"
         << "  [--overwrite]\n"
+        << "  [--exhaust-cell-mm <mm>]  (a measurement mesh, not the application's)\n"
         << "  [--loop-pack [--loop-step <rpm>] [--loop-seconds <s>] [--ogg]]\n"
         << "      seamless loops for a game instead of the showcase (48 kHz)\n"
         << "  --list-engines\n";
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
     bool sampleRateGiven = false;
     double loopStep = 500.0;
     double loopSeconds = 2.0;
+    std::optional<double> exhaustCellMm;
     enginelab::OfflineAudioMix mix;
     struct MixOverrides final {
         std::optional<double> volume;
@@ -211,6 +213,13 @@ int main(int argc, char** argv) {
                 return 1;
             }
             mixOverrides.intake = parsed;
+        } else if (option == "--exhaust-cell-mm") {
+            double parsed {};
+            if (!parseDouble(value, parsed) || !(parsed > 0.0)) {
+                std::cerr << "Exhaust cell length must be positive.\n";
+                return 1;
+            }
+            exhaustCellMm = parsed;
         } else if (option == "--mechanical") {
             double parsed {};
             if (!parseDouble(value, parsed)
@@ -338,6 +347,7 @@ int main(int argc, char** argv) {
     request.format = format;
     request.writeStems = writeStems;
     request.overwriteExistingFiles = overwrite;
+    if (exhaustCellMm) request.exhaustCellLengthM = *exhaustCellMm * 1.0e-3;
 
     std::cout << "Engine: " << request.engine.name << '\n'
               << "Scenario: " << request.scenario.name << '\n'

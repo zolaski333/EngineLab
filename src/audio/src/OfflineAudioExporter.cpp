@@ -720,7 +720,7 @@ OfflineAudioExportResult exportOfflineAudio(
             return fail("Scenario produces no audio frames.");
 
         auto chain = std::make_unique<offline::RenderChain>(
-            config, request.mix);
+            config, request.mix, request.exhaustCellLengthM);
         auto* simulator = &chain->simulator();
         auto* renderer = &chain->renderer();
         offline::DroppedTelemetry dropped;
@@ -1158,6 +1158,9 @@ OfflineAudioExportResult exportOfflineAudio(
                 { "monitor_mode", request.mix.monitorMode
                         == AudioMonitorMode::physicalReference
                     ? "physical_reference" : "capture_voiced" },
+                // Null: the production mesh the application runs.
+                { "exhaust_cell_length_m", request.exhaustCellLengthM
+                    ? Json(*request.exhaustCellLengthM) : Json(nullptr) },
             } },
             { "exhaust_topology", {
                 { "fnv1a64", exhaustTopologyHash(manifestExhaustGraph) },

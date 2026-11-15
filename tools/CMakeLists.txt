@@ -241,3 +241,12 @@ endif()
 add_executable(EngineLabKnockLimitCalibration KnockLimitCalibration.cpp)
 target_link_libraries(EngineLabKnockLimitCalibration PRIVATE EngineLab::Runtime EngineLab::Catalog)
 enginelab_set_warnings(EngineLabKnockLimitCalibration)
+
+# In-pipe pressure against crank angle at one place of an exhaust, and its
+# harmonics in dB SPL: a transducer, for published pipe measurements.
+add_executable(EngineLabPressureProbeHarness PressureProbeHarness.cpp)
+target_link_libraries(EngineLabPressureProbeHarness PRIVATE
+    EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+target_compile_definitions(EngineLabPressureProbeHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabPressureProbeHarness)

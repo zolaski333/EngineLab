@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,6 +59,10 @@ struct OfflineAudioExportRequest final {
     bool writeStems { true };
     bool loadAuthoredImpulseResponses { true };
     bool overwriteExistingFiles { false };
+    /** Exhaust finite-volume cell length (m) for a measurement against a
+     *  published pipe; absent keeps the production mesh the application runs
+     *  (EngineSimulator::productionExhaustCellLengthM). */
+    std::optional<double> exhaustCellLengthM;
 };
 
 /** Speed actually reached inside one scenario stage.

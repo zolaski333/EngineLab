@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-15 — ACME diesel single against Winterbone & Pearson: the pipe is right, the radiated sound 6-9 dB loud
+
+- Case: the ACME-ADN 43W (426 cc, CR 19) with the three silencers of Winterbone & Pearson (1999) 6.6.2, `tests/reference-data/winterbone-acme/` (book: engine, valve events, every pipe, rated 6.5 kW, the 0.5 m / 45 deg microphone; estimated and named in the file: lifts, intake, injection, load). Model 7.0-7.2 kW at the book's speeds. Book spectra read off Figs 6.12-6.14 (+-2 dB; the scan's page curve may lower Fig 6.13 above 800 Hz by up to 8 dB).
+- In-pipe, 130 mm from the valve (`PressureProbeHarness`, 25 mm mesh): (b) pulse 1.28 bar at 181 deg for the measured ~1.31 at ~170, trough 0.84 for ~0.83, second peak 1.10 for ~1.14, ~10-15 deg late; the measured ringing after EVC (+-0.05 bar to 720 deg) dies by 380 deg in the model. Harmonics within +1.6 to +3.6 dB to 760 Hz. (a) within +-2 dB below 240 Hz, 7-9 dB low above. (c) +6-8 dB below 230 Hz: the resonator branch is acoustic-only, the solver has no route into it. Production mesh (one cell per 200 mm pipe): (b) peaks 1.48 bar at 205 deg, low harmonics +13 dB.
+- Radiated at 0.5 m, audio network (`OfflineAudioExporter --exhaust-cell-mm 25 --convolution 0`, exhaust stem, pascals from the 140 dB full scale): overall +5.6 (a), +9.3 (b), +6.1 (c) dB over the measurement; below 500 Hz +5 to +10 dB in every case. Production mesh (b) +7.5. The excess sits on the network's own peaks (+10-25 dB) while its troughs match: under-damped resonances, not a gain. The jet is negligible here (11 dB).
+- The same outlets' finite-volume flow as a monopole (no audio network) reads 2-17 dB UNDER the measurement: the truth lies between the solver and the audio network. Not separated: the semi-anechoic floor (0 to +6 dB on the measurement, mic height unknown), the load of the test (not stated; the in-pipe peak agrees), the lift profile.
+- Lead, not fixed (a sound change): the audio exhaust network's damping (lossless junctions, wall loss) against the measured ringing; it needs an in-pipe probe of the audio network. Nothing in the physics or the default sound changed.
+
 ## 2026-11-15 — turbos at high speed: the fitted turbine, not the exhaust valve
 
 - `DynoCurveHarness`, three turbos, full load: the I5 loses 32 N.m from 4,000 to 5,600 rpm at flat gross IMEP (25.5-25.8 bar), all of it pumping (-0.67 -> -2.22 bar); mean port back pressure only 0.93-1.15 x boost, but the cylinder's exhaust-stroke mean is 1.4 bar over it at 5,600. EJ25 falls 12 % from 4,000 to 6,000 (maker 6 %), the 2JZ 4 % (maker 4.5 %): the two generic heads (`turbo_street`, derived valves) fall too steeply, the benched 2JZ does not. BSFC 270-335 g/kWh at lambda 0.82-0.88: not over-efficient.

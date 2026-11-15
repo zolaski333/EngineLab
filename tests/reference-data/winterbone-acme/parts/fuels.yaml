@@ -1,0 +1,14 @@
+# A copy of the catalogue's road diesel (parts/fuels.yaml), so this reference
+# root loads on its own.
+road_diesel_en590:
+  name: EN 590 road diesel C12H23 surrogate
+  lower_heating_value_mj_per_kg: 42.6
+  density_kg_per_l: 0.832
+  stoichiometric_afr: 14.65
+  molar_mass_g_per_mol: 167.31
+  oxygen_moles_per_fuel_mole: 17.75
+  product_moles_per_fuel_mole: 23.5
+  laminar_flame_speed_mps: 0.0
+  turbulence_flame_speed_gain: 0.0
+  cetane_number: 51
+  latent_heat_kj_per_kg: 270

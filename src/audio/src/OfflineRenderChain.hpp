@@ -33,8 +33,11 @@ struct DroppedTelemetry final {
  *  It holds an EngineRuntime (~7.4 MB): build it with std::make_unique. */
 class RenderChain final {
 public:
-    /** `config` is the normalised engine the simulator runs. */
-    RenderChain(const EngineConfig& config, const OfflineAudioMix& mix);
+    /** `config` is the normalised engine the simulator runs; a cell length
+     *  replaces the production exhaust mesh (a measurement, never a render
+     *  the application would make). */
+    RenderChain(const EngineConfig& config, const OfflineAudioMix& mix,
+                std::optional<double> exhaustCellLengthM = std::nullopt);
     RenderChain(const RenderChain&) = delete;
     RenderChain& operator=(const RenderChain&) = delete;
 

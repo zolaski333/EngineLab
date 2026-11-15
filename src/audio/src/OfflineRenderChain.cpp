@@ -32,10 +32,13 @@ namespace {
 } // namespace
 
 RenderChain::RenderChain(
-    const EngineConfig& config, const OfflineAudioMix& mix)
+    const EngineConfig& config, const OfflineAudioMix& mix,
+    std::optional<double> exhaustCellLengthM)
     : exhaust_(ExhaustGraph::makeForEngine(config)) {
+    EngineSimulatorOptions options;
+    options.exhaustTargetCellLengthM = exhaustCellLengthM;
     simulator_ = std::make_unique<EngineSimulator>(
-        config, ecu_, physics_, events_, exhaust_);
+        config, ecu_, physics_, events_, exhaust_, options);
     simulator_->setPressureSamplingEnabled(true);
 
     eventQueue_ = std::make_unique<FiringEventQueue>();
