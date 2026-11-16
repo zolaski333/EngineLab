@@ -11,12 +11,14 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -191,7 +193,37 @@ void knockRunsFreeWithoutControl() {
 
 } // namespace
 
+/** A knock-limit curve with a non-finite point was accepted, and the ECU's
+ *  advance came out NaN (0 x infinity below the limit's onset); a curve out
+ *  of RPM order was accepted too (audit PH-02). Both are refused now, by the
+ *  validation and so by the YAML reader. */
+void malformedKnockCurveRefused() {
+    auto config = makeDefaultInlineFour();
+    normaliseEngineConfig(config);
+    config.ignition.knockLimitCurve = { { 2'000.0, 4.0, 101.325 }, { 4'000.0, 8.0, 101.325 } };
+    require(!validateEngineConfig(config).has_value(), "an ordered finite knock-limit curve validates");
+    auto infinite = config;
+    infinite.ignition.knockLimitCurve.push_back({ 5'000.0, -std::numeric_limits<double>::infinity(), 101.325 });
+    require(validateEngineConfig(infinite).has_value(), "a knock-limit point at minus infinity is refused");
+    auto unordered = config;
+    unordered.ignition.knockLimitCurve = { { 5'000.0, 4.0, 101.325 }, { 1'000.0, 8.0, 101.325 } };
+    require(validateEngineConfig(unordered).has_value(), "a knock-limit curve out of RPM order is refused");
+    auto single = config;
+    single.ignition.knockLimitCurve = { { 3'000.0, 4.0, 101.325 }, { 3'000.0, 5.0, 101.325 } };
+    require(!validateEngineConfig(single).has_value(), "equal RPMs (a single-point range) still validate");
+
+    const YamlEngineSerializer yaml;
+    auto text = yaml.encode(config);
+    const std::string_view point = "rpm: 4000, advance_deg: 8";
+    const auto at = text.find(point);
+    require(at != std::string::npos, "the knock-limit curve is written");
+    text.replace(at, point.size(), "rpm: 4000, advance_deg: -.inf");
+    require(!yaml.decode(text), "the YAML reader refuses a knock-limit point at minus infinity");
+}
+
 int main() {
+    malformedKnockCurveRefused();
+    std::cout << "malformed knock-limit curve refused: ok\n";
     ecuAppliesTheGain();
     std::cout << "ECU knock retard gain: ok\n";
     knockRunsFreeWithoutControl();

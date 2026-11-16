@@ -1339,6 +1339,19 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
             return "Ignition timing curve must be finite and strictly ordered by RPM";
         previousIgnitionRpm = sample.rpm;
     }
+    // Optional; read by the ECU every step. A non-finite point gave a NaN
+    // advance, and the interpolation needs its points in RPM order (audit
+    // PH-02). The designer's measurement gives equal RPMs on an engine whose
+    // range is a single point, so equal is allowed.
+    if (config.ignition.knockLimitCurve.size() > 128)
+        return "Ignition knock-limit curve must contain at most 128 samples";
+    double previousKnockRpm = 0.0;
+    for (const auto& sample : config.ignition.knockLimitCurve) {
+        if (!inRange(sample.rpm, 0.0, 25'000.0) || !inRange(sample.advanceDegrees, -30.0, 80.0)
+            || !inRange(sample.manifoldPressureKpa, 1.0, 2'000.0) || sample.rpm < previousKnockRpm)
+            return "Ignition knock-limit curve must be finite and ordered by RPM";
+        previousKnockRpm = sample.rpm;
+    }
     std::unordered_set<std::uint32_t> cylinderIds;
     constexpr std::uint32_t mergeId = std::numeric_limits<std::uint32_t>::max() - 2U;
     for (const auto& cylinder : config.cylinders) {
