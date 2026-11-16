@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-16 — TS125 (Jones & Brown): the gas is right, the audio network's port source is 7-9 dB low
+
+- Case: NASA TM-84061 (1981, public), Suzuki TS125, `tests/reference-data/jones-brown-ts125/`: 0.40 m pipe, 1.30 m pipe, tuned chamber (Fig. 6), 4,000 rpm; ports, areas and pc(0) published. Estimated and named: rod (port widths follow), trapped 6.7:1, port Cd 0.72, chamber's belly ends, carburettor. Load: throttle setting the model's pc(0) (0.25 / 0.70 / 0.27). `PressureProbeHarness` now prints cylinder 1's pressure.
+- In-pipe (25 mm, overlaid on Figs 7, 9, 10, 12): short pipe and chamber follow the measurement in shape and timing (pulse within ~2 kPa); the long pipe's pulse is right at 0.84/1.12 m but ~0.3 ms wide, +8 kPa at 0.10 m (2.5 diameters, the authors' 3-D region), with no shock at 1.12 m; troughs everywhere 30-60 % shallow.
+- Radiated, 5 m, bands with a firing harmonic, +6 dB as the authors: the finite-volume outlet's monopole is -3.9 / -3.9 dB (63-200 Hz) and +2.9 / -4.2 (250-630) against the measurement (short pipe / chamber): as close as the authors' own 1-D (-4.4 / -2.5, +4.3 / -0.3). The render: -11.7 / -10.6 and -0.7 / -10.7; 1.25-3.15 kHz -0.2 / -2.8.
+- The deficit is the network's source, not its radiation: its own pressure at 0.10 m (`--exhaust-tap 101:1.0`) is under the FV's by 8.2 / 7.2 dB at 63-200 Hz and 2.7 / 8.9 at 250-630, as much as the render under the FV monopole. Above 1.6 kHz it reads +5 dB, not interpretable: the FV side is phase-averaged over 66 cycles, the tap is not (averaging only lowers the FV, so the low-band deficit stands).
+- Not tested: why the port source is low (one factor at a time: the port's conductance as the network sees it, the source's mass flow, the two-stroke's transfer flow). Nothing in the physics or the default sound changed.
+
 ## 2026-11-16 — the outlet's (1-M)/(1+M) is the no-Kutta limit, which the measurements refute
 
 - Read: Davies, Bento Coelho & Bhattacharya, JSV 72 (1980), 103 points in a 38 mm pipe, M < 0.3; Peters, Hirschberg, Reijnen & Wijnands, JFM 256 (1993); Allam & Abom, JSV 292 (2006). With a mean outflow the pressure |R| follows Munt WITH a Kutta condition: |R| -> 1 as ka -> 0, (1 + M d)(1 - (ka)^2/2) with d 0-0.90, over 1 near Sr = ka/M ~ pi. (1-M)/(1+M) is Rienstra's/Cargill's no-Kutta limit; the energy loss lives in R_E = |R|^2 (1-M)^2/(1+M)^2, not in the pressure. End correction: Levine-Schwinger at high Sr, 0.19 a at low Sr (phase only).

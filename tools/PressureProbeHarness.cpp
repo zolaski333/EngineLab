@@ -5,7 +5,8 @@
 // a part throttle), probes one sample of one authored exhaust component
 // through the simulator's gas probe (EngineSimulator::probeGasField), and
 // averages that place's pressure over whole cycles, bin by bin (2 deg on a
-// four-stroke). It prints the averaged cycle, then its harmonics as sound
+// four-stroke). It prints the averaged cycle (with cylinder 1's pressure
+// beside it), then its harmonics as sound
 // pressure levels (dB re 20 uPa, RMS): the form in which published in-pipe
 // measurements are read (Winterbone & Pearson 1999, Figs 6.12-6.14).
 //
@@ -201,6 +202,10 @@ int main(int argc, char** argv) {
         simulator->setPressureSamplingEnabled(true);
         std::array<double, bins> flowSum {};
         std::array<double, bins> flowCount {};
+        // Cylinder 1's pressure, binned the same way: the state a measured
+        // case gives at the exhaust opening (Jones & Brown's pc(0)).
+        std::array<double, bins> cylinderSum {};
+        std::array<double, bins> cylinderCount {};
         const auto cycleOf = [&] { return simulator->gasProbe().cycleDegrees > 0.0
             ? simulator->gasProbe().cycleDegrees : 720.0; };
         const auto forward = [](double degrees, double cycle) {
@@ -220,8 +225,15 @@ int main(int argc, char** argv) {
                 const auto cycle = cycleOf();
                 const auto spanSeconds = frame.state.simulationTimeSeconds - startSeconds;
                 const auto spanDegrees = forward(frame.state.crankAngleDegrees - startDegrees, cycle);
-                enginelab::CylinderPressureSample discarded;
-                while (simulator->tryPopCylinderPressureSample(discarded)) {}
+                enginelab::CylinderPressureSample cylinder;
+                while (simulator->tryPopCylinderPressureSample(cylinder)) {
+                    if (!(spanSeconds > 0.0) || cylinder.cylinderCount == 0) continue;
+                    const auto fraction = std::clamp((cylinder.timeSeconds - startSeconds) / spanSeconds, 0.0, 1.0);
+                    const auto degrees = forward(startDegrees + fraction * spanDegrees, cycle);
+                    const auto b = std::min<std::size_t>(bins - 1, static_cast<std::size_t>(degrees / cycle * bins));
+                    cylinderSum[b] += cylinder.pressureBar[0];
+                    cylinderCount[b] += 1.0;
+                }
                 enginelab::ExhaustAcousticSample acoustic;
                 while (simulator->tryPopExhaustAcousticSample(acoustic)) {
                     if (!(spanSeconds > 0.0)) continue;
@@ -269,10 +281,11 @@ int main(int argc, char** argv) {
                   << "\n# power_kw " << torqueSum / frames * heldRpm * std::numbers::pi / 30.0 / 1'000.0
                   << "\n# cycles_per_bin_min " << minimumCount
                   << "\n# exhaust_coupling_hz " << couplingHzSum / frames << '\n';
-        std::cout << "crank_deg,pressure_bar\n";
+        std::cout << "crank_deg,pressure_bar,cylinder1_bar\n";
         for (std::size_t b = 0; b < bins; ++b)
             std::cout << (static_cast<double>(b) + 0.5) * cycleDegrees / static_cast<double>(bins) << ','
-                      << mean[b] * 1.0e-5 << '\n';
+                      << mean[b] * 1.0e-5 << ','
+                      << (cylinderCount[b] > 0.0 ? cylinderSum[b] / cylinderCount[b] : 0.0) << '\n';
 
         // Harmonics of the cycle frequency: a bin-averaged cycle is periodic
         // by construction, so its discrete Fourier series is exact.
