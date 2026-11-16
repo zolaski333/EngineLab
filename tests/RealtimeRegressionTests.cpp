@@ -2758,6 +2758,24 @@ void valvePortTerminationRegression() {
                 "a shut valve must reflect with unit magnitude");
     require(shut.b0 > 0.0, "a shut valve must reflect in phase (rigid, not pressure-release)");
 
+    // A valve that closes on the open filter's history must not keep an
+    // offset: the shut end reflects what arrives, and nothing once nothing
+    // arrives (audit A2-03). The former rigid {1, -1, -1} held -71.8 Pa here.
+    {
+        Termination::State closing;
+        const auto open = Termination::compute(5.0e-4, 0.0, 0.0, density,
+                                               characteristicImpedance, sampleRate);
+        (void) Termination::process(open, closing, 1'000.0F);
+        double tailEnergy = 0.0;
+        float last = 0.0F;
+        for (int sample = 0; sample < 48'000; ++sample) {
+            last = Termination::process(shut, closing, 0.0F);
+            tailEnergy += static_cast<double>(last) * static_cast<double>(last);
+        }
+        require(last == 0.0F && tailEnergy == 0.0,
+                "a closed valve must not keep the open filter's offset");
+    }
+
     // A nearly shut valve must approach the rigid end rather than invert. This
     // is the limit the linearised mean-flow resistance had backwards.
     const auto nearlyShut = Termination::compute(2.0e-6, 0.0, 0.0, density,

@@ -58,11 +58,17 @@ public:
      * filter can round to a magnitude just above unity, i.e. an active
      * termination feeding a waveguide. Double keeps the differences exact enough
      * for the passivity the physics guarantees. There is one of these per runner
-     * per sample, so the cost is irrelevant. */
+     * per sample, so the cost is irrelevant.
+     *
+     * The default is the rigid end as a memoryless identity, y[n] = x[n]. It
+     * was {1, -1, -1}, y[n] = x[n] - x[n-1] + y[n-1]: a pole on the unit
+     * circle that equals the identity only while the history matches, so a
+     * valve closing on the open filter's history kept its offset forever
+     * (audit A2-03: -71.8 Pa still there 48,000 zero samples later). */
     struct Coefficients final {
         double b0 { 1.0 };
-        double b1 { -1.0 };
-        double a1 { -1.0 };
+        double b1 { 0.0 };
+        double a1 { 0.0 };
     };
 
     /** Two-word filter memory for one port. */
