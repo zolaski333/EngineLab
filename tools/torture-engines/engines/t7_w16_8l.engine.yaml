@@ -19,7 +19,10 @@ engine:
     throttle_diameter_mm: 100
     runner_length_mm: 300
     runner_diameter_mm: 40
-    idle_bypass_area_mm2: 45
+    # The LS3's bypass per litre (60 mm2 for 6.2 L). At 45 mm2 (5.6 a litre,
+    # half the K20's) the idle sat at 550 rpm for 750, 37 kPa in the plenum,
+    # and a cold start drowned in its rich misfires (journal 2026-11-16).
+    idle_bypass_area_mm2: 78
   ignition:
     rev_limit_rpm: 7000
     timing_curve:
