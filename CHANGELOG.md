@@ -208,6 +208,12 @@ file formats, always with an in-memory migration).
   at the next save: an Audi RC8 saved three times overwrote "Diesel V Six
   Truck", "Diesel V8 Truck" and "Eight-Rotor". Their earlier contents are
   not recoverable from the files.
+- **A turbo fitted to the running engine brings its ECU settings.** The
+  engine kept the tables it had without one, so the Equipment window and
+  Drive offered no anti-lag (a flat-6 3.6 turbocharged in the inspector),
+  and the tuner had no boost target or overboost cut. They now come with
+  the turbo (anti-lag off, as on any turbo engine), and anti-lag goes when
+  the turbo or petrol does.
 - **An exhaust cone no longer makes sound out of nothing.** In the audio
   exhaust a tapered pipe (a megaphone, a two-stroke's expansion chamber, the
   Merlin's stacks) passed its pressure wave unchanged from its narrow end to

@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <initializer_list>
 #include <string>
+#include <string_view>
 #include <variant>
 
 namespace enginelab::calibration {
@@ -154,10 +156,21 @@ constexpr double seaLevelPressureKpa = 101.325;
     } };
 }
 
-[[nodiscard]] bool antiLagCapable(const EngineConfig& config) noexcept {
-    return config.fuel == FuelType::gasoline && config.forcedInduction.enabled
-        && config.forcedInduction.type == ForcedInductionType::turbocharger;
+[[nodiscard]] bool turbocharged(const EngineConfig& config) noexcept {
+    return config.forcedInduction.enabled && config.forcedInduction.type == ForcedInductionType::turbocharger;
 }
+
+[[nodiscard]] bool antiLagCapable(const EngineConfig& config) noexcept {
+    return config.fuel == FuelType::gasoline && turbocharged(config);
+}
+
+/** The ids antiLagSettings() gives, without an engine to seed them from. */
+constexpr std::array<std::string_view, 12> antiLagKeys {
+    keys::antiLagEnabled, keys::antiLagMinimumRpm, keys::antiLagAir, keys::antiLagRetard,
+    keys::antiLagLambda, keys::antiLagCut, keys::antiLagMode, keys::antiLagBrakingKept,
+    keys::antiLagAggressiveness, keys::antiLagMaximumRpm, keys::antiLagMaximumSeconds,
+    keys::antiLagExhaustLimit,
+};
 
 } // namespace
 
@@ -281,8 +294,7 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
                  CalibrationUnit::revolutionsPerMinute, 0.0, ecuLimits::maximumRevLimitRpm, 0),
         0.0
     });
-    if (config.forcedInduction.enabled
-            && config.forcedInduction.type == ForcedInductionType::turbocharger) {
+    if (turbocharged(config)) {
         // The configuration's wastegate ratio is a sea-level ratio, so the
         // same gauge boost: flat, the controller holds what it always held.
         const auto gaugeKpa = std::clamp(
@@ -319,7 +331,7 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
 }
 
 void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& config) {
-    (void)syncVtecSettings(draft, config);
+    (void)syncEquipmentSettings(draft, config);
     // A table saved under a narrower AFR limit keeps the limit it was saved
     // with (the file carries it): widen it to today's, values untouched.
     if (const auto* afr = draft.find(keys::targetAirFuelRatio)) {
@@ -332,12 +344,41 @@ void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& conf
             draft.set(std::move(widened));
         }
     }
-    if (antiLagCapable(config))
-        for (auto& setting : antiLagSettings(config))
-            if (draft.find(setting.metadata.id) == nullptr) draft.set(std::move(setting));
-    if (draft.find(keys::overboostCut) != nullptr) return;
-    const auto defaults = makeDefaultEcuCalibration(config);
-    if (const auto* cut = defaults.find(keys::overboostCut)) draft.set(*cut);
+}
+
+bool syncEquipmentSettings(CalibrationDraft& draft, const EngineConfig& config) {
+    auto changed = syncVtecSettings(draft, config);
+    if (turbocharged(config)) {
+        const auto defaults = makeDefaultEcuCalibration(config);
+        for (const auto key : { keys::boostTargetGauge, keys::overboostCut }) {
+            if (draft.find(key) != nullptr) continue;
+            if (const auto* setting = defaults.find(key)) {
+                draft.set(*setting);
+                changed = true;
+            }
+        }
+    }
+    if (antiLagCapable(config)) {
+        for (auto& setting : antiLagSettings(config)) {
+            if (draft.find(setting.metadata.id) != nullptr) continue;
+            draft.set(std::move(setting));
+            changed = true;
+        }
+        return changed;
+    }
+    for (const auto& setting : antiLagSettings(config)) changed = draft.erase(setting.metadata.id) || changed;
+    return changed;
+}
+
+bool equipmentSettingsInStep(const CalibrationSnapshot& snapshot, const EngineConfig& config) {
+    if (vtecCamsFitted(config) != snapshot.scalar(keys::vtecEnabled).has_value()) return false;
+    if (turbocharged(config)
+        && (snapshot.find(keys::boostTargetGauge) == nullptr || snapshot.find(keys::overboostCut) == nullptr))
+        return false;
+    const auto capable = antiLagCapable(config);
+    for (const auto key : antiLagKeys)
+        if ((snapshot.find(key) != nullptr) != capable) return false;
+    return true;
 }
 
 bool syncVtecSettings(CalibrationDraft& draft, const EngineConfig& config) {

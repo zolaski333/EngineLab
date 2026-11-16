@@ -167,10 +167,11 @@ private:
     /** Fits VTEC cams to the running engine (the tuner's VTEC button), live:
      *  they start on the low cam. */
     void fitVtecCamsToEngine();
-    /** Gives the running tables the VTEC settings when the engine has VTEC
-     *  cams and takes them away when it has none, whatever fitted or
-     *  removed the cams (the inspector, the tuner, A/B, a loaded table). */
-    void syncVtecTables();
+    /** Puts the running tables' equipment settings in step with the engine
+     *  (calibration::syncEquipmentSettings): VTEC with its cams, a turbo's
+     *  boost target, overboost cut and anti-lag with the turbo, whatever
+     *  fitted or removed them (the inspector, the tuner, A/B, a loaded table). */
+    void syncEquipmentTables();
     void showExhaustDesigner();
     void showFuelWindow();
     /** Every optional part: nitrous, the active valve, VTEC, launch control. */
@@ -250,8 +251,8 @@ private:
     bool configModified_ { false };
     bool calibrationModified_ { false };
     std::shared_ptr<const calibration::CalibrationSnapshot> seenCalibration_;
-    /** The table revision syncVtecTables last tried to complete. */
-    std::optional<std::uint64_t> vtecSyncAttemptedRevision_;
+    /** The table revision syncEquipmentTables last tried to complete. */
+    std::optional<std::uint64_t> equipmentSyncAttemptedRevision_;
     std::filesystem::path catalogRoot_;
     EngineConfig config_;
     int selectedPresetIndex_ { -1 };

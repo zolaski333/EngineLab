@@ -335,7 +335,50 @@ void testSavedAfrLimitIsWidened() {
     require(validate(saved).empty(), "a lambda 1.4 cell validates");
 }
 
+/** A turbo fitted to the running engine keeps the tables of the engine
+ *  without one: the sync gives them the turbo's settings, anti-lag among
+ *  them, as a turbo engine's generated tables have them (owner report
+ *  2026-11-16: no anti-lag on a flat-6 turbocharged live). */
+void testFittedTurboBringsItsSettings() {
+    auto config = enginelab::makeDefaultInlineFour();
+    config.fuel = enginelab::FuelType::gasoline;
+    config.forcedInduction.enabled = false;
+    auto tables = makeDefaultEcuCalibration(config);
+    require(tables.find(keys::antiLagEnabled) == nullptr, "an engine without a turbo has no anti-lag");
+    const auto inStep = [&tables, &config] {
+        CalibrationStore store;
+        require(store.publish(tables, { std::nullopt, "test" }).published, "the tables publish");
+        return equipmentSettingsInStep(*store.snapshot(), config);
+    };
+    require(inStep(), "the generated tables are in step with their engine");
+    config.forcedInduction.enabled = true;
+    config.forcedInduction.type = enginelab::ForcedInductionType::turbocharger;
+    require(!inStep(), "a turbo fitted puts the old tables out of step");
+    require(syncEquipmentSettings(tables, config), "the sync changes them");
+    const auto generated = makeDefaultEcuCalibration(config);
+    for (const auto& [id, entry] : generated.entries()) {
+        (void)entry;
+        require(tables.find(id) != nullptr, ("the synced tables hold the turbo engine's " + id).c_str());
+    }
+    const auto* antiLag = tables.find(keys::antiLagEnabled);
+    const auto* armed = antiLag != nullptr ? std::get_if<ScalarCalibration>(antiLag) : nullptr;
+    require(armed != nullptr && armed->value == 0.0, "anti-lag comes off");
+    require(inStep(), "and are in step after it");
+    require(!syncEquipmentSettings(tables, config), "a second sync changes nothing");
+    // Anti-lag set up, then the turbo taken off: it goes, the rest stays.
+    config.forcedInduction.enabled = false;
+    require(!inStep() && syncEquipmentSettings(tables, config), "a turbo removed takes anti-lag away");
+    require(tables.find(keys::antiLagEnabled) == nullptr && tables.find(keys::antiLagExhaustLimit) == nullptr,
+            "every anti-lag setting goes");
+    require(inStep(), "the tables are in step without the turbo");
+    config.forcedInduction.enabled = true;
+    config.fuel = enginelab::FuelType::diesel;
+    (void)syncEquipmentSettings(tables, config);
+    require(tables.find(keys::antiLagEnabled) == nullptr, "a turbo diesel gets no anti-lag");
+}
+
 int main() {
+    testFittedTurboBringsItsSettings();
     testSavedAfrLimitIsWidened();
     testAxisValidationAndInterpolation();
     testInvalidDraftNeverPublishes();

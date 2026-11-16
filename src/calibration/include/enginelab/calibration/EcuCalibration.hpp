@@ -19,6 +19,20 @@ void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& conf
  *  cams; removes them all when it has none. Whether the draft changed. */
 bool syncVtecSettings(CalibrationDraft& draft, const EngineConfig& config);
 
+/** Puts the tables' equipment settings in step with the engine, so a part
+ *  fitted to the running engine brings its settings: VTEC (syncVtecSettings);
+ *  a turbocharger's boost target, overboost cut and, on petrol, anti-lag,
+ *  each added when missing, as its generated tables have them. A turbo fitted
+ *  live kept the tables of the engine without one, so the Equipment window
+ *  offered no anti-lag (owner report 2026-11-16, the flat-6 3.6). Anti-lag
+ *  leaves the tables of an engine that cannot carry it. Whether the draft
+ *  changed. */
+bool syncEquipmentSettings(CalibrationDraft& draft, const EngineConfig& config);
+
+/** Whether syncEquipmentSettings would leave these tables as they are: a
+ *  lookup per setting, cheap enough to ask every frame. */
+[[nodiscard]] bool equipmentSettingsInStep(const CalibrationSnapshot& snapshot, const EngineConfig& config);
+
 /** Create a mutable transaction from an immutable realtime snapshot. */
 [[nodiscard]] CalibrationDraft makeDraft(const CalibrationSnapshot& snapshot);
 

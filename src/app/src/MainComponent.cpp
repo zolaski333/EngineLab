@@ -375,7 +375,7 @@ void MainComponent::setBaseline(const EngineConfig& config,
     baseline_ = EngineBaseline(canonical, tables ? *tables : calibration::makeDefaultEcuCalibration(canonical));
     configChanged_ = true;
     seenCalibration_.reset();
-    vtecSyncAttemptedRevision_.reset();
+    equipmentSyncAttemptedRevision_.reset();
     updateModified();
 }
 
@@ -1009,20 +1009,20 @@ void MainComponent::fitVtecCamsToEngine() {
     if (!runtime_ || runtime_->dynoRunning()) return;
     auto edited = config_;
     if (!fitVtecCams(edited)) return;
-    if (applyEngineEdit(edited, 0.0)) syncVtecTables();
+    if (applyEngineEdit(edited, 0.0)) syncEquipmentTables();
 }
 
-void MainComponent::syncVtecTables() {
+void MainComponent::syncEquipmentTables() {
     if (!runtime_ || runtime_->dynoRunning()) return;
     const auto store = runtime_->calibrationStore();
     const auto snapshot = store->snapshot();
-    if (vtecCamsFitted(config_) == snapshot->scalar(calibration::keys::vtecEnabled).has_value()) return;
+    if (calibration::equipmentSettingsInStep(*snapshot, config_)) return;
     // One attempt per table revision: a refused table is not retried every frame.
-    if (vtecSyncAttemptedRevision_ == snapshot->revision()) return;
-    vtecSyncAttemptedRevision_ = snapshot->revision();
+    if (equipmentSyncAttemptedRevision_ == snapshot->revision()) return;
+    equipmentSyncAttemptedRevision_ = snapshot->revision();
     auto draft = calibration::makeDraft(*snapshot);
-    if (calibration::syncVtecSettings(draft, config_))
-        (void)store->publish(draft, { snapshot->revision(), "vtec-cams" });
+    if (calibration::syncEquipmentSettings(draft, config_))
+        (void)store->publish(draft, { snapshot->revision(), "equipment-fitted" });
 }
 
 OfflineAudioMix MainComponent::currentAudioMix() const noexcept {
@@ -2164,7 +2164,7 @@ void MainComponent::timerCallback() {
     model_.state = runtime_->snapshot();
     model_.redlineRpm = displayRedlineRpm(config_, *runtime_->calibrationStore()->snapshot());
     model_.units.ambientPressureKpa = config_.ambientPressureKpa;
-    syncVtecTables();
+    syncEquipmentTables();
     if (ecuTunerWindow_) {
         ecuTunerWindow_->setVtecFittable(config_.cycle != EngineCycle::twoStroke);
         const auto normalizedLoad = std::clamp(model_.state.manifoldPressureKpa
