@@ -29,11 +29,22 @@ namespace {
 using namespace enginelab;
 using namespace enginelab::render;
 
+/** A JSON string's contents. A control character (a newline in an accepted
+ *  engine name) went out raw and the file was not JSON (audit RT-07). */
 std::string escape(std::string_view text) {
     std::string out;
     for (const auto c : text) {
-        if (c == '"' || c == '\\') out += '\\';
-        out += c;
+        const auto byte = static_cast<unsigned char>(c);
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += c;
+        } else if (byte < 0x20U) {
+            char code[8];
+            std::snprintf(code, sizeof(code), "\\u%04x", static_cast<unsigned>(byte));
+            out += code;
+        } else {
+            out += c;
+        }
     }
     return out;
 }
@@ -54,7 +65,9 @@ void writeVec(std::ostream& out, Vec3 v) {
     out << ']';
 }
 
-RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const std::filesystem::path& file) {
+/** `written` is false when the file could not be written (audit RT-06). */
+RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const std::filesystem::path& file,
+                        bool& written) {
     const EngineModel3D model(config);
     const auto report = checkRoutes(model);
     std::vector<SceneInstance> instances;
@@ -148,6 +161,8 @@ RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const s
         out << '}';
     }
     out << "]}\n";
+    out.close();
+    written = static_cast<bool>(out);
     return report;
 }
 } // namespace
@@ -193,7 +208,12 @@ int main(int argc, char** argv) {
         if (twoStrokeIntake && config.cycle == EngineCycle::twoStroke) config.twoStroke.intake = *twoStrokeIntake;
         if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
         const auto file = std::to_string(e + 1U) + ".json";
-        const auto report = writeEngine(config, crank, outDirectory / file);
+        auto sceneWritten = false;
+        const auto report = writeEngine(config, crank, outDirectory / file, sceneWritten);
+        if (!sceneWritten) {
+            std::cerr << "cannot write " << (outDirectory / file).string() << '\n';
+            return 1;
+        }
         if (written++ > 0) index << ',';
         index << "{\"name\":\"" << escape(config.name) << "\",\"file\":\"" << file << "\"}";
         char line[256];
@@ -205,6 +225,12 @@ int main(int argc, char** argv) {
         for (std::size_t k = 0; k < totals.size(); ++k) totals[k] += report.count(static_cast<RouteIssueKind>(k));
     }
     index << "]\n";
+    index.close();
+    // An index that was never written was reported as a success (audit RT-06).
+    if (!index) {
+        std::cerr << "cannot write " << (outDirectory / "index.json").string() << '\n';
+        return 1;
+    }
     std::cout << "total: clash " << totals[0] << ", self " << totals[1] << ", engine " << totals[2] << ", bend "
               << totals[3] << ", stretch " << totals[4] << '\n';
     return 0;

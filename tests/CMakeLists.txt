@@ -581,6 +581,29 @@ if(TARGET EngineLabAcousticTransferProbe)
     set_tests_properties(EngineLab.ToolArguments.TransferProbeSeconds PROPERTIES
         PASS_REGULAR_EXPRESSION "usage: EngineLabAcousticTransferProbe")
 endif()
+if(TARGET EngineLabDynoSweepHarness)
+    # A reference check whose filter selects nothing fails (audit TL2-03).
+    add_test(NAME EngineLab.ToolArguments.DynoReferenceNoMatch
+        COMMAND EngineLabDynoSweepHarness --catalog-root "${CMAKE_SOURCE_DIR}"
+            --reference-file "${CMAKE_SOURCE_DIR}/tests/reference-data/catalog-manufacturer-points.csv"
+            --filter no-engine-matches-this)
+    set_tests_properties(EngineLab.ToolArguments.DynoReferenceNoMatch PROPERTIES
+        WILL_FAIL TRUE)
+endif()
+if(TARGET EngineLabSceneExport)
+    # An index that cannot be written (a folder in its place) fails the
+    # export (audit RT-06).
+    add_test(NAME EngineLab.ToolArguments.SceneIndexBlockedSetup
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${CMAKE_BINARY_DIR}/tool-arguments/scene-blocked/index.json")
+    set_tests_properties(EngineLab.ToolArguments.SceneIndexBlockedSetup PROPERTIES
+        FIXTURES_SETUP SceneIndexBlocked)
+    add_test(NAME EngineLab.ToolArguments.SceneIndexBlocked
+        COMMAND EngineLabSceneExport --out "${CMAKE_BINARY_DIR}/tool-arguments/scene-blocked"
+            --filter no-engine-matches-this)
+    set_tests_properties(EngineLab.ToolArguments.SceneIndexBlocked PROPERTIES
+        FIXTURES_REQUIRED SceneIndexBlocked WILL_FAIL TRUE)
+endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRuntimeDiscontinuity

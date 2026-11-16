@@ -583,6 +583,7 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
     }
 
     auto passed = true;
+    std::size_t measuredPoints = 0;
     std::cout << "engine,metric,target_rpm,actual_rpm,raw_rpm_span_percent,"
                  "held_rpm_span_percent,held_rpm_drift_percent,"
                  "held_rpm_stddev,measured,reference,"
@@ -674,6 +675,7 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
                       << ',' << (holdStable ? "PASS" : "UNSETTLED")
                       << ',' << std::quoted(reference.source)
                       << ',' << (pointPassed ? "PASS" : "FAIL") << '\n';
+            ++measuredPoints;
         }
     }
     for (const auto& point : points) {
@@ -684,6 +686,13 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
         if (point.matched) continue;
         std::cerr << "no catalogue engine matched manufacturer reference: "
                   << point.engineFilter << '\n';
+        passed = false;
+    }
+    // A filter that selects nothing is a mistyped check, not a passed one
+    // (audit TL2-03).
+    if (measuredPoints == 0) {
+        std::cerr << "no manufacturer reference point was measured"
+                  << (engineFilter.empty() ? std::string {} : " for --filter " + engineFilter) << '\n';
         passed = false;
     }
     return passed;
