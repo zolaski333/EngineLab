@@ -37,6 +37,7 @@
 #include <iomanip>
 #include <iostream>
 #include <numbers>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -381,7 +382,10 @@ SweepResult renderSweep(const EngineConfig& baseConfig, const WavData& ir,
     constexpr int samplesPerStep = 200; // 48000 / 240
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
-        &audioConfiguration->engineConfig(), nullptr);
+        &audioConfiguration->engineConfig(),
+        // The sweep fills this queue below: without a consumer it filled up
+        // and the harness threw on its first engine (audit UA-08).
+        &audioConfiguration->exhaustAcousticSamples());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -509,16 +513,18 @@ SweepResult renderSweep(const EngineConfig& baseConfig, const WavData& ir,
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int runHarness(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::filesystem::path root = ENGINELAB_CATALOG_ROOT;
     std::filesystem::path outDir = "audio-ab-output";
     std::filesystem::path irPath = root / "assets" / "ir" / "exhaust_default.wav";
+    std::string filter;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
         else if (a == "--ir" && i + 1 < argc) irPath = argv[++i];
         else if (a == "--root" && i + 1 < argc) root = argv[++i];
+        else if (a == "--filter" && i + 1 < argc) filter = argv[++i];
     }
     std::filesystem::create_directories(outDir);
 
@@ -556,8 +562,11 @@ int main(int argc, char** argv) {
         { "peak", 3.0, 0.97, 0.0 },
     };
 
+    auto measured = 0;
     for (const auto& entry : catalog.entries) {
         const auto& config = entry.config;
+        if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
+        ++measured;
         const auto idle = config.idleRpm;
         const auto redline = config.redlineRpm;
         auto setpoints = setpointTemplate;
@@ -616,7 +625,20 @@ int main(int argc, char** argv) {
                   << (dry.valid && wet.valid ? "" : "  [UNMEASURABLE]") << "\n\n";
     }
 
+    if (measured == 0) {
+        std::cerr << "No catalogue engine matches --filter " << filter << ".\n";
+        return 1;
+    }
     std::cout << "Wrote " << (outDir / "audio-ab-metrics.csv").string() << " and "
               << (outDir / "audio-ab-rt60.csv").string() << '\n';
     return 0;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return runHarness(argc, argv);
+    } catch (const std::exception& error) {
+        std::cerr << "EngineLabAudioAbHarness: " << error.what() << '\n';
+        return 1;
+    }
 }

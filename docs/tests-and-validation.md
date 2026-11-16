@@ -191,7 +191,7 @@ file's header says which question it answers and lists its options.
 |---|---|
 | `AbClipRenderer` | listening clips, each segment (idle, rev-up...) at its own loudness, for blind A/B against a recording or another engine |
 | `AfterfireHarness` | the shape of the overrun heat release in the exhaust (use `--liftoff-rpm`) |
-| `AudioAbHarness` | the real-time audio path rendered offline over an idle-to-redline sweep of every catalogue engine, with the same metrics as `AudioRenderHarness` |
+| `AudioAbHarness` | the real-time audio path rendered offline over an idle-to-redline sweep of every catalogue engine (`--filter <substring>` keeps the matching ones), with the same metrics as `AudioRenderHarness` |
 | `AudioRenderHarness` | the real-time audio path rendered offline: RMS, crest, DC, spectral bands, exhaust RT60 |
 | `ComparisonHarness` | deterministic scenarios on the catalogue with an operating gate, compared against a reference `summary.csv` (above) |
 | `CyclicVariabilityHarness` | COV(IMEP) per cylinder at a held engine speed |
