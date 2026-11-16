@@ -1,0 +1,16 @@
+{
+  "findings": 90,
+  "priorities": {
+    "P1": 13,
+    "P2": 66,
+    "P3": 11
+  },
+  "markdown_files_checked": 8,
+  "relative_links_checked": 588,
+  "missing_links": [],
+  "baseline_byte_changes": [
+    "docs/journal.md"
+  ],
+  "application_source_unchanged": true,
+  "canonical_sha256": "bff33c2856414f6026670b472a382acd04d9285d5f6415a1e9a41143aa77e861"
+}

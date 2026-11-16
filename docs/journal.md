@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-16 — systematic audit: file coverage and bounded witnesses
+
+- Register: [audit.md](audit.md), 90 scoped findings (52 added); [coverage](audit-coverage.md) records 553/553 tracked files and 174,336 text lines. Proofs, sources and component images are in [audit-evidence](audit-evidence/continuation.md); existing local edits retained.
+- Windows Release build passed; initial CTest 106/108, both timed-out entries passed alone (all 108 have passing executions). Linux GCC 13.3 standard build blocked on PLAT-01; four independent freshly built tests passed.
+- Executed: current physics/parser/persistence/audio/UI-component witnesses and 18 fresh 3-D route exports; rated points 24/24 catalogue, 20/22 generated designs. Short runtime+audio+gas-view attempt: 17 valid capacity points, Merlin accelerated invalid; paced control factor 0.991 with zero audio-contract losses.
+- Limits: desktop capture failed; no live-device, blind-listening, new recording or long thermal campaign. No product correction, default-sound change, commit or publication; detailed uncertainty and refutations remain in the register.
+
 ## 2026-11-16 — TS125 (Jones & Brown): the gas is right, the audio network's port source is 7-9 dB low
 
 - Case: NASA TM-84061 (1981, public), Suzuki TS125, `tests/reference-data/jones-brown-ts125/`: 0.40 m pipe, 1.30 m pipe, tuned chamber (Fig. 6), 4,000 rpm; ports, areas and pc(0) published. Estimated and named: rod (port widths follow), trapped 6.7:1, port Cd 0.72, chamber's belly ends, carburettor. Load: throttle setting the model's pc(0) (0.25 / 0.70 / 0.27). `PressureProbeHarness` now prints cylinder 1's pressure.
