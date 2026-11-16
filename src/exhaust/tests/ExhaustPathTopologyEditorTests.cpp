@@ -410,6 +410,38 @@ void cylinderFeedsAnyPart() {
         "an X-pipe's ports were not numbered or a cylinder fed it");
 }
 
+// Audit EXHAUST-01: a turbocharger chosen by path index (-1) moved with the
+// paths after the one removed, so the other two paths swapped turbines.
+void removingAPathKeepsEachTurbine() {
+    auto config = makeDefaultInlineFour();
+    const auto first = config.exhaustPaths.front().id;
+    const auto second = ExhaustPathTopologyEditor::createPathFromCylinder(
+        config, first, config.cylinders[3].id).selectedPathId;
+    const auto third = ExhaustPathTopologyEditor::createPathFromCylinder(
+        config, first, config.cylinders[2].id).selectedPathId;
+    require(config.exhaustPaths.size() == 3U && second != 0U && third != 0U, "three paths for the twin-turbo fixture");
+    config.forcedInduction.enabled = true;
+    config.forcedInduction.type = ForcedInductionType::turbocharger;
+    config.forcedInduction.turbochargerCount = 2U;
+    for (auto& path : config.exhaustPaths) path.turbocharger = -1;
+    if (const auto error = validateEngineConfig(config)) require(false, "the twin-turbo fixture is valid: " + *error);
+    const auto turbineOf = [](const EngineConfig& engine, std::uint32_t pathId) {
+        for (std::size_t index = 0; index < engine.exhaustPaths.size(); ++index) {
+            const auto& path = engine.exhaustPaths[index];
+            if (path.id != pathId) continue;
+            return path.turbocharger >= 0 ? static_cast<std::size_t>(path.turbocharger)
+                                          : index % engine.forcedInduction.turbochargerCount;
+        }
+        return std::size_t { 99 };
+    };
+    const auto secondTurbine = turbineOf(config, second);
+    const auto thirdTurbine = turbineOf(config, third);
+    const auto removed = ExhaustPathTopologyEditor::removePath(config, first, third);
+    require(static_cast<bool>(removed), "removing the first path failed: " + removed.error);
+    require(turbineOf(config, second) == secondTurbine && turbineOf(config, third) == thirdTurbine,
+        "each remaining path keeps the turbine it drove");
+}
+
 void invalidWorkIsNotMutated() {
     auto config = makeDefaultInlineFour();
     installGeneratedNetwork(config.exhaustPaths.front());
@@ -437,6 +469,7 @@ int main() {
         legacyPathsJoinBothWays();
         cylindersThatNeverMeetFallBack();
         cylinderFeedsAnyPart();
+        removingAPathKeepsEachTurbine();
         std::cout << "EngineLab exhaust path topology editor tests passed\n";
         return 0;
     } catch (const std::exception& error) {

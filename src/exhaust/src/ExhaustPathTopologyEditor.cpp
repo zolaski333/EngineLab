@@ -370,6 +370,19 @@ void pruneOrphans(ExhaustNetworkConfig& network) {
     return std::nullopt;
 }
 
+/** A turbocharger chosen by path index (-1) moves with the paths after one
+ *  removed: name the unit each path drives before the erase, as
+ *  joinExhaustPaths does. Removing the first of three paths on two turbos
+ *  swapped the other two's turbines (audit EXHAUST-01). */
+void pinDefaultTurbochargers(EngineConfig& config) {
+    const auto count = config.forcedInduction.turbochargerCount;
+    if (count < 2U) return;
+    for (std::size_t index = 0; index < config.exhaustPaths.size(); ++index) {
+        auto& path = config.exhaustPaths[index];
+        if (path.turbocharger < 0) path.turbocharger = static_cast<std::int32_t>(index % count);
+    }
+}
+
 void refreshBankPathHints(EngineConfig& config) {
     for (auto& bank : config.banks) {
         std::uint32_t commonPathId = 0;
@@ -632,6 +645,7 @@ ExhaustPathEditResult ExhaustPathTopologyEditor::removePath(
         why = rebuildInto(*destination, cylinders);
     }
     if (!why) {
+        pinDefaultTurbochargers(candidate);
         candidate.exhaustPaths.erase(findPath(candidate, pathId));
         refreshBankPathHints(candidate);
         const auto error = validateEngineConfig(candidate);
@@ -648,6 +662,7 @@ ExhaustPathEditResult ExhaustPathTopologyEditor::removePath(
     const auto target = findPath(fallback, destinationPathId);
     for (const auto cylinderId : cylinders)
         if (const auto error = addCylinderToPath(*target, cylinderId)) return reject(*error);
+    pinDefaultTurbochargers(fallback);
     fallback.exhaustPaths.erase(findPath(fallback, pathId));
     auto result = commitIfValid(config, std::move(fallback), destinationPathId);
     if (result) result.note = "Each cylinder joined the collector its nearest neighbour feeds (" + *why + ").";
