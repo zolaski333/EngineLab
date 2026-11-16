@@ -117,9 +117,9 @@ struct LiftOff final {
     double burntBeforeTurbineMgPerS { 0.0 };
     double tailpipeMgPerS { 0.0 };
     double misfireShare { 0.0 };
-    /** Over the lift: the highest engine speed, the mean torque from 0.4 s
-     *  on (the manifold emptied), the controller's target and opening, and
-     *  how long it worked. */
+    /** Over the lift: the highest engine speed, the mean cycle torque from
+     *  0.4 s on (the manifold emptied), the controller's target and opening,
+     *  and how long it worked. */
     double peakRpm { 0.0 };
     double meanTorqueNm { 0.0 };
     double targetTorqueNm { 0.0 };
@@ -202,7 +202,11 @@ LiftOff liftOff(Rig& rig, const LiftOptions& options) {
             if (frame >= settledFrame) {
                 if (options.settled) options.settled(state);
                 ++settledFrames;
-                result.meanTorqueNm += state.torqueNm;
+                // The last whole cycle's brake torque: the instantaneous one,
+                // read once a frame, aliases the cut firings (2JZ at 0 % kept:
+                // +-300 N.m a sample, its mean +3.7 or -5.0 N.m by where the
+                // frames land, while the speed held within 60 rpm).
+                result.meanTorqueNm += state.cycleAveragedTorqueNm;
                 result.targetTorqueNm += state.antiLagTargetTorqueNm;
                 result.authority += state.antiLagAuthority;
             }
