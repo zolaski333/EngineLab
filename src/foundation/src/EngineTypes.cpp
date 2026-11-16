@@ -1913,6 +1913,7 @@ const char* afterfireBlockerName(std::uint32_t mask) noexcept {
     if (afterfireBlocked(mask, AfterfireBlocker::belowMinimumRpm)) return "engine speed too low";
     if (afterfireBlocked(mask, AfterfireBlocker::throttleOpen)) return "throttle open";
     if (afterfireBlocked(mask, AfterfireBlocker::revLimiterActive)) return "rev limiter active";
+    if (afterfireBlocked(mask, AfterfireBlocker::overboostCut)) return "overboost cut";
     if (afterfireBlocked(mask, AfterfireBlocker::fuelCutInactive)) return "not in overrun fuel cut";
     return "";
 }

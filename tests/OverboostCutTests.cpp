@@ -71,6 +71,40 @@ int main() {
     require(back.fuelEnabled && !hasActiveLimit(back.activeLimits, ActiveLimit::overboostCut),
         "below half its margin the fuel comes back");
 
+    // A late-spark overrun map lifting off a boosted run: its fuel was ORed
+    // past the cut, which still reported itself (audit PG-06).
+    {
+        auto popping = config;
+        popping.exhaustAfterfire.strategy = ExhaustAfterfireStrategy::lateSparkOverrun;
+        popping.exhaustAfterfire.enabled = true;
+        popping.exhaustAfterfire.overrunMinimumRpm = 3'000.0;
+        popping.exhaustAfterfire.overrunMaximumThrottle = 0.02;
+        SimpleEcuModel popEcu;
+        popEcu.initialiseCalibration(popping);
+        publishMargin(popEcu, 40.0);
+        EngineState popState;
+        popState.coolantTemperatureC = 90.0;
+        popState.simulationTimeSeconds = 1.0;
+        popState.manifoldPressureKpa = popping.ambientPressureKpa + targetGaugeKpa;
+        popState.rpm = 4'000.0;
+        popState.throttle = 0.5;
+        (void)popEcu.evaluate(popping, popState, EngineControls { true, false, 0.5, 0.0 });
+        const EngineControls lifted { true, false, 0.0, 0.0 };
+        popState.throttle = 0.0;
+        popState.simulationTimeSeconds += 0.01;
+        popState.manifoldPressureKpa = popping.ambientPressureKpa + targetGaugeKpa + 45.0;
+        const auto overboosted = popEcu.evaluate(popping, popState, lifted);
+        require(cut(overboosted) && !overboosted.overrunAfterfireActive,
+            "past its margin the overrun map is cut with the rest of the fuel");
+        require(afterfireBlocked(overboosted.overrunAfterfireBlockers, AfterfireBlocker::overboostCut),
+            "and the afterfire names the cut that holds it");
+        popState.simulationTimeSeconds += 0.01;
+        popState.manifoldPressureKpa = popping.ambientPressureKpa + targetGaugeKpa;
+        const auto backDown = popEcu.evaluate(popping, popState, lifted);
+        require(backDown.overrunAfterfireActive && backDown.fuelEnabled && backDown.overrunAfterfireBlockers == 0U,
+            "back under it the overrun map fuels again (the case reaches the afterfire)");
+    }
+
     // The boost table is the target: a table raised to 200 kPa is not cut at
     // 220 kPa, and is at 250.
     {

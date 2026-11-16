@@ -775,6 +775,9 @@ enum class AfterfireBlocker : std::uint32_t {
     /** The engine has not been taken above the rpm gate under throttle since
      * the last start, so the lift-off is still an after-start flare. */
     notArmed = 1U << 8,
+    /** The overboost cut holds the fuel: the overrun map must not refuel it
+     *  (audit PG-06). */
+    overboostCut = 1U << 9,
 };
 
 [[nodiscard]] constexpr bool afterfireBlocked(std::uint32_t mask,

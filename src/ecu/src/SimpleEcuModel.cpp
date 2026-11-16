@@ -734,6 +734,9 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         config.fuel == FuelType::gasoline
         && lateSparkOverrun
         && decelerationFuelCut && !limiterActive
+        // The overboost cut wins: the overrun map's fuel ORed past it, so
+        // the boost protection did nothing while the pops ran (audit PG-06).
+        && !overboostActive
         && controls.ignitionEnabled && !controls.starterEngaged
         && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
         && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle;
@@ -760,6 +763,9 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              : static_cast<std::uint32_t>(AfterfireBlocker::fuelCutInactive))
         | (limiterActive
              ? static_cast<std::uint32_t>(AfterfireBlocker::revLimiterActive)
+             : 0U)
+        | (overboostActive
+             ? static_cast<std::uint32_t>(AfterfireBlocker::overboostCut)
              : 0U)
         // Not part of the conjunction: arming gates the DFCO inhibit rather
         // than the afterfire directly, so it is reported as the upstream
