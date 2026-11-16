@@ -28,8 +28,12 @@ APP-02..06, EXHAUST-01, PH-03. Physics and default sound untouched (the
 deterministic harnesses prove it). Lots 0-4 done (2026-11-16). Owner go
 2026-11-16 to continue: (5) physics, each change measured before/after:
 PH-01, PH-04, PH-06, PG-02, PG-04, PG-05, PG-06, PG-08, DR-07, DR-08,
-EXHAUST-02 (done 2026-11-16). Lots 6-8 (sound, UI, packaging) and the owner decisions (PH-05,
-V07, RT-04, V05/V06, K01-K03) wait; the sound lot needs the owner's A/B.
+EXHAUST-02 (done 2026-11-16). Owner go 2026-11-16 for (6) sound, in this
+order: A2-02, A2-04 (default sound unchanged, proven bit-exact), then A2-08 +
+PG-01, A2-05, A2-03, each measured on the catalogue; a negligible spectral
+change passes, a clear one waits on an owner A/B pair (on `exp/audit-sound`,
+off the fix branch). Lots 7-8 (UI, packaging) and the owner decisions (PH-05,
+V07, RT-04, V05/V06, K01-K03) wait.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a
