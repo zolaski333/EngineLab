@@ -25,8 +25,11 @@ DR-01, APP-01, DR-09, UA-05, UA-06, A2-01, DR-02, DR-06, DR-10, RT2-01;
 (3) the instruments: UA-08, V01-V04, TL2-01..04, T2-01, TEST-01/02, RT-01,
 RT-02, RT-06, RT-07, A2-06; (4) the app against the running engine: UA-01,
 APP-02..06, EXHAUST-01, PH-03. Physics and default sound untouched (the
-deterministic harnesses prove it). Lots 5-8 (physics, sound, UI, packaging)
-and the owner decisions (PH-05, V07, RT-04, V05/V06, K01-K03) wait.
+deterministic harnesses prove it). Lots 0-4 done (2026-11-16). Owner go
+2026-11-16 to continue: (5) physics, each change measured before/after:
+PH-01, PH-04, PH-06, PG-02, PG-04, PG-05, PG-06, PG-08, DR-07, DR-08,
+EXHAUST-02. Lots 6-8 (sound, UI, packaging) and the owner decisions (PH-05,
+V07, RT-04, V05/V06, K01-K03) wait; the sound lot needs the owner's A/B.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a
