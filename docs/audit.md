@@ -43,20 +43,20 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 
 | ID | Priority | Finding | Status |
 |---|---|---|---|
-| [PH-01](#ph-01) | P1 | The transmission creates power when the wheels drive the engine | open |
+| [PH-01](#ph-01) | P1 | The transmission creates power when the wheels drive the engine | fixed a3c79b4 |
 | [PH-02](#ph-02) | P1 | A malformed knock-limit curve is accepted and can produce NaN ignition commands | fixed 2f1fe31 |
 | [PH-03](#ph-03) | P2 | ECU reset leaves anti-lag timeout and feedback state from the preceding run | fixed 119deb7 |
-| [PH-04](#ph-04) | P2 | Road aerodynamic drag ignores the configured atmosphere | open |
+| [PH-04](#ph-04) | P2 | Road aerodynamic drag ignores the configured atmosphere | fixed a3c79b4 |
 | [PH-05](#ph-05) | P2 | Construction limits contradict the advertised range and the unlimited-build criterion | owner decision |
-| [PH-06](#ph-06) | P2 | Live ambient-temperature edits leave retained thermal boundaries on the old atmosphere | open |
+| [PH-06](#ph-06) | P2 | Live ambient-temperature edits leave retained thermal boundaries on the old atmosphere | fixed a3c79b4 |
 | [DR-01](#dr-01) | P1 | A new engine design can overwrite another saved engine through a filename collision | fixed b144b8a |
 | [DR-02](#dr-02) | P2 | A successful save can produce a file the application refuses to read | fixed b144b8a |
 | [DR-03](#dr-03) | P1 | A small syntactically valid engine script can overflow the stack | fixed 812cd52 |
 | [DR-04](#dr-04) | P1 | Live gearbox edits write a value that the simulation thread reads without synchronization | fixed e05f68f |
 | [DR-05](#dr-05) | P2 | UTF-8 paths fail in script includes and ECU hot reload on standard Windows code page 1252 | fixed c44352e |
 | [DR-06](#dr-06) | P2 | An accepted saved-engine name can be reclassified as an ECU calibration | fixed b144b8a |
-| [DR-07](#dr-07) | P2 | JSON and YAML imports disagree about repairing the same out-of-range value | open |
-| [DR-08](#dr-08) | P2 | JSON integer fields silently truncate fractions and wrap oversized values | open |
+| [DR-07](#dr-07) | P2 | JSON and YAML imports disagree about repairing the same out-of-range value | fixed 60f83de |
+| [DR-08](#dr-08) | P2 | JSON integer fields silently truncate fractions and wrap oversized values | fixed 60f83de |
 | [DR-09](#dr-09) | P2 | Starting two logs or pass-by recordings within the same second reuses the same output file | fixed 8e26a01 |
 | [DR-10](#dr-10) | P3 | Windows reserved device names pass saved-engine name validation | fixed b144b8a |
 | [UA-01](#ua-01) | P1 | Audio Workshop exports discard the running engine's ECU tuning | fixed 0d46f4e |
@@ -82,12 +82,12 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | owner decision |
 | [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | owner decision |
 | [PG-01](#pg-01) | P1 | Exhaust boundary history is shorter than its fixed reconstruction delay | open |
-| [PG-02](#pg-02) | P2 | Wet nitrous fuel is omitted from fuel consumption | open |
-| [PG-04](#pg-04) | P2 | The internal reordered-duct test executes one ascending chunk | open |
-| [PG-05](#pg-05) | P2 | Remeshing a tapered duct does not preserve its inventory | open |
-| [PG-06](#pg-06) | P2 | Overrun backfires re-enable fuel during an overboost cut | open |
+| [PG-02](#pg-02) | P2 | Wet nitrous fuel is omitted from fuel consumption | fixed c3de893 |
+| [PG-04](#pg-04) | P2 | The internal reordered-duct test executes one ascending chunk | fixed 58816e5 |
+| [PG-05](#pg-05) | P2 | Remeshing a tapered duct does not preserve its inventory | fixed e6a4473 |
+| [PG-06](#pg-06) | P2 | Overrun backfires re-enable fuel during an overboost cut | fixed 894ad14 |
 | [PG-07](#pg-07) | P1 | A YAML alias cycle in embedded ECU data recursively exhausts the stack | fixed 60510df |
-| [PG-08](#pg-08) | P2 | Scripted listener distance keeps millimetres in a metre field | open |
+| [PG-08](#pg-08) | P2 | Scripted listener distance keeps millimetres in a metre field | fixed 6b38967 |
 | [A2-01](#a2-01) | P2 | Cancelling a stem export leaves a Windows-locked partial and blocks the next export | fixed ea253b4 |
 | [A2-02](#a2-02) | P2 | Forced-induction sound continues while paused | open |
 | [A2-03](#a2-03) | P2 | Closing a valve preserves an undamped offset in the reflection filter | open |
@@ -117,7 +117,7 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [APP-13](#app-13) | P3 | A second inspector choice draws the authored note beneath the buttons | open |
 | [RENDER-01](#render-01) | P2 | Scalar midpipe gas colouring binds the first primary's field | open |
 | [EXHAUST-01](#exhaust-01) | P2 | Removing a path can silently reassign the remaining turbochargers | fixed 0328b58 |
-| [EXHAUST-02](#exhaust-02) | P2 | Converting a supported scalar exhaust to editable geometry changes its model | open |
+| [EXHAUST-02](#exhaust-02) | P2 | Converting a supported scalar exhaust to editable geometry changes its model | fixed e15b858 |
 | [RENDER-02](#render-02) | P3 | Valid low gearbox ratios are drawn with a different gear ratio | open |
 | [TEST-01](#test-01) | P3 | The idle slow-coast exception accepts a high, flat recovery | fixed aaf498f |
 | [TEST-02](#test-02) | P2 | Saved-audio sample identity is accepted from only RMS and peak | fixed aaf498f |

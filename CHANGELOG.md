@@ -274,7 +274,7 @@ file formats, always with an in-memory migration).
   kept, however far from a real fuel), and the top speed line holds the
   shaft.
 
-The audit of 2026-11-16 (`docs/audit.md`, lots 0-4):
+The audit of 2026-11-16 (`docs/audit.md`, lots 0-5):
 
 - **Crashes**: a deeply nested expression in an engine script, ECU tables
   in a YAML alias loop, a click on a gearbox's last ratio after the gear
@@ -299,6 +299,20 @@ The audit of 2026-11-16 (`docs/audit.md`, lots 0-4):
   the New engine window takes the last value typed; the Audio workshop's
   physics fields follow a newly loaded engine; an ECU reset clears the
   anti-lag's timeout.
+- **Driving**: engine braking through the gearbox loses power to it instead
+  of creating some (a K20A's downshift peaks at 7,541 rpm, not 7,753);
+  aerodynamic drag uses the atmosphere's air density (1.196 kg/m3 at the
+  default 22 degC, not a fixed 1.225); a live atmosphere edit reaches the
+  clutch's cooling.
+- **Fuel and ECU**: a wet nitrous kit's fuel counts in the fuel used; the
+  overboost cut also cuts the fuel of the overrun pops.
+- **Files and scripts**: a YAML engine with an out-of-range value is
+  repaired as a JSON one is; a JSON whole-number field refuses a fraction or
+  an oversized value instead of truncating or wrapping it; a script's
+  listening distance in metres is read as metres.
+- **Exhaust**: a live remesh of a tapered pipe keeps its gas; opening a
+  scalar exhaust in the designer keeps every route's length (a cylinder's own
+  primary, the collector trunk, the straight body, the tailpipe).
 
 ## [0.9.1] — 2026-11-10
 

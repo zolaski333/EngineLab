@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-16 — audit lot 5: physics, each change measured
+
+- Fixed: PH-01 (back-driven, the wheel gives the clutch torque over the gearbox efficiency: the crank received 56.5 kW for 195 kW at the wheel), PH-04 (drag at p/(R T), 1.196 kg/m3 by default, not 1.225), PH-06 (a live atmosphere reaches the clutch), PG-02 (wet nitrous fuel counted), PG-04 (the reordered-duct test runs one chunk per runner), PG-05 (a taper remeshes by frustum volume), PG-06 (the overboost cut holds the overrun map's fuel), PG-08 (script distance in metres), DR-07/08 (YAML repairs like JSON; JSON whole numbers refuse fractions and wraps), EXHAUST-02 (conversion keeps every route: 1,727 mm stayed 1,727, was 1,547 with the old tailpipe).
+- Drive harness, one factor at a time: PH-04 alone, K20A 0-100 7.01 -> 7.03 s, 2JZ 6.30 -> 6.15 s (its shift sequence diverges from 6.67 s on a tiny perturbation: pre-existing sensitivity, not examined), top speeds within 0.4 km/h. PH-01 alone: pulls identical, K20A downshift peak 7,753 -> 7,541 rpm, top 107.3 km/h unchanged.
+- Benches bit-identical to the lot 0 baseline (IntakeDuctBench checksums, DynoSweep K20/RD350, K20A render sha256): the default sound and the dyno are untouched.
+- Rebuilt and rerun without the fix, failing on its own message: PG-05, PG-06, EXHAUST-02; PG-02 by arithmetic (without the kit fuel wet reads 6.89 g/s against 12.76 dry). The other new tests were not rerun without their fix. PG-05's first test passed without the fix: nested meshes (0.360/0.045) hide the weight; it now remeshes 0.360 -> 0.100.
+- Full build green; ctest 111/113 at -j 4, AudioRender and LoadedAccelerationCatalogDfcoResume timed out and pass alone.
+- Not done: EXHAUST-02 fixes route lengths only, the straight body as a pipe has no 82 Hz voice mode; PG-05's wall temperature keeps the length weight.
+
 ## 2026-11-16 — audit lot 4: the app against the running engine
 
 - Fixed on `fix/audit-2026-11-16`: UA-01/APP-03 (an Audio workshop render or loop pack builds its simulator from the running engine and publishes its ECU snapshot before it; it ran the catalogue engine's tables), APP-04 (the workshop's physics fields follow `setEngine`), PH-03 (`SimpleEcuModel::reset` clears the eight anti-lag latches), EXHAUST-01 (removing a path pins each remaining path's turbo before the erase), APP-02/05/06 (cost advisory read before the apply, Escape writes the running vehicle value back, Build flushes a pending redesign).
