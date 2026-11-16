@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -1288,11 +1289,46 @@ void testAdoptingFromAnIdenticalNetworkChangesNothing() {
             "adopting an identical network must continue bit-identically in the junctions");
 }
 
-void testAdoptingAcrossMeshesKeepsTheGasWhereItWas() {
-    const auto config = makeDefaultInlineFour();
+/** The default four with an authored exhaust whose primaries flare from 41 to
+ * 55 mm and whose tailpipe is a 70-to-100 mm megaphone. */
+[[nodiscard]] EngineConfig taperedExhaustConfig() {
+    auto config = makeDefaultInlineFour();
+    const auto component = [](std::uint32_t id, ExhaustComponentType type,
+                              double lengthMm, double diameterMm) {
+        ExhaustComponentConfig result;
+        result.id = id;
+        result.type = type;
+        result.lengthMm = lengthMm;
+        result.diameterMm = diameterMm;
+        return result;
+    };
+    ExhaustNetworkConfig network;
+    for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+        const auto id = static_cast<std::uint32_t>(101 + index);
+        auto primary = component(id, ExhaustComponentType::pipe, 440.0, 41.0);
+        primary.outletDiameterMm = 55.0;
+        network.components.push_back(primary);
+        network.cylinderConnections.push_back({ config.cylinders[index].id, id });
+        network.connections.push_back({ id, 200 });
+    }
+    auto merge = component(200, ExhaustComponentType::merge, 0.0, 60.0);
+    merge.volumeLitres = 0.42;
+    network.components.push_back(merge);
+    auto outlet = component(400, ExhaustComponentType::outlet, 600.0, 70.0);
+    outlet.outletDiameterMm = 100.0;
+    network.components.push_back(outlet);
+    network.connections.push_back({ 200, 400 });
+    config.exhaustPaths.front().network = std::move(network);
+    normaliseEngineConfig(config);
+    requireNetwork(!validateEngineConfig(config), "the tapered exhaust must be valid");
+    return config;
+}
+
+void testAdoptingAcrossMeshesKeepsTheGasWhereItWas(const EngineConfig& config, bool tapered,
+                                                    double fineCellLengthM = 0.045) {
     auto coarse = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
     perturbWithBlowdown(coarse, 0.004);
-    auto fine = makeMeshedNetwork(config, 0.045, hotWallNetworkConfig());
+    auto fine = makeMeshedNetwork(config, fineCellLengthM, hotWallNetworkConfig());
     auto refinedDucts = std::size_t { 0 };
     for (std::size_t duct = 0; duct < fine.ducts().size(); ++duct)
         if (fine.ducts()[duct].cells().size() > coarse.ducts()[duct].cells().size())
@@ -1302,10 +1338,23 @@ void testAdoptingAcrossMeshesKeepsTheGasWhereItWas() {
         "a network must adopt the state of the same exhaust at another mesh");
     const auto& model = coarse.mixtureModel();
     auto comparedCells = std::size_t { 0 };
+    auto comparedTapers = std::size_t { 0 };
     for (std::size_t duct = 0; duct < fine.ducts().size(); ++duct) {
         const auto& from = coarse.ducts()[duct];
         const auto& to = fine.ducts()[duct];
-        if (from.geometry().hasVariableArea()) continue;
+        if (from.geometry().hasVariableArea()) {
+            // A taper's cells hold their frustum's gas: the remap weighted
+            // its overlaps by length and moved inventory (audit PG-05).
+            if (from.cells().size() == to.cells().size()) continue;
+            const auto before = from.inventory();
+            const auto after = to.inventory();
+            requireNetwork(relativeError(totalMass(after.speciesMassKg),
+                                         totalMass(before.speciesMassKg)) < 1.0e-12
+                    && relativeError(after.totalEnergyJ, before.totalEnergyJ) < 1.0e-12,
+                "a remap at constant geometry must conserve a tapered duct's gas");
+            ++comparedTapers;
+            continue;
+        }
         // Same geometry, another mesh: every duct holds the same gas.
         const auto before = from.inventory();
         const auto after = to.inventory();
@@ -1328,7 +1377,9 @@ void testAdoptingAcrossMeshesKeepsTheGasWhereItWas() {
             ++comparedCells;
         }
     }
-    requireNetwork(comparedCells > 0, "the mesh test must compare at least one cell");
+    requireNetwork(tapered || comparedCells > 0, "the mesh test must compare at least one cell");
+    requireNetwork(!tapered || comparedTapers > 0,
+        "the mesh test must remesh at least one tapered duct");
     // Back to the coarse mesh: each coarse cell gets back the gas it gave.
     auto coarseAgain = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
     requireNetwork(coarseAgain.adoptStateFrom(fine),
@@ -1417,6 +1468,9 @@ void runExhaustGasNetworkTests() {
     testBoundaryInputOrderIsIrrelevant();
     testHotUnburnedFuelReactsConservatively();
     testAdoptingFromAnIdenticalNetworkChangesNothing();
-    testAdoptingAcrossMeshesKeepsTheGasWhereItWas();
+    testAdoptingAcrossMeshesKeepsTheGasWhereItWas(makeDefaultInlineFour(), false);
+    // A 0.100 m mesh does not nest in the 0.360 m one: its cells straddle the
+    // coarse faces, where the weight decides the inventory.
+    testAdoptingAcrossMeshesKeepsTheGasWhereItWas(taperedExhaustConfig(), true, 0.100);
     testAdoptingAResizedExhaustKeepsTheRunningState();
 }

@@ -1097,6 +1097,29 @@ namespace {
         * static_cast<double>(toCount);
 }
 
+/** The same share, by volume, of a duct whose radius runs linearly from its
+ * inlet to its outlet: a taper's cells hold the gas of their frustum, so an
+ * overlap weighted by its length alone moved inventory across the remap
+ * (audit PG-05). A uniform duct keeps the length weight, its exact value. */
+[[nodiscard]] double remapOverlapWeight(std::size_t from, std::size_t fromCount,
+                                        std::size_t to, std::size_t toCount,
+                                        const DuctGeometry& geometry) noexcept {
+    const auto length = remapOverlap(from, fromCount, to, toCount);
+    if (!(length > 0.0) || !geometry.hasVariableArea()) return length;
+    const auto start = std::max(static_cast<double>(from) / static_cast<double>(fromCount),
+                                static_cast<double>(to) / static_cast<double>(toCount));
+    const auto end = std::min(static_cast<double>(from + 1U) / static_cast<double>(fromCount),
+                              static_cast<double>(to + 1U) / static_cast<double>(toCount));
+    const auto inletRadius = std::sqrt(geometry.inletAreaM2() / std::numbers::pi);
+    const auto outletRadius = std::sqrt(geometry.outletAreaM2() / std::numbers::pi);
+    const auto startRadius = std::lerp(inletRadius, outletRadius, start);
+    const auto endRadius = std::lerp(inletRadius, outletRadius, end);
+    // A frustum's mean area, (r0^2 + r0 r1 + r1^2) / 3 times pi.
+    const auto meanArea = std::numbers::pi
+        * (startRadius * startRadius + startRadius * endRadius + endRadius * endRadius) / 3.0;
+    return length * meanArea;
+}
+
 } // namespace
 
 bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexcept {
@@ -1128,24 +1151,28 @@ bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexce
                 ConservativeState state {};
                 auto wallTemperatureK = 0.0;
                 auto weightSum = 0.0;
+                auto wallWeightSum = 0.0;
                 for (std::size_t from = 0; from < fromCount; ++from) {
-                    const auto weight = remapOverlap(from, fromCount, to, toCount);
-                    if (weight <= 0.0) continue;
+                    const auto wallWeight = remapOverlap(from, fromCount, to, toCount);
+                    if (wallWeight <= 0.0) continue;
+                    const auto weight = remapOverlapWeight(from, fromCount, to, toCount,
+                                                           duct.geometry_);
                     const auto& cell = source.cells_[from];
                     for (std::size_t species = 0; species < gasSpeciesCount; ++species)
                         state.speciesMassDensityKgPerM3[species] +=
                             weight * cell.speciesMassDensityKgPerM3[species];
                     state.momentumDensityKgPerM2S += weight * cell.momentumDensityKgPerM2S;
                     state.totalEnergyDensityJPerM3 += weight * cell.totalEnergyDensityJPerM3;
-                    wallTemperatureK += weight * source.wallStates_[from].temperatureK;
+                    wallTemperatureK += wallWeight * source.wallStates_[from].temperatureK;
                     weightSum += weight;
+                    wallWeightSum += wallWeight;
                 }
-                if (!(weightSum > 0.0)) return false;
+                if (!(weightSum > 0.0) || !(wallWeightSum > 0.0)) return false;
                 for (auto& species : state.speciesMassDensityKgPerM3) species /= weightSum;
                 state.momentumDensityKgPerM2S /= weightSum;
                 state.totalEnergyDensityJPerM3 /= weightSum;
                 duct.candidate_[to] = state;
-                duct.candidateWallStates_[to].temperatureK = wallTemperatureK / weightSum;
+                duct.candidateWallStates_[to].temperatureK = wallTemperatureK / wallWeightSum;
             }
             if (!mixtureModel_.isPhysical(duct.candidate_[to])) return false;
         }
