@@ -89,6 +89,7 @@ set acoustic_observer.left_y_m = 3 m
 set acoustic_observer.right_x_m = 0.2 m
 set acoustic_observer.right_y_m = 3 m
 set acoustic_observer.sound_speed_mps = 343 m_s
+set acoustic_observer.listening_distance_m = 4 m
 set injection.mode = direct
 set injection.rail_pressure_bar = 20 MPa
 set injection.wall_film_fraction = 8 percent
@@ -153,6 +154,9 @@ ignition point 1000 rpm, 14 deg
                 "observer distance must remain SI metres after script unit conversion");
     requireNear(config.acousticObserver.soundSpeedMps, 343.0, 1.0e-12,
                 "observer sound speed must be script-authorable in SI");
+    // It stored millimetres: 4 m became 4,000 m, past the 200 m ceiling (audit PG-08).
+    requireNear(config.acousticObserver.listeningDistanceM, 4.0, 1.0e-12,
+                "the listening distance must remain SI metres after script unit conversion");
     requireNear(config.injection.railPressureBar, 200.0, 1.0e-12, "pressure should convert back to bar field units");
     requireNear(config.injection.wallFilmFraction, 0.08, 1.0e-12, "percent should convert to a ratio");
     require(config.ignition.limiterKeepsFuel,
