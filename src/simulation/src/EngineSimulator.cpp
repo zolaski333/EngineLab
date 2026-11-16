@@ -6681,8 +6681,35 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     static_cast<std::uint8_t>(
                         intakePathIndexByCylinder_[index]);
                 pressureSample.exhaustRunnerPressureKpa[index] = static_cast<float>(exhaustRunnerPressureKpa_[index]);
-                pressureSample.exhaustMassFlowKgPerSecond[index] =
-                    static_cast<float>(exhaustMassFlowKgPerSecond[index]);
+                // The valve's flow and conductance at the boundary's delay,
+                // interpolated between the substeps that bracket it: see
+                // valveFlowHistory_.
+                auto& history = valveFlowHistory_[index];
+                history[valveFlowHistoryWrite_] = {
+                    state_.simulationTimeSeconds,
+                    exhaustMassFlowKgPerSecond[index],
+                    exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index],
+                    true,
+                };
+                const auto delayedTimeSeconds = state_.simulationTimeSeconds
+                    - exhaustBoundaryReconstructionDelaySeconds;
+                const auto* valveBefore = &history[valveFlowHistoryWrite_];
+                const auto* valveAfter = valveBefore;
+                for (std::size_t age = 0; age < exhaustBoundaryKnotCount; ++age) {
+                    const auto slot = (valveFlowHistoryWrite_ + exhaustBoundaryKnotCount - age)
+                        % exhaustBoundaryKnotCount;
+                    if (!history[slot].valid) break;
+                    valveBefore = &history[slot];
+                    if (history[slot].timeSeconds <= delayedTimeSeconds) break;
+                    valveAfter = &history[slot];
+                }
+                const auto valveInterval = valveAfter->timeSeconds - valveBefore->timeSeconds;
+                const auto valvePhase = valveInterval > 0.0
+                    ? std::clamp((delayedTimeSeconds - valveBefore->timeSeconds) / valveInterval, 0.0, 1.0)
+                    : 1.0;
+                pressureSample.exhaustMassFlowKgPerSecond[index] = static_cast<float>(
+                    valveBefore->massFlowKgPerSecond
+                    + (valveAfter->massFlowKgPerSecond - valveBefore->massFlowKgPerSecond) * valvePhase);
                 pressureSample.exhaustAcousticMassFlowKgPerSecond[index] =
                     static_cast<float>(exhaustAcousticMassFlowKgPerSecond[index]);
                 pressureSample.exhaustPortDensityKgPerM3[index] =
@@ -6690,7 +6717,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 pressureSample.exhaustPortSpeedOfSoundMps[index] =
                     static_cast<float>(exhaustPortSpeedOfSoundMps[index]);
                 pressureSample.exhaustValveConductanceAreaM2[index] = static_cast<float>(
-                    exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index]);
+                    valveBefore->conductanceAreaM2
+                    + (valveAfter->conductanceAreaM2 - valveBefore->conductanceAreaM2) * valvePhase);
                 pressureSample.exhaustFlowMgPerCycle[index] = static_cast<float>(exhaustFlowMgPerCycle_[index]);
                 auto cams = activeCamshaft(
                     config_, config_.cylinders[index],
@@ -6713,6 +6741,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 pressureSample.thermoacousticBoundaryValid[index] =
                     thermoacousticBoundaryValid[index];
             }
+            valveFlowHistoryWrite_ = (valveFlowHistoryWrite_ + 1) % exhaustBoundaryKnotCount;
             if (pressureSamples_->tryPush(pressureSample))
                 ++frame.cylinderPressureSampleCount;
             else
@@ -7205,6 +7234,7 @@ void EngineSimulator::reset() noexcept {
     intakeWallHeatPendingSeconds_ = 0.0;
     intakeSplitReservoirDiagnostics_ = {};
     exhaustBoundaryKnotWrite_ = 0;
+    valveFlowHistoryWrite_ = 0;
     exhaustValveConductanceTimeIntegralM2S_.fill(0.0);
     exhaustBoundaryStateTimeIntegral_.fill({});
     exhaustBoundaryVolumeTimeIntegralM3S_.fill(0.0);
@@ -7397,6 +7427,7 @@ void EngineSimulator::reset() noexcept {
         intakePortRamKpa_[index] = 0.0;
         exhaustRunnerPressureKpa_[index] = config_.ambientPressureKpa;
         exhaustBoundaryKnots_[index].fill({});
+        valveFlowHistory_[index].fill({});
         chamberPressureBar_[index] = config_.ambientPressureKpa / 100.0;
         cyclePeakPressureKpa_[index] = 0.0;
         lastCyclePeakPressureKpa_[index] = 0.0;

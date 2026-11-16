@@ -154,7 +154,11 @@ never paired with the slower pressure: it becomes a volume-velocity source at
 the port, i.e. the antisymmetric characteristics `(+Zc U/2, -Zc U/2)`, then
 goes through the same physical valve impedance as the runner waves. The two
 filters sum coherently to an all-pass; there is therefore neither a doubled
-band nor a hidden timbre gain. If the boundary is already published full-band
+band nor a hidden timbre gain. They do so only if both branches describe the
+same instant: the network boundary is reconstructed 625 µs late, so the
+simulator publishes the valve's instantaneous flow and conductance at that same
+delay, interpolated from a per-substep history. Published at "now", the two
+branches cancelled up to 10 dB around the crossover (audit A2-08). If the boundary is already published full-band
 (`coupling rate = 0`), the complementary source is exactly zero.
 
 This instantaneous branch is itself a signal sampled by the mechanical solver.

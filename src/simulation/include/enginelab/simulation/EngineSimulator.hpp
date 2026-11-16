@@ -577,6 +577,23 @@ private:
     std::vector<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>>
         exhaustBoundaryKnots_ = std::vector<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>>(32);
     std::size_t exhaustBoundaryKnotWrite_ { 0 };
+    /** The valve's instantaneous flow and conductance, published to the audio
+     * at the boundary's own delay. The renderer sums this high band with the
+     * network's low band through complementary filters, which only make an
+     * all-pass when both describe the same instant: published at now beside a
+     * boundary 625 us behind, the two cancelled up to 10 dB around the
+     * crossover (audit A2-08). Recorded every substep a pressure sample is
+     * published; a substep is never shorter than the boundary's finest
+     * coupling, so the knot count above spans it. */
+    struct ValveFlowKnot final {
+        double timeSeconds {};
+        double massFlowKgPerSecond {};
+        double conductanceAreaM2 {};
+        bool valid { false };
+    };
+    std::vector<std::array<ValveFlowKnot, exhaustBoundaryKnotCount>> valveFlowHistory_ =
+        std::vector<std::array<ValveFlowKnot, exhaustBoundaryKnotCount>>(32);
+    std::size_t valveFlowHistoryWrite_ { 0 };
     /** Length-mean acoustic medium of every compiled exhaust duct. Reaction
      * events remain coupling-rate, while these slowly varying states are
      * refreshed at the 240 Hz product-frame cadence: the audio renderer applies
