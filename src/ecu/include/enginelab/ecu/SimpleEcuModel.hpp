@@ -74,6 +74,16 @@ public:
         overrunAfterfireArmed_.store(false, std::memory_order_relaxed);
         driverRevvedSinceStart_.store(false, std::memory_order_relaxed);
         knockRetardShare_.store(0.0, std::memory_order_relaxed);
+        // A run that timed anti-lag out left it out on the next one, and its
+        // feedback started from the last run's torque (audit PH-03).
+        antiLagAuthority_.store(0.0, std::memory_order_relaxed);
+        antiLagTorqueNm_.store(0.0, std::memory_order_relaxed);
+        antiLagActiveSeconds_.store(0.0, std::memory_order_relaxed);
+        antiLagDecoupledSeconds_.store(0.0, std::memory_order_relaxed);
+        antiLagWasActive_.store(false, std::memory_order_relaxed);
+        antiLagTimedOut_.store(false, std::memory_order_relaxed);
+        antiLagTooHot_.store(false, std::memory_order_relaxed);
+        antiLagLeftPlateOpen_.store(false, std::memory_order_relaxed);
     }
     /**
      * Read-only view of the idle governor's internal state, for diagnostics.

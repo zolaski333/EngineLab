@@ -376,6 +376,16 @@ void exitsLetItGo() {
         require(!run.activeAtEnd && (run.blockersAtEnd & bit(AntiLagBlocker::timeUp)) != 0U
                     && run.activeSeconds < 0.6,
                 "its maximum time lets it go, until the throttle re-arms it");
+        // A reset ECU is a fresh one: the timeout of the last run no longer
+        // holds anti-lag off on the next (audit PH-03).
+        EngineControls shut;
+        shut.ignitionEnabled = true;
+        const auto state = rig->simulator->state();
+        require((rig->ecu.evaluate(rig->config, state, shut).antiLagBlockers & bit(AntiLagBlocker::timeUp)) != 0U,
+                "the timeout holds while the pedal stays shut");
+        rig->ecu.reset();
+        require((rig->ecu.evaluate(rig->config, state, shut).antiLagBlockers & bit(AntiLagBlocker::timeUp)) == 0U,
+                "a reset clears the timeout");
     }
     {
         auto rig = std::make_unique<Rig>(jz);
