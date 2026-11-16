@@ -266,6 +266,14 @@ void testBaseFilesIncludesDependenciesAndCycles() {
     const auto cycle = compiler.compileFile(a);
     require(!cycle && hasDiagnostic(cycle, "ES301"), "include cycles should be detected");
     require(cycle.dependencies.size() == 2, "cyclic include dependencies should still be tracked");
+
+    // A script is UTF-8: an accented include was looked up in the ANSI code
+    // page on Windows and not found (audit DR-05).
+    writeFile(directory.path() / std::filesystem::path(u8"é.engine"), "name \"Accented\"\n");
+    writeFile(directory.path() / "accent-root.engine", "include \"\xC3\xA9.engine\"\n");
+    const auto accented = compiler.compileFile(directory.path() / "accent-root.engine");
+    for (const auto& diagnostic : accented.diagnostics) std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    require(accented && accented.config->name == "Accented", "an accented include is found");
 }
 
 void testTwoStrokePorts() {

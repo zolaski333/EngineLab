@@ -15,11 +15,19 @@
 #include <numbers>
 #include <set>
 #include <sstream>
+#include <string>
 #include <system_error>
 #include <utility>
 
 namespace enginelab::scripting {
 namespace {
+
+/** A script is UTF-8: a narrow path is the ANSI code page on Windows, and an
+ *  accented include or base was not found (audit DR-05). */
+[[nodiscard]] std::filesystem::path pathFromUtf8(const std::string& text) {
+    return std::filesystem::path(std::u8string(text.begin(), text.end()));
+}
+
 
 enum class Dimension {
     dimensionless,
@@ -626,7 +634,7 @@ private:
             error(peek(), "ES205", "base requires a quoted YAML or JSON path.");
             return;
         }
-        const auto relative = std::filesystem::path(advance().text);
+        const auto relative = pathFromUtf8(advance().text);
         context_.loadBase(sourceDirectory_ / relative, location);
     }
 
@@ -636,7 +644,7 @@ private:
             error(peek(), "ES206", "include requires a quoted engine-script path.");
             return;
         }
-        const auto relative = std::filesystem::path(advance().text);
+        const auto relative = pathFromUtf8(advance().text);
         context_.parseFile(sourceDirectory_ / relative, location);
     }
 

@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cctype>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <string>
@@ -13,6 +14,17 @@
 
 namespace enginelab {
 namespace {
+
+/** The calibration file as std::filesystem sees it: a narrow string is the
+ *  ANSI code page on Windows, and an accented path was never watched (audit
+ *  DR-05). */
+[[nodiscard]] std::filesystem::path watchedPath(const juce::File& file) {
+#if defined(_WIN32)
+    return std::filesystem::path(file.getFullPathName().toWideCharPointer());
+#else
+    return std::filesystem::path(file.getFullPathName().toRawUTF8());
+#endif
+}
 
 [[nodiscard]] juce::String utf8(std::string_view value) {
     return juce::String::fromUTF8(value.data(), static_cast<int>(value.size()));
@@ -706,7 +718,7 @@ void EcuTunerComponent::chooseCalibrationToLoad() {
                 json,
                 { {}, file.getFullPathName().toStdString() }, safe->completeTables_);
             if (result.published) {
-                safe->hotReloader_->watch(file.getFullPathName().toStdString());
+                safe->hotReloader_->watch(watchedPath(file));
                 safe->reloadFromSnapshot();
             } else safe->showIssues(result, "ECU load rejected");
         } else if (file != juce::File {}) {
@@ -733,7 +745,7 @@ void EcuTunerComponent::chooseCalibrationToSave() {
                 ui::showMessage(safe.getComponent(), juce::MessageBoxIconType::WarningIcon,
                     "ECU save failed", "The file could not be written.");
             else {
-                safe->hotReloader_->watch(file.getFullPathName().toStdString());
+                safe->hotReloader_->watch(watchedPath(file));
                 safe->reloadFromSnapshot();
             }
         }
