@@ -208,6 +208,22 @@ void testDiagnosticsAndSafetyLimits() {
     require(!missingCylinder && hasDiagnostic(missingCylinder, "ES228"),
             "unknown cylinder ID should not silently address an array index");
 
+    // A 20 kB script of nested parentheses overflowed the parser's stack and
+    // ended the process (audit 2026-11-16, DR-03): it is a diagnostic now.
+    const auto nested = [&compiler](std::size_t depth) {
+        return compiler.compileText("preset inline_four\nset idle_rpm = " + std::string(depth, '(') + "900 rpm"
+                                        + std::string(depth, ')') + "\n", "nested.engine");
+    };
+    const auto shallow = nested(100);
+    require(static_cast<bool>(shallow) && shallow.config->idleRpm == 900.0,
+            "a hundred nested parentheses still compile");
+    const auto deep = nested(10'000);
+    require(!deep && hasDiagnostic(deep, "ES242"), "ten thousand nested parentheses are refused, not a crash");
+    require(deep.diagnostics.size() < 10, "the refusal is one diagnostic, not one per parenthesis");
+    const auto signs = compiler.compileText("preset inline_four\nset idle_rpm = " + std::string(10'000, '-')
+                                                + "900 rpm\n", "signs.engine");
+    require(!signs && hasDiagnostic(signs, "ES242"), "ten thousand unary signs are refused, not a crash");
+
     EngineScriptCompileOptions limited;
     limited.maximumSourceBytes = 8;
     const auto tooLarge = compiler.compileText("preset inline_four", "large.engine", limited);

@@ -995,6 +995,20 @@ private:
     }
 
     std::optional<Quantity> parseUnary() {
+        // Every parenthesis and sign nests a call: a 20 kB line of them ran
+        // the thread out of stack and ended the process (audit DR-03).
+        if (expressionDepth_ >= maximumExpressionDepth) {
+            if (!expressionTooDeep_) error(peek(), "ES242", "Expression nested too deeply.");
+            expressionTooDeep_ = true;
+            return std::nullopt;
+        }
+        ++expressionDepth_;
+        struct Leave final {
+            Parser& parser;
+            ~Leave() {
+                if (--parser.expressionDepth_ == 0) parser.expressionTooDeep_ = false;
+            }
+        } leave { *this };
         if (match(TokenKind::plus)) return parseUnary();
         if (match(TokenKind::minus)) {
             const auto operation = previous();
@@ -1039,6 +1053,7 @@ private:
         }
         if (match(TokenKind::leftParenthesis)) {
             const auto value = parseExpression();
+            if (expressionTooDeep_) return std::nullopt;
             if (!require(TokenKind::rightParenthesis, "')' after the expression")) return std::nullopt;
             return value;
         }
@@ -1050,6 +1065,9 @@ private:
     std::vector<Token> tokens_;
     std::filesystem::path sourceDirectory_;
     std::size_t current_ { 0 };
+    static constexpr std::size_t maximumExpressionDepth { 256 };
+    std::size_t expressionDepth_ { 0 };
+    bool expressionTooDeep_ { false };
 };
 
 std::filesystem::path CompilationContext::canonical(const std::filesystem::path& path) const {
