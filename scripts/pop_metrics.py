@@ -171,6 +171,20 @@ def analyse(path: Path, start: float, end: float | None,
     }
 
 
+def strict_json(value):
+    """NaN (no pop, so no median) as null: a bare NaN is not JSON and a
+    strict reader rejected the file of a recording without pops (audit RT-01)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: strict_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [strict_json(item) for item in value]
+    if isinstance(value, np.generic):
+        return strict_json(value.item())
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("files", nargs="+", type=Path)
@@ -202,7 +216,8 @@ def main() -> int:
             for pop in result["pops"]:
                 print("   ", pop)
     if args.json:
-        args.json.write_text(json.dumps(results, indent=1), encoding="utf-8")
+        args.json.write_text(json.dumps(strict_json(results), indent=1, allow_nan=False),
+                             encoding="utf-8")
     return 0
 
 

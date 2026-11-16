@@ -120,7 +120,9 @@ def two_sided_sign_test(successes: int, total: int) -> float:
         return 1.0
 
     def binomial_tail(k: int) -> float:
-        return sum(math.comb(total, i) for i in range(0, k + 1)) / (2.0**total)
+        # Integers throughout: 2.0 ** 1024 overflowed a float and took the
+        # report down at 1,024 judgements (audit V04).
+        return sum(math.comb(total, i) for i in range(0, k + 1)) / (2**total)
 
     extreme = min(successes, total - successes)
     return min(1.0, 2.0 * binomial_tail(extreme))
@@ -129,17 +131,21 @@ def two_sided_sign_test(successes: int, total: int) -> float:
 # --------------------------------------------------------------------------- report
 
 
-def load_responses(pack: Path) -> tuple[list[dict], list[str]]:
+def load_responses(pack: Path) -> tuple[list[dict], list[str], dict[str, set[int]]]:
+    """The complete rows, one line per faulty row, and the pairs each
+    listener's sheet holds a row for (complete or not)."""
     responses_dir = pack / "responses"
     if not responses_dir.is_dir():
         raise SystemExit(f"error: {responses_dir} not found; run 'sheets' first")
     rows: list[dict] = []
     problems: list[str] = []
+    answered: dict[str, set[int]] = {}
     sheets = sorted(responses_dir.glob("*.csv"))
     if not sheets:
         raise SystemExit(f"error: no CSV in {responses_dir}")
     for sheet in sheets:
         listener = sheet.stem
+        seen = answered.setdefault(listener, set())
         with sheet.open(encoding="utf-8-sig", newline="") as handle:
             for line_number, raw in enumerate(csv.DictReader(handle), start=2):
                 if raw.get("pair") in (None, ""):
@@ -150,6 +156,12 @@ def load_responses(pack: Path) -> tuple[list[dict], list[str]]:
                 except (TypeError, ValueError):
                     problems.append(f"{where}: pair '{raw.get('pair')}' is not an integer")
                     continue
+                # One listener, one answer per pair: a copied row was counted
+                # as another independent vote (audit V01).
+                if pair in seen:
+                    problems.append(f"{where}: pair {pair} is answered twice by {listener}")
+                    continue
+                seen.add(pair)
                 record: dict = {"listener": listener, "pair": pair, "where": where}
                 incomplete = False
                 for column in SCORE_COLUMNS:
@@ -179,7 +191,7 @@ def load_responses(pack: Path) -> tuple[list[dict], list[str]]:
                 record["comment"] = (raw.get("comment") or "").strip()
                 if not incomplete:
                     rows.append(record)
-    return rows, problems
+    return rows, problems, answered
 
 
 def report(pack: Path, allow_incomplete: bool) -> int:
@@ -211,7 +223,12 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     subject_label = "Candidate" if variant_mode else "EngineLab"
     control_label = "Baseline" if variant_mode else "Reference"
 
-    rows, problems = load_responses(pack)
+    rows, problems, answered = load_responses(pack)
+    # A pair a listener never answered is as incomplete as an empty cell: it
+    # vanished from the report, which still said no row was dropped (audit V02).
+    for listener, pairs in sorted(answered.items()):
+        for pair in sorted(set(by_pair) - pairs):
+            problems.append(f"responses/{listener}.csv: pair {pair} is not answered")
     if problems and not allow_incomplete:
         print("Refusing to score an incomplete or out-of-domain set:\n", file=sys.stderr)
         for problem in problems[:40]:
@@ -290,9 +307,14 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     def mean(values: list[int]) -> float:
         return sum(values) / len(values) if values else float("nan")
 
-    total_n = sum(bucket["n"] for bucket in per_pair.values())
-    total_realistic = sum(bucket["chose_el_realistic"] for bucket in per_pair.values())
-    total_preferred = sum(bucket["chose_el_preferred"] for bucket in per_pair.values())
+    # A pair the key itself declares condition-mismatched (an idle against a
+    # recording under load) is listed and warned about, but no longer drives
+    # the global figures (audit V03).
+    scored = [bucket for bucket in per_pair.values() if bucket["window_matched"] is not False]
+    excluded_n = sum(bucket["n"] for bucket in per_pair.values()) - sum(bucket["n"] for bucket in scored)
+    total_n = sum(bucket["n"] for bucket in scored)
+    total_realistic = sum(bucket["chose_el_realistic"] for bucket in scored)
+    total_preferred = sum(bucket["chose_el_preferred"] for bucket in scored)
 
     lines: list[str] = []
     if variant_mode:
@@ -307,6 +329,10 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     lines.append(f"- target loudness: {key.get('target_lufs')} LUFS (ITU-R BS.1770)")
     lines.append(f"- listeners: {len(listeners)} ({', '.join(listeners)})")
     lines.append(f"- judgements kept: {total_n}")
+    if excluded_n:
+        lines.append(
+            f"- **judgements left out of the global figures (window not matched): {excluded_n}**"
+        )
     if solo_pairs:
         dropped = sum(bucket["n"] for bucket in solo_pairs.values())
         lines.append(
@@ -330,7 +356,14 @@ def report(pack: Path, allow_incomplete: bool) -> int:
             qualities[label] = qualities.get(label, 0) + 1
     paired = sum(qualities.values())
     proxies = sum(count for label, count in qualities.items() if "proxy" in label)
-    if variant_mode:
+    if key.get("mode") in self_modes:
+        lines.append(
+            f"This test compares one engine with itself, one factor switched:"
+            f" **{candidate}** versus **{baseline}**. It says nothing about"
+            " absolute realism -- no real recording takes part. It only says"
+            " which of the two a listener prefers, blind and at equal loudness."
+        )
+    elif variant_mode:
         lines.append(
             f"This test compares two catalogue engines: **{candidate}** (the"
             f" candidate) versus **{baseline}** (the internal reference). It says"
@@ -461,6 +494,7 @@ def report(pack: Path, allow_incomplete: bool) -> int:
         "target_lufs": key.get("target_lufs"),
         "listeners": listeners,
         "judgements": total_n,
+        "judgements_excluded_window_not_matched": excluded_n,
         "dropped_rows": len(problems),
         "match_quality_counts": qualities,
         "unpaired_segments": {
