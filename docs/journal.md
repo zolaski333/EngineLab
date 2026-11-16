@@ -5,6 +5,30 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-16 — audit lot 4: the app against the running engine
+
+- Fixed on `fix/audit-2026-11-16`: UA-01/APP-03 (an Audio workshop render or loop pack builds its simulator from the running engine and publishes its ECU snapshot before it; it ran the catalogue engine's tables), APP-04 (the workshop's physics fields follow `setEngine`), PH-03 (`SimpleEcuModel::reset` clears the eight anti-lag latches), EXHAUST-01 (removing a path pins each remaining path's turbo before the erase), APP-02/05/06 (cost advisory read before the apply, Escape writes the running vehicle value back, Build flushes a pending redesign).
+- Fails without the fix, rebuilt and rerun: PH-03 "a reset clears the timeout", EXHAUST-01 "each remaining path keeps the turbine it drove", APP-04 "the physics fields follow the engine". UA-01, APP-02, APP-05, APP-06: source proof only (the export manifest carries no ECU figure; the three app paths need a live window).
+- Not done: the loop pack's rpm points still come from the authored limits, not from the running calibration's rev limit.
+
+## 2026-11-16 — audit lot 3: the instruments say what they measure
+
+- Fixed: UA-08 (AudioAbHarness passed a dangling sample buffer, now runs every engine, `--filter`), TL2-01 (cyclic variability sampled once per phase wrap and kept zero-work cycles: K20A COV 0.29 -> 0.28 %), TL2-02 (5 unnamed CSV columns), TL2-03/RT-06/RT-07 (an empty reference match, an unwritten scene and a raw control byte fail), TL2-04 (the no-X control bypasses the crossovers only), A2-06 (a tap on a tapered part spread over its sections by length: 2.166 -> 0.000 in the new test), T2-01/TEST-01/TEST-02 (three oracles that could pass what they refuse), V01-V04/RT-01/RT-02 (listening reports count each answer once, unanswered pairs and excluded windows are reported, the binomial is 2^n; pop JSON refuses NaN).
+- New ctest entries: `ToolArguments.DynoReferenceNoMatch` and `SceneIndexBlocked` (WILL_FAIL on the right message). The listening fixes were checked by a scratch probe (5 cases fail before, pass after), not in ctest.
+- TEST-01 measured: "the last sample under the last 2 s mean" failed the RD350 at its raised 2,080 rpm target (2,278 -> 2,452 at 12 s, rising), but 18 s more show a slow swing, not a hang (min 1,705, settled 2,057; at 1,300: 1,363). The exception now requires the engine back within [0.85, 1.15] x target and over 0.78 x 30 s after the blip; physics unchanged.
+- Not examined: AudioAbHarness prints RT60 "UNMEASURABLE" on the K20A.
+
+## 2026-11-16 — audit lot 2: user data is no longer lost
+
+- Fixed: DR-01/02/06/10 (one file per saved-engine name; device names, over-long names and names read back as ECU files refused at save), RT2-01/DR-09 (a log keeps one time base; two logs in one second get two files), UA-05/UA-06/A2-01 (exports write to `.partial` and replace all their files or none; overwrite off keeps an existing tap), APP-01 (an exhaust designer opened before Save As keeps the new name), DR-05 (UTF-8 paths in script includes and the ECU watcher).
+- New tests fail without the fix: cancel leaves no `.partial`, a folder named `scenario.json` fails before the master is touched, a held file restores the old ones (Windows), the accented include. APP-01: source proof only.
+
+## 2026-11-16 — audit lots 0-1: a clean base, crashes and the build
+
+- Lot 0: the pending local edits committed on their own (add9560, 02737bd), the register committed (fdf7681), the priority in CLAUDE.md (172e72c); branch `fix/audit-2026-11-16`.
+- Lot 1 fixed: PLAT-01 (GCC: `reject()` named one field of three), DR-03 (expression depth is a diagnostic), PG-07 (YAML alias loop is a read error), PH-02 (knock-limit curve validated, no NaN spark), DR-04/A2-07 (live-edit fields guarded between threads), APP-12 (last-ratio click after a resize), RT-05/RT-08 (bad `--exhaust-tap` id, run shorter than a sample).
+- DR-04 and A2-07: no race detector, source proof only.
+
 ## 2026-11-16 — systematic audit: file coverage and bounded witnesses
 
 - Register: [audit.md](audit.md), 90 scoped findings (52 added); [coverage](audit-coverage.md) records 553/553 tracked files and 174,336 text lines. Proofs, sources and component images are in [audit-evidence](audit-evidence/continuation.md); existing local edits retained.

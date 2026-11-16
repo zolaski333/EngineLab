@@ -274,6 +274,32 @@ file formats, always with an in-memory migration).
   kept, however far from a real fuel), and the top speed line holds the
   shaft.
 
+The audit of 2026-11-16 (`docs/audit.md`, lots 0-4):
+
+- **Crashes**: a deeply nested expression in an engine script, ECU tables
+  in a YAML alias loop, a click on a gearbox's last ratio after the gear
+  count shrank, and a live gearbox edit racing the simulation no longer
+  crash the app. A malformed knock-limit curve is refused instead of
+  producing NaN spark advance.
+- **A new design can no longer overwrite another saved engine** whose name
+  maps to the same file; a name that is a Windows device (CON, NUL...), too
+  long, or read back as an ECU file is refused when saving, not after.
+- **Exports**: the Audio workshop's render and loop pack use the running
+  engine with its tuned ECU, not the catalogue engine; a failed or
+  cancelled overwrite leaves the old render whole; a diagnostic pressure
+  tap no longer overwrites a file with overwrite off.
+- **Logs and pass-by recordings** started within the same second get
+  their own files, and a log keeps one time base.
+- **Accented folder names** work in script includes and the ECU file
+  watcher.
+- **The exhaust designer** opened before Save As keeps the new name;
+  removing a path keeps each remaining path on its own turbo; its "solver
+  cost" note compares with the engine before the apply.
+- **Escape in a Vehicle field** restores the running value; **Build** in
+  the New engine window takes the last value typed; the Audio workshop's
+  physics fields follow a newly loaded engine; an ECU reset clears the
+  anti-lag's timeout.
+
 ## [0.9.1] — 2026-11-10
 
 The first published release of 0.9: the v0.9.0 tag did not compile on Linux
