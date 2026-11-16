@@ -2701,11 +2701,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     intakePlenumGas_[pathIndex].injectNitrousOxideMoles(nitrousMoles,
                         nitrousBottleTemperatureK_,
                         nitrousLatentHeatJPerKg(nitrousBottleTemperatureK_) * nitrousMolarMassKg);
-                    if (config_.nitrous.type == NitrousKitType::wet)
+                    if (config_.nitrous.type == NitrousKitType::wet) {
+                        const auto kitFuelMoles = 0.5 * nitrousMoles
+                            / (config_.fuelProperties.oxygenMolesPerFuelMole * config_.nitrous.kitLambda);
                         intakePlenumGas_[pathIndex].injectFuelMoles(
-                            0.5 * nitrousMoles / (config_.fuelProperties.oxygenMolesPerFuelMole
-                                * config_.nitrous.kitLambda),
-                            config_.injection.fuelTemperatureC + 273.15);
+                            kitFuelMoles, config_.injection.fuelTemperatureC + 273.15);
+                        // Counted as fuel used: it burnt uncounted, so the
+                        // fuel flow and BSFC undercounted the spray (audit PG-02).
+                        nitrousFuelMassKgThisStep_ += kitFuelMoles
+                            * config_.fuelProperties.molarMassGramsPerMole * 0.001;
+                    }
                 }
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
@@ -6226,7 +6231,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 / config_.fuelProperties.stoichiometricAirFuelRatio;
         }
         const auto totalMeteredFuelMassKg = meteredFuelMassKg
-            + std::exchange(carburettorFuelMassKgThisStep_, 0.0);
+            + std::exchange(carburettorFuelMassKgThisStep_, 0.0)
+            + std::exchange(nitrousFuelMassKgThisStep_, 0.0);
         const auto meteredFuelFlowGramsPerSecond =
             totalMeteredFuelMassKg / subDt * 1'000.0;
         state_.fuelFlowGramsPerSecond = smooth(state_.fuelFlowGramsPerSecond,
@@ -7278,6 +7284,7 @@ void EngineSimulator::reset() noexcept {
     airboxSlug_.fill({});
     carburettorStates_.fill({});
     carburettorFuelMassKgThisStep_ = 0.0;
+    nitrousFuelMassKgThisStep_ = 0.0;
     entrainedFuelMolesThisCycle_.fill(0.0);
     meteredFuelMolesLastCycle_.fill(0.0);
     deliveredFuelMolesLastCycle_.fill(0.0);

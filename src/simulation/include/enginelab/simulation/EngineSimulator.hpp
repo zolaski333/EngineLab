@@ -723,6 +723,8 @@ private:
     std::array<CarburettorState, 32> carburettorStates_ {};
     /** What the jets passed this substep, for the fuel flow and the total. */
     double carburettorFuelMassKgThisStep_ {};
+    // A wet nitrous kit's fuel, sprayed into the plenums (audit PG-02).
+    double nitrousFuelMassKgThisStep_ {};
     /** Density-scaled previous charge sampled once at the injector-start edge.
      *  Resolved chamber oxygen may raise the request later in the intake event,
      *  but sub-cycle plenum waves must not be peak-detected into pulse width. */

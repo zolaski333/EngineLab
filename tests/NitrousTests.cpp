@@ -68,6 +68,7 @@ struct Hold final {
     double trimBefore { 0.0 };
     double trimAfter { 0.0 };
     double peakBar { 0.0 };
+    double fuelFlowGramsPerSecond { 0.0 };
 };
 
 /** Started, then full throttle held at `rpm` by the dyno: `settle` seconds
@@ -112,6 +113,7 @@ Hold holdAt(const enginelab::EngineConfig& config, double rpm, bool armed, doubl
             hold.flowKgPerSecond += result.state.nitrousMassFlowKgPerSecond;
             hold.bottlePressureKpa += result.state.nitrousBottlePressureKpa;
             hold.manifoldKpa += result.state.manifoldPressureKpa;
+            hold.fuelFlowGramsPerSecond += result.state.fuelFlowGramsPerSecond;
             hold.peakBar = std::max(hold.peakBar, result.state.peakCylinderPressureBar);
             ++samples;
         }
@@ -122,6 +124,7 @@ Hold holdAt(const enginelab::EngineConfig& config, double rpm, bool armed, doubl
     hold.flowKgPerSecond /= samples;
     hold.bottlePressureKpa /= samples;
     hold.manifoldKpa /= samples;
+    hold.fuelFlowGramsPerSecond /= samples;
     hold.knock = knock / samples;
     hold.airFuelRatio = afr / samples;
     hold.bottleAfterKg = state.nitrousBottleMassKg;
@@ -219,6 +222,26 @@ void checkShot(const std::string& name, enginelab::NitrousKitType type, double r
     require(with.bottleBeforeKg - with.bottleAfterKg > 0.9 * with.flowKgPerSecond * 3.0, name + ": the bottle empties");
 }
 
+/** A wet kit's own fuel is fuel used: it burnt uncounted, so the fuel flow
+ *  and BSFC undercounted the spray (audit PG-02). A dry kit's fuel goes
+ *  through the injectors, which were always counted: at the same shot the
+ *  two use about the same fuel. (Against the unsprayed engine the delta
+ *  is not the kit's fuel: the lambda loop leans the injectors under it.) */
+void checkWetKitFuelCounted() {
+    const auto plain = catalogueEngine("K20");
+    const auto wet = holdAt(withKit(plain, enginelab::NitrousKitType::wet), 6'000.0, true);
+    const auto dry = holdAt(withKit(plain, enginelab::NitrousKitType::dry), 6'000.0, true);
+    const auto kit = withKit(plain, enginelab::NitrousKitType::wet);
+    const auto& fuel = kit.fuelProperties;
+    // 0.5 mol of O2 per mol of N2O, at the kit's lambda.
+    const auto kitFuelGramsPerSecond = wet.flowKgPerSecond / 0.0440128 * 0.5
+        / (fuel.oxygenMolesPerFuelMole * kit.nitrous.kitLambda) * fuel.molarMassGramsPerMole;
+    std::cout << "K20 fuel flow sprayed: wet " << wet.fuelFlowGramsPerSecond << " g/s, dry "
+              << dry.fuelFlowGramsPerSecond << " g/s (the wet kit's own " << kitFuelGramsPerSecond << " g/s)\n";
+    require(std::abs(wet.fuelFlowGramsPerSecond - dry.fuelFlowGramsPerSecond) < 0.25 * kitFuelGramsPerSecond,
+            "K20: the wet kit's fuel is counted in the fuel flow, as the dry kit's is");
+}
+
 void checkBottle() {
     auto config = withKit(catalogueEngine("K20"), enginelab::NitrousKitType::wet);
     config.nitrous.bottleCapacityKg = 0.5;
@@ -275,6 +298,7 @@ int main() {
     checkShot("K20", enginelab::NitrousKitType::wet, 6'000.0);
     checkShot("LS3", enginelab::NitrousKitType::dry, 4'500.0);
     checkBottle();
+    checkWetKitFuelCounted();
     checkLeanKit();
     std::cout << "EngineLab.Nitrous PASS\n";
     return 0;
