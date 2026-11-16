@@ -95,7 +95,7 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [A2-05](#a2-05) | P2 | Intake tapered runner propagation gains power between unequal endpoint admittances | fixed 9244b71 |
 | [A2-06](#a2-06) | P2 | Authored-component pressure taps address only the first taper section | fixed 4ef50da |
 | [A2-07](#a2-07) | P2 | Live replacement reads the network owner while the audio thread swaps it | fixed e05f68f |
-| [A2-08](#a2-08) | P2 | Complementary exhaust bands are summed with different source times | fixed e3c2906 on exp/audit-sound, owner A/B |
+| [A2-08](#a2-08) | P2 | Complementary exhaust bands are summed with different source times | fixed 60c4ad5 (owner A/B) |
 | [RT2-01](#rt2-01) | P2 | Changing engine during a datalog makes the recorded time jump backwards | fixed 8e26a01 |
 | [T2-01](#t2-01) | P2 | The maximum-mix quality test bypasses the boosted mixer settings it claims to validate | fixed aaf498f |
 | [TL2-01](#tl2-01) | P2 | Cyclic variability silently discards the zero/negative-work cycles that create roughness | fixed 00f307b |

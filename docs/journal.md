@@ -12,10 +12,10 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - PG-01 (8 boundary knots spanned 210 us of a 625 us delay at a 30 us flush; now 96, a static_assert holds it): median 0.000 dB on all 18, largest in one high-speed window (RD350 +1.33 dB at 16 kHz, CP4 -0.75, others under 0.5), Radial bit-identical.
 - A2-03 (the rigid end {1,-1,-1} kept a closing valve's offset forever; now {1,0,0}): median 0.000 dB, largest in the same window (CP3 +1.79 dB at 16 kHz, others under 0.6). That window moves on both: a sensitive point, not examined.
 - A2-05 (a tapered intake runner gained A_out/A_in): a compact 30-60 mm cone read 16.0 dB over its equal-volume cylinder at 150 Hz, 0.0 after. Catalogue: 17 bit-identical, EA288 median 0.04 dB, largest -1.79 dB at 63 Hz, level +0.01 dB.
-- A2-08 (the valve flow's high band published 625 us ahead of the network's low band, around one crossover): clear, 3-9 dB in single bands (RD350 -13.8 at 16 kHz), median 0.11-0.99 dB, overall level within +-0.5 dB (CP3 -0.81). On `exp/audit-sound` (e3c2906) for an owner A/B, pairs in `listening-test/2026-11-16/`.
+- A2-08 (the valve flow's high band published 625 us ahead of the network's low band, around one crossover): clear, 3-9 dB in single bands (RD350 -13.8 at 16 kHz), median 0.11-0.99 dB, overall level within +-0.5 dB (CP3 -0.81). The owner heard the pairs (`listening-test/2026-11-16/`) and kept it on 2026-11-17 (60c4ad5).
 - Rebuilt and rerun without the fix, failing on their own message: A2-02, A2-04, A2-03, A2-05. A2-08 has no new test; PG-01's is the static_assert.
 - Benches against the lot 0 baseline: IntakeDuctBench identical; DynoSweep K20/RD350 torque, power and held_rpm_stddev identical to the digit, the reported egt_c and exh_kpa move (PG-01: K20A -0.003 C; RD350 egt up to +2.0 C, exh_kpa peak -1.7 % at the top, where its history was short). Full build green; ctest 111/113 at -j 4, AudioRender and LoadedAccelerationCatalogDfcoResume timed out and pass alone.
-- Not measured: A2-08 against a real recording; the suite on `exp/audit-sound`.
+- Not measured: A2-08 against a real recording.
 
 ## 2026-11-16 — audit lot 5: physics, each change measured
 

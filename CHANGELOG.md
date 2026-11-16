@@ -315,7 +315,10 @@ The audit of 2026-11-16 (`docs/audit.md`, lots 0-6):
   primary, the collector trunk, the straight body, the tailpipe).
 - **Sound**: a paused turbocharger rings down instead of holding its
   whistle; a tapered intake runner no longer amplifies its own wave (only
-  the EA288 tapers in the catalogue, under 2 dB in one band). A closing
+  the EA288 tapers in the catalogue, under 2 dB in one band); the exhaust's
+  fast and slow parts are added at the same instant, so they no longer
+  partly cancel around their crossover (the timbre moves by a few dB in
+  some bands, the overall level within half a decibel). A closing
   valve and the exhaust boundary's history were also corrected, measured
   at no more than a fraction of a decibel on the catalogue.
 

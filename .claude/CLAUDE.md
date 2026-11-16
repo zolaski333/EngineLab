@@ -32,8 +32,8 @@ EXHAUST-02 (done 2026-11-16). Owner go 2026-11-16 for (6) sound, in this
 order: A2-02, A2-04 (default sound unchanged, proven bit-exact), then A2-08 +
 PG-01, A2-05, A2-03, each measured on the catalogue; a negligible spectral
 change passes, a clear one waits on an owner A/B pair (on `exp/audit-sound`,
-off the fix branch). Lot 6 done 2026-11-16: A2-08 alone was clear and waits on
-its owner A/B (`exp/audit-sound`, `listening-test/2026-11-16/`). Lots 7-8 (UI, packaging) and the owner decisions (PH-05,
+off the fix branch). Lot 6 done 2026-11-16; A2-08, the one clear change, kept by
+the owner after its A/B (2026-11-17). Lots 7-8 (UI, packaging) and the owner decisions (PH-05,
 V07, RT-04, V05/V06, K01-K03) wait.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
