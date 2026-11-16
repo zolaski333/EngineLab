@@ -222,6 +222,7 @@ struct AcousticExhaustNetwork::Impl final {
     bool jetNoiseEnabled { true };
     double farFieldDensityKgPerM3 { 0.0 };
     bool outletPressureRelease { false };
+    bool outletConvectiveLoss { false };
     bool mediaInitialised { false };
     /** Diagnostic pressure tap (setPressureTap). */
     std::size_t tapDuct { invalidEndpoint };
@@ -1403,6 +1404,11 @@ void AcousticExhaustNetwork::beginBlock(
         // plane-wave reflection at a subsonic outflow falls to (1-M)/(1+M), so
         // the outlet Mach number sets a real, physically scaled dissipation at
         // the termination -- not a broadband gain inside the collector loop.
+        // Measured against since (journal 2026-11-16): (1-M)/(1+M) is the
+        // limit WITHOUT a Kutta condition. Davies et al. (1980), Peters et
+        // al. (1993) and Allam & Abom (2006) measure Munt's Kutta solution,
+        // |R| -> 1 as ka -> 0 and above it near Sr ~ pi; the energy loss is in
+        // the convected intensity, not the pressure. setOutletConvectiveLoss.
         auto mach = 0.0;
         auto massFlow = 0.0;
         if (boundary != outletBoundaries.end()) {
@@ -1436,8 +1442,8 @@ void AcousticExhaustNetwork::beginBlock(
             outlet.radiationDensityKgPerM3 = medium.densityKgPerM3;
             outlet.radiationSoundSpeedMps = medium.soundSpeedMps;
             outlet.outletMach = outlet.outletMachTarget;
-            outlet.convectiveReflection =
-                (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach);
+            outlet.convectiveReflection = impl_->outletConvectiveLoss
+                ? (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach) : 1.0;
             (void) outlet.radiation.setMedium(
                 outlet.radiationDensityKgPerM3, outlet.radiationSoundSpeedMps);
             outlet.jetNoise.snapToTarget();
@@ -1558,8 +1564,8 @@ AcousticExhaustNetwork::process(
         (void) outlet.radiation.setMedium(
             outlet.radiationDensityKgPerM3, outlet.radiationSoundSpeedMps);
         outlet.outletMach += ramp * (outlet.outletMachTarget - outlet.outletMach);
-        outlet.convectiveReflection =
-            (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach);
+        outlet.convectiveReflection = impl_->outletConvectiveLoss
+            ? (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach) : 1.0;
     }
     const auto linear = impl_->linearSamplesLeft > 0U;
     if (linear) --impl_->linearSamplesLeft;
@@ -1902,6 +1908,11 @@ void AcousticExhaustNetwork::setOutletPressureRelease(bool enabled) noexcept {
     impl_->outletPressureRelease = enabled;
     for (auto& outlet : impl_->outlets)
         outlet.radiation.setPressureRelease(enabled);
+}
+
+void AcousticExhaustNetwork::setOutletConvectiveLoss(bool enabled) noexcept {
+    if (!impl_) return;
+    impl_->outletConvectiveLoss = enabled;
 }
 
 bool AcousticExhaustNetwork::outletJetNoiseEnabled() const noexcept {

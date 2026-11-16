@@ -168,6 +168,7 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
     handoff->network->setOutletJetNoiseEnabled(outletJetNoiseEnabled_);
     handoff->network->setOutletFarFieldDensity(resolvedOutletFarFieldDensityKgPerM3());
     handoff->network->setOutletPressureRelease(outletPressureRelease_);
+    handoff->network->setOutletConvectiveLoss(outletConvectiveLoss_);
     handoff->sampleRate = sampleRate;
     // A change the audio thread has not taken yet is replaced, and freed here.
     delete incomingExhaustNetwork_.exchange(handoff.release(), std::memory_order_acq_rel);

@@ -121,6 +121,11 @@ public:
      * (UnflangedPipeRadiation::setPressureRelease). Production keeps the
      * Levine-Schwinger load. */
     void setOutletPressureRelease(bool enabled) noexcept;
+    /** Diagnostic: true restores the outlet's mean-flow factor (1-M)/(1+M)
+     * on the reflected wave, the no-Kutta limit that measured open pipes
+     * refute (journal 2026-11-16). Production leaves it off: the pressure
+     * reflection is Levine-Schwinger's. */
+    void setOutletConvectiveLoss(bool enabled) noexcept;
     /** Every outlet's microphones glide to `left` and `right`
      * (FreeFieldObserver::moveMicrophones). Audio thread. */
     void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,

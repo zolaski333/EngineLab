@@ -72,6 +72,10 @@ struct OfflineAudioExportRequest final {
         double axialFraction {};
     };
     std::optional<ExhaustPressureTap> exhaustPressureTap;
+    /** Diagnostic: the outlets' mean-flow reflection factor on or off
+     *  (RealtimeEngineAudio::setOutletConvectiveLoss); absent keeps the
+     *  renderer's default. */
+    std::optional<bool> outletConvectiveLoss;
 };
 
 /** Speed actually reached inside one scenario stage.

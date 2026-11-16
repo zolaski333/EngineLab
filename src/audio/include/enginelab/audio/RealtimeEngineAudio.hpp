@@ -285,6 +285,14 @@ public:
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletPressureRelease(enabled);
     }
+    /** Diagnostic: true restores the outlets' refuted mean-flow reflection
+     * factor (AcousticExhaustNetwork::setOutletConvectiveLoss). Same
+     * threading rule. */
+    void setOutletConvectiveLoss(bool enabled) noexcept {
+        outletConvectiveLoss_ = enabled;
+        if (acousticExhaustNetwork_)
+            acousticExhaustNetwork_->setOutletConvectiveLoss(enabled);
+    }
     /** Diagnostic: every sample the compiled exhaust network runs, append its
      * pressure at `axialFraction` of graph node `nodeId` to a recording of
      * at most `capacitySamples` (AcousticExhaustNetwork::setPressureTap).
@@ -666,6 +674,7 @@ private:
             ? ambientAirDensityKgPerM3() : outletFarFieldDensityOverrideKgPerM3_;
     }
     bool outletPressureRelease_ { false };
+    bool outletConvectiveLoss_ { false };
     /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
     std::atomic<std::uint64_t> microphoneSequence_ { 0 };
     std::array<std::atomic<double>, 6> publishedMicrophones_ {};

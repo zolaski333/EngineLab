@@ -245,7 +245,11 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   fundamental); the exhaust valve's flow as a four-valve superbike's missing
   power (Cd 0.90 and plateau 1.5 give the designed CBR +3 %), or as the
   turbos' high-speed pumping (plateau 0.65: at most +0.8 %; the fitted
-  turbine area is what sets it, journal 2026-11-15).
+  turbine area is what sets it, journal 2026-11-15); the outlet's edge
+  loss, decay along the pipe or the coupling cadence as the BSA A50's
+  radiated deficit; an outlet scaling its reflected pressure by
+  (1-M)/(1+M), the no-Kutta limit (measured pipes follow Munt with a Kutta
+  condition, |R| -> 1; journal 2026-11-16).
 - **Performance**: fork-join per cylinder with woken threads (the resident pool
   runs the pass since 2026-10-20); AVX/AVX2 (dependent-division latency); a
   telemetry cache for listening; state-variable valve-flow reconstruction

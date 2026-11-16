@@ -354,8 +354,11 @@ struct TransferResult final {
     const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
         { gasDensityKgPerM3, soundSpeedMps }
     }};
-    // A fixed positive mean flow gives the open termination its physical
-    // convective loss. Jet noise remains explicitly disabled above.
+    // A fixed positive mean flow leaves by the outlet; it enters through an
+    // open exhaust valve, whose orifice is the termination's loss
+    // (ValvePortTermination). The outlet's pressure reflection keeps
+    // Levine-Schwinger's |R| (Munt with a Kutta condition, journal
+    // 2026-11-16). Jet noise remains explicitly disabled above.
     const std::array<float, 1> meanFlowKgPerSecond {{ 0.060F }};
     network.beginBlock(medium, 1.0, meanFlowKgPerSecond);
 
@@ -364,8 +367,13 @@ struct TransferResult final {
     result.left.resize(renderSampleCount);
     result.right.resize(renderSampleCount);
     std::array<float, 1> source {};
+    // The valve that passes that flow: a 30 mm head at 8 mm lift, Cd 0.6
+    // (CdA 4.5 cm2), into the 42 mm primary.
+    constexpr float primaryAreaM2 = static_cast<float>(
+        std::numbers::pi * 0.021 * 0.021);
     std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 1>
-        cylinderBoundary {};
+        cylinderBoundary {{ { 4.5e-4F, meanFlowKgPerSecond[0], gasDensityKgPerM3,
+            gasDensityKgPerM3 * soundSpeedMps / primaryAreaM2, true } }};
     for (std::size_t sample = 0; sample < renderSampleCount; ++sample) {
         source[0] = excitation[sample];
         result.sourceSquareSum += static_cast<double>(source[0]) * source[0];

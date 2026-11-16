@@ -145,6 +145,12 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- **An open tailpipe no longer swallows the wave it reflects.** The outlet
+  scaled the reflected pressure by (1-M)/(1+M) of its exit flow; measured
+  open pipes with flow (Davies 1980, Peters 1993, Allam & Abom 2006)
+  reflect it whole at low frequency. The sound is slightly fuller: +0.2 to
+  +0.7 dB on the catalogue, more on an open straight pipe (the BSA A50
+  reference, +1 to +5 dB per octave, closer to its measurement).
 - **Boosted engines make more of their power.** The generated spark map took
   5 degrees off for every bar of boost on top of the knock model and its
   control, which already retard a charge that knocks, so a turbo engine ran
