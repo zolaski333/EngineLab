@@ -45,6 +45,10 @@ struct SavedEngineLoad final {
 
 /** `<folder>/<name>.json`, the name made safe for a file system. */
 [[nodiscard]] std::filesystem::path savedEngineFile(const std::filesystem::path& folder, std::string_view name);
+/** Whether two saved-engine paths are the same file: names that differ only
+    in case are one file on Windows. "A?B" and "A*B" give the same file too
+    (savedEngineFile), so two names can share one. */
+[[nodiscard]] bool sameSavedEngineFile(const std::filesystem::path& first, const std::filesystem::path& second);
 /** The calibration file a save made by 0.9.1 or earlier kept beside an engine file. */
 [[nodiscard]] std::filesystem::path savedCalibrationFile(const std::filesystem::path& engineFile);
 

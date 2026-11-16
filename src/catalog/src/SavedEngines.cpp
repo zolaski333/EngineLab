@@ -9,6 +9,7 @@
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -175,9 +176,31 @@ std::filesystem::path savedEngineFile(const std::filesystem::path& folder, std::
     // Windows drops trailing dots and spaces from a file name.
     while (!stem.empty() && (stem.back() == '.' || stem.back() == ' ')) stem.pop_back();
     if (stem.empty()) stem = "engine";
-    // Not a calibration file by accident.
-    if (endsWith(stem, ".ecu")) stem += '_';
+    // Not a calibration file by accident, whatever its case: the drop reads
+    // "My.ECU.json" as one (audit DR-06).
+    if (endsWith(lowercase(stem), ".ecu")) stem += '_';
+    // Not a Windows device: "CON.json" cannot be written, nor "nul.v8.json"
+    // (audit DR-10). The name before its first dot is what Windows reads.
+    const auto device = lowercase(stem.substr(0, stem.find('.')));
+    const auto reservedDevice = device == "con" || device == "prn" || device == "aux" || device == "nul"
+        || ((device.starts_with("com") || device.starts_with("lpt")) && device.size() == 4
+            && device[3] >= '1' && device[3] <= '9');
+    if (reservedDevice) stem.insert(device.size(), 1, '_');
     return folder / pathFromUtf8(stem + ".json");
+}
+
+bool sameSavedEngineFile(const std::filesystem::path& first, const std::filesystem::path& second) {
+#ifdef _WIN32
+    // Windows file names ignore case: "A b.json" is "a B.json".
+    const auto folded = [](const std::filesystem::path& path) {
+        auto text = path.lexically_normal().generic_wstring();
+        for (auto& character : text) character = static_cast<wchar_t>(std::towlower(character));
+        return text;
+    };
+    return folded(first) == folded(second);
+#else
+    return first.lexically_normal() == second.lexically_normal();
+#endif
 }
 
 std::filesystem::path savedCalibrationFile(const std::filesystem::path& engineFile) {
@@ -284,8 +307,15 @@ std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, c
     if (error) return "cannot create the folder of " + nameOf(engineFile);
     auto saved = config;
     disableBackfires(saved);
-    if (auto failed = writeReplacing(engineFile, encodeEngineFile(saved, calibration, engineFileFormatOf(engineFile))))
-        return failed;
+    const auto format = engineFileFormatOf(engineFile);
+    auto text = encodeEngineFile(saved, calibration, format);
+    // The reader refuses a file over its limit: a save it could not read back
+    // lost the engine (audit DR-02). JSON without its indentation is a third
+    // of the size; beyond that, the engine is not saved.
+    if (text.size() > maximumFileBytes && format == EngineFileFormat::json) text = Json::parse(text).dump();
+    if (text.size() > maximumFileBytes)
+        return nameOf(engineFile) + " would exceed the 2 MiB limit of a saved engine";
+    if (auto failed = writeReplacing(engineFile, text)) return failed;
     // An older save's tables beside it would outlive the ones now inside.
     std::filesystem::remove(savedCalibrationFile(engineFile), error);
     return std::nullopt;
@@ -293,7 +323,8 @@ std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, c
 
 std::size_t placeSavedEngine(std::vector<SavedEngine>& engines, SavedEngine saved) {
     std::erase_if(engines, [&saved](const SavedEngine& engine) {
-        return !engine.file.empty() && (engine.file == saved.file || engine.config.name == saved.config.name);
+        return !engine.file.empty()
+            && (sameSavedEngineFile(engine.file, saved.file) || engine.config.name == saved.config.name);
     });
     const auto position = std::find_if(engines.begin(), engines.end(), [&saved](const SavedEngine& engine) {
         return !engine.file.empty() && saved.file < engine.file;

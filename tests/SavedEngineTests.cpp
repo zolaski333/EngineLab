@@ -25,6 +25,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 #include <variant>
 
 namespace {
@@ -516,6 +517,62 @@ void checkNamesAndFolder(const EngineConfig& source) {
     require(savedEngineFile(folder.path, "x.ecu").filename() == "x.ecu_.json",
             "an engine is never named like a calibration file");
     require(savedEngineFile(folder.path, " . ").filename() == "engine.json", "an empty file name gets a stem");
+    // "My.ECU.json" dropped back on the app was read as a calibration
+    // (audit DR-06); "CON.json" could not be written (audit DR-10).
+    const auto upperEcu = savedEngineFile(folder.path, "My.ECU");
+    require(upperEcu.filename() == "My.ECU_.json" && droppedFileKind(upperEcu) == DroppedFileKind::engine,
+            "an engine is never named like a calibration file, whatever the case");
+    for (const auto& [name, expected] : std::vector<std::pair<std::string, std::string>> {
+             { "CON", "CON_.json" }, { "nul.v8", "nul_.v8.json" }, { "COM1", "COM1_.json" },
+             { "lpt9", "lpt9_.json" }, { "Console", "Console.json" }, { "COM10", "COM10.json" },
+             { "Aux V8", "Aux V8.json" } })
+        require(savedEngineFile(folder.path, name).filename() == std::filesystem::path(expected),
+                "\"" + name + "\" is kept in " + expected + ", not "
+                    + savedEngineFile(folder.path, name).filename().string());
+    {
+        auto device = canonical(source);
+        device.name = "CON";
+        require(!saveEngine(savedEngineFile(folder.path, device.name), device, nullptr)
+                    && readSavedEngine(savedEngineFile(folder.path, device.name)).engine.has_value(),
+                "an engine named CON saves and reads back");
+        std::filesystem::remove(savedEngineFile(folder.path, device.name));
+    }
+    // Two names, one file (audit DR-01): the designer checks this before it
+    // builds, and the menu holds one engine per file.
+    require(sameSavedEngineFile(savedEngineFile(folder.path, "A?B"), savedEngineFile(folder.path, "A*B")),
+            "\"A?B\" and \"A*B\" share a file");
+    require(!sameSavedEngineFile(savedEngineFile(folder.path, "A B"), savedEngineFile(folder.path, "A C")),
+            "two names, two files");
+#ifdef _WIN32
+    require(sameSavedEngineFile(folder.path / "My V8.json", folder.path / "my v8.JSON"),
+            "names that differ only in case are one file on Windows");
+    {
+        auto engines = std::vector<SavedEngine> {};
+        auto first = canonical(source);
+        first.name = "My V8";
+        engines.push_back({ first, std::nullopt, folder.path / "My V8.json" });
+        auto second = canonical(source);
+        second.name = "my v8";
+        (void)placeSavedEngine(engines, { second, std::nullopt, folder.path / "my v8.json" });
+        require(engines.size() == 1 && engines.front().config.name == "my v8",
+                "the menu keeps one engine for one file, whatever the case");
+    }
+#endif
+    // A save the reader refuses lost the engine (audit DR-02): an engine of
+    // 200,000 gears is 2.6 MB indented, 0.8 MB without.
+    {
+        auto large = canonical(source);
+        large.name = "Many gears";
+        large.transmission.gearRatios.assign(200'000, 1.0);
+        require(!validateEngineConfig(large).has_value(), "an engine of 200,000 gears validates");
+        const auto file = savedEngineFile(folder.path, large.name);
+        const auto saved = saveEngine(file, large, nullptr);
+        require(!saved, "it saves: " + saved.value_or(""));
+        const auto read = readSavedEngine(file);
+        require(read.engine && read.engine->config.transmission.gearRatios.size() == 200'000,
+                "and reads back: " + read.error);
+        std::filesystem::remove(file);
+    }
     require(savedCalibrationFile(folder.path / "My EJ25.json").filename() == "My EJ25.ecu.json",
             "the calibration shares the engine's stem");
     const std::vector<std::string> catalogue { source.name };

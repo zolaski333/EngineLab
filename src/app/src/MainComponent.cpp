@@ -1739,7 +1739,7 @@ void MainComponent::confirmSaveAs(const juce::String& typedName) {
     const auto file = savedEngineFile(pathOf(savedEnginesFolder()), name);
     // Another saved engine with this name, or this file, is replaced: ask.
     const auto replaced = std::find_if(presets_.begin(), presets_.end(), [&](const Preset& preset) {
-        return !preset.file.empty() && (preset.config.name == name || preset.file == file);
+        return !preset.file.empty() && (preset.config.name == name || sameSavedEngineFile(preset.file, file));
     });
     const auto replacesOther = replaced != presets_.end()
         && static_cast<int>(std::distance(presets_.begin(), replaced)) != selectedPresetIndex_;
@@ -1785,8 +1785,21 @@ bool MainComponent::runDesignedEngine(const EngineConfig& designed) {
             + utf8("\": choose another name."));
         return false;
     }
+    // "A?B" and "A*B" are one file, as are names that differ only in case on
+    // Windows: the build wrote over the other engine without a word (audit
+    // DR-01). Save As asks before replacing; a new design never replaces.
+    const auto file = savedEngineFile(pathOf(savedEnginesFolder()), designed.name);
+    const auto fileTaken = fileOf(file).existsAsFile()
+        || std::any_of(presets_.begin(), presets_.end(), [&file](const Preset& preset) {
+               return !preset.file.empty() && sameSavedEngineFile(preset.file, file);
+           });
+    if (fileTaken) {
+        showError(utf8("Engine not built"), utf8("Another saved engine is kept in \"")
+            + fileOf(file).getFileName() + utf8("\": choose another name."));
+        return false;
+    }
     if (!switchEngine(designed, {}, std::nullopt)) return false;
-    writeSavedEngine(designed.name, savedEngineFile(pathOf(savedEnginesFolder()), designed.name));
+    writeSavedEngine(designed.name, file);
     return true;
 }
 
