@@ -641,10 +641,35 @@ void checkOutOfRangeEdits(const EngineConfig& source) {
     std::ofstream(file) << replaceValue(text, "bore_mm", "-1.0");
     require(!readSavedEngine(file).engine.has_value(), "a negative bore is still refused");
 
+    // A whole-number field holding a fraction or a value past 32 bits was
+    // truncated or wrapped into another valid one (audit DR-08).
+    std::ofstream(file) << replaceValue(text, "intake_valve_count", "1.9");
+    const auto fractional = readSavedEngine(file);
+    require(!fractional.engine.has_value() && fractional.error.find("intake_valve_count") != std::string::npos,
+            "a fractional valve count is refused by name: " + fractional.error);
+    std::ofstream(file) << replaceValue(text, "schema_version", "4294967305");
+    const auto wrapped = readSavedEngine(file);
+    require(!wrapped.engine.has_value() && wrapped.error.find("schema_version") != std::string::npos,
+            "a schema past 32 bits is refused by name: " + wrapped.error);
+    std::ofstream(file) << replaceValue(text, "intake_valve_count", "2.0");
+    require(readSavedEngine(file).engine.has_value(), "a whole 2.0 still reads");
+
     // The strict reader keeps refusing what the lenient one corrects.
     auto strict = config;
     strict.octaneRating = 150.0;
     require(validateEngineConfig(strict).has_value(), "validation still refuses an octane of 150");
+
+    // The same edit in a YAML file loads the same way: it was refused, so
+    // one engine loaded or vanished by its file format (audit DR-07).
+    std::filesystem::remove(file);
+    const auto yamlFile = folder.path / "Hand edited.yaml";
+    std::ofstream(yamlFile, std::ios::binary) << encodeEngineFile(strict, nullptr, EngineFileFormat::yaml);
+    const auto yamlRead = readSavedEngine(yamlFile);
+    require(yamlRead.engine.has_value(), "a YAML octane of 150 loads: " + yamlRead.error);
+    require(yamlRead.engine->config.octaneRating == 130.0, "the YAML one is clamped into its range (130)");
+    require(yamlRead.warnings.size() == 1
+                && yamlRead.warnings.front().find("octaneRating = 150") != std::string::npos,
+            "and the YAML one says so");
 }
 } // namespace
 

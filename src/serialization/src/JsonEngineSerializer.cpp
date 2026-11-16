@@ -1,11 +1,73 @@
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <nlohmann/json.hpp>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 
 namespace enginelab {
 namespace {
 using Json = nlohmann::json;
+
+/** The keys read as whole numbers (std::uint32_t). nlohmann converts 1.9
+ *  to 1 and 4294967305 to 9 without a word, so an invalid value became
+ *  another valid one (audit DR-08): they are checked before they are read. */
+constexpr std::array<std::string_view, 25> wholeNumberKeys {
+    "schema_version", "id", "bank_id", "crank_journal_id", "crankshaft_id",
+    "cylinder_id", "cylinder_ids", "exhaust_path_id", "intake_id",
+    "master_cylinder_id", "from_component_id", "to_component_id",
+    "from_port", "to_port", "firing_order", "intake_valve_count",
+    "exhaust_valve_count", "compressor_blade_count", "turbine_blade_count",
+    "supercharger_lobe_count", "turbocharger_count", "ignition_site_count",
+    "rotor_count", "stage_count", "throttle_count" };
+
+[[nodiscard]] bool isWholeNumberKey(std::string_view key) {
+    for (const auto name : wholeNumberKeys)
+        if (name == key) return true;
+    return false;
+}
+
+[[nodiscard]] bool isUnsigned32(const Json& value) {
+    if (value.is_number_unsigned())
+        return value.get<std::uint64_t>() <= std::numeric_limits<std::uint32_t>::max();
+    if (value.is_number_integer()) {
+        const auto signedValue = value.get<std::int64_t>();
+        return signedValue >= 0 && signedValue <= std::numeric_limits<std::uint32_t>::max();
+    }
+    if (value.is_number_float()) {
+        const auto number = value.get<double>();
+        return std::isfinite(number) && number == std::floor(number) && number >= 0.0
+            && number <= static_cast<double>(std::numeric_limits<std::uint32_t>::max());
+    }
+    return true; // not a number: the read itself names the wrong type
+}
+
+/** The first whole-number key holding a fraction, a negative or a value past
+ *  std::uint32_t, anywhere under `node`. */
+[[nodiscard]] std::optional<std::string> wholeNumberError(const Json& node) {
+    if (node.is_array()) {
+        for (const auto& item : node)
+            if (auto error = wholeNumberError(item)) return error;
+        return std::nullopt;
+    }
+    if (!node.is_object()) return std::nullopt;
+    for (const auto& [key, value] : node.items()) {
+        if (isWholeNumberKey(key)) {
+            const auto bad = value.is_array()
+                ? std::any_of(value.begin(), value.end(), [](const Json& item) { return !isUnsigned32(item); })
+                : !isUnsigned32(value);
+            if (bad)
+                return "Engine value is not a whole number from 0 to 4294967295: " + key + " = " + value.dump();
+        }
+        if (auto error = wholeNumberError(value)) return error;
+    }
+    return std::nullopt;
+}
 [[nodiscard]] std::uint8_t decodeOptionalCrossoverPort(
     const Json& object, const char* key) {
     if (!object.contains(key)) return unspecifiedExhaustComponentPort;
@@ -763,6 +825,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
     try {
         const auto document = Json::parse(text);
         const auto& engine = document.at("engine");
+        if (const auto& schema = document.at("schema_version"); !isUnsigned32(schema))
+            return { std::nullopt, "Engine value is not a whole number from 0 to 4294967295: schema_version = "
+                + schema.dump() };
+        if (auto error = wholeNumberError(engine)) return { std::nullopt, std::move(*error) };
         EngineConfig config;
         config.schemaVersion = document.at("schema_version").get<std::uint32_t>();
         if (config.schemaVersion < minimumSupportedEngineSchemaVersion

@@ -902,6 +902,11 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
 }
 
 EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noexcept {
+    return decode(text, nullptr);
+}
+
+EngineDecodeResult YamlEngineSerializer::decode(std::string_view text,
+                                                std::vector<std::string>* repairs) const noexcept {
     try {
         const auto document = YAML::Load(std::string(text));
         EngineConfig config;
@@ -1537,6 +1542,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.cylinders.push_back(cylinder);
         }
         normaliseEngineConfig(config);
+        if (repairs != nullptr) *repairs = repairEngineConfigRanges(config);
         if (const auto error = validateEngineConfig(config)) return { std::nullopt, *error };
         return { std::move(config), {} };
     } catch (const std::exception& error) { return { std::nullopt, error.what() }; }

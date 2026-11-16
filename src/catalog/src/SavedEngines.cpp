@@ -260,7 +260,7 @@ SavedEngineRead decodeEngineFile(std::string_view text, EngineFileFormat format,
     std::optional<std::string> calibrationText;
     try {
         if (format == EngineFileFormat::yaml) {
-            decoded = YamlEngineSerializer {}.decode(text);
+            decoded = YamlEngineSerializer {}.decode(text, &repairs);
             if (decoded) {
                 const auto document = YAML::Load(std::string(text));
                 if (const auto node = document[calibrationKey]; node && !node.IsNull())
