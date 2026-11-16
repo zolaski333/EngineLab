@@ -19,6 +19,7 @@
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
+#include <enginelab/foundation/TurboSizing.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -2122,6 +2123,55 @@ void starterIndependentOfMechanicalRegression() {
             "the starter does not follow the mechanical fader");
 }
 
+/** Paused, the runtime publishes a zero time scale over a still-spinning
+ * turbocharger: its tone held on over a frozen engine (audit A2-02). */
+void forcedInductionPauseRegression() {
+    constexpr double sampleRate = 48'000.0;
+    constexpr int blockSize = 256;
+    enginelab::FiringEventQueue eventQueue;
+    enginelab::RealtimeAudioState state;
+    state.forcedInductionKind.store(1);
+    state.forcedInductionShaftRpm.store(120'000.0F);
+    state.boostPressureRatio.store(2.0F);
+    state.correctedAirFlowKgPerSecond.store(0.20F);
+    state.compressorPowerWatts.store(25'000.0F);
+    state.turbinePowerWatts.store(26'000.0F);
+    state.exhaustFlowGramsPerSecond.store(210.0F);
+    state.rpm.store(6'000.0F);
+    state.throttle.store(1.0F);
+    state.timeScale.store(1.0F);
+    const auto config = enginelab::withTurbocharger(enginelab::makeDefaultInlineFour());
+    auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
+        eventQueue, state, nullptr, nullptr, &config, nullptr);
+    renderer->prepare(sampleRate, blockSize);
+    juce::AudioBuffer<float> master(2, blockSize);
+    juce::AudioBuffer<float> turbo(2, blockSize);
+    enginelab::RealtimeAudioStemBuffers stems;
+    stems.forcedInduction = &turbo;
+    const auto renderRms = [&](int blocks, int measuredBlocks) {
+        double sum = 0.0;
+        for (int block = 0; block < blocks; ++block) {
+            master.clear();
+            turbo.clear();
+            renderer->renderWithStems(master, 0, blockSize, stems);
+            if (block < blocks - measuredBlocks) continue;
+            for (int sample = 0; sample < blockSize; ++sample)
+                sum += static_cast<double>(turbo.getSample(0, sample)) * turbo.getSample(0, sample);
+        }
+        return std::sqrt(sum / (static_cast<double>(measuredBlocks) * blockSize));
+    };
+    const auto running = renderRms(200, 100);
+    // What the runtime publishes paused: zero speed, throttle and time scale,
+    // the shaft's speed and powers kept.
+    state.rpm.store(0.0F);
+    state.throttle.store(0.0F);
+    state.timeScale.store(0.0F);
+    const auto paused = renderRms(400, 200);
+    std::cout << "  forced induction paused: running rms " << running << ", paused rms " << paused << '\n';
+    require(running > 1.0e-4, "the spinning turbocharger must be audible before the pause");
+    require(paused < 0.01 * running, "paused, the turbocharger must ring down to silence");
+}
+
 void outputQualityRegression() {
     for (const auto mode : { enginelab::AudioMonitorMode::physicalReference,
                              enginelab::AudioMonitorMode::captureVoiced }) {
@@ -3758,6 +3808,7 @@ int main(int argc, char** argv) {
         intakeMouthCarriesEveryBoreRegression();
         intakeAirboxIsAnExpansionChamberRegression();
         forcedInductionAcousticsRegression();
+        forcedInductionPauseRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
         diagnosticStemRegression();

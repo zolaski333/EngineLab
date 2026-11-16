@@ -2015,16 +2015,22 @@ void RealtimeEngineAudio::renderSynthesis(
                 density = densitySum / mediumCount;
                 soundSpeed = soundSpeedSum / mediumCount;
             }
+            // Paused, the runtime publishes a zero time scale but keeps the
+            // shaft's speed and powers, and the time scale maps back to 1 for
+            // the acoustics: the wheel's tone and flow noise held on over a
+            // frozen engine (audit A2-02). A paused shaft drives nothing, so
+            // the source's own telemetry smoothing rings it down.
+            const auto running = publishedTimeScale > 0.01F ? 1.0F : 0.0F;
             const ForcedInductionAcoustics::Input input {
-                .shaftSpeedRpm = fiShaftRpm,
-                .correctedAirFlowKgPerSecond = correctedAirFlow,
+                .shaftSpeedRpm = running * fiShaftRpm,
+                .correctedAirFlowKgPerSecond = running * correctedAirFlow,
                 .pressureRatio = boostRatio,
-                .compressorPowerWatts = compressorPowerWatts,
-                .turbinePowerWatts = turbinePowerWatts,
-                .exhaustMassFlowKgPerSecond = std::max(
+                .compressorPowerWatts = running * compressorPowerWatts,
+                .turbinePowerWatts = running * turbinePowerWatts,
+                .exhaustMassFlowKgPerSecond = running * std::max(
                     0.0F, exhaustFlowGramsPerSecond * 0.001F),
                 .wastegateOpening = wastegateOpening,
-                .blowOffMassFlowKgPerSecond = blowOffMassFlow,
+                .blowOffMassFlowKgPerSecond = running * blowOffMassFlow,
                 .densityKgPerM3 = density,
                 .soundSpeedMps = soundSpeed,
                 .acousticTimeScale = acousticTimeScale
