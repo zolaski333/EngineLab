@@ -706,7 +706,14 @@ bool MainComponent::applyIntakeEdit(const EngineConfig& edited) {
     return true;
 }
 
-bool MainComponent::applyExhaustEdit(const EngineConfig& edited) {
+bool MainComponent::applyExhaustEdit(const EngineConfig& requested) {
+    // The designer holds a copy made when it opened: after a "Save as" its
+    // name was the old engine's, the restart fallback below made the engine
+    // that one again and the next Save wrote over it (audit APP-01). Same
+    // rule as applyEngineEdit.
+    auto edited = requested;
+    keepBackfires(config_, edited);
+    edited.name = config_.name;
     if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveExhaust(edited))
         return applyConfig(edited, false, true);
     // The simulation thread swaps the runtime's own graph: the audio gets one
