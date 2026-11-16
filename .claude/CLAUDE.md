@@ -28,7 +28,7 @@ APP-02..06, EXHAUST-01, PH-03. Physics and default sound untouched (the
 deterministic harnesses prove it). Lots 0-4 done (2026-11-16). Owner go
 2026-11-16 to continue: (5) physics, each change measured before/after:
 PH-01, PH-04, PH-06, PG-02, PG-04, PG-05, PG-06, PG-08, DR-07, DR-08,
-EXHAUST-02. Lots 6-8 (sound, UI, packaging) and the owner decisions (PH-05,
+EXHAUST-02 (done 2026-11-16). Lots 6-8 (sound, UI, packaging) and the owner decisions (PH-05,
 V07, RT-04, V05/V06, K01-K03) wait; the sound lot needs the owner's A/B.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
