@@ -11,6 +11,7 @@
 // conservation while drawing, and the port species source used by port fuel
 // injection.
 
+#include <algorithm>
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 
 #include <array>
@@ -342,9 +343,12 @@ void testPortSpeciesInjectionIsConservativeAndGuarded() {
 // order-dependent write inside a per-duct pass then changes the result.
 struct ReversedExecutor final {
     std::size_t dispatches { 0 };
+    std::size_t widestDispatch { 0 };
     static void run(void* executor, std::size_t count,
                     ExhaustGasNetwork::ParallelFor::Body body, void* context) noexcept {
-        ++static_cast<ReversedExecutor*>(executor)->dispatches;
+        auto& self = *static_cast<ReversedExecutor*>(executor);
+        ++self.dispatches;
+        self.widestDispatch = std::max(self.widestDispatch, count);
         for (auto index = count; index > 0; --index) body(context, index - 1);
     }
 };
@@ -383,7 +387,10 @@ void testPerDuctPassIsOrderIndependent() {
                       && reversed.configure(layout, configuration),
                   "the manifold networks must configure");
     ReversedExecutor executor;
-    reversed.setParallelFor({ &ReversedExecutor::run, &executor });
+    // One chunk per runner: at the default single thread the network makes
+    // one chunk, so "reversing" it ran the runners in ascending order
+    // (audit PG-04).
+    reversed.setParallelFor({ &ReversedExecutor::run, &executor, runnerCount });
 
     const auto& model = serial.mixtureModel();
     auto plenum = model.conservativeFromPressureTemperature(97'000.0, 305.0);
@@ -426,6 +433,8 @@ void testPerDuctPassIsOrderIndependent() {
     }
     requireIntake(executor.dispatches > 0,
                   "the reversed network must actually dispatch through its executor");
+    requireIntake(executor.widestDispatch == runnerCount,
+                  "the reversed network must dispatch one chunk per runner");
 }
 
 } // namespace
