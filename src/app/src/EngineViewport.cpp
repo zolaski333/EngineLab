@@ -899,6 +899,9 @@ void PartInspector::beginTyping(std::size_t index) {
     if (!edit_ || index >= pending_.size()) return;
     stopTimer();
     sendEdit();
+    // The edit just sent can rebuild the fields (fewer gears): the old last
+    // ratio is gone (audit APP-12).
+    if (!edit_ || index >= pending_.size()) return;
     typing_ = static_cast<int>(index);
     valueEditor_.setText(formatValue(index, pending_[index], false), false);
     valueEditor_.setBounds(valueArea(index));
