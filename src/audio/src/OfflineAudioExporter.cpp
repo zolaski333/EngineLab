@@ -1,5 +1,6 @@
 #include <enginelab/audio/OfflineAudioExporter.hpp>
 
+#include "ExportFiles.hpp"
 #include "OfflineRenderChain.hpp"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -422,12 +423,7 @@ void removePartialFiles(
         std::filesystem::remove(file, ignored);
 }
 
-[[nodiscard]] std::filesystem::path partialPathFor(
-    const std::filesystem::path& finalPath) {
-    auto partial = finalPath;
-    partial += ".partial";
-    return partial;
-}
+using exportfiles::partialPathFor;
 
 } // namespace
 
@@ -693,17 +689,15 @@ OfflineAudioExportResult exportOfflineAudio(
         if (request.writeStems) finalFiles.push_back(orderMapPath);
         finalFiles.push_back(scenarioPath);
         finalFiles.push_back(manifestPath);
+        // The tap is one of the export's files: it was written over an
+        // existing one with overwrite off (audit UA-06).
+        const auto tapPath = request.outputDirectory / "exhaust_tap_pa.f32";
+        if (request.exhaustPressureTap) finalFiles.push_back(tapPath);
         for (const auto& finalFile : finalFiles) {
-            const auto partial = partialPathFor(finalFile);
-            if (std::filesystem::exists(partial))
-                return fail(
-                    "Stale partial export exists: " + partial.string());
-            if (!request.overwriteExistingFiles
-                && std::filesystem::exists(finalFile)) {
-                return fail(
-                    "Output already exists: " + finalFile.string());
-            }
-            partialFiles.push_back(partial);
+            if (const auto refused = exportfiles::checkFinalFile(
+                    finalFile, request.overwriteExistingFiles))
+                return fail(*refused);
+            partialFiles.push_back(partialPathFor(finalFile));
         }
 
         double totalSeconds = 0.0;
@@ -1013,9 +1007,10 @@ OfflineAudioExportResult exportOfflineAudio(
                     static_cast<double>(writtenFrames)
                     / static_cast<double>(totalFrames);
                 if (!progress(fraction, stage.name)) {
-                    for (auto& writer : writers)
-                        writer->abort();
-                    removePartialFiles(partialFiles);
+                    // fail() closes the order map's stream before it removes
+                    // the partials: open, Windows kept it, and the next
+                    // export found it stale (audit A2-01).
+                    (void)fail({});
                     result.cancelled = true;
                     result.error.clear();
                     return result;
@@ -1327,30 +1322,18 @@ OfflineAudioExportResult exportOfflineAudio(
                     "Could not write render manifest.");
         }
 
-        for (const auto& finalFile : finalFiles) {
-            const auto partial = partialPathFor(finalFile);
-            if (request.overwriteExistingFiles) {
-                std::error_code removeError;
-                std::filesystem::remove(
-                    finalFile, removeError);
-                if (removeError)
-                    return fail(
-                        "Could not replace "
-                        + finalFile.string() + ": "
-                        + removeError.message());
-            }
-            std::filesystem::rename(partial, finalFile);
-        }
-        result.files = std::move(finalFiles);
         if (request.exhaustPressureTap) {
-            const auto tapPath = request.outputDirectory / "exhaust_tap_pa.f32";
             const auto& recording = renderer->exhaustTapRecording();
-            std::ofstream tap(tapPath, std::ios::binary | std::ios::trunc);
+            std::ofstream tap(partialPathFor(tapPath), std::ios::binary | std::ios::trunc);
             tap.write(reinterpret_cast<const char*>(recording.data()),
                 static_cast<std::streamsize>(recording.size() * sizeof(float)));
+            tap.close();
             if (!tap) return fail("Could not write exhaust_tap_pa.f32.");
-            result.files.push_back(tapPath);
         }
+        if (const auto failed = exportfiles::commitPartials(
+                finalFiles, request.overwriteExistingFiles))
+            return fail(*failed);
+        result.files = std::move(finalFiles);
         result.success = true;
         return result;
     } catch (const std::exception& exception) {

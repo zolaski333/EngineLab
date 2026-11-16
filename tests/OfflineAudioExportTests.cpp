@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -386,6 +388,74 @@ int main() {
         !std::filesystem::exists(
             cancelledRequest.outputDirectory / "master.wav"),
         "cancelled export leaves no final WAV");
+
+    // Cancelled once it renders, with stems: the order map's stream stayed
+    // open, Windows kept its partial and the same export was then refused
+    // as stale (audit A2-01).
+    auto midRequest = pcmRequest;
+    midRequest.outputDirectory = temporary.path() / "cancelled-mid";
+    midRequest.sampleRateHz = 48'000;
+    const auto midCancelled = enginelab::exportOfflineAudio(
+        midRequest, [](double fraction, std::string_view) { return fraction <= 0.0; });
+    require(midCancelled.cancelled && !midCancelled.success, "an export cancelled while it renders");
+    for (const auto& entry : std::filesystem::directory_iterator(midRequest.outputDirectory))
+        require(entry.path().extension() != ".partial",
+            "a cancelled export leaves no partial: " + entry.path().filename().string());
+    const auto retried = enginelab::exportOfflineAudio(midRequest);
+    require(retried.success, "the same export runs again after a cancel: " + retried.error);
+
+    // A failed replacement lost the earlier master (audit UA-05): the
+    // export now replaces all of its files or none.
+    const auto writeSentinel = [](const std::filesystem::path& file) {
+        std::ofstream(file, std::ios::binary) << "earlier";
+    };
+    const auto holdsSentinel = [](const std::filesystem::path& file) {
+        std::ifstream in(file, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        return text == "earlier";
+    };
+    auto replaceRequest = floatRequest;
+    replaceRequest.sampleRateHz = 48'000;
+    replaceRequest.outputDirectory = temporary.path() / "replace-directory";
+    replaceRequest.overwriteExistingFiles = true;
+    std::filesystem::create_directories(replaceRequest.outputDirectory / "scenario.json" / "inside");
+    writeSentinel(replaceRequest.outputDirectory / "master.wav");
+    const auto notAFile = enginelab::exportOfflineAudio(replaceRequest);
+    require(!notAFile.success && holdsSentinel(replaceRequest.outputDirectory / "master.wav"),
+        "a folder where a file goes fails the export before the master is touched");
+#ifdef _WIN32
+    // A file Windows will not let go of fails the replacement half way.
+    replaceRequest.outputDirectory = temporary.path() / "replace-locked";
+    std::filesystem::create_directories(replaceRequest.outputDirectory);
+    writeSentinel(replaceRequest.outputDirectory / "master.wav");
+    writeSentinel(replaceRequest.outputDirectory / "scenario.json");
+    {
+        std::ifstream held(replaceRequest.outputDirectory / "scenario.json");
+        const auto locked = enginelab::exportOfflineAudio(replaceRequest);
+        require(!locked.success, "a held file fails the replacement");
+    }
+    require(holdsSentinel(replaceRequest.outputDirectory / "master.wav")
+            && holdsSentinel(replaceRequest.outputDirectory / "scenario.json"),
+        "a failed replacement puts the earlier files back");
+    for (const auto& entry : std::filesystem::directory_iterator(replaceRequest.outputDirectory))
+        require(entry.path().filename() == "master.wav" || entry.path().filename() == "scenario.json",
+            "a failed replacement leaves nothing else: " + entry.path().filename().string());
+#endif
+
+    // The pressure tap is one of the export's files: written over an
+    // earlier one with overwrite off (audit UA-06).
+    auto tapRequest = floatRequest;
+    tapRequest.sampleRateHz = 48'000;
+    tapRequest.outputDirectory = temporary.path() / "tap";
+    tapRequest.exhaustPressureTap = enginelab::OfflineAudioExportRequest::ExhaustPressureTap { 100U, 0.5 };
+    std::filesystem::create_directories(tapRequest.outputDirectory);
+    writeSentinel(tapRequest.outputDirectory / "exhaust_tap_pa.f32");
+    const auto tapRefused = enginelab::exportOfflineAudio(tapRequest);
+    require(!tapRefused.success && tapRefused.error.find("exhaust_tap_pa.f32") != std::string::npos
+            && holdsSentinel(tapRequest.outputDirectory / "exhaust_tap_pa.f32"),
+        "an earlier tap is not written over with overwrite off: " + tapRefused.error);
+    require(!std::filesystem::exists(tapRequest.outputDirectory / "master.wav"),
+        "a refused tap writes no other file either");
 
     const enginelab::EngineConfig* audioLab = nullptr;
     for (const auto& entry : catalog.entries) {

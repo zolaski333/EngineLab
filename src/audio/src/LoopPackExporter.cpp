@@ -1,5 +1,6 @@
 #include <enginelab/audio/LoopPackExporter.hpp>
 
+#include "ExportFiles.hpp"
 #include "OfflineRenderChain.hpp"
 
 #include <enginelab/simulation/DynoAbsorberController.hpp>
@@ -121,12 +122,7 @@ struct RecordedLoop final {
     return buffer.data();
 }
 
-[[nodiscard]] std::filesystem::path partialPathFor(
-    const std::filesystem::path& finalPath) {
-    auto partial = finalPath;
-    partial += ".partial";
-    return partial;
-}
+using exportfiles::partialPathFor;
 
 void removeFiles(const std::vector<std::filesystem::path>& files) noexcept {
     std::error_code ignored;
@@ -297,13 +293,9 @@ LoopPackResult exportLoopPack(
             }
         }
         finalFiles.push_back(summaryPath);
-        for (const auto& file : finalFiles) {
-            if (std::filesystem::exists(partialPathFor(file)))
-                return fail("Stale partial export exists: "
-                    + partialPathFor(file).string());
-            if (!request.overwriteExistingFiles && std::filesystem::exists(file))
-                return fail("Output already exists: " + file.string());
-        }
+        for (const auto& file : finalFiles)
+            if (const auto refused = exportfiles::checkFinalFile(file, request.overwriteExistingFiles))
+                return fail(*refused);
 
         if (progress && !progress(0.0, "preflight")) {
             result.cancelled = true;
@@ -752,16 +744,9 @@ LoopPackResult exportLoopPack(
             if (!output) return fail("Could not write loop-pack.json.");
         }
 
-        for (const auto& file : finalFiles) {
-            if (request.overwriteExistingFiles) {
-                std::error_code removeError;
-                std::filesystem::remove(file, removeError);
-                if (removeError)
-                    return fail("Could not replace " + file.string() + ": "
-                        + removeError.message());
-            }
-            std::filesystem::rename(partialPathFor(file), file);
-        }
+        // A failure puts back what the export replaced (audit UA-05).
+        if (const auto failed = exportfiles::commitPartials(finalFiles, request.overwriteExistingFiles))
+            return fail(*failed);
         createdFiles.clear();
         result.files = std::move(finalFiles);
         result.success = true;
