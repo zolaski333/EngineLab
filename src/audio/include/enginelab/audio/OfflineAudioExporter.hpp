@@ -1,10 +1,12 @@
 #pragma once
 
+#include <enginelab/calibration/CalibrationStore.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -49,6 +51,10 @@ using OfflineAudioMix = AudioVoicingConfig;
 
 struct OfflineAudioExportRequest final {
     EngineConfig engine;
+    /** The ECU tables the render runs, as a running engine's store holds
+     *  them; absent, the tables the configuration implies. An Audio workshop
+     *  export ran the default tables and lost the live tuning (audit UA-01). */
+    std::shared_ptr<const calibration::CalibrationSnapshot> calibration;
     OfflineAudioScenario scenario;
     OfflineAudioMix mix;
     std::filesystem::path outputDirectory;

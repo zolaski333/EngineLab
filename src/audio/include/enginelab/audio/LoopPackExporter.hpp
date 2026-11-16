@@ -21,6 +21,10 @@ namespace enginelab {
  */
 struct LoopPackRequest final {
     EngineConfig engine;
+    /** The ECU tables the render runs, as a running engine's store holds
+     *  them; absent, the tables the configuration implies. An Audio workshop
+     *  export ran the default tables and lost the live tuning (audit UA-01). */
+    std::shared_ptr<const calibration::CalibrationSnapshot> calibration;
     OfflineAudioMix mix;
     std::filesystem::path outputDirectory;
     /** Root used to resolve engine-authored relative impulse-response paths. */

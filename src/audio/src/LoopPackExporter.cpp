@@ -302,7 +302,8 @@ LoopPackResult exportLoopPack(
             return result;
         }
 
-        auto chain = std::make_unique<offline::RenderChain>(config, request.mix);
+        auto chain = std::make_unique<offline::RenderChain>(
+            config, request.mix, std::nullopt, request.calibration.get());
         auto& simulator = chain->simulator();
         auto& renderer = chain->renderer();
         std::size_t authoredResponses = 0;

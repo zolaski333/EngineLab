@@ -208,7 +208,8 @@ public:
         bool measuredImpulseResponseAvailable,
         MixChangedCallback mixChanged,
         PhysicsApplyCallback physicsApply,
-        TelemetryProvider telemetryProvider)
+        TelemetryProvider telemetryProvider,
+        RunningEngineProvider runningEngine)
         : engine_(engine),
           assetRoot_(std::move(assetRoot)),
           catalogueMix_(mix),
@@ -220,6 +221,7 @@ public:
           mixChanged_(std::move(mixChanged)),
           physicsApply_(std::move(physicsApply)),
           telemetryProvider_(std::move(telemetryProvider)),
+          runningEngine_(std::move(runningEngine)),
           progressBar_(progressValue_) {
         setOpaque(true);
 
@@ -559,11 +561,21 @@ public:
             compiledIntakeTopology;
         measuredImpulseResponseAvailable_ =
             measuredImpulseResponseAvailable;
-        mixAfterfireToggle_.setToggleState(
-            engine_.exhaustAfterfire.enabled, juce::dontSendNotification);
+        // The physics fields are the new engine's: APPLY LIVE sent the
+        // last engine's to it (audit APP-04).
+        setPhysicsInternal(audioPhysicsSettingsFor(engine_));
         updateEnginePresentation();
         updateAvailability();
         publishMix();
+    }
+
+    /** The calibration an export runs: the running engine's, read with
+     *  its configuration (see RunningEngineProvider). */
+    [[nodiscard]] std::shared_ptr<const calibration::CalibrationSnapshot> refreshRunningEngine() {
+        if (!runningEngine_) return {};
+        auto running = runningEngine_();
+        engine_ = std::move(running.config);
+        return std::move(running.calibration);
     }
 
     void setMix(const OfflineAudioMix& mix) {
@@ -1127,6 +1139,7 @@ private:
 
     void startExport(
         const std::filesystem::path& parentDirectory) {
+        auto runningCalibration = refreshRunningEngine();
         OfflineAudioScenario scenario =
             makeDefaultOfflineAudioScenario(engine_);
         if (!scenarioPath_.empty()) {
@@ -1170,6 +1183,7 @@ private:
 
         OfflineAudioExportRequest request;
         request.engine = engine_;
+        request.calibration = std::move(runningCalibration);
         request.scenario = std::move(scenario);
         request.mix = effectiveMix();
         request.outputDirectory = outputDirectory;
@@ -1324,6 +1338,7 @@ private:
     }
 
     void startLoopPack(const std::filesystem::path& parentDirectory) {
+        auto runningCalibration = refreshRunningEngine();
         const auto stamp = juce::Time::getCurrentTime()
             .formatted("%Y%m%d-%H%M%S").toStdString();
         const auto baseName = fileSlug(engine_.name) + "-" + stamp + "-loops";
@@ -1334,6 +1349,7 @@ private:
 
         LoopPackRequest request;
         request.engine = engine_;
+        request.calibration = std::move(runningCalibration);
         request.mix = effectiveMix();
         request.outputDirectory = outputDirectory;
         request.assetRoot = assetRoot_;
@@ -1455,6 +1471,7 @@ private:
     MixChangedCallback mixChanged_;
     PhysicsApplyCallback physicsApply_;
     TelemetryProvider telemetryProvider_;
+    RunningEngineProvider runningEngine_;
 
     juce::GroupComponent mixGroup_;
     juce::GroupComponent exportGroup_;
@@ -1541,7 +1558,8 @@ AudioWorkshopWindow::AudioWorkshopWindow(
     bool measuredImpulseResponseAvailable,
     MixChangedCallback mixChanged,
     PhysicsApplyCallback physicsApply,
-    TelemetryProvider telemetryProvider)
+    TelemetryProvider telemetryProvider,
+    RunningEngineProvider runningEngine)
     : juce::DocumentWindow(
         "EngineLab - Audio workshop",
         juce::Colour(0xff0d1312),
@@ -1553,7 +1571,7 @@ AudioWorkshopWindow::AudioWorkshopWindow(
         compiledIntakeTopology,
         measuredImpulseResponseAvailable,
         std::move(mixChanged), std::move(physicsApply),
-        std::move(telemetryProvider));
+        std::move(telemetryProvider), std::move(runningEngine));
     setContentOwned(content_, true);
     setUsingNativeTitleBar(true);
     setResizable(true, true);

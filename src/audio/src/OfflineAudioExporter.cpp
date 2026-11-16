@@ -714,7 +714,7 @@ OfflineAudioExportResult exportOfflineAudio(
             return fail("Scenario produces no audio frames.");
 
         auto chain = std::make_unique<offline::RenderChain>(
-            config, request.mix, request.exhaustCellLengthM);
+            config, request.mix, request.exhaustCellLengthM, request.calibration.get());
         auto* simulator = &chain->simulator();
         auto* renderer = &chain->renderer();
         offline::DroppedTelemetry dropped;

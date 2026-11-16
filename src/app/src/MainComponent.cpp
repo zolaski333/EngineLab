@@ -1152,6 +1152,14 @@ void MainComponent::showAudioWorkshop() {
                     if (!safe) return AudioPhysicsTelemetry {};
                     return audioPhysicsTelemetryFor(
                         safe->config_, safe->model_.state);
+                },
+                [safe] {
+                    AudioWorkshopWindow::RunningEngine running;
+                    if (!safe) return running;
+                    running.config = safe->config_;
+                    if (safe->runtime_)
+                        running.calibration = safe->runtime_->calibrationStore()->snapshot();
+                    return running;
                 });
     } else {
         audioWorkshopWindow_->setEngine(

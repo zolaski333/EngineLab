@@ -422,6 +422,16 @@ int main() {
                     base.combustionGain),
         "compatibility topology re-enables its real controls");
 
+    // Another engine brings its own physics fields: APPLY LIVE sent the
+    // last engine's to it (audit APP-04).
+    auto otherEngine = engine;
+    otherEngine.combustionCalibration.cycleVariationCoefficientOfVariation = 0.03;
+    window.setEngine(otherEngine, ENGINELAB_CATALOG_ROOT, false, false, true);
+    refusePhysics = false;
+    applyPhysicsButton->onClick();
+    require(near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.03),
+        "the physics fields follow the engine the workshop is given");
+
     // The exhaust designer draws a rotor's port passage inside its source,
     // so the passage has no node: painting it as one threw out of paint()
     // and closed the app on a rotary's Exhaust button (owner report

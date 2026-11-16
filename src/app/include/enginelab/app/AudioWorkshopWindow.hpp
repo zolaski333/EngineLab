@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <array>
 
 namespace enginelab {
@@ -79,6 +80,16 @@ public:
     using PhysicsApplyCallback = std::function<bool(
         const AudioPhysicsSettings& settings)>;
     using TelemetryProvider = std::function<AudioPhysicsTelemetry()>;
+    /** The engine as it runs now: its configuration after every live edit,
+     *  and its ECU tables. */
+    struct RunningEngine final {
+        EngineConfig config;
+        std::shared_ptr<const calibration::CalibrationSnapshot> calibration;
+    };
+    /** Read when an export starts, so it renders the running engine: the
+     *  copy the window holds missed live edits and the ECU tuning (audit
+     *  APP-03, UA-01). */
+    using RunningEngineProvider = std::function<RunningEngine()>;
 
     AudioWorkshopWindow(
         const EngineConfig& engine,
@@ -89,7 +100,8 @@ public:
         bool measuredImpulseResponseAvailable,
         MixChangedCallback mixChanged,
         PhysicsApplyCallback physicsApply = {},
-        TelemetryProvider telemetryProvider = {});
+        TelemetryProvider telemetryProvider = {},
+        RunningEngineProvider runningEngine = {});
     ~AudioWorkshopWindow() override;
 
     void closeButtonPressed() override;

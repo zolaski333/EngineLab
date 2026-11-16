@@ -1,10 +1,12 @@
 #include "OfflineRenderChain.hpp"
 
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
+#include <enginelab/calibration/EcuCalibration.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <algorithm>
+#include <stdexcept>
 #include <utility>
 
 namespace enginelab::offline {
@@ -33,8 +35,17 @@ namespace {
 
 RenderChain::RenderChain(
     const EngineConfig& config, const OfflineAudioMix& mix,
-    std::optional<double> exhaustCellLengthM)
+    std::optional<double> exhaustCellLengthM,
+    const calibration::CalibrationSnapshot* ecuCalibration)
     : exhaust_(ExhaustGraph::makeForEngine(config)) {
+    // Published before the simulator initialises the ECU, which then keeps
+    // these tables rather than the configuration's defaults.
+    if (ecuCalibration) {
+        const auto published = ecu_.calibrationStore()->publish(
+            calibration::makeDraft(*ecuCalibration), { std::nullopt, "offline-render" });
+        if (!published.published)
+            throw std::runtime_error("The ECU calibration given to the render was refused.");
+    }
     EngineSimulatorOptions options;
     options.exhaustTargetCellLengthM = exhaustCellLengthM;
     simulator_ = std::make_unique<EngineSimulator>(

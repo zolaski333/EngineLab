@@ -35,9 +35,12 @@ class RenderChain final {
 public:
     /** `config` is the normalised engine the simulator runs; a cell length
      *  replaces the production exhaust mesh (a measurement, never a render
-     *  the application would make). */
+     *  the application would make). `ecuCalibration`, when given, is the ECU's
+     *  tables instead of the ones the configuration implies; a set the
+     *  store refuses throws. */
     RenderChain(const EngineConfig& config, const OfflineAudioMix& mix,
-                std::optional<double> exhaustCellLengthM = std::nullopt);
+                std::optional<double> exhaustCellLengthM = std::nullopt,
+                const calibration::CalibrationSnapshot* ecuCalibration = nullptr);
     RenderChain(const RenderChain&) = delete;
     RenderChain& operator=(const RenderChain&) = delete;
 
