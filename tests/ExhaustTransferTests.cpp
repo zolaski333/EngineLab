@@ -679,6 +679,69 @@ void taperPassivityRegression() {
             + std::to_string(measuredDb) + " dB against " + std::to_string(expectedDb) + " dB)");
 }
 
+/** A tap at the end of a cone reads the junction pressure the next pipe's
+ *  start reads. The cone compiles to several sections of one node, and the
+ *  fraction went to the first alone (audit A2-06). */
+void taperTapPositionRegression() {
+    auto config = makeFixture(FixtureTopology::straight);
+    enginelab::ExhaustNetworkConfig network;
+    const auto cylinderId = config.cylinders.front().id;
+    network.components.push_back(component(
+        100, enginelab::ExhaustComponentType::pipe, 200.0, 27.0));
+    auto cone = component(101, enginelab::ExhaustComponentType::pipe, 400.0, 27.0);
+    cone.outletDiameterMm = 80.0;
+    network.components.push_back(cone);
+    network.components.push_back(component(
+        102, enginelab::ExhaustComponentType::pipe, 300.0, 80.0));
+    auto outlet = component(200, enginelab::ExhaustComponentType::outlet, 50.0, 80.0);
+    network.components.push_back(outlet);
+    network.cylinderConnections.push_back({ cylinderId, 100 });
+    network.connections.push_back({ 100, 101 });
+    network.connections.push_back({ 101, 102 });
+    network.connections.push_back({ 102, 200 });
+    config.exhaustPaths.front().network = network;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    require(graph.diagnostics().empty(), "the cone tap fixture must compile without fallbacks");
+    const auto record = [&](std::uint32_t componentId, float fraction) {
+        const std::array<std::uint32_t, 1> cylinderIds { cylinderId };
+        enginelab::AcousticExhaustNetwork acoustic(graph, cylinderIds);
+        require(acoustic.valid() && acoustic.prepare(sampleRateHz),
+            "the cone tap fixture must compile and prepare for audio");
+        acoustic.setOutletJetNoiseEnabled(false);
+        auto tapped = false;
+        for (const auto& node : graph.nodes()) {
+            if (node.sourceComponentId != componentId) continue;
+            tapped = acoustic.setPressureTap(node.id, fraction);
+            if (tapped) break;
+        }
+        require(tapped, "the cone tap fixture carries its taps");
+        const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+            { gasDensityKgPerM3, soundSpeedMps } }};
+        acoustic.beginBlock(medium, 1.0);
+        std::vector<double> tap(4'800);
+        std::array<float, 1> source {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 1> boundary {};
+        for (std::size_t sample = 0; sample < tap.size(); ++sample) {
+            source[0] = sample == 0 ? 1'000.0F : 0.0F;
+            (void)acoustic.process(source, boundary, 1.0F);
+            tap[sample] = acoustic.lastTapPressurePa();
+        }
+        return tap;
+    };
+    const auto coneEnd = record(101U, 1.0F);
+    const auto pipeStart = record(102U, 0.0F);
+    double energy = 0.0;
+    double difference = 0.0;
+    for (std::size_t sample = 0; sample < coneEnd.size(); ++sample) {
+        energy += pipeStart[sample] * pipeStart[sample];
+        difference += (coneEnd[sample] - pipeStart[sample]) * (coneEnd[sample] - pipeStart[sample]);
+    }
+    const auto relative = std::sqrt(difference / std::max(energy, 1.0e-30));
+    std::cout << "Taper tap: cone end against next pipe start, relative difference " << relative << '\n';
+    require(energy > 0.0 && relative < 1.0e-3,
+        "a tap at a cone's end reads where the next pipe starts (" + std::to_string(relative) + ")");
+}
+
 } // namespace
 
 namespace enginelab::tests {
@@ -686,6 +749,7 @@ namespace enginelab::tests {
 void exhaustTransferRegression() {
     transferOracleRegression();
     taperPassivityRegression();
+    taperTapPositionRegression();
 }
 
 } // namespace enginelab::tests

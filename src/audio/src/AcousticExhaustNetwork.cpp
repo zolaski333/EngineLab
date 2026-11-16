@@ -1928,14 +1928,40 @@ AcousticExhaustNetwork::lastOutletJetNoisePressure() const noexcept {
 bool AcousticExhaustNetwork::setPressureTap(
     std::uint32_t nodeId, float axialFraction) noexcept {
     if (!impl_ || !std::isfinite(axialFraction)) return false;
-    for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
-        if (impl_->ducts[index].nodeId != nodeId) continue;
-        impl_->tapDuct = index;
-        impl_->tapFraction = std::clamp(axialFraction, 0.0F, 1.0F);
-        impl_->tapPressurePa = 0.0F;
-        return true;
+    const auto& ducts = impl_->ducts;
+    const auto first = static_cast<std::size_t>(std::distance(ducts.begin(),
+        std::find_if(ducts.begin(), ducts.end(),
+            [nodeId](const Impl::Duct& duct) noexcept { return duct.nodeId == nodeId; })));
+    if (first >= ducts.size()) return false;
+    // A tapered component compiles to several consecutive sections of one
+    // node: the fraction is along the whole component, by length. It was
+    // applied to the first section alone, so 1.0 on a four-section cone read
+    // the end of its first quarter (audit A2-06).
+    auto last = first;
+    auto totalLengthM = 0.0;
+    while (last < ducts.size() && ducts[last].nodeId == nodeId) totalLengthM += ducts[last++].lengthM;
+    const auto fraction = std::clamp(axialFraction, 0.0F, 1.0F);
+    auto section = first;
+    auto local = fraction;
+    if (last - first > 1U && totalLengthM > 0.0) {
+        auto remainingM = static_cast<double>(fraction) * totalLengthM;
+        section = last - 1U;
+        local = 1.0F;
+        for (auto index = first; index < last; ++index) {
+            const auto lengthM = ducts[index].lengthM;
+            if (remainingM < lengthM || index + 1U == last) {
+                section = index;
+                local = lengthM > 0.0
+                    ? static_cast<float>(std::clamp(remainingM / lengthM, 0.0, 1.0)) : 1.0F;
+                break;
+            }
+            remainingM -= lengthM;
+        }
     }
-    return false;
+    impl_->tapDuct = section;
+    impl_->tapFraction = local;
+    impl_->tapPressurePa = 0.0F;
+    return true;
 }
 
 float AcousticExhaustNetwork::lastTapPressurePa() const noexcept {

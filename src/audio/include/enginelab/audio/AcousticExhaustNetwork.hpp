@@ -141,8 +141,9 @@ public:
     lastOutletJetNoisePressure() const noexcept;
 
     /** Diagnostic: after each process() the plane-wave pressure, Pa, at
-     * `axialFraction` (0 inlet, 1 outlet) of the first audio duct compiled
-     * from graph node `nodeId`, the forward and reverse lines read at their
+     * `axialFraction` (0 inlet, 1 outlet) along graph node `nodeId`: the
+     * audio sections a tapered node compiles to share it by length. The
+     * forward and reverse lines are read at their
      * partial delays. It never feeds the output. False when no duct
      * carries that node. At 0 or 1 it is exact, the end's incident plus
      * scattered wave. Inside a duct it is approximate: the line's wall loss
