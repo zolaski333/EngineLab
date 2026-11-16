@@ -51,13 +51,15 @@ struct IdleResult final {
     bool diesel { false };
     double wideOpenBlipMinRpm { 0.0 };     // lowest speed after a 1.2 s WOT blip
     double wideOpenBlipSettledRpm { 0.0 }; // mean over the last 2 s of its recovery
+    double wideOpenBlipFinalRpm { 0.0 };   // its last sample
     double earlyBlipMinRpm { 0.0 };        // lowest speed after a WOT blip 6 s after start
 };
 
 /** Shuts the throttle for `seconds` and returns the lowest speed reached;
- * `settledRpm` receives the mean over the last two seconds. */
+ * `settledRpm` receives the mean over the last two seconds, `finalRpm` the
+ * last sample. */
 double recoverFromBlip(enginelab::EngineSimulator& simulator, double seconds,
-                       double* settledRpm = nullptr) {
+                       double* settledRpm = nullptr, double* finalRpm = nullptr) {
     auto lowest = simulator.state().rpm;
     double settledSum = 0.0;
     int settledSamples = 0;
@@ -76,7 +78,16 @@ double recoverFromBlip(enginelab::EngineSimulator& simulator, double seconds,
     }
     if (settledRpm)
         *settledRpm = settledSamples > 0 ? settledSum / settledSamples : 0.0;
+    if (finalRpm) *finalRpm = simulator.state().rpm;
     return lowest;
+}
+
+/** The slow-coast exception's condition: still coming down at the end of
+ *  the window (its last sample under the last 2 s mean). The minimum stood
+ *  in for the last sample, so a dip then a speed hanging high passed (audit
+ *  TEST-01). */
+bool stillCoasting(const IdleResult& result) {
+    return result.wideOpenBlipFinalRpm < result.wideOpenBlipSettledRpm;
 }
 
 void holdThrottle(enginelab::EngineSimulator& simulator, double throttle, double seconds) {
@@ -198,7 +209,7 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
     // CP4 and the TDI hung at 1.4-1.5 x idle.
     holdThrottle(simulator, 1.0, 1.2);
     result.wideOpenBlipMinRpm = recoverFromBlip(
-        simulator, 12.0, &result.wideOpenBlipSettledRpm);
+        simulator, 12.0, &result.wideOpenBlipSettledRpm, &result.wideOpenBlipFinalRpm);
 
     if (afrSamples > 0)
         result.afrRatio = afrRatioSum / static_cast<double>(afrSamples);
@@ -588,7 +599,7 @@ int main(int argc, char** argv) {
             if (r.wideOpenBlipMinRpm < 0.78 * r.idleRpm)
                 failures.push_back(r.name + ": dips toward stall after a WOT blip ("
                     + std::to_string(static_cast<int>(r.wideOpenBlipMinRpm)) + " rpm)");
-            const auto slowCoastAllowed = r.wideOpenBlipMinRpm < r.wideOpenBlipSettledRpm
+            const auto slowCoastAllowed = stillCoasting(r)
                 && std::any_of(knownSlowCoastAllow.begin(), knownSlowCoastAllow.end(),
                     [&](const std::string& token) { return r.name.find(token) != std::string::npos; });
             if (r.wideOpenBlipSettledRpm < 0.85 * r.idleRpm
@@ -627,7 +638,7 @@ int main(int argc, char** argv) {
                 failures.push_back(label + "idles at " + std::to_string(static_cast<int>(r.settledMeanRpm)));
             if (r.stdRpm > 0.06 * target || std::abs(r.driftRpm) > 0.05 * target)
                 failures.push_back(label + "does not hold its idle");
-            const auto slowCoastAllowed = r.wideOpenBlipMinRpm < r.wideOpenBlipSettledRpm
+            const auto slowCoastAllowed = stillCoasting(r)
                 && std::any_of(knownSlowCoastAllow.begin(), knownSlowCoastAllow.end(),
                     [&](const std::string& token) { return r.name.find(token) != std::string::npos; });
             if (r.wideOpenBlipSettledRpm < 0.85 * target

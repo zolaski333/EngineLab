@@ -387,10 +387,16 @@ void checkOneFile(const EngineConfig& source) {
     std::cout << "SavedEngine: one file (JSON, YAML) holds the engine and its tables; old saves load\n";
 }
 
-/** Master level of a short start and rev through the shipping audio path,
-    heard through the engine's own voicing (the physical reference monitor
-    ignores it). */
-[[nodiscard]] std::pair<double, double> sound(const EngineConfig& config, const std::filesystem::path& output) {
+struct RenderedSound final {
+    double rms { 0.0 };
+    /** master.wav as written: sample for sample. RMS and peak alone accept
+        any permutation of the samples (audit TEST-02). */
+    std::string masterBytes;
+};
+
+/** A short start and rev through the shipping audio path, heard through the
+    engine's own voicing (the physical reference monitor ignores it). */
+[[nodiscard]] RenderedSound sound(const EngineConfig& config, const std::filesystem::path& output) {
     OfflineAudioExportRequest request;
     request.engine = config;
     request.mix = config.audioVoicing;
@@ -415,7 +421,11 @@ void checkOneFile(const EngineConfig& source) {
     request.scenario.stages = { start, rev };
     const auto result = exportOfflineAudio(request);
     require(result.success, config.name + ": the render runs (" + result.error + ")");
-    return { result.masterRms, result.masterPeak };
+    std::ifstream master(output / "master.wav", std::ios::binary);
+    RenderedSound rendered { result.masterRms,
+        std::string((std::istreambuf_iterator<char>(master)), std::istreambuf_iterator<char>()) };
+    require(!rendered.masterBytes.empty(), config.name + ": the render wrote its master");
+    return rendered;
 }
 
 /** A saved engine keeps its voice: the voicing it names comes back from the
@@ -440,9 +450,9 @@ void checkSavedSound(const EngineCatalogLoadResult& catalogue) {
                 config.name + ": the saved engine names its voicing");
         const auto original = sound(config, folder.path / "original");
         const auto reloaded = sound(canonical(match->config), folder.path / "reloaded");
-        require(original == reloaded, config.name + ": the saved engine sounds as the original (rms "
-                                          + std::to_string(original.first) + " / "
-                                          + std::to_string(reloaded.first) + ")");
+        require(original.masterBytes == reloaded.masterBytes,
+                config.name + ": the saved engine sounds as the original, sample for sample (rms "
+                    + std::to_string(original.rms) + " / " + std::to_string(reloaded.rms) + ")");
     }
     std::cout << "SavedEngine: " << catalogue.entries.size() << " engines render the same audio once saved\n";
 }

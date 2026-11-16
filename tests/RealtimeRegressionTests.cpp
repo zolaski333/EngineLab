@@ -2003,13 +2003,17 @@ WaveformMetrics analyseWaveform(std::span<const float> samples, std::size_t begi
     return metrics;
 }
 
-std::array<std::vector<float>, 2> renderMaximumMix() {
+std::array<std::vector<float>, 2> renderMaximumMix(enginelab::AudioMonitorMode mode) {
     constexpr double sampleRate = 48'000.0;
     constexpr int blockSize = 256;
     constexpr int sampleCount = 48'000;
 
     enginelab::FiringEventQueue eventQueue;
     enginelab::RealtimeAudioState state;
+    // The physical reference (the default) sets every authored gain and
+    // noise back to 1 and 0: alone, it never rendered the boosted mix this
+    // test names (audit T2-01).
+    state.monitorMode.store(static_cast<int>(mode));
     state.volume.store(2.0F);
     state.convolution.store(1.0F);
     state.highFrequencyGain.store(2.5F);
@@ -2119,23 +2123,26 @@ void starterIndependentOfMechanicalRegression() {
 }
 
 void outputQualityRegression() {
-    const auto channels = renderMaximumMix();
-    for (const auto& channel : channels) {
-        const auto complete = analyseWaveform(channel);
-        require(complete.finite, "maximum mixer settings must produce only finite samples");
-        require(complete.peak <= 1.00001,
-                "the final output stage must remain within full scale at maximum mixer settings");
-        require(complete.longestFlatTop <= 8,
-                "the final output must not contain a sustained flat clipping plateau");
+    for (const auto mode : { enginelab::AudioMonitorMode::physicalReference,
+                             enginelab::AudioMonitorMode::captureVoiced }) {
+        const auto channels = renderMaximumMix(mode);
+        for (const auto& channel : channels) {
+            const auto complete = analyseWaveform(channel);
+            require(complete.finite, "maximum mixer settings must produce only finite samples");
+            require(complete.peak <= 1.00001,
+                    "the final output stage must remain within full scale at maximum mixer settings");
+            require(complete.longestFlatTop <= 8,
+                    "the final output must not contain a sustained flat clipping plateau");
 
-        // Ignore the deliberately dense initial excitation. Once it has passed,
-        // nonlinear stages and feedback tails must settle around acoustic zero.
-        const auto settled = analyseWaveform(channel, 6'000);
-        const auto allowedDc = std::max(0.0025, settled.rms * 0.08);
-        require(std::abs(settled.mean) <= allowedDc,
-                "the post-transient output must not retain a measurable DC offset");
-        require(settled.rms > 1.0e-5,
-                "the stress fixture must remain audible while quality metrics are evaluated");
+            // Ignore the deliberately dense initial excitation. Once it has passed,
+            // nonlinear stages and feedback tails must settle around acoustic zero.
+            const auto settled = analyseWaveform(channel, 6'000);
+            const auto allowedDc = std::max(0.0025, settled.rms * 0.08);
+            require(std::abs(settled.mean) <= allowedDc,
+                    "the post-transient output must not retain a measurable DC offset");
+            require(settled.rms > 1.0e-5,
+                    "the stress fixture must remain audible while quality metrics are evaluated");
+        }
     }
 }
 
