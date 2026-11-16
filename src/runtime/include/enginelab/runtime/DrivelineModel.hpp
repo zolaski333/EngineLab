@@ -91,6 +91,9 @@ public:
      * changed, for another number of gears. Copies into the existing
      * storage: no allocation. */
     [[nodiscard]] bool replaceVehicle(const TransmissionConfig& transmission, const VehicleConfig& vehicle);
+    /** A live edit of the atmosphere: the clutch cools toward the new air
+     *  (it kept the one it was built with, audit PH-06). */
+    void setAtmosphere(double pressureKpa, double temperatureC) noexcept;
     [[nodiscard]] DrivelineOutput advance(double dtSeconds, const EngineState&, double requestedLoad,
                                           double clutchPedalPressure, double brakePressure) noexcept;
 private:

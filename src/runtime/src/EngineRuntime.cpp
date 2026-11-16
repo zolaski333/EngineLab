@@ -773,6 +773,7 @@ void EngineRuntime::consumeLiveSettingsChange() noexcept {
     engineInertiaKgM2_ = effectiveRotatingInertiaKgM2(simulator_.config());
     driveline_.setEngineInertia(engineInertiaKgM2_);
     (void)driveline_.replaceVehicle(simulator_.config().transmission, simulator_.config().vehicle);
+    driveline_.setAtmosphere(simulator_.config().ambientPressureKpa, simulator_.config().ambientTemperatureC);
     audioState_.ambientPressureKpa.store(static_cast<float>(simulator_.config().ambientPressureKpa),
                                          std::memory_order_relaxed);
     audioState_.ambientTemperatureC.store(static_cast<float>(simulator_.config().ambientTemperatureC),

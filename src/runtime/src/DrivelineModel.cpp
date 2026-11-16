@@ -52,6 +52,11 @@ bool DrivelineModel::replaceVehicle(const TransmissionConfig& transmission, cons
     return true;
 }
 
+void DrivelineModel::setAtmosphere(double pressureKpa, double temperatureC) noexcept {
+    config_.ambientPressureKpa = pressureKpa;
+    config_.ambientTemperatureC = temperatureC;
+}
+
 void DrivelineModel::requestGear(int gear) noexcept {
     // A CVT has one forward position.
     const auto maximum = continuouslyVariable() ? 0 : static_cast<int>(config_.transmission.gearRatios.size()) - 1;
@@ -572,7 +577,13 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         const auto speedSquared = previousVehicleSpeed * previousVehicleSpeed;
         const auto speedSign = std::abs(previousVehicleSpeed) > 0.01
             ? std::copysign(1.0, previousVehicleSpeed) : 0.0;
-        const auto aeroForce = 0.5 * 1.225 * vehicle.dragCoefficient
+        // The air the engine breathes: 1.225 kg/m3 was ISA's 15 degC sea
+        // level whatever the atmosphere (audit PH-04); the default 22 degC
+        // and 101.325 kPa give 1.196.
+        constexpr double airGasConstantJPerKgK = 287.05;
+        const auto airDensityKgPerM3 = config_.ambientPressureKpa * 1'000.0
+            / (airGasConstantJPerKgK * (config_.ambientTemperatureC + 273.15));
+        const auto aeroForce = 0.5 * airDensityKgPerM3 * vehicle.dragCoefficient
             * vehicle.frontalAreaM2 * speedSquared * speedSign;
         // Below 1 cm/s a car slowing down keeps a rolling resistance that
         // fades with its speed: switched off there, it left a car creeping on
@@ -658,18 +669,28 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         constexpr double variatorSlipRecoverySeconds = 0.02;
         const auto ratioAcceleration = continuouslyVariable()
             ? ratioRate * previousWheelOmega - slipOmega / variatorSlipRecoverySeconds : 0.0;
+        // The gearbox loses its share of the power that crosses it, in either
+        // direction: driving, the wheel gets the clutch's torque times the
+        // efficiency; back-driven (engine braking), the wheel must give the
+        // clutch's torque over it. One law both ways made the crank receive
+        // more power than the wheel gave (audit PH-01).
+        auto gearboxEfficiency = transmission.drivelineEfficiency;
         if (totalRatio != 0.0 && effectiveClutch > 0.0) {
             const auto lockBandRpm = std::max(1.0, transmission.clutchLockSpeedRpm);
             if (std::abs(lastSlipRpm) > lockBandRpm) {
                 clutchTorque = std::copysign(capacity, slipOmega);
+                if (clutchTorque * totalRatio * previousWheelOmega < 0.0)
+                    gearboxEfficiency = 1.0 / transmission.drivelineEfficiency;
             } else {
+                // The coupling torque's sign is its numerator's (the shared
+                // inertia is positive), so it says which way the power goes.
+                const auto stickNumerator = wheelInertiaForConstraint * engineDriveTorque
+                    + engineInertiaKgM2_ * totalRatio * wheelLoadTorque
+                    - engineInertiaKgM2_ * wheelInertiaForConstraint * ratioAcceleration;
+                if (stickNumerator < 0.0) gearboxEfficiency = 1.0 / transmission.drivelineEfficiency;
                 const auto coupledInertia = wheelInertiaForConstraint
-                    + engineInertiaKgM2_ * totalRatio * totalRatio * transmission.drivelineEfficiency;
-                const auto stickTorque = coupledInertia > 0.0
-                    ? (wheelInertiaForConstraint * engineDriveTorque
-                       + engineInertiaKgM2_ * totalRatio * wheelLoadTorque
-                       - engineInertiaKgM2_ * wheelInertiaForConstraint * ratioAcceleration) / coupledInertia
-                    : 0.0;
+                    + engineInertiaKgM2_ * totalRatio * totalRatio * gearboxEfficiency;
+                const auto stickTorque = coupledInertia > 0.0 ? stickNumerator / coupledInertia : 0.0;
                 clutchTorque = std::clamp(stickTorque, -capacity, capacity);
                 clutchSticking = std::abs(stickTorque) <= capacity + 1.0e-9;
             }
@@ -683,14 +704,13 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             // inertia; applying it as an external load one 240 Hz frame later
             // phase-inverts combustion ripple. Carry that inertia explicitly
             // and reflect only the road-side load torque instead.
-            const auto ratioEfficiency = totalRatio
-                * transmission.drivelineEfficiency;
+            const auto ratioEfficiency = totalRatio * gearboxEfficiency;
             reflectedInertiaKgM2 = wheelInertiaForConstraint
                 / (totalRatio * ratioEfficiency);
             engineCouplingTorque = -wheelLoadTorque / ratioEfficiency
                 + reflectedInertiaKgM2 * ratioAcceleration;
         }
-        const auto wheelTorque = clutchTorque * totalRatio * transmission.drivelineEfficiency;
+        const auto wheelTorque = clutchTorque * totalRatio * gearboxEfficiency;
         const auto wheelAcceleration = (wheelTorque - wheelLoadTorque)
             / wheelInertiaForConstraint;
         wheelAngularVelocityRadPerSecond_ += wheelAcceleration * mechanicalDt;

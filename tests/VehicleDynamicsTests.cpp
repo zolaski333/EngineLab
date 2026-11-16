@@ -12,6 +12,7 @@
 #include <iostream>
 #include <numbers>
 #include <string_view>
+#include <utility>
 
 namespace {
 void require(bool condition, std::string_view message) {
@@ -322,6 +323,98 @@ int main() {
         for (int step = 0; step < 240 * 60; ++step) output = model.advance(1.0 / 240.0, pulling, 0.0, 0.0, 0.0);
         std::cout << "coasted 60 s: " << output.vehicleSpeedMps * 3.6 << " km/h\n";
         require(std::abs(output.vehicleSpeedMps) < 1.0e-4, "a coasting car must come to rest");
+    }
+
+    // Engine braking through a slipping clutch: the wheels drive the engine,
+    // so the gearbox's loss comes out of the wheel's power. The wheel gave
+    // the clutch's torque times the ratio times the efficiency, so the crank
+    // received more power than the wheel lost (audit PH-01).
+    {
+        auto config = launchConfig(enginelab::DrivenAxleLayout::front);
+        config.vehicle.tyreGripLimitEnabled = false;
+        const auto ratio = config.transmission.gearRatios.front() * config.transmission.finalDriveRatio;
+        const auto efficiency = config.transmission.drivelineEfficiency;
+        enginelab::DrivelineModel model(config);
+        model.requestGear(0);
+        enginelab::EngineState engine;
+        engine.simulationTimeSeconds = 5.0;
+        engine.rpm = 3'000.0;
+        engine.angularVelocityRadPerSecond = engine.rpm * 2.0 * std::numbers::pi / 60.0;
+        engine.torqueNm = 200.0;
+        engine.cycleAveragedTorqueNm = 200.0;
+        enginelab::DrivelineOutput output;
+        for (int step = 0; step < 240 * 4; ++step) output = model.advance(1.0 / 240.0, engine, 0.0, 1.0, 0.0);
+        // The engine drops to 900 rpm with the clutch half let in: it slips
+        // with the wheels turning the crank faster than the engine runs.
+        engine.rpm = 900.0;
+        engine.angularVelocityRadPerSecond = engine.rpm * 2.0 * std::numbers::pi / 60.0;
+        engine.torqueNm = 0.0;
+        engine.cycleAveragedTorqueNm = 0.0;
+        for (int step = 0; step < 3; ++step) output = model.advance(1.0 / 240.0, engine, 0.0, 0.3, 0.0);
+        const auto wheelOmega = output.vehicleSpeedMps / config.vehicle.tireRadiusM;
+        const auto crankPowerW = output.engineCouplingTorqueNm * engine.angularVelocityRadPerSecond;
+        const auto wheelPowerW = -output.wheelTorqueNm * wheelOmega;
+        std::cout << "engine braking through a slipping clutch: slip " << output.clutchSlipRpm << " rpm, wheel "
+                  << output.wheelTorqueNm << " N.m / clutch " << output.clutchTorqueNm << " N.m = "
+                  << output.wheelTorqueNm / output.clutchTorqueNm << " (ratio / efficiency " << ratio / efficiency
+                  << "); crank receives " << crankPowerW << " W, wheel gives " << wheelPowerW << " W\n";
+        require(output.clutchStickFraction == 0.0 && output.clutchSlipRpm < -100.0 && output.clutchTorqueNm < 0.0,
+            "the witness slips with the wheels driving the engine");
+        require(std::abs(output.wheelTorqueNm / output.clutchTorqueNm - ratio / efficiency) < 1.0e-6 * ratio,
+            "back-driven, the wheel gives the clutch's torque times the ratio over the efficiency");
+        require(crankPowerW <= wheelPowerW, "the crank receives no more power than the wheel gives");
+    }
+    // The drag is the air's: at 50 and 120 kPa, both at 20 degC, a car
+    // coasting in neutral with no rolling resistance slows 2.4 times as fast
+    // in the denser air. The density was 1.225 whatever the atmosphere, so
+    // the two coasted identically (audit PH-04).
+    {
+        const auto coastLoss = [](double pressureKpa) {
+            auto config = launchConfig(enginelab::DrivenAxleLayout::front);
+            config.vehicle.tyreGripLimitEnabled = false;
+            config.ambientPressureKpa = pressureKpa;
+            config.ambientTemperatureC = 20.0;
+            enginelab::DrivelineModel model(config);
+            model.requestGear(0);
+            enginelab::EngineState pulling;
+            pulling.simulationTimeSeconds = 5.0;
+            pulling.rpm = 3'000.0;
+            pulling.angularVelocityRadPerSecond = pulling.rpm * 2.0 * std::numbers::pi / 60.0;
+            pulling.torqueNm = 200.0;
+            pulling.cycleAveragedTorqueNm = 200.0;
+            enginelab::DrivelineOutput output;
+            for (int step = 0; step < 240 * 4; ++step) output = model.advance(1.0 / 240.0, pulling, 0.0, 1.0, 0.0);
+            model.requestGear(-1);
+            for (int step = 0; step < 24; ++step) output = model.advance(1.0 / 240.0, pulling, 0.0, 0.0, 0.0);
+            const auto before = output.vehicleSpeedMps;
+            for (int step = 0; step < 240; ++step) output = model.advance(1.0 / 240.0, pulling, 0.0, 0.0, 0.0);
+            return std::pair { before, before - output.vehicleSpeedMps };
+        };
+        const auto [thinSpeed, thinLoss] = coastLoss(50.0);
+        const auto [denseSpeed, denseLoss] = coastLoss(120.0);
+        const auto ratio = denseLoss / thinLoss * (thinSpeed * thinSpeed) / (denseSpeed * denseSpeed);
+        std::cout << "coasting 1 s from " << thinSpeed * 3.6 << " / " << denseSpeed * 3.6 << " km/h: lost "
+                  << thinLoss << " / " << denseLoss << " m/s at 50 / 120 kPa (ratio " << ratio << ")\n";
+        require(thinSpeed > 5.0 && thinLoss > 0.0, "the drag witness must first move the car");
+        require(std::abs(ratio - 2.4) < 0.1, "the drag follows the air's density (120 / 50 = 2.4)");
+    }
+    // A live edit of the air reaches the clutch: it cooled toward the air the
+    // driveline was built with (audit PH-06). In neutral it does no work,
+    // so it sits at the ambient it cools toward.
+    {
+        auto config = launchConfig(enginelab::DrivenAxleLayout::front);
+        config.ambientTemperatureC = 20.0;
+        enginelab::DrivelineModel model(config);
+        model.requestGear(-1);
+        enginelab::EngineState idling;
+        idling.simulationTimeSeconds = 5.0;
+        idling.rpm = 900.0;
+        idling.angularVelocityRadPerSecond = idling.rpm * 2.0 * std::numbers::pi / 60.0;
+        auto output = model.advance(1.0 / 240.0, idling, 0.0, 0.0, 0.0);
+        require(std::abs(output.clutchTemperatureC - 20.0) < 1.0e-9, "the clutch starts at the air's 20 degC");
+        model.setAtmosphere(config.ambientPressureKpa, 40.0);
+        output = model.advance(1.0 / 240.0, idling, 0.0, 0.0, 0.0);
+        require(std::abs(output.clutchTemperatureC - 40.0) < 1.0e-9, "the clutch follows the air edited to 40 degC");
     }
 
     std::cout << "PASS: load transfer, persistence, catalogue layouts, injector and back-pressure diagnostics\n";
