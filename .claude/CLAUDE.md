@@ -17,22 +17,20 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**The owner's report of 2026-11-14** (plan validated in full, autonomous,
-reported at the end), in this order: (1) the real-time regression since
-0.9.1, measured and bisected before any fix; (2) gearboxes: the automated
-manual cuts its torque by fuel and spark and opens its clutch only once the
-torque is gone; the automatic downshifts on pedal demand and when braking,
-not only when lugging; the gear count is typed in, with no cap; (3) the 3-D
-mechanism: main journals only between the throws (no rod through the
-shaft), a V's bank stagger of one rod width (none with articulated rods),
-the chamber drawn from the compression ratio at real scale, a two-stroke
-power valve's housing on its barrel; (4) the 3-D exhaust: the active valve
-drawn as a split, each branch with its own outlet (the topology changes
-too); the collector oriented to untangle its primaries; a V4 two-stroke's
-chambers clear of each other; (5) the active exhaust valve hidden on a
-two-stroke (nitrous stays). Default sound unchanged.
+**The audit register of 2026-11-16** (`docs/audit.md`, 90 findings; owner
+go 2026-11-16 for lots 0-4 only, autonomous), in this order: (0) a clean
+base on `fix/audit-2026-11-16`; (1) crashes and the build: PLAT-01, DR-03,
+PG-07, DR-04, A2-07, APP-12, PH-02, RT-05, RT-08; (2) lost user data:
+DR-01, APP-01, DR-09, UA-05, UA-06, A2-01, DR-02, DR-06, DR-10, RT2-01;
+(3) the instruments: UA-08, V01-V04, TL2-01..04, T2-01, TEST-01/02, RT-01,
+RT-02, RT-06, RT-07, A2-06; (4) the app against the running engine: UA-01,
+APP-02..06, EXHAUST-01, PH-03. Physics and default sound untouched (the
+deterministic harnesses prove it). Lots 5-8 (physics, sound, UI, packaging)
+and the owner decisions (PH-05, V07, RT-04, V05/V06, K01-K03) wait.
 
-Done before it: **the owner's plans of 2026-11-13** (an Equipment window,
+Done before it: **the owner's report of 2026-11-14** (real-time regression,
+gearboxes, 3-D mechanism and exhaust, the active valve hidden on a
+two-stroke), **the owner's plans of 2026-11-13** (an Equipment window,
 tuner group pages, anti-lag by feedback, a pass-by run) **and 2026-11-11**:
 (1) the turbo runaway on a lowered stoichiometric AFR; (2) the exhaust
 designer's edits; (3) VTEC; (4) one engine file with its ECU maps; (5) menus
