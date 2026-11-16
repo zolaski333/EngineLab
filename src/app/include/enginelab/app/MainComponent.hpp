@@ -67,15 +67,9 @@ public:
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
 private:
-    /** An engine of the menu: from the catalogue, or saved by the user. */
-    struct Preset final {
-        EngineConfig config;
-        /** The saved tables; a catalogue engine runs on the ones its
-            configuration implies. */
-        std::optional<calibration::CalibrationDraft> calibration;
-        /** The saved engine's file, empty for a catalogue engine. */
-        std::filesystem::path file;
-    };
+    /** An engine of the menu: from the catalogue (no file, no tables: it
+        runs on the ones its configuration implies), or saved by the user. */
+    using Preset = SavedEngine;
     /** Edits to a preset not saved yet, kept while another engine runs. */
     struct SessionEdit final {
         EngineConfig config;
@@ -114,7 +108,9 @@ private:
     void showEngineDesigner();
     /** Runs and saves a designed engine; false (with a message) if its name is taken. */
     bool runDesignedEngine(const EngineConfig& designed);
-    void writeSavedEngine(const std::string& name, const std::filesystem::path& file);
+    /** By value: Save passes the selected preset's own name and file, and the
+        preset list changes under them (placeSavedEngine). */
+    void writeSavedEngine(std::string name, std::filesystem::path file);
     void deleteSavedEngine();
     void removeSavedEngine(const std::filesystem::path& file);
     /** Any edit of the running engine: the groups it can take live

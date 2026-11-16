@@ -79,6 +79,17 @@ enum class DroppedFileKind { none, engine, calibration, engineScript };
 [[nodiscard]] std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, const EngineConfig&,
                                                     const calibration::CalibrationSnapshot* calibration);
 
+/**
+ * Puts an engine just saved into the engine menu's list, where catalogue
+ * engines have no file: drops the saved entries it replaces (same file or
+ * same name) and inserts it among the saved ones in file order. Returns its
+ * index. `saved` is taken by value because a caller may pass one of the
+ * list's own entries: held by reference, the erase slid the next engine into
+ * its place, and each Save wrote over the next saved engine in the menu
+ * (owner report 2026-11-16, Audi RC8 into three others).
+ */
+std::size_t placeSavedEngine(std::vector<SavedEngine>& engines, SavedEngine saved);
+
 /** Reads one saved engine (JSON or YAML) and, if present, its calibration:
     the one inside it, or else an older save's file beside it. A calibration
     that does not parse makes the whole read fail: running the engine on other

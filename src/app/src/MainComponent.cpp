@@ -1790,7 +1790,7 @@ bool MainComponent::runDesignedEngine(const EngineConfig& designed) {
     return true;
 }
 
-void MainComponent::writeSavedEngine(const std::string& name, const std::filesystem::path& file) {
+void MainComponent::writeSavedEngine(std::string name, std::filesystem::path file) {
     if (!runtime_) return;
     auto config = config_;
     config.name = name;
@@ -1802,14 +1802,9 @@ void MainComponent::writeSavedEngine(const std::string& name, const std::filesys
     // The edits are saved: the engine they were made on is as on disk again.
     if (selectedPresetIndex_ >= 0) sessionEdits_.erase(presets_[static_cast<std::size_t>(selectedPresetIndex_)].config.name);
     sessionEdits_.erase(name);
-    std::erase_if(presets_, [&](const Preset& preset) {
-        return !preset.file.empty() && (preset.file == file || preset.config.name == name);
-    });
     // Saved engines follow the catalogue, by file name, as they load.
-    const auto position = std::find_if(presets_.begin(), presets_.end(),
-        [&file](const Preset& preset) { return !preset.file.empty() && file < preset.file; });
     auto tables = calibration::makeDraft(*snapshot);
-    presets_.insert(position, Preset { config, tables, file });
+    (void)placeSavedEngine(presets_, Preset { config, tables, file });
     // The running engine is the saved one now, without a restart.
     config_.name = name;
     runtime_->renameEngine(name);

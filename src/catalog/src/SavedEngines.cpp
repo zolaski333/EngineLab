@@ -271,6 +271,18 @@ std::optional<std::string> saveEngine(const std::filesystem::path& engineFile, c
     return std::nullopt;
 }
 
+std::size_t placeSavedEngine(std::vector<SavedEngine>& engines, SavedEngine saved) {
+    std::erase_if(engines, [&saved](const SavedEngine& engine) {
+        return !engine.file.empty() && (engine.file == saved.file || engine.config.name == saved.config.name);
+    });
+    const auto position = std::find_if(engines.begin(), engines.end(), [&saved](const SavedEngine& engine) {
+        return !engine.file.empty() && saved.file < engine.file;
+    });
+    const auto index = static_cast<std::size_t>(std::distance(engines.begin(), position));
+    engines.insert(position, std::move(saved));
+    return index;
+}
+
 SavedEngineRead readSavedEngine(const std::filesystem::path& engineFile) {
     std::string text;
     if (auto failed = readText(engineFile, text)) {

@@ -202,6 +202,12 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- **Save no longer writes over the next saved engine.** Saving a saved
+  engine a second time (Ctrl+S) renamed the running engine to the next one
+  in the My engines list and wrote over that one's file, then the next one
+  at the next save: an Audi RC8 saved three times overwrote "Diesel V Six
+  Truck", "Diesel V8 Truck" and "Eight-Rotor". Their earlier contents are
+  not recoverable from the files.
 - **An exhaust cone no longer makes sound out of nothing.** In the audio
   exhaust a tapered pipe (a megaphone, a two-stroke's expansion chamber, the
   Merlin's stacks) passed its pressure wave unchanged from its narrow end to

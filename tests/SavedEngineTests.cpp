@@ -447,6 +447,50 @@ void checkRunningEngineRenamed(const EngineConfig& source) {
                                                      + run.engineName + ")");
 }
 
+/** Save on a saved engine passes the menu's own entry back to the list it
+    lives in. Held by reference, the entry was erased first and the next
+    saved engine slid into its place: each Save renamed the running engine to
+    the next one and wrote over its file (owner report 2026-11-16: an Audi
+    RC8 saved three times became "Diesel V Six Truck", "Diesel V8 Truck" and
+    "Eight-Rotor", in file order). */
+void checkSaveKeepsTheMenu(const EngineConfig& source) {
+    const std::filesystem::path folder = "engines";
+    std::vector<SavedEngine> menu;
+    auto engine = [&source](const std::string& name, const std::filesystem::path& file) {
+        auto config = source;
+        config.name = name;
+        return SavedEngine { std::move(config), std::nullopt, file };
+    };
+    menu.push_back(engine("Catalogue engine", {}));
+    const std::vector<std::string> names { "Audi RC8", "Diesel V Six Truck", "Diesel V8 Truck", "Eight-Rotor" };
+    for (const auto& name : names) menu.push_back(engine(name, savedEngineFile(folder, name)));
+    const auto expectMenu = [&](const std::string& when) {
+        require(menu.size() == names.size() + 1, when + ": the menu keeps its " + std::to_string(names.size() + 1)
+                                                     + " engines (" + std::to_string(menu.size()) + ")");
+        require(menu.front().file.empty() && menu.front().config.name == "Catalogue engine",
+                when + ": the catalogue engine stays first");
+        for (std::size_t index = 0; index < names.size(); ++index) {
+            const auto& saved = menu[index + 1];
+            require(saved.config.name == names[index] && saved.file == savedEngineFile(folder, names[index]),
+                    when + ": entry " + std::to_string(index + 1) + " is still \"" + names[index] + "\", not \""
+                        + saved.config.name + "\" in " + saved.file.filename().string());
+        }
+    };
+    for (int save = 1; save <= 3; ++save) {
+        const auto index = placeSavedEngine(menu, menu[1]);
+        require(index == 1, "Save " + std::to_string(save) + " puts the engine back in its place");
+        expectMenu("after Save " + std::to_string(save));
+    }
+    // "Save as" a new name lands in file order among the saved engines.
+    const auto added = placeSavedEngine(menu, engine("Cobra", savedEngineFile(folder, "Cobra")));
+    require(added == 2 && menu[2].config.name == "Cobra", "a new saved engine is placed by its file name");
+    require(menu.size() == names.size() + 2, "and replaces none");
+    // ... and over another engine's name replaces that entry only.
+    const auto replaced = placeSavedEngine(menu, engine("Eight-Rotor", savedEngineFile(folder, "Eight-Rotor")));
+    require(menu.size() == names.size() + 2 && menu[replaced].config.name == "Eight-Rotor",
+            "saving over a saved engine replaces it, once");
+}
+
 void checkNamesAndFolder(const EngineConfig& source) {
     Folder folder;
     require(savedEngineFile(folder.path, " a/b:c?  ").filename() == "a_b_c_.json", "a name is made safe for a file");
@@ -620,6 +664,7 @@ int main(int argc, char** argv) {
     const auto cp2 = std::find_if(catalogue.entries.begin(), catalogue.entries.end(),
                                   [](const EngineCatalogEntry& entry) { return entry.config.name.find("CP2") != std::string::npos; });
     require(cp2 != catalogue.entries.end(), "the CP2 is in the catalogue");
+    checkSaveKeepsTheMenu(cp2->config);
     checkNamesAndFolder(cp2->config);
     checkOutOfRangeEdits(cp2->config);
     checkCalibrationSaved(cp2->config);
