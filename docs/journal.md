@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-16 — the two tests the film tau broke: an aliased torque and a starved W16
+
+- `AntiLag`: the test averaged `state.torqueNm` read once a frame; at 0 % kept it swings +-300 N.m a sample (cut firings) and its mean was +3.7 (new tau) or -5.0 N.m (old) while the speed held within 60 rpm. The last cycle's brake torque reads -1.7 (new) / +1.2 (old); 50 % kept -22.4 for a -23.4 target (the sample said -31.9). The test now averages that. Feeding the controller the cycle torque too gave -3.1 / -3.8 N.m at 0 % kept: not kept.
+- `Vtec`'s W16 torture start floods with either tau, VTEC or not: at 37 kPa the trapped air is twice the delivered (the misfires' unburnt charge comes back, its fuel with it), the chamber holds 2.4x the metered fuel, AFR 6.5-9, the trim on its floor. The old tau survived at 276 rpm and idled at 550 for 750. Its bypass was 45 mm2, 5.6 a litre (K20 12, LS3 9.7): at the LS3's ratio, 78 mm2, both taus clear the flood by ~2 s and idle at 700-730 rpm, AFR 13.4-13.7.
+- Refuted: fuelling a four-stroke for min(trapped, delivered) air (the W16's chamber still 12-15 mg for 5-7 metered).
+- Found, left as designed: the trim loop's max(0.45 s, 8 tau) went 0.45 -> 2.1 s with the sourced tau (`CoreTests` asks it to follow the film). At a fixed 0.45 s the W16's trim fell as before, but the I5 resume went 34.5 -> 35.1 % rich, over its 0.35 envelope.
+- Lead: Curtis's tau (1,800 rpm, part load) applies at every load. At WOT 5,750 rpm the I5 holds ~350 mg of film a port, and its charges still take ~21 mg each through the cut: the first resumed one gets 49.5 mg for 32 asked. A tau that falls with airflow (Aquino's trend) is the physical answer, a sound change.
+
 ## 2026-11-16 — port film tau from Curtis et al. adopted on `exp/port-film-tau`: resume fixed, two tests fail
 
 - Applied (4aa40c3): the three port styles' tau x6.5 (0.26 / 0.17 / 0.49 s) and the serializers' port default 0.040 -> 0.26; the 13B and the two-strokes keep their authored film.
