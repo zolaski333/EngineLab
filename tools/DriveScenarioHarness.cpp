@@ -354,7 +354,9 @@ int run(const Options& options) {
                "throttle_authority,clutch_pedal,clutch_pressure,clutch_slip_rpm,engine_torque_nm,"
                "wheel_torque_nm,shift_in_progress,ignition_cut,blip_throttle,brake,knock_level,"
                "boost_ratio,fuel_g_s,soft_limiter,hard_limiter,traction_limited,"
-               "active_rev_limit_rpm,active_limits,spark_retard_deg,spark_advance_deg,egt_c\n";
+               "active_rev_limit_rpm,active_limits,spark_retard_deg,spark_advance_deg,egt_c,"
+               // The last five had no names (audit TL2-02).
+               "lambda,afr_valid,map_kpa,wastegate_opening,injector_duty\n";
     }
 
     Pedal throttle(0.0);
