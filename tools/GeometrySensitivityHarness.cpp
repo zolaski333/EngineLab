@@ -628,10 +628,9 @@ struct Variant final {
 [[nodiscard]] std::vector<Variant> variants() {
     return {
         { "reference", [](ExhaustConfig&) {} },
-        // V8 control applied only when the graph contains two four-into-one
-        // bank collectors, two silencers and two outlets. The graph rewrite
-        // below bypasses only the common X section; all bank primaries,
-        // collector bodies, silencers and terminal geometry remain authored.
+        // V8 control: the graph rewrite below bypasses only the crossover
+        // (X) components; every pipe, collector, silencer and terminal stays
+        // as authored. A graph with no crossover is the reference.
         { "twin-4into1-no-x", [](ExhaustConfig&) {} },
         // Topology control matching the original user report: preserve each
         // authored primary but terminate it independently, with no collector,
@@ -765,54 +764,33 @@ struct Variant final {
             }
         };
         if (name == "twin-4into1-no-x") {
-            std::vector<std::uint32_t> bankMergeIds;
-            std::vector<std::uint32_t> mufflerIds;
-            std::vector<std::uint32_t> outletIds;
-            for (const auto& component : network.components) {
-                if (component.type == ExhaustComponentType::muffler)
-                    mufflerIds.push_back(component.id);
-                else if (component.type == ExhaustComponentType::outlet)
-                    outletIds.push_back(component.id);
+            // Only the X goes: each pipe that fed one of its ports joins the
+            // pipe that left the same port, so every bank keeps its authored
+            // length. Rewiring each bank collector straight to its silencer
+            // also dropped the 140 mm and 1,070 mm pipes either side of the
+            // LS3's X, 1.21 m of each route (audit TL2-04).
+            std::vector<std::uint32_t> crossoverIds;
+            for (const auto& component : network.components)
+                if (component.type == ExhaustComponentType::crossover)
+                    crossoverIds.push_back(component.id);
+            const auto isCrossover = [&](std::uint32_t id) {
+                return std::ranges::find(crossoverIds, id) != crossoverIds.end();
+            };
+            std::vector<ExhaustComponentConnectionConfig> bypasses;
+            for (const auto crossoverId : crossoverIds) {
+                for (const auto& in : network.connections) {
+                    if (in.toComponentId != crossoverId) continue;
+                    for (const auto& out : network.connections) {
+                        if (out.fromComponentId != crossoverId || out.fromPort != in.toPort) continue;
+                        bypasses.push_back({ in.fromComponentId, out.toComponentId, in.fromPort, out.toPort });
+                    }
+                }
             }
-            for (const auto& component : network.components) {
-                if (component.type != ExhaustComponentType::merge) continue;
-                const auto primaryInputs = std::count_if(
-                    network.connections.begin(), network.connections.end(),
-                    [&](const auto& connection) {
-                        return connection.toComponentId == component.id
-                            && primaryIds.contains(
-                                connection.fromComponentId);
-                    });
-                if (primaryInputs >= 2) bankMergeIds.push_back(component.id);
-            }
-            std::ranges::sort(bankMergeIds);
-            std::ranges::sort(mufflerIds);
-            std::ranges::sort(outletIds);
-            if (bankMergeIds.size() == 2 && mufflerIds.size() == 2
-                    && outletIds.size() == 2) {
-                std::set<std::uint32_t> keptIds = primaryIds;
-                keptIds.insert(bankMergeIds.begin(), bankMergeIds.end());
-                keptIds.insert(mufflerIds.begin(), mufflerIds.end());
-                keptIds.insert(outletIds.begin(), outletIds.end());
-                std::erase_if(network.components, [&](const auto& component) {
-                    return !keptIds.contains(component.id);
-                });
-                std::erase_if(network.connections, [&](const auto& connection) {
-                    return !(primaryIds.contains(connection.fromComponentId)
-                            && std::ranges::find(bankMergeIds,
-                                connection.toComponentId)
-                                != bankMergeIds.end())
-                        && !(std::ranges::find(mufflerIds,
-                                connection.fromComponentId)
-                                != mufflerIds.end()
-                            && std::ranges::find(outletIds,
-                                connection.toComponentId)
-                                != outletIds.end());
-                });
-                for (std::size_t bank = 0; bank < 2; ++bank)
-                    network.connections.push_back(
-                        { bankMergeIds[bank], mufflerIds[bank] });
-            }
+            std::erase_if(network.connections, [&](const auto& connection) {
+                return isCrossover(connection.fromComponentId) || isCrossover(connection.toComponentId);
+            });
+            std::erase_if(network.components, [&](const auto& component) { return isCrossover(component.id); });
+            network.connections.insert(network.connections.end(), bypasses.begin(), bypasses.end());
         } else if (name == "independent-pipes") {
             const auto originalComponents = network.components;
             std::vector<ExhaustComponentConfig> independentComponents;
