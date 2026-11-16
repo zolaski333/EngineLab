@@ -395,7 +395,15 @@ VehiclePanel::VehiclePanel(const DashboardModel& model) : model_(model) {
         editor->setTooltip(juce::String::fromUTF8(vehicleFields[index].tooltip));
         editor->onReturnKey = [this, index] { commit(index); };
         editor->onFocusLost = [this, index] { commit(index); };
-        editor->onEscapeKey = [this] { shownOnce_ = false; refresh(); };
+        // Escape puts the running figure back in the field itself: refresh()
+        // skips the focused editor, so the typed value stayed and the focus
+        // loss after it committed what Escape cancelled (audit APP-05).
+        editor->onEscapeKey = [this, index] {
+            const auto& field = vehicleFields[index];
+            editors_[index]->setText(juce::String(model_.config.vehicle.*(field.member), field.decimals), false);
+            shownOnce_ = false;
+            refresh();
+        };
         addAndMakeVisible(*editor);
         editors_.push_back(std::move(editor));
     }

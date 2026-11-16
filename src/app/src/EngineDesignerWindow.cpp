@@ -709,6 +709,12 @@ private:
     }
 
     void build() {
+        // A field typed less than 250 ms ago has not redesigned yet: Build
+        // copied the design before it (audit APP-06).
+        if (isTimerRunning()) {
+            stopTimer();
+            redesign();
+        }
         if (!designed_.config) return;
         auto config = *designed_.config;
         const auto voicing = loadAudioVoicing(catalogRoot_, "", "");

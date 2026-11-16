@@ -2081,6 +2081,9 @@ private:
             setStatus("Configuration valid, but no apply callback is installed.", true);
             return;
         }
+        // Read the cost before the apply: setConfig makes the applied engine
+        // the baseline, and the advisory always said "unchanged" (audit APP-02).
+        const auto advisory = solverCostAdvisory();
         // The engine applied comes back through setConfig: keep the history.
         const juce::ScopedValueSetter<bool> applying(applying_, true);
         try {
@@ -2088,8 +2091,7 @@ private:
                 setStatus("The valid configuration was rejected by the running engine.", true);
                 return;
             }
-            setStatus("Configuration validated and applied to the engine."
-                + solverCostAdvisory(), false);
+            setStatus("Configuration validated and applied to the engine." + advisory, false);
         } catch (const std::exception& exception) {
             setStatus("Apply failed: " + utf8(exception.what()), true);
         } catch (...) {
