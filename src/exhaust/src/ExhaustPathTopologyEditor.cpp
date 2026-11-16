@@ -397,7 +397,7 @@ void refreshBankPathHints(EngineConfig& config) {
 }
 
 [[nodiscard]] ExhaustPathEditResult reject(std::string error) {
-    return { 0, std::move(error) };
+    return { 0, std::move(error), {} };
 }
 
 [[nodiscard]] std::optional<std::string> validateStartingPoint(const EngineConfig& config) {
