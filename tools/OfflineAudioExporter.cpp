@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
@@ -238,14 +239,18 @@ int main(int argc, char** argv) {
             const std::string text(value);
             const auto colon = text.find(':');
             double fraction {};
-            if (colon == std::string::npos || colon == 0
+            // The id is checked whole: std::stoul threw on "bad" and ended
+            // the tool without a word (audit RT-05).
+            std::uint32_t component {};
+            const auto* const idEnd = text.data() + (colon == std::string::npos ? 0 : colon);
+            const auto parsedId = std::from_chars(text.data(), idEnd, component);
+            if (colon == std::string::npos || colon == 0 || parsedId.ec != std::errc {} || parsedId.ptr != idEnd
                 || !parseDouble(text.substr(colon + 1).c_str(), fraction)
                 || fraction < 0.0 || fraction > 1.0) {
                 std::cerr << "Exhaust tap is <component id>:<fraction 0..1>.\n";
                 return 1;
             }
-            exhaustTap = enginelab::OfflineAudioExportRequest::ExhaustPressureTap {
-                static_cast<std::uint32_t>(std::stoul(text.substr(0, colon))), fraction };
+            exhaustTap = enginelab::OfflineAudioExportRequest::ExhaustPressureTap { component, fraction };
         } else if (option == "--mechanical") {
             double parsed {};
             if (!parseDouble(value, parsed)

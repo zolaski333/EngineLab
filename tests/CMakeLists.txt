@@ -564,6 +564,23 @@ if(TARGET EngineLabDynoSweepHarness)
             TIMEOUT 900 FIXTURES_REQUIRED DesignedEngines)
     endif()
 endif()
+
+# The tools refuse a bad argument with their message instead of ending
+# without one (audit 2026-11-16): the message is what passes, so a crash fails.
+if(TARGET EngineLabOfflineAudioExporter)
+    add_test(NAME EngineLab.ToolArguments.ExporterTap
+        COMMAND EngineLabOfflineAudioExporter --engine K20A
+            --output "${CMAKE_BINARY_DIR}/tool-arguments/exporter-tap" --exhaust-tap bad:0.5)
+    set_tests_properties(EngineLab.ToolArguments.ExporterTap PROPERTIES
+        PASS_REGULAR_EXPRESSION "Exhaust tap is <component id>")
+endif()
+if(TARGET EngineLabAcousticTransferProbe)
+    add_test(NAME EngineLab.ToolArguments.TransferProbeSeconds
+        COMMAND EngineLabAcousticTransferProbe --filter K20A --component 100
+            --seconds 0.000001 --max-hz 10)
+    set_tests_properties(EngineLab.ToolArguments.TransferProbeSeconds PROPERTIES
+        PASS_REGULAR_EXPRESSION "usage: EngineLabAcousticTransferProbe")
+endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRuntimeDiscontinuity

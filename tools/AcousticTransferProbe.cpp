@@ -77,7 +77,8 @@ Settings parse(int argc, char** argv) {
         else if (arg == "--dump") s.dumpSamples = std::stoul(next());
         else usage();
     }
-    if (s.filter.empty() || s.componentId == 0 || !(s.seconds > 0.0)
+    // At least one sample: a shorter run read the last of none (audit RT-08).
+    if (s.filter.empty() || s.componentId == 0 || !(s.seconds * s.sampleRateHz >= 1.0)
         || !(s.stepHz > 0.0) || !(s.maxHz > 0.0))
         usage();
     return s;
