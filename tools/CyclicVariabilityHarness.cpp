@@ -66,18 +66,21 @@ namespace {
 constexpr double dt = 1.0 / 240.0;
 
 struct CylinderSeries final {
-    double lastWork { 0.0 };
+    double lastPhase { -1.0 };
     double sum { 0.0 };
     double sumSquares { 0.0 };
     std::size_t count { 0 };
 
-    void observe(double work) noexcept {
-        // The published value only changes at a cycle boundary, so a change is
-        // the cycle event. Sampling every frame instead would count the same
-        // cycle many times and collapse the variance toward zero.
-        if (std::abs(work - lastWork) < 1.0e-12) return;
-        lastWork = work;
-        if (!(work > 0.0) || !std::isfinite(work)) return;
+    void observe(double work, double cyclePhaseDegrees) noexcept {
+        // One sample per cycle, when the cylinder's phase wraps: the work then
+        // published is the cycle just completed. Sampling every frame would
+        // count a cycle many times and collapse the variance; a change of
+        // value missed two equal cycles in a row. A cycle of zero or negative
+        // work (a misfire) is the roughness being measured: it was dropped,
+        // and 0 J / 100 J alternating read COV 0 (audit TL2-01).
+        const auto wrapped = lastPhase >= 0.0 && cyclePhaseDegrees < lastPhase;
+        lastPhase = cyclePhaseDegrees;
+        if (!wrapped || !std::isfinite(work)) return;
         sum += work;
         sumSquares += work * work;
         ++count;
@@ -162,7 +165,8 @@ struct ConditionResult final {
              index < frame.state.cylinderStateCount && index < series.size();
              ++index) {
             series[index].observe(
-                frame.state.cylinderStates[index].indicatedWorkJoulesPerCycle);
+                frame.state.cylinderStates[index].indicatedWorkJoulesPerCycle,
+                frame.state.cylinderStates[index].cyclePhaseDegrees);
             dispersionSum += std::abs(
                 frame.state.cylinderStates[index].combustionCycleMultiplier
                 - 1.0);
