@@ -1667,6 +1667,59 @@ void intakeAirboxIsAnExpansionChamberRegression() {
     }
 }
 
+/** A runner far shorter than the wavelength radiates as the cylinder of its
+ *  own volume does, whatever its taper: at 150 Hz a 250 mm runner is a
+ *  twelfth of a wavelength, and a 30-60 mm cone's inertance is 17 % above
+ *  its equal-volume cylinder's, a fraction of a decibel through the plenum.
+ *  With the valve end at the inlet area and the plenum end at the outlet area
+ *  the cone gained A_out/A_in, a factor 4, on the way out (audit A2-05). */
+void intakeTaperedRunnerIsPassiveRegression() {
+    const auto radiated = [](double valveEndMm, double plenumEndMm) {
+        auto config = enginelab::makeDefaultInlineFour();
+        config.intake.airboxVolumeLitres = 4.0;
+        config.intake.inletDuctLengthMm = 250.0;
+        config.intake.inletDuctDiameterMm = 70.0;
+        config.intake.bellmouthDiameterMm = 82.0;
+        config.intake.runnerLengthMm = 250.0;
+        config.intake.runnerDiameterMm = valveEndMm;
+        config.intake.runnerPlenumDiameterMm = plenumEndMm;
+        for (auto& cylinder : config.cylinders) {
+            cylinder.intakeRunnerLengthMm = 0.0;
+            cylinder.intakeRunnerDiameterMm = 0.0;
+        }
+        for (auto& path : config.intakePaths) path.geometry = config.intake;
+        enginelab::normaliseEngineConfig(config);
+        enginelab::AcousticIntakeNetwork intake(config);
+        require(intake.valid() && intake.prepare(48'000.0), "the taper fixture must prepare");
+        const std::array<enginelab::AcousticIntakeNetwork::PathBoundary, 1> paths {{
+            { 0.0032F, 1.15F, 350.0F } }};
+        intake.beginBlock(paths, 1.0);
+        std::array<enginelab::AcousticIntakeNetwork::CylinderBoundary, 4> cylinders {};
+        for (auto& cylinder : cylinders) {
+            cylinder.conductanceAreaM2 = 0.00045F;
+            cylinder.densityKgPerM3 = 1.15F;
+            cylinder.soundSpeedMps = 350.0F;
+            cylinder.physical = true;
+        }
+        auto energy = 0.0;
+        for (std::size_t sample = 0; sample < 24'000; ++sample) {
+            cylinders[0].massFlowKgPerSecond = 0.040F + 0.010F * static_cast<float>(std::sin(
+                2.0 * std::numbers::pi * 150.0 * static_cast<double>(sample) / 48'000.0));
+            const auto pressure = intake.process(cylinders, 1.0F)[0].leftPa;
+            if (sample >= 12'000) energy += static_cast<double>(pressure) * pressure;
+        }
+        return 10.0 * std::log10(energy + 1.0e-30);
+    };
+    // The cylinder of the 30-60 mm cone's volume: d^2 = (30^2 + 30*60 + 60^2)/3.
+    const auto equalVolumeMm = std::sqrt((900.0 + 1'800.0 + 3'600.0) / 3.0);
+    const auto cone = radiated(30.0, 60.0);
+    const auto cylinder = radiated(equalVolumeMm, equalVolumeMm);
+    std::cout << "  tapered runner at 150 Hz: 30-60 mm cone " << cone
+              << " dB, equal-volume cylinder " << cylinder << " dB\n";
+    require(std::abs(cone - cylinder) < 1.5,
+        "a compact tapered runner must radiate as the cylinder of its volume, not gain power");
+}
+
 void acousticIntakeNetworkRegression() {
     auto config = enginelab::makeDefaultInlineFour();
     config.intake.airboxVolumeLitres = 4.0;
@@ -3847,6 +3900,7 @@ int main(int argc, char** argv) {
         acousticIntakeNetworkRegression();
         intakeMouthCarriesEveryBoreRegression();
         intakeAirboxIsAnExpansionChamberRegression();
+        intakeTaperedRunnerIsPassiveRegression();
         forcedInductionAcousticsRegression();
         forcedInductionPauseRegression();
         customGraphRuntimeTelemetryRegression();

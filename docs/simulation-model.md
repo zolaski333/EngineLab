@@ -782,7 +782,12 @@ Intake runners can also define `runner_plenum_diameter_mm`. The historical
 `runner_diameter_mm` then designates the valve side and the new field the
 plenum side; zero keeps a constant area. Intake and exhaust share the same
 conservative conical discretisation (exact volume, local areas, friction and
-heat exchange computed with the local hydraulic diameter).
+heat exchange computed with the local hydraulic diameter). The audio network
+carries a tapered runner as one delay line, so both its ends present the
+admittance of the cylinder of the frustum's volume, as each exhaust taper
+section does: a valve end at the inlet area beside a plenum end at the outlet
+area made the runner an amplifier (a compact 30-60 mm cone radiated 16 dB
+above its equal-volume cylinder at 150 Hz; audit A2-05).
 
 `individual_throttles: true` puts one plate in each runner instead of one
 ahead of the plenum (motorcycle and racing throttle bodies). The plenum is then

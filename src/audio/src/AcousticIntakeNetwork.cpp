@@ -272,12 +272,21 @@ struct AcousticIntakeNetwork::Impl final {
             runner.cylinderIndex = cylinder;
             runner.pathIndex = path;
             runner.duct.lengthM = std::max(0.001, lengthMm * 0.001);
-            runner.duct.inletAreaM2 = circularAreaM2(diameterMm);
-            runner.duct.outletAreaM2 = circularAreaM2(plenumDiameterMm);
-            runner.duct.areaM2 = (runner.duct.inletAreaM2
-                + std::sqrt(runner.duct.inletAreaM2
-                    * runner.duct.outletAreaM2)
-                + runner.duct.outletAreaM2) / 3.0;
+            const auto valveEndAreaM2 = circularAreaM2(diameterMm);
+            const auto plenumEndAreaM2 = circularAreaM2(plenumDiameterMm);
+            runner.duct.areaM2 = (valveEndAreaM2
+                + std::sqrt(valveEndAreaM2 * plenumEndAreaM2)
+                + plenumEndAreaM2) / 3.0;
+            // One delay line carries its pressure unchanged, so both ends
+            // present one admittance: the cylinder of the frustum's volume,
+            // as each exhaust taper section is (AcousticExhaustNetwork). The
+            // valve's impedance at the inlet area and the plenum's scattering
+            // at the outlet area made a forward wave gain A_out/A_in in power
+            // and a returning one lose it, x4 for a 2:1 diameter (audit
+            // A2-05). A straight runner is untouched to the bit.
+            runner.duct.inletAreaM2 = diameterMm == plenumDiameterMm
+                ? valveEndAreaM2 : runner.duct.areaM2;
+            runner.duct.outletAreaM2 = runner.duct.inletAreaM2;
             runner.duct.radiusM = std::sqrt(runner.duct.areaM2 / std::numbers::pi);
             paths[path].runners.push_back(runners.size());
             runners.push_back(std::move(runner));
