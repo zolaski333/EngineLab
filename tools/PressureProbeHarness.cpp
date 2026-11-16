@@ -53,12 +53,17 @@ struct Settings final {
     double sampleSeconds { 2.0 };
     int harmonics { 40 };
     double observerM { 0.5 };
+    // Diagnostics: the exhaust coupled on every mechanical substep (the
+    // simulator's oracle) and the mechanical step's crank angle.
+    bool couplingEverySubstep { false };
+    double crankDegreesPerStep { 0.0 };
 };
 
 [[noreturn]] void usage() {
     std::cerr << "usage: EngineLabPressureProbeHarness --filter exact-key --component id"
                  " --position-mm mm [--catalog-root dir] [--rpm rpm] [--throttle 0..1]"
-                 " [--exhaust-cell-mm mm] [--settle s] [--sample s] [--harmonics n] [--observer-m m]\n";
+                 " [--exhaust-cell-mm mm] [--settle s] [--sample s] [--harmonics n] [--observer-m m]"
+                 " [--coupling-every-substep] [--crank-degrees deg]\n";
     std::exit(EXIT_FAILURE);
 }
 
@@ -81,6 +86,8 @@ Settings parse(int argc, char** argv) {
         else if (arg == "--sample") s.sampleSeconds = std::stod(next());
         else if (arg == "--harmonics") s.harmonics = std::clamp(std::stoi(next()), 1, 170);
         else if (arg == "--observer-m") s.observerM = std::stod(next());
+        else if (arg == "--coupling-every-substep") s.couplingEverySubstep = true;
+        else if (arg == "--crank-degrees") s.crankDegreesPerStep = std::stod(next());
         else usage();
     }
     if (s.filter.empty() || s.componentId == 0 || !(s.rpm > 0.0) || !(s.settleSeconds > 0.0)
@@ -111,6 +118,15 @@ int main(int argc, char** argv) {
         }
         auto config = selection.entry->config;
         enginelab::normaliseEngineConfig(config);
+        // As DynoSweepHarness --crank-degrees: a finer step raises the
+        // solver's frequency ceiling with it.
+        if (settings.crankDegreesPerStep > 0.0) {
+            config.solver.maximumCrankDegreesPerStep = settings.crankDegreesPerStep;
+            config.solver.maximumMechanicalFrequencyHz = std::clamp(
+                std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0
+                    / settings.crankDegreesPerStep * 1.01,
+                config.solver.maximumMechanicalFrequencyHz, 100'000.0);
+        }
         const auto lengthMm = componentLengthMm(config, settings.componentId);
         if (!lengthMm || !(*lengthMm > 0.0)) {
             std::cerr << "no exhaust component " << settings.componentId << " with a length\n";
@@ -127,6 +143,7 @@ int main(int argc, char** argv) {
         // EngineRuntime-sized: never on the stack.
         auto simulator = std::make_unique<enginelab::EngineSimulator>(
             config, ecu, physics, events, exhaust, options);
+        simulator->setExhaustCouplingEverySubstep(settings.couplingEverySubstep);
 
         constexpr double dt = 1.0 / 240.0;
         for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
@@ -189,13 +206,14 @@ int main(int argc, char** argv) {
         const auto forward = [](double degrees, double cycle) {
             return std::fmod(std::fmod(degrees, cycle) + cycle, cycle); };
         std::int32_t previous = -1;
-        auto rpmSum = 0.0, torqueSum = 0.0, frames = 0.0;
+        auto rpmSum = 0.0, torqueSum = 0.0, frames = 0.0, couplingHzSum = 0.0;
         for (int step = 0; step < static_cast<int>(settings.sampleSeconds / dt); ++step) {
             const auto controls = controlsAt(settings.rpm);
             const auto startSeconds = simulator->state().simulationTimeSeconds;
             const auto startDegrees = simulator->state().crankAngleDegrees;
             const auto frame = simulator->step(dt, controls);
             rpmSum += frame.state.rpm;
+            couplingHzSum += frame.state.exhaustCouplingFrequencyHz;
             torqueSum += controls.dynamometerTorqueNm;
             frames += 1.0;
             {
@@ -249,7 +267,8 @@ int main(int argc, char** argv) {
         std::cout << "# engine " << config.name << "\n# held_rpm " << heldRpm
                   << "\n# brake_torque_nm " << torqueSum / frames
                   << "\n# power_kw " << torqueSum / frames * heldRpm * std::numbers::pi / 30.0 / 1'000.0
-                  << "\n# cycles_per_bin_min " << minimumCount << '\n';
+                  << "\n# cycles_per_bin_min " << minimumCount
+                  << "\n# exhaust_coupling_hz " << couplingHzSum / frames << '\n';
         std::cout << "crank_deg,pressure_bar\n";
         for (std::size_t b = 0; b < bins; ++b)
             std::cout << (static_cast<double>(b) + 0.5) * cycleDegrees / static_cast<double>(bins) << ','
