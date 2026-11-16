@@ -81,7 +81,7 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | owner decision |
 | [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | owner decision |
 | [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | owner decision |
-| [PG-01](#pg-01) | P1 | Exhaust boundary history is shorter than its fixed reconstruction delay | open |
+| [PG-01](#pg-01) | P1 | Exhaust boundary history is shorter than its fixed reconstruction delay | fixed a97ccdf |
 | [PG-02](#pg-02) | P2 | Wet nitrous fuel is omitted from fuel consumption | fixed c3de893 |
 | [PG-04](#pg-04) | P2 | The internal reordered-duct test executes one ascending chunk | fixed 58816e5 |
 | [PG-05](#pg-05) | P2 | Remeshing a tapered duct does not preserve its inventory | fixed e6a4473 |
@@ -89,13 +89,13 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [PG-07](#pg-07) | P1 | A YAML alias cycle in embedded ECU data recursively exhausts the stack | fixed 60510df |
 | [PG-08](#pg-08) | P2 | Scripted listener distance keeps millimetres in a metre field | fixed 6b38967 |
 | [A2-01](#a2-01) | P2 | Cancelling a stem export leaves a Windows-locked partial and blocks the next export | fixed ea253b4 |
-| [A2-02](#a2-02) | P2 | Forced-induction sound continues while paused | open |
-| [A2-03](#a2-03) | P2 | Closing a valve preserves an undamped offset in the reflection filter | open |
-| [A2-04](#a2-04) | P2 | The jet-noise renderer bypasses its own subsonic velocity cap | open |
-| [A2-05](#a2-05) | P2 | Intake tapered runner propagation gains power between unequal endpoint admittances | open |
+| [A2-02](#a2-02) | P2 | Forced-induction sound continues while paused | fixed a1b21e1 |
+| [A2-03](#a2-03) | P2 | Closing a valve preserves an undamped offset in the reflection filter | fixed 3a29333 |
+| [A2-04](#a2-04) | P2 | The jet-noise renderer bypasses its own subsonic velocity cap | fixed 0ebf190 |
+| [A2-05](#a2-05) | P2 | Intake tapered runner propagation gains power between unequal endpoint admittances | fixed 9244b71 |
 | [A2-06](#a2-06) | P2 | Authored-component pressure taps address only the first taper section | fixed 4ef50da |
 | [A2-07](#a2-07) | P2 | Live replacement reads the network owner while the audio thread swaps it | fixed e05f68f |
-| [A2-08](#a2-08) | P2 | Complementary exhaust bands are summed with different source times | open |
+| [A2-08](#a2-08) | P2 | Complementary exhaust bands are summed with different source times | fixed e3c2906 on exp/audit-sound, owner A/B |
 | [RT2-01](#rt2-01) | P2 | Changing engine during a datalog makes the recorded time jump backwards | fixed 8e26a01 |
 | [T2-01](#t2-01) | P2 | The maximum-mix quality test bypasses the boosted mixer settings it claims to validate | fixed aaf498f |
 | [TL2-01](#tl2-01) | P2 | Cyclic variability silently discards the zero/negative-work cycles that create roughness | fixed 00f307b |

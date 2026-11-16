@@ -274,7 +274,7 @@ file formats, always with an in-memory migration).
   kept, however far from a real fuel), and the top speed line holds the
   shaft.
 
-The audit of 2026-11-16 (`docs/audit.md`, lots 0-5):
+The audit of 2026-11-16 (`docs/audit.md`, lots 0-6):
 
 - **Crashes**: a deeply nested expression in an engine script, ECU tables
   in a YAML alias loop, a click on a gearbox's last ratio after the gear
@@ -313,6 +313,11 @@ The audit of 2026-11-16 (`docs/audit.md`, lots 0-5):
 - **Exhaust**: a live remesh of a tapered pipe keeps its gas; opening a
   scalar exhaust in the designer keeps every route's length (a cylinder's own
   primary, the collector trunk, the straight body, the tailpipe).
+- **Sound**: a paused turbocharger rings down instead of holding its
+  whistle; a tapered intake runner no longer amplifies its own wave (only
+  the EA288 tapers in the catalogue, under 2 dB in one band). A closing
+  valve and the exhaust boundary's history were also corrected, measured
+  at no more than a fraction of a decibel on the catalogue.
 
 ## [0.9.1] — 2026-11-10
 
