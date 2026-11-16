@@ -135,10 +135,18 @@ void ExhaustJetNoise::configure(
         ? std::sqrt(powerWatts * ambientDensityKgPerM3 * ambientSoundSpeedMps
             / (4.0 * std::numbers::pi))
         : 0.0;
+    // The emitted pressure follows the same capped velocity as the target:
+    // the raw volume velocity let a supersonic outlet emit U^4 past 0.95 c,
+    // 25.9 dB over its own target at Mach 2 (audit A2-04). Below the cap the
+    // raw value is kept as it was, to the bit.
     meanVolumeVelocityTargetM3PerS_ =
         positiveFinite(massFlowKgPerSecond)
             && positiveFinite(densityKgPerM3)
-        ? static_cast<float>(massFlowKgPerSecond / densityKgPerM3) : 0.0F;
+            && positiveFinite(outletAreaM2)
+            && positiveFinite(soundSpeedMps)
+        ? static_cast<float>(std::min(massFlowKgPerSecond / densityKgPerM3,
+                                      0.95 * soundSpeedMps * outletAreaM2))
+        : 0.0F;
     inverseOutletAreaTargetM2_ = positiveFinite(outletAreaM2)
         ? static_cast<float>(1.0 / outletAreaM2) : 0.0F;
     // p_rms(1 m) = rho0*sqrt(K*A/(4*pi))/c0^2 * U^4.

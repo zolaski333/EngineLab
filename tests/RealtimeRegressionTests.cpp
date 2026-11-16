@@ -451,6 +451,28 @@ void exhaustJetNoiseRegression() {
             && measuredRms < first.targetPressureRmsPa() * 1.20,
         "normalised jet spectrum must retain the acoustic-power RMS");
 
+    // At Mach 2 the law is held at 0.95 c, and the rendered pressure with it:
+    // the raw volume velocity emitted 25.9 dB over the target (audit A2-04).
+    {
+        const auto supersonicFlow = 2.0 * soundSpeedMps * densityKgPerM3 * areaM2;
+        Jet supersonic(0x12345678U);
+        require(supersonic.prepare(sampleRate), "the supersonic renderer must prepare");
+        supersonic.configure(supersonicFlow, areaM2, densityKgPerM3, soundSpeedMps, ambientDensity);
+        supersonic.snapToTarget();
+        auto supersonicEnergy = 0.0;
+        for (std::size_t sample = 0; sample < measurementSamples; ++sample) {
+            const auto value = supersonic.process(1.0F);
+            if (sample >= 4'000) supersonicEnergy += static_cast<double>(value) * value;
+        }
+        const auto supersonicRms = std::sqrt(
+            supersonicEnergy / static_cast<double>(measurementSamples - 4'000));
+        std::cout << "  jet noise at Mach 2: target " << supersonic.targetPressureRmsPa()
+                  << " Pa, rendered " << supersonicRms << " Pa\n";
+        require(supersonicRms > supersonic.targetPressureRmsPa() * 0.80
+                && supersonicRms < supersonic.targetPressureRmsPa() * 1.20,
+            "a supersonic outlet must render its capped target, not the raw velocity's");
+    }
+
     first.reset();
     first.configure(0.0, areaM2, densityKgPerM3, soundSpeedMps,
         ambientDensity);
