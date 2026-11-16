@@ -818,7 +818,8 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
     for (std::size_t p = 0; p < layouts.size(); ++p) {
         auto& layout = layouts[p];
         layout.path = &config.exhaustPaths[p];
-        layout.network = layout.path->network ? *layout.path->network : makeEditableExhaustNetwork(*layout.path);
+        layout.network = layout.path->network ? *layout.path->network
+                                               : makeEditableExhaustNetwork(*layout.path, config.cylinders);
         if (config.cycle == EngineCycle::rotary) layout.passages = foldRotorPassages(layout.network, ports);
         buildNodes(layout);
         sizeSlots(layout, ports, routing.gapMm);

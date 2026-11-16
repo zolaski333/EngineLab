@@ -638,8 +638,9 @@ ExhaustPathEditResult ExhaustPathTopologyEditor::removePath(
     std::optional<std::string> why;
     if (join == ExhaustPathJoin::yJunction) {
         auto removed = *source;
-        if (!removed.network) removed.network = makeEditableExhaustNetwork(removed);
-        if (!destination->network) destination->network = makeEditableExhaustNetwork(*destination);
+        if (!removed.network) removed.network = makeEditableExhaustNetwork(removed, candidate.cylinders);
+        if (!destination->network)
+            destination->network = makeEditableExhaustNetwork(*destination, candidate.cylinders);
         why = joinWithY(*destination, removed);
     } else {
         why = rebuildInto(*destination, cylinders);
@@ -843,8 +844,8 @@ std::string ExhaustNetworkEditor::fitSilencerBypass(EngineConfig& config) {
     std::size_t fitted = 0;
     std::string why = "No silencer in this exhaust: add one in the exhaust designer first.";
     for (auto& path : edited.exhaustPaths) {
-        auto network = path.network && !path.network->components.empty() ? *path.network
-                                                                          : makeEditableExhaustNetwork(path);
+        auto network = path.network && !path.network->components.empty()
+            ? *path.network : makeEditableExhaustNetwork(path, edited.cylinders);
         // Parts counted back from the tailpipes: the silencer with the
         // fewest parts after it is the one nearest the end.
         std::unordered_map<std::uint32_t, std::size_t> after;

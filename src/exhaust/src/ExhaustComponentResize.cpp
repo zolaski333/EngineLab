@@ -59,6 +59,28 @@ template <typename Config>
         });
 }
 
+/** A scalar path's primaries share one length unless a cylinder carries its
+ *  own, which no shared field can hold. */
+[[nodiscard]] bool primariesHaveOwnLengths(const EngineConfig& config, const ExhaustPathConfig& path) noexcept {
+    return std::any_of(config.cylinders.begin(), config.cylinders.end(),
+        [&path](const CylinderConfig& cylinder) {
+            return cylinder.exhaustPrimaryLengthMm > 0.0
+                && std::find(path.cylinderIds.begin(), path.cylinderIds.end(), cylinder.id)
+                    != path.cylinderIds.end();
+        });
+}
+
+/** On a scalar path, a component no scalar field sizes: a primary of its own
+ *  length, or a pipe that is neither a primary nor the mid pipe (a single
+ *  cylinder's collector trunk, the straight body where no chamber is). */
+[[nodiscard]] bool hasNoScalarField(const EngineConfig& config, const ExhaustPathConfig& path,
+                                    const ExhaustNetworkConfig& network, std::uint32_t componentId) {
+    const auto* component = findComponent(network, componentId);
+    if (component == nullptr || component->type != ExhaustComponentType::pipe) return false;
+    if (isPrimary(network, componentId)) return primariesHaveOwnLengths(config, path);
+    return componentId != editableMidpipeId(path);
+}
+
 [[nodiscard]] std::vector<ExhaustComponentType> typesOf(const ExhaustNetworkConfig& network) {
     std::vector<ExhaustComponentType> types;
     types.reserve(network.components.size());
@@ -73,7 +95,7 @@ std::optional<ExhaustComponentSize> exhaustComponentSize(const EngineConfig& con
     const auto* path = findPath(config, pathId);
     if (path == nullptr) return std::nullopt;
     const auto scalar = !path->network || path->network->components.empty();
-    const auto network = scalar ? makeEditableExhaustNetwork(*path) : *path->network;
+    const auto network = scalar ? makeEditableExhaustNetwork(*path, config.cylinders) : *path->network;
     const auto* component = findComponent(network, componentId);
     if (component == nullptr) return std::nullopt;
     ExhaustComponentSize size;
@@ -89,7 +111,7 @@ std::optional<ExhaustComponentSize> exhaustComponentSize(const EngineConfig& con
         if (component->type == ExhaustComponentType::muffler)
             size.diameterMm = path->geometry.mufflerChamberDiameterMm;
         size.sharedByPrimaries = component->type == ExhaustComponentType::pipe && path->cylinderIds.size() > 1U
-            && isPrimary(network, componentId);
+            && isPrimary(network, componentId) && !primariesHaveOwnLengths(config, *path);
     }
     return size;
 }
@@ -105,19 +127,21 @@ std::string resizeExhaustComponent(EngineConfig& config, std::uint32_t pathId, s
     auto edited = config;
     auto& path = *findPath(edited, pathId);
     auto scalar = !path.network || path.network->components.empty();
-    const auto type = findComponent(scalar ? makeEditableExhaustNetwork(path) : *path.network, componentId)->type;
+    const auto drawn = scalar ? makeEditableExhaustNetwork(path, edited.cylinders) : *path.network;
+    const auto type = findComponent(drawn, componentId)->type;
     const auto noLength = mayHaveNoLength(type) && lengthMm == 0.0;
     if (lengthChanged && !noLength && !(lengthMm >= minimumLengthMm && lengthMm <= maximumLengthMm))
         return mayHaveNoLength(type) ? "The length must be 0 (none) or between 10 and 30,000 mm."
                                      : "The length must be between 10 and 30,000 mm.";
-    // A scalar path has no field for this length: it becomes the network it
-    // was drawn from, which then keeps it.
-    if (scalar && lengthChanged && !hasScalarLength(type)) {
-        path.network = makeEditableExhaustNetwork(path);
+    // A scalar path has no field for this length, or for this component at
+    // all: it becomes the network it was drawn from, which then keeps it.
+    if (scalar && ((lengthChanged && !hasScalarLength(type))
+                   || hasNoScalarField(edited, path, drawn, componentId))) {
+        path.network = drawn;
         scalar = false;
     }
     if (scalar) {
-        const auto before = makeEditableExhaustNetwork(path);
+        const auto before = makeEditableExhaustNetwork(path, edited.cylinders);
         auto& geometry = path.geometry;
         switch (findComponent(before, componentId)->type) {
         case ExhaustComponentType::pipe:
@@ -140,7 +164,7 @@ std::string resizeExhaustComponent(EngineConfig& config, std::uint32_t pathId, s
         case ExhaustComponentType::catalyst:
         case ExhaustComponentType::crossover: return "This component cannot be resized here.";
         }
-        if (typesOf(makeEditableExhaustNetwork(path)) != typesOf(before))
+        if (typesOf(makeEditableExhaustNetwork(path, edited.cylinders)) != typesOf(before))
             return "The silencer must stay wider than the pipes on either side of it.";
         // A single path mirrors the global geometry: normalisation copies
         // one over the other, and the solver reads the global one.
@@ -170,7 +194,8 @@ std::string joinExhaustPaths(EngineConfig& config, std::uint32_t keptId, std::ui
     if (config.forcedInduction.enabled && config.forcedInduction.type == ForcedInductionType::turbocharger
         && config.forcedInduction.turbochargerCount + 1U > config.exhaustPaths.size())
         return "Each turbocharger needs an exhaust path of its own.";
-    auto network = keptPath->network ? *keptPath->network : makeEditableExhaustNetwork(*keptPath);
+    auto network = keptPath->network ? *keptPath->network
+                                     : makeEditableExhaustNetwork(*keptPath, config.cylinders);
     if (network.cylinderConnections.empty()) return "The exhaust path has no primary to copy.";
 
     std::unordered_map<std::uint32_t, std::size_t> incoming;

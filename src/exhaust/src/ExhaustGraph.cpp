@@ -633,7 +633,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         graph.nodes_.back().perforatedOpenAreaRatio =
             finiteClamped(geometry.mufflerPerforatedOpenAreaRatio,
                 0.0, 1.0, 0.0);
-        graph.nodes_.push_back({ outletId, ExhaustNodeType::outlet, 180.0, outletDiameter,
+        graph.nodes_.push_back({ outletId, ExhaustNodeType::outlet, legacyTailpipeLengthMm, outletDiameter,
             outletRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
             std::numbers::pi * std::pow(outletDiameter * 0.0005, 2.0)
                 * 0.180 * 1'000.0,

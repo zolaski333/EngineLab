@@ -898,6 +898,90 @@ void testEditableLegacyConversionIsNeutral() {
         "an open scalar path must not become a default muffler when edited");
 }
 
+// Opening a scalar exhaust in the editor must not move its routes: the
+// conversion used the path's primary length for every cylinder, dropped the
+// collector trunk under an authored body, the 450 mm straight body and the
+// 180 mm tailpipe (audit EXHAUST-02: 1,727 -> 600 mm on one cylinder).
+void testEditableConversionKeepsEveryRoute() {
+    const auto compareRoutes = [](EngineConfig config, const std::string& label) {
+        normaliseEngineConfig(config);
+        require(!validateEngineConfig(config), label + ": the scalar fixture must be valid");
+        auto editable = config;
+        for (auto& path : editable.exhaustPaths) {
+            require(!path.network, label + ": the fixture must be scalar");
+            path.network = makeEditableExhaustNetwork(path, config.cylinders);
+        }
+        require(!validateEngineConfig(editable), label + ": the converted exhaust must be valid");
+        const auto before = ExhaustGraph::makeForEngine(config);
+        const auto after = ExhaustGraph::makeForEngine(editable);
+        require(!before.routes().empty() && before.routes().size() == after.routes().size(),
+            label + ": conversion must keep the number of routes");
+        for (const auto& route : before.routes()) {
+            const auto match = std::find_if(after.routes().begin(), after.routes().end(),
+                [&route](const ExhaustRoute& other) {
+                    return other.cylinderId == route.cylinderId && other.pathIndex == route.pathIndex;
+                });
+            require(match != after.routes().end()
+                    && std::abs(match->lengthMm - route.lengthMm) < 1.0e-9
+                    && std::abs(match->delaySeconds - route.delaySeconds) < 1.0e-12,
+                label + ": cylinder " + std::to_string(route.cylinderId) + " route "
+                    + std::to_string(route.lengthMm) + " mm became "
+                    + (match != after.routes().end() ? std::to_string(match->lengthMm) : std::string("none"))
+                    + " mm on conversion");
+        }
+    };
+
+    auto ownPrimary = makeDefaultInlineFour();
+    ownPrimary.cylinders.front().exhaustPrimaryLengthMm = 977.0;
+    compareRoutes(ownPrimary, "a cylinder's own primary");
+
+    auto body = ownPrimary;
+    body.exhaust.collectorVolumeLitres = 0.8;
+    body.exhaustPaths.front().geometry.collectorVolumeLitres = 0.8;
+    compareRoutes(body, "an authored collector body");
+
+    auto chamber = ownPrimary;
+    for (auto* geometry : { &chamber.exhaust, &chamber.exhaustPaths.front().geometry }) {
+        geometry->mufflerChamberDiameterMm = 142.0;
+        geometry->mufflerChamberLengthMm = 400.0;
+    }
+    compareRoutes(chamber, "an expansion chamber");
+
+    auto narrow = ownPrimary;
+    for (auto* geometry : { &narrow.exhaust, &narrow.exhaustPaths.front().geometry }) {
+        geometry->mufflerChamberDiameterMm = geometry->collectorDiameterMm;
+        geometry->mufflerChamberLengthMm = 300.0;
+    }
+    compareRoutes(narrow, "a chamber no wider than its pipes");
+
+    // Two paths of one cylinder each: no collector to merge, but the trunk.
+    auto singles = makeDefaultInlineTwo();
+    require(singles.exhaustPaths.size() == 1 && singles.cylinders.size() == 2,
+        "the single-cylinder fixture starts from one path of two cylinders");
+    auto second = singles.exhaustPaths.front();
+    second.id = singles.exhaustPaths.front().id + 1U;
+    singles.exhaustPaths.front().cylinderIds = { singles.cylinders[0].id };
+    second.cylinderIds = { singles.cylinders[1].id };
+    singles.exhaustPaths.push_back(second);
+    compareRoutes(singles, "single-cylinder paths");
+
+    // The shared primary length is no field for a cylinder of its own: the
+    // edit makes the path its network and changes that primary only.
+    auto edited = ownPrimary;
+    const auto pathId = edited.exhaustPaths.front().id;
+    require(!exhaustComponentSize(edited, pathId, 1U)->sharedByPrimaries,
+        "a primary of its own length is not shared");
+    require(std::abs(exhaustComponentSize(edited, pathId, 1U)->lengthMm - 977.0) < 1.0e-9,
+        "the editor shows a cylinder's own primary length");
+    const auto error = resizeExhaustComponent(edited, pathId, 1U, 900.0,
+        edited.exhaustPaths.front().geometry.primaryDiameterMm);
+    require(error.empty() && edited.exhaustPaths.front().network.has_value()
+            && std::abs(edited.exhaustPaths.front().network->components[0].lengthMm - 900.0) < 1.0e-9
+            && std::abs(edited.exhaustPaths.front().network->components[1].lengthMm
+                - edited.exhaustPaths.front().geometry.primaryLengthMm) < 1.0e-9,
+        "resizing a primary of its own length resizes it alone: " + error);
+}
+
 // The mid pipe gives a scalar path its real length. The solver's compiler,
 // the editable network (3-D view, designer) and the inspector must all carry
 // it, or the length would vanish as soon as the exhaust is drawn or edited.
@@ -981,6 +1065,7 @@ int main() {
         testTopologyRejectionIsReported();
         testDegenerateChamberIsFlooredToItsResolutionLimit();
         testEditableLegacyConversionIsNeutral();
+        testEditableConversionKeepsEveryRoute();
         testMidpipeIsCarriedEverywhere();
         testDefaultCollectorIsItsTrunk();
         testValidationAndRouting();

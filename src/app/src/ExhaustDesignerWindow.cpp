@@ -1754,7 +1754,7 @@ private:
             return;
         }
         rememberForUndo();
-        path->network = makeEditableExhaustNetwork(*path);
+        path->network = makeEditableExhaustNetwork(*path, working_.cylinders);
         selectedComponentId_ = path->network->components.front().id;
         selectedConnectionRow_ = -1;
         selectedMappingRow_ = -1;

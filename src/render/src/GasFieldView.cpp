@@ -68,12 +68,28 @@ std::vector<int> bindGasField(const EngineModel3D& model, const GasFieldSnapshot
             // A geometry-only path: the solver compiles it without component
             // ids, a primary per cylinder (node id = cylinder id) and one node
             // of each other type.
-            const auto type = static_cast<std::uint8_t>(nodeTypeOf(duct.componentType));
+            auto componentType = duct.componentType;
             std::optional<std::uint32_t> cylinderId;
             if (duct.componentType == ExhaustComponentType::pipe) {
-                for (const auto& connection : makeEditableExhaustNetwork(path).cylinderConnections)
+                const auto drawn = makeEditableExhaustNetwork(path, config.cylinders);
+                for (const auto& connection : drawn.cylinderConnections)
                     if (connection.componentId == duct.elementId) cylinderId = connection.cylinderId;
+                // The drawn graph's other pipes besides the mid pipe stand for
+                // the solver's nodes: a single cylinder's collector trunk is
+                // its merge, the straight body where no chamber is its muffler.
+                if (!cylinderId && duct.elementId != editableMidpipeId(path)) {
+                    const auto fromPrimary = std::any_of(drawn.connections.begin(), drawn.connections.end(),
+                        [&](const ExhaustComponentConnectionConfig& connection) {
+                            return connection.toComponentId == duct.elementId
+                                && std::any_of(drawn.cylinderConnections.begin(), drawn.cylinderConnections.end(),
+                                    [&](const auto& primary) {
+                                        return primary.componentId == connection.fromComponentId;
+                                    });
+                        });
+                    componentType = fromPrimary ? ExhaustComponentType::merge : ExhaustComponentType::muffler;
+                }
             }
+            const auto type = static_cast<std::uint8_t>(nodeTypeOf(componentType));
             binding[d] = find([&](const GasFieldElement& e) {
                 return isExhaust(e.kind) && e.pathIndex == *pathIndex && e.nodeType == type
                     && (!cylinderId || e.nodeId == *cylinderId);

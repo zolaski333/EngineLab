@@ -2860,7 +2860,7 @@ void EngineViewport::updateInspector() {
         if (exhaust) {
             for (const auto& path : config.exhaustPaths) {
                 if (path.id != duct.pathId) continue;
-                const auto network = path.network ? *path.network : makeEditableExhaustNetwork(path);
+                const auto network = path.network ? *path.network : makeEditableExhaustNetwork(path, config.cylinders);
                 for (const auto& component : network.components) {
                     if (component.id != duct.elementId || duct.kind != render::DuctKind::exhaustComponent) continue;
                     add("Diameter", millimetres(model_.units, component.diameterMm));

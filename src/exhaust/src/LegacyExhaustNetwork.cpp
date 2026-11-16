@@ -17,20 +17,39 @@ namespace {
     return result;
 }
 
-} // namespace
+/** The scalar geometry's straight body length where no chamber scatters:
+ * the solver's compiler meshes 450 mm there, or a configured but narrow
+ * chamber's own length floored at its plane-wave limit (ExhaustGraph). */
+[[nodiscard]] double straightBodyLengthMm(const ExhaustConfig& geometry) noexcept {
+    const auto chamberConfigured = geometry.mufflerChamberDiameterMm > 1.0
+        && geometry.mufflerChamberLengthMm > 1.0;
+    if (!chamberConfigured) return 450.0;
+    constexpr double planeWaveResonantLengthRatio = 0.853;
+    const auto flowDiameterMm = std::clamp(geometry.mufflerChamberDiameterMm,
+        geometry.collectorDiameterMm, 3'000.0);
+    return std::max(std::min(geometry.mufflerChamberLengthMm, 15'000.0),
+                    flowDiameterMm * planeWaveResonantLengthRatio);
+}
 
-ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
+[[nodiscard]] ExhaustNetworkConfig build(const ExhaustPathConfig& path,
+                                         std::span<const CylinderConfig> cylinders,
+                                         std::uint32_t* midpipeIdOut) {
     ExhaustNetworkConfig network;
-    network.components.reserve(path.cylinderIds.size() + 4U);
+    network.components.reserve(path.cylinderIds.size() + 5U);
     network.cylinderConnections.reserve(path.cylinderIds.size());
-    network.connections.reserve(path.cylinderIds.size() + 2U);
+    network.connections.reserve(path.cylinderIds.size() + 4U);
+    if (midpipeIdOut != nullptr) *midpipeIdOut = 0;
 
     std::uint32_t nextId = 1;
     std::vector<std::uint32_t> primaryIds;
     primaryIds.reserve(path.cylinderIds.size());
     for (const auto cylinderId : path.cylinderIds) {
         auto primary = component(ExhaustComponentType::pipe, nextId++);
-        primary.lengthMm = path.geometry.primaryLengthMm;
+        // A cylinder's own primary length wins, as in the solver's compiler.
+        const auto cylinder = std::find_if(cylinders.begin(), cylinders.end(),
+            [cylinderId](const CylinderConfig& item) { return item.id == cylinderId; });
+        primary.lengthMm = cylinder != cylinders.end() && cylinder->exhaustPrimaryLengthMm > 0.0
+            ? cylinder->exhaustPrimaryLengthMm : path.geometry.primaryLengthMm;
         primary.diameterMm = path.geometry.primaryDiameterMm;
         primaryIds.push_back(primary.id);
         network.cylinderConnections.push_back({ cylinderId, primary.id });
@@ -40,10 +59,10 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
     std::uint32_t previousId = 0;
     if (primaryIds.size() > 1U) {
         auto collector = component(ExhaustComponentType::merge, nextId++);
-        // Without an authored body the collector is its trunk and holds what
-        // it sweeps (zero volume), as the solver's own geometry has it.
-        collector.lengthMm = path.geometry.collectorVolumeLitres > 0.0
-            ? 0.0 : legacyCollectorTrunkLengthMm;
+        // The collector is its trunk, as the solver's own geometry has it:
+        // without an authored body it holds what the trunk sweeps (zero
+        // volume); an authored body is the trunk's volume.
+        collector.lengthMm = legacyCollectorTrunkLengthMm;
         collector.diameterMm = path.geometry.collectorDiameterMm;
         collector.volumeLitres = path.geometry.collectorVolumeLitres;
         previousId = collector.id;
@@ -51,7 +70,14 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
         for (const auto primaryId : primaryIds)
             network.connections.push_back({ primaryId, collector.id });
     } else if (!primaryIds.empty()) {
-        previousId = primaryIds.front();
+        // One primary has nothing to merge, but the solver still runs it
+        // through the collector's trunk.
+        auto trunk = component(ExhaustComponentType::pipe, nextId++);
+        trunk.lengthMm = legacyCollectorTrunkLengthMm;
+        trunk.diameterMm = path.geometry.collectorDiameterMm;
+        network.components.push_back(trunk);
+        network.connections.push_back({ primaryIds.front(), trunk.id });
+        previousId = trunk.id;
     }
 
     if (path.geometry.midpipeLengthMm > 0.0) {
@@ -65,6 +91,7 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
         if (previousId != 0)
             network.connections.push_back({ previousId, midpipe.id });
         previousId = midpipe.id;
+        if (midpipeIdOut != nullptr) *midpipeIdOut = midpipe.id;
     }
 
     // An authored expansion chamber is geometry, not the editor's generic
@@ -79,7 +106,8 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
     // something that provably does nothing, and a user who authors it (a common
     // shape when every diameter is set to the same number) is entitled to see
     // that the exhaust has no silencer rather than a silencer with no effect.
-    // Not an approximation: there is nothing there to model.
+    // Not an approximation: there is nothing there to model. It is still a
+    // length of pipe the solver meshes, so it is drawn as one.
     //
     // A body that is merely SHORT is a separate matter and is deliberately not
     // filtered here. `ExhaustGraph` floors its meshed length at the body's own
@@ -120,10 +148,19 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
         if (previousId != 0)
             network.connections.push_back({ previousId, muffler.id });
         previousId = muffler.id;
+    } else {
+        auto body = component(ExhaustComponentType::pipe, nextId++);
+        body.lengthMm = straightBodyLengthMm(path.geometry);
+        body.diameterMm = path.geometry.collectorDiameterMm;
+        body.restriction = path.geometry.mufflerRestriction;
+        network.components.push_back(body);
+        if (previousId != 0)
+            network.connections.push_back({ previousId, body.id });
+        previousId = body.id;
     }
 
     auto outlet = component(ExhaustComponentType::outlet, nextId);
-    outlet.lengthMm = 0.0;
+    outlet.lengthMm = legacyTailpipeLengthMm;
     outlet.diameterMm = path.geometry.outletDiameterMm;
     outlet.dischargeCoefficient = path.geometry.outletDischargeCoefficient;
     outlet.acousticPositionM = path.acousticPositionM;
@@ -133,6 +170,19 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
     if (previousId != 0)
         network.connections.push_back({ previousId, outlet.id });
     return network;
+}
+
+} // namespace
+
+ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path,
+                                                std::span<const CylinderConfig> cylinders) {
+    return build(path, cylinders, nullptr);
+}
+
+std::uint32_t editableMidpipeId(const ExhaustPathConfig& path) {
+    std::uint32_t midpipeId = 0;
+    static_cast<void>(build(path, {}, &midpipeId));
+    return midpipeId;
 }
 
 } // namespace enginelab

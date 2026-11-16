@@ -190,6 +190,8 @@ struct CamshaftConfig final {
 /** Length of the common trunk the scalar exhaust geometry gives its
  *  collector, mm. */
 inline constexpr double legacyCollectorTrunkLengthMm = 120.0;
+/** The tailpipe the scalar exhaust compiler meshes after its body. */
+inline constexpr double legacyTailpipeLengthMm = 180.0;
 
 struct ExhaustConfig final {
     double primaryLengthMm { 480.0 };
