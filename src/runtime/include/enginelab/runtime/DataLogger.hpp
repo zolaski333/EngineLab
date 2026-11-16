@@ -42,6 +42,7 @@ public:
 private:
     std::ofstream stream_;
     std::filesystem::path file_;
+    bool started_ { false };
     double startSeconds_ { 0.0 };
     double lastSeconds_ { 0.0 };
     double minimumIntervalSeconds_ { 0.02 };

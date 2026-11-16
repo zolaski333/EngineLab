@@ -569,7 +569,9 @@ void MainComponent::toggleDatalog() {
     auto name = juce::File::createLegalFileName(utf8(config_.name)).replaceCharacter(' ', '-');
     const auto file = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
         .getChildFile("EngineLab logs")
-        .getChildFile(name + "-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".csv");
+        .getChildFile(name + "-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".csv")
+        // A second log in the same second wrote over the first (audit DR-09).
+        .getNonexistentSibling(false);
     if (!dataLogger_.start(pathOf(file))) {
         showError(utf8("Datalogger"), utf8("Cannot write ") + file.getFullPathName());
         return;
@@ -1218,7 +1220,8 @@ void MainComponent::startPassByRun(const PassByRunSettings& settings, bool recor
         auto name = juce::File::createLegalFileName(utf8(config_.name)).replaceCharacter(' ', '-');
         const auto file = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
             .getChildFile("EngineLab recordings")
-            .getChildFile(name + "-pass-by-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".wav");
+            .getChildFile(name + "-pass-by-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".wav")
+            .getNonexistentSibling(false);
         const auto rate = outputSampleRateHz_.load(std::memory_order_relaxed);
         if (passByRecorder_.start(file, rate, 2))
             passByWindow_->setRecordingStatus(utf8("Recording to ") + file.getFullPathName());

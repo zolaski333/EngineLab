@@ -49,7 +49,7 @@ bool DataLogger::start(const std::filesystem::path& file, double minimumInterval
     file_ = file;
     rows_ = 0;
     minimumIntervalSeconds_ = std::max(0.0, minimumIntervalSeconds);
-    startSeconds_ = -1.0;
+    started_ = false;
     stream_ << header() << '\n';
     return static_cast<bool>(stream_);
 }
@@ -57,7 +57,10 @@ bool DataLogger::start(const std::filesystem::path& file, double minimumInterval
 void DataLogger::push(const EngineState& state) {
     if (!stream_.is_open()) return;
     const auto now = state.simulationTimeSeconds;
-    if (startSeconds_ < 0.0) {
+    // A flag, not a negative origin: a restart early in the log puts the
+    // origin below zero (audit RT2-01).
+    if (!started_) {
+        started_ = true;
         startSeconds_ = now;
     } else if (now < lastSeconds_) {
         // A restarted engine starts its clock again: the log's time goes on.

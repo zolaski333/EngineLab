@@ -74,6 +74,22 @@ int main() {
     require(written[1].substr(written[1].rfind(',') + 1) == "rev_limiter+knock_retard", "the active limits by name");
     require(written[2].rfind("0.050,", 0) == 0 && written[2].substr(written[2].rfind(',') + 1) == "none",
         "nothing holding the engine is 'none'");
+    // An engine changed a second into the log, its clock back at 0: the
+    // origin went negative and was taken for "not started", so the time
+    // jumped back to 0 (audit RT2-01).
+    require(logger.start(file, 0.02), "a second log opens");
+    for (const auto seconds : { 100.0, 101.0, 0.0, 0.02, 0.04 }) {
+        state.simulationTimeSeconds = seconds;
+        logger.push(state);
+    }
+    logger.stop();
+    const auto rewound = lines(file);
+    require(rewound.size() == 6, "a header and five rows");
+    const char* const expected[] { "0.000,", "1.000,", "1.020,", "1.040,", "1.060," };
+    for (std::size_t index = 0; index < 5; ++index)
+        require(rewound[index + 1].rfind(expected[index], 0) == 0,
+                std::string("the log's time goes on across the restart: row ") + std::to_string(index + 1)
+                    + " reads " + rewound[index + 1].substr(0, 6) + ", not " + expected[index]);
     std::filesystem::remove_all(file.parent_path());
     std::cout << "datalogger: ok\n";
     return 0;
