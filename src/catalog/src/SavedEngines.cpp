@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <stdexcept>
 #include <system_error>
 
 namespace enginelab {
@@ -50,16 +51,30 @@ void emitYaml(YAML::Emitter& out, const Json& value) {
     }
 }
 
-[[nodiscard]] Json jsonOf(const YAML::Node& node) {
+/** How far jsonOf() goes into a YAML tree. An alias may point back at its
+    own sequence (`&loop [*loop]`): the tree never ends, and the recursion ran
+    the stack out and ended the process (audit PG-07). Aliases repeated level
+    after level grow as a power instead. The tables nest four deep and hold
+    a few thousand values. */
+struct JsonOfBudget final {
+    static constexpr std::size_t maximumDepth { 64 };
+    std::size_t nodesLeft { 1'000'000 };
+};
+
+[[nodiscard]] Json jsonOf(const YAML::Node& node, JsonOfBudget& budget, std::size_t depth) {
+    if (depth > JsonOfBudget::maximumDepth) throw std::runtime_error("the ECU tables nest too deep (an alias loop?)");
+    if (budget.nodesLeft == 0) throw std::runtime_error("the ECU tables hold too many values (repeated aliases?)");
+    --budget.nodesLeft;
     switch (node.Type()) {
     case YAML::NodeType::Map: {
         auto object = Json::object();
-        for (const auto& item : node) object[item.first.as<std::string>()] = jsonOf(item.second);
+        for (const auto& item : node)
+            object[item.first.as<std::string>()] = jsonOf(item.second, budget, depth + 1);
         return object;
     }
     case YAML::NodeType::Sequence: {
         auto array = Json::array();
-        for (const auto& item : node) array.push_back(jsonOf(item));
+        for (const auto& item : node) array.push_back(jsonOf(item, budget, depth + 1));
         return array;
     }
     case YAML::NodeType::Scalar: {
@@ -76,6 +91,11 @@ void emitYaml(YAML::Emitter& out, const Json& value) {
     default:
         return nullptr;
     }
+}
+
+[[nodiscard]] Json jsonOf(const YAML::Node& node) {
+    JsonOfBudget budget;
+    return jsonOf(node, budget, 0);
 }
 
 [[nodiscard]] std::string lowercase(std::string text) {

@@ -306,6 +306,25 @@ void checkOneFile(const EngineConfig& source) {
                 std::string(extension) + ": the engine decoder alone reads the file");
     }
 
+    // Tables whose YAML alias points back at itself never end: their
+    // conversion ran the stack out and ended the process (audit PG-07).
+    // They are a read error now, and so are aliases repeated level after level.
+    const auto plainYaml = encodeEngineFile(config, nullptr, EngineFileFormat::yaml);
+    require(decodeEngineFile(plainYaml, EngineFileFormat::yaml, "plain.yaml").engine.has_value(),
+            "the YAML engine without tables reads");
+    const auto looped = decodeEngineFile(plainYaml + "\necu_calibration: &loop [*loop]\n", EngineFileFormat::yaml,
+                                         "loop.yaml");
+    require(!looped.engine && looped.error.find("too deep") != std::string::npos, "tables in an alias loop are a read error: " + looped.error);
+    std::string laughs = "\nlaugh0: &l0 [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]\n";
+    for (int level = 1; level <= 7; ++level) {
+        laughs += "laugh" + std::to_string(level) + ": &l" + std::to_string(level) + " [";
+        for (int item = 0; item < 10; ++item) laughs += (item ? ", *l" : "*l") + std::to_string(level - 1);
+        laughs += "]\n";
+    }
+    const auto laughed = decodeEngineFile(plainYaml + laughs + "ecu_calibration: *l7\n", EngineFileFormat::yaml,
+                                          "laughs.yaml");
+    require(!laughed.engine && laughed.error.find("too many") != std::string::npos, "tables of a hundred million aliased values are a read error: " + laughed.error);
+
     // The tables inside win over a stale file beside it.
     const auto single = folder.path / "Single.json";
     require(!saveEngine(single, config, tuned.get()), "the single file saves");
