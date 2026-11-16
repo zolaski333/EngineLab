@@ -124,6 +124,12 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
         passByExhaustBehindM_ = std::isfinite(engineConfig->vehicle.wheelbaseM)
             ? std::clamp(engineConfig->vehicle.wheelbaseM, 0.0, 10.0) : 2.65;
     }
+    publishNetworksPresent();
+}
+
+void RealtimeEngineAudio::publishNetworksPresent() noexcept {
+    exhaustNetworkPresent_.store(acousticExhaustNetwork_ != nullptr, std::memory_order_release);
+    intakeNetworkPresent_.store(acousticIntakeNetwork_ != nullptr, std::memory_order_release);
 }
 
 double RealtimeEngineAudio::ambientAirDensityKgPerM3() const noexcept {
@@ -152,7 +158,8 @@ RealtimeEngineAudio::~RealtimeEngineAudio() {
 bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
     collectRetiredExhaustNetworks();
     const auto sampleRate = preparedSampleRate_.load(std::memory_order_acquire);
-    if (!acousticExhaustNetwork_ || !(sampleRate > 0.0)) return false;
+    // Not the network itself: the audio thread swaps it (audit A2-07).
+    if (!exhaustNetworkPresent_.load(std::memory_order_acquire) || !(sampleRate > 0.0)) return false;
     std::array<std::uint32_t, maxRunners> cylinderIds {};
     const auto count = std::clamp<std::size_t>(static_cast<std::size_t>(
         std::lround(realtimeState_.cylinderCount.load(std::memory_order_relaxed))),
@@ -286,7 +293,7 @@ bool RealtimeEngineAudio::replaceIntake(const EngineConfig& config) {
     handoff->network = std::make_unique<AcousticIntakeNetwork>(config);
     const auto compiles = handoff->network->valid()
         && handoff->network->prepare(sampleRate, observerDistanceM);
-    if (!acousticIntakeNetwork_) return !compiles;
+    if (!intakeNetworkPresent_.load(std::memory_order_acquire)) return !compiles;
     if (!compiles) return false;
     handoff->sampleRate = sampleRate;
     // A change the audio thread has not taken yet is replaced, and freed here.
@@ -537,6 +544,7 @@ void RealtimeEngineAudio::prepareSynthesis(double sampleRate, int maximumBlockSi
     if (acousticIntakeNetwork_
         && !acousticIntakeNetwork_->prepare(sampleRate_, observerDistanceM))
         acousticIntakeNetwork_.reset();
+    publishNetworksPresent();
     if (forcedInductionAcoustics_
         && !forcedInductionAcoustics_->prepare(sampleRate_))
         forcedInductionAcoustics_.reset();

@@ -631,8 +631,10 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
         return false;
     }
     if (!EngineSimulator::settingsReplaceable(config_, change->config)) return false;
-    // The simulation thread never reads these fields of config_; the
-    // crankshafts keep their storage.
+    // The simulation thread never reads these fields of config_: it reads
+    // the simulator's copy, which the change replaces between two frames
+    // (it read the clutch capacity here as the UI wrote it: audit DR-04).
+    // The crankshafts keep their storage.
     config_.injection = change->config.injection;
     config_.forcedInduction = change->config.forcedInduction;
     config_.ignition = change->config.ignition;
@@ -1459,8 +1461,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 const auto calibration = ecu_.calibrationStore()->snapshot();
                 PassByVehicle vehicle;
                 vehicle.idleRpm = config_.idleRpm;
-                vehicle.ceilingRpm = std::min(config_.redlineRpm, activeRevLimitRpm(config_, *calibration));
-                vehicle.gearCount = static_cast<int>(config_.transmission.gearRatios.size());
+                vehicle.ceilingRpm = std::min(config_.redlineRpm, activeRevLimitRpm(simulator_.config(), *calibration));
+                vehicle.gearCount = static_cast<int>(simulator_.config().transmission.gearRatios.size());
                 vehicle.automaticGearbox = driveline_.automaticShifting();
                 vehicle.launchControlFitted = calibration->scalarOr(calibration::keys::launchLimit, 0.0) > 0.0;
                 passByDriver_.start(settings, vehicle);
@@ -1628,7 +1630,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         publishAudioFrame(audioState_, frame.state, {
             isPaused, controls.starterEngaged,
             std::abs(engineClutchTorqueNm_)
-                / std::max(20.0, config_.transmission.maxClutchTorqueNm),
+                / std::max(20.0, simulator_.config().transmission.maxClutchTorqueNm),
             dynoActive_ ? 1.0 : timeScale_.load(std::memory_order_relaxed) });
         if (dynoActive_ && dynoSweeping_) {
             // Observe the POST-step shaft state. The old acquisition gate used
@@ -1904,7 +1906,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.gear = engagedGear_;
             frame.state.continuouslyVariable = driveline_.continuouslyVariable();
             frame.state.gearCount = frame.state.continuouslyVariable
-                ? 1 : static_cast<int>(config_.transmission.gearRatios.size());
+                ? 1 : static_cast<int>(simulator_.config().transmission.gearRatios.size());
             frame.state.gearboxRatio = drivelineOutput_.gearboxRatio;
             frame.state.clutchPressure = effectiveClutchPressure_;
             frame.state.vehicleSpeedMps = vehicleSpeedMps_;

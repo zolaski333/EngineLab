@@ -647,6 +647,10 @@ private:
     /** Complete compiled DAG used by production engines. Null only for legacy
      * producers/tests that did not supply topology. */
     std::unique_ptr<AcousticExhaustNetwork> acousticExhaustNetwork_;
+    /** Whether acousticExhaustNetwork_ is set, for the message thread: the
+     *  audio thread swaps the pointer itself. */
+    std::atomic<bool> exhaustNetworkPresent_ { false };
+    std::atomic<bool> intakeNetworkPresent_ { false };
     /** Diagnostic recording (setExhaustPressureTap); empty in production. */
     std::vector<float> exhaustTapRecording_;
     std::size_t exhaustTapCapacity_ { 0 };
@@ -740,6 +744,9 @@ private:
     /** Audio thread: take a waiting network, or finish the one in progress. */
     void beginExhaustSwapIfWaiting() noexcept;
     void completeExhaustSwap() noexcept;
+    /** Says, for the replace calls, whether there is an exhaust and an
+     *  intake network: set where they are made or dropped, never by a swap. */
+    void publishNetworksPresent() noexcept;
     /** Block/head modes compiled from immutable engine geometry. */
     std::unique_ptr<StructuralModalRadiator> structuralModalRadiator_;
     /** Runners/plenums/throttles/inlets compiled from EngineConfig. */
