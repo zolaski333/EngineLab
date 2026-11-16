@@ -538,10 +538,21 @@ private:
      * construction through every interval change. The delay must exceed the
      * longest coupling interval so a bracketing pair always exists.
      */
-    static constexpr std::size_t exhaustBoundaryKnotCount = 8;
+    /** Enough knots to span the delay at the finest coupling: a two-stroke's
+     * scavenging window flushes every mechanical substep, down to 10 us at the
+     * 100 kHz solver ceiling. Eight spanned 210 us at a 30 us flush, so the
+     * search ran out of history and published the oldest knot at a delay that
+     * followed the cadence (audit PG-01): 625 us at 10 us is 63 intervals,
+     * and a frame's short last substep adds at most one more. */
+    static constexpr std::size_t exhaustBoundaryKnotCount = 96;
     /** Above the 250 us low-speed coupling cap with slack, and about 0.6 ms of
      * group delay on the exhaust boundary alone -- inaudible as latency. */
     static constexpr double exhaustBoundaryReconstructionDelaySeconds = 625.0e-6;
+    // The validated solver ceiling is 100 kHz (EngineTypes.cpp): the ring must
+    // span the delay at that substep, with a short substep and a knot to spare.
+    static_assert(static_cast<double>(exhaustBoundaryKnotCount - 3) / 100'000.0
+                      >= exhaustBoundaryReconstructionDelaySeconds,
+        "the boundary history must span its reconstruction delay at the finest coupling");
     /** Multirate coupling accumulators, carried ACROSS frames.
      *
      * The network flush used to be forced on the last substep of every frame,
@@ -561,8 +572,10 @@ private:
     double exhaustCouplingDurationSeconds_ { 0.0 };
     double outletOpeningScaleTimeIntegralSeconds_ { 0.0 };
     bool exhaustCouplingEverySubstep_ { false };
-    std::array<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>, 32>
-        exhaustBoundaryKnots_ {};
+    /** On the heap: 196 kB of history would grow a simulator that tests keep
+     * on the stack. Sized once, never reallocated. */
+    std::vector<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>>
+        exhaustBoundaryKnots_ = std::vector<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>>(32);
     std::size_t exhaustBoundaryKnotWrite_ { 0 };
     /** Length-mean acoustic medium of every compiled exhaust duct. Reaction
      * events remain coupling-rate, while these slowly varying states are
