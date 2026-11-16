@@ -51,15 +51,15 @@ struct IdleResult final {
     bool diesel { false };
     double wideOpenBlipMinRpm { 0.0 };     // lowest speed after a 1.2 s WOT blip
     double wideOpenBlipSettledRpm { 0.0 }; // mean over the last 2 s of its recovery
-    double wideOpenBlipFinalRpm { 0.0 };   // its last sample
+    double lateBlipMinRpm { 0.0 };         // slow-coast engines: lowest over the window after
+    double lateBlipSettledRpm { 0.0 };     // and the mean over its last 2 s
     double earlyBlipMinRpm { 0.0 };        // lowest speed after a WOT blip 6 s after start
 };
 
 /** Shuts the throttle for `seconds` and returns the lowest speed reached;
- * `settledRpm` receives the mean over the last two seconds, `finalRpm` the
- * last sample. */
+ * `settledRpm` receives the mean over the last two seconds. */
 double recoverFromBlip(enginelab::EngineSimulator& simulator, double seconds,
-                       double* settledRpm = nullptr, double* finalRpm = nullptr) {
+                       double* settledRpm = nullptr) {
     auto lowest = simulator.state().rpm;
     double settledSum = 0.0;
     int settledSamples = 0;
@@ -78,16 +78,20 @@ double recoverFromBlip(enginelab::EngineSimulator& simulator, double seconds,
     }
     if (settledRpm)
         *settledRpm = settledSamples > 0 ? settledSum / settledSamples : 0.0;
-    if (finalRpm) *finalRpm = simulator.state().rpm;
     return lowest;
 }
 
-/** The slow-coast exception's condition: still coming down at the end of
- *  the window (its last sample under the last 2 s mean). The minimum stood
- *  in for the last sample, so a dip then a speed hanging high passed (audit
- *  TEST-01). */
-bool stillCoasting(const IdleResult& result) {
-    return result.wideOpenBlipFinalRpm < result.wideOpenBlipSettledRpm;
+/** The slow-coast exception's condition: back to idle by the end of a
+ *  longer window, without dipping toward a stall on the way. It compared the
+ *  recovery's minimum with its last 2 s mean, so a dip then a speed hanging
+ *  high passed (audit TEST-01); the last sample alone misjudges a coast with
+ *  a slow swing (the RD350 at 2,080 rpm rose 2,278 -> 2,452 at 12 s, then
+ *  fell to 1,705 and settled at 2,057 by 30 s). */
+constexpr double slowCoastExtraSeconds = 18.0;
+bool backAfterSlowCoast(const IdleResult& result, double targetRpm) {
+    return result.lateBlipSettledRpm >= 0.85 * targetRpm
+        && result.lateBlipSettledRpm <= 1.15 * targetRpm
+        && result.lateBlipMinRpm >= 0.78 * targetRpm;
 }
 
 void holdThrottle(enginelab::EngineSimulator& simulator, double throttle, double seconds) {
@@ -114,10 +118,12 @@ void publishIdleTarget(enginelab::SimpleEcuModel& ecu, const enginelab::EngineCo
 }
 
 /** `idleTargetRpm`: the ECU page's idle target instead of the configured idle,
- *  which still paces the starter, as the configuration does in the app. */
+ *  which still paces the starter, as the configuration does in the app.
+ *  `slowCoast`: the WOT blip's recovery runs `slowCoastExtraSeconds` more. */
 IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottle,
                        std::optional<double> exhaustTargetCellLengthM = {},
-                       std::optional<double> idleTargetRpm = {}) {
+                       std::optional<double> idleTargetRpm = {},
+                       bool slowCoast = false) {
     IdleResult result;
     result.name = config.name;
     result.idleRpm = idleTargetRpm.value_or(config.idleRpm);
@@ -209,7 +215,10 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
     // CP4 and the TDI hung at 1.4-1.5 x idle.
     holdThrottle(simulator, 1.0, 1.2);
     result.wideOpenBlipMinRpm = recoverFromBlip(
-        simulator, 12.0, &result.wideOpenBlipSettledRpm, &result.wideOpenBlipFinalRpm);
+        simulator, 12.0, &result.wideOpenBlipSettledRpm);
+    if (slowCoast)
+        result.lateBlipMinRpm = recoverFromBlip(
+            simulator, slowCoastExtraSeconds, &result.lateBlipSettledRpm);
 
     if (afrSamples > 0)
         result.afrRatio = afrRatioSum / static_cast<double>(afrSamples);
@@ -515,9 +524,9 @@ int main(int argc, char** argv) {
         const std::vector<std::string> knownBlipStallAllow {};
         // Engines whose shut-throttle coast from the limiter takes longer than
         // the 12 s window, tracked on their own. Only the "back to idle" check
-        // is relaxed, and only while the engine is still coasting down at the
-        // end (its last sample below its last 2 s mean): a speed that HANGS
-        // above idle still fails. The RD350 on Blair's sourced friction coasts
+        // is relaxed, and only if the engine is back to idle 18 s later
+        // (backAfterSlowCoast): a speed that HANGS above idle still fails.
+        // The RD350 on Blair's sourced friction coasts
         // from 9,970 rpm at 450-900 rpm/s, misfiring (phi 0.3), so it is
         // friction and pumping against its unsourced 0.030 kg m2; at 0.020 or
         // 0.015 it dips toward a stall instead (journal 2026-10-28).
@@ -539,8 +548,10 @@ int main(int argc, char** argv) {
             if (!engineFilter.empty()
                 && config.name.find(engineFilter) == std::string::npos)
                 continue;
+            const auto slowCoast = std::any_of(knownSlowCoastAllow.begin(), knownSlowCoastAllow.end(),
+                [&](const std::string& token) { return config.name.find(token) != std::string::npos; });
             auto r = measureIdle(
-                config, blipThrottle, exhaustTargetCellLengthM);
+                config, blipThrottle, exhaustTargetCellLengthM, std::nullopt, slowCoast);
             r.earlyBlipMinRpm = measureEarlyBlip(config, exhaustTargetCellLengthM);
             std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f    %d       %d         %d   %5.3f"
                         "  WOT blip min %5.0f settled %5.0f, early blip min %5.0f\n",
@@ -548,6 +559,9 @@ int main(int argc, char** argv) {
                 r.stdRpm, r.driftRpm, r.caught ? 1 : 0, r.steadyStalled ? 1 : 0,
                 r.blipStalled ? 1 : 0, r.afrRatio, r.wideOpenBlipMinRpm,
                 r.wideOpenBlipSettledRpm, r.earlyBlipMinRpm);
+            if (slowCoast)
+                std::printf("  %-34s slow coast, 18 s later: min %5.0f settled %5.0f\n",
+                    r.name.c_str(), r.lateBlipMinRpm, r.lateBlipSettledRpm);
 
             // (1) Every engine must catch during start.
             if (!r.caught) failures.push_back(r.name + ": did not start");
@@ -599,13 +613,14 @@ int main(int argc, char** argv) {
             if (r.wideOpenBlipMinRpm < 0.78 * r.idleRpm)
                 failures.push_back(r.name + ": dips toward stall after a WOT blip ("
                     + std::to_string(static_cast<int>(r.wideOpenBlipMinRpm)) + " rpm)");
-            const auto slowCoastAllowed = stillCoasting(r)
-                && std::any_of(knownSlowCoastAllow.begin(), knownSlowCoastAllow.end(),
-                    [&](const std::string& token) { return r.name.find(token) != std::string::npos; });
+            const auto slowCoastAllowed = slowCoast && backAfterSlowCoast(r, r.idleRpm);
             if (r.wideOpenBlipSettledRpm < 0.85 * r.idleRpm
                     || (r.wideOpenBlipSettledRpm > 1.15 * r.idleRpm && !slowCoastAllowed))
                 failures.push_back(r.name + ": idle not back 12 s after a WOT blip ("
-                    + std::to_string(static_cast<int>(r.wideOpenBlipSettledRpm)) + " rpm)");
+                    + std::to_string(static_cast<int>(r.wideOpenBlipSettledRpm)) + " rpm"
+                    + (slowCoast ? ", 30 s: " + std::to_string(static_cast<int>(r.lateBlipSettledRpm))
+                        + ", min " + std::to_string(static_cast<int>(r.lateBlipMinRpm)) : std::string {})
+                    + ")");
             const auto earlyDipAllowed = std::any_of(knownEarlyBlipDipAllow.begin(),
                 knownEarlyBlipDipAllow.end(), [&](const std::string& token) {
                     return r.name.find(token) != std::string::npos;
@@ -628,23 +643,29 @@ int main(int argc, char** argv) {
             if (!engineFilter.empty() && config.name.find(engineFilter) == std::string::npos) continue;
             if (enginelab::idleCarburettor(config) != nullptr) continue;
             const auto target = std::min(3'000.0, std::round(1.6 * config.idleRpm / 10.0) * 10.0);
-            const auto r = measureIdle(config, blipThrottle, exhaustTargetCellLengthM, target);
+            const auto slowCoast = std::any_of(knownSlowCoastAllow.begin(), knownSlowCoastAllow.end(),
+                [&](const std::string& token) { return config.name.find(token) != std::string::npos; });
+            const auto r = measureIdle(config, blipThrottle, exhaustTargetCellLengthM, target, slowCoast);
             std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f  WOT blip min %5.0f settled %5.0f\n",
                 r.name.c_str(), r.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm, r.stdRpm, r.driftRpm,
                 r.wideOpenBlipMinRpm, r.wideOpenBlipSettledRpm);
+            if (slowCoast)
+                std::printf("  %-34s slow coast, 18 s later: min %5.0f settled %5.0f\n",
+                    r.name.c_str(), r.lateBlipMinRpm, r.lateBlipSettledRpm);
             const auto label = r.name + " at a " + std::to_string(static_cast<int>(target)) + " rpm target: ";
             if (r.steadyStalled || r.blipStalled) failures.push_back(label + "stalled");
             if (std::abs(r.settledMeanRpm - target) > 0.05 * target)
                 failures.push_back(label + "idles at " + std::to_string(static_cast<int>(r.settledMeanRpm)));
             if (r.stdRpm > 0.06 * target || std::abs(r.driftRpm) > 0.05 * target)
                 failures.push_back(label + "does not hold its idle");
-            const auto slowCoastAllowed = stillCoasting(r)
-                && std::any_of(knownSlowCoastAllow.begin(), knownSlowCoastAllow.end(),
-                    [&](const std::string& token) { return r.name.find(token) != std::string::npos; });
+            const auto slowCoastAllowed = slowCoast && backAfterSlowCoast(r, target);
             if (r.wideOpenBlipSettledRpm < 0.85 * target
                     || (r.wideOpenBlipSettledRpm > 1.15 * target && !slowCoastAllowed))
                 failures.push_back(label + "idle not back 12 s after a WOT blip ("
-                    + std::to_string(static_cast<int>(r.wideOpenBlipSettledRpm)) + " rpm)");
+                    + std::to_string(static_cast<int>(r.wideOpenBlipSettledRpm)) + " rpm"
+                    + (slowCoast ? ", 30 s: " + std::to_string(static_cast<int>(r.lateBlipSettledRpm))
+                        + ", min " + std::to_string(static_cast<int>(r.lateBlipMinRpm)) : std::string {})
+                    + ")");
         }
 
         // (6) A carburettor's idle is its idle stop screw's: no ECU target in
