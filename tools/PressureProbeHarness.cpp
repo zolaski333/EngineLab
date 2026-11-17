@@ -401,7 +401,9 @@ int main(int argc, char** argv) {
         // exhaust, at the port's instantaneous and at its mean density.
         std::array<double, bins> portFlow {};
         if (fillBinsBy(portVolumeFlowSum, cylinderCount, portFlow) > 0) {
-            std::cout << "harmonic,frequency_hz,port_monopole_spl_db_at_"
+            std::cout << "# mean_port_volume_flow_m3_s "
+                      << std::accumulate(portFlow.begin(), portFlow.end(), 0.0) / bins
+                      << "\nharmonic,frequency_hz,port_monopole_spl_db_at_"
                       << settings.observerM << "_m\n";
             printMonopole(portFlow);
         }

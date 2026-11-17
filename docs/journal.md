@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — K01 at small amplitude: no network defect
+
+- The network alone (`AcousticTransferProbe`, TS125 short pipe, uniform 0.5 kg/m3 at 500 m/s, impulse at the port) against an open pipe's plane-wave transfer (Levine-Schwinger 0.61a, ambient far field at 5 m): -79.6/-78.8/-78.1/-77.1/-75.8 dB at 33/67/133/200/267 Hz for -78.7/-78.5/-78.0/-77.1/-75.7. Linear and right within 0.3 dB.
+- The "-6.4 dB port-to-outlet" of the entry below compared the render with the solver's sampled port flow, which the network does not receive as such (its orifice port sits between): a comparison artefact, not a loss.
+- The solver's own -6 to -7 dB at 67 Hz and 0.39 kW is its gas: the mean volume flow is about 5x lower at the outlet than at the port (0.001 against 0.005 m3/s; mean densities 1.05 against 0.53), the outlet breathing near-ambient air. Walls warmed 60 s instead of 4 (`--settle 60`): -7.4 -> -6.3 dB.
+- Instrument oddity, not examined: `PressureProbeHarness --settle 60` at 2.3 kW prints no outlet monopole table (the port tables are there; 4 s and 0.39 kW are fine).
+
 ## 2026-11-17 — K01 deeper: the load dependence is the solver's, the network is linear
 
 - Refuted, one factor each, TS125 short pipe at 2.32 kW against the solver's outlet monopole (67/133/200 Hz, base -6.7/-8.2/-5.1 dB): the outlet's nonlinear edge loss off -6.8/-8.0/-4.8; wave steepening off -6.7/-8.1/-5.0; the flow's mean taken on the volume flow instead of the mass flow (the dropped mean-flow x 1/rho term) -5.7/-7.4/-4.6, chamber +0.4-0.9 dB.
