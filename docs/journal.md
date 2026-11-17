@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — K01 deeper: the load dependence is the solver's, the network is linear
+
+- Refuted, one factor each, TS125 short pipe at 2.32 kW against the solver's outlet monopole (67/133/200 Hz, base -6.7/-8.2/-5.1 dB): the outlet's nonlinear edge loss off -6.8/-8.0/-4.8; wave steepening off -6.7/-8.1/-5.0; the flow's mean taken on the volume flow instead of the mass flow (the dropped mean-flow x 1/rho term) -5.7/-7.4/-4.6, chamber +0.4-0.9 dB.
+- `PressureProbeHarness` now also prints cylinder 1's port flow as the same monopole. At 67 Hz the solver's port-to-outlet volume-flow ratio is -7.5 / -2.5 / +0.2 dB at 0.39 / 1.16 / 2.32 kW; the network's (render against that port flow) -6.3 at 0.39 kW and -6.5 at 2.32 kW. The network transmits the port's low band at a constant ratio, as the solver does at small amplitude; the solver's ratio rises with amplitude.
+- So the missing high-load low band is generated in the solver's pipe by a finite-amplitude effect (candidates: the mass a pulse actually carries out, convection at the mean flow) that a linear zero-mean network fed at the port cannot reproduce. Not measured: which one, and whether a real pipe does the same (the solver's monopole is within ~4 dB of Jones & Brown, so it is the better of the two here).
+- Not explained: why a 0.40 m pipe passes only about -6 dB of its port's 67 Hz volume flow at small amplitude in both models (compact pipe, kL 0.3); the rigid-port test put about 2.5 dB of it on the port's orifice model.
+- Physics and default sound untouched: the four switches were temporary and reverted, the exporter rebuilt bit-identical to the baseline render.
+
 ## 2026-11-17 — K01 and K03: where the measured sound gaps are born
 
 - K01, TS125 at 4,000 rpm, 0.10.0 (`OfflineAudioExporter --exhaust-tap`, `PressureProbeHarness`, 25 mm): the render against Jones & Brown at 63/125/200 Hz reads -9.0/-12.3/-10.5 (short pipe), -4.2/-8.3/-13.6 (chamber); the network at 0.10 m is 7.0/5.4 dB under the solver (8.2/7.2 on 2026-11-16).

@@ -213,6 +213,12 @@ int main(int argc, char** argv) {
         // case gives at the exhaust opening (Jones & Brown's pc(0)).
         std::array<double, bins> cylinderSum {};
         std::array<double, bins> cylinderCount {};
+        // Cylinder 1's exhaust-port flow, binned the same way: its volume
+        // flow at the port's instantaneous density and its mass flow, to
+        // compare what enters the exhaust with what leaves the outlets.
+        std::array<double, bins> portVolumeFlowSum {};
+        std::array<double, bins> portMassFlowSum {};
+        auto portDensitySum = 0.0, portDensityCount = 0.0;
         const auto cycleOf = [&] { return simulator->gasProbe().cycleDegrees > 0.0
             ? simulator->gasProbe().cycleDegrees : 720.0; };
         const auto forward = [](double degrees, double cycle) {
@@ -240,6 +246,14 @@ int main(int argc, char** argv) {
                     const auto b = std::min<std::size_t>(bins - 1, static_cast<std::size_t>(degrees / cycle * bins));
                     cylinderSum[b] += cylinder.pressureBar[0];
                     cylinderCount[b] += 1.0;
+                    const auto portDensity = static_cast<double>(cylinder.exhaustPortDensityKgPerM3[0]);
+                    const auto portMassFlow = static_cast<double>(cylinder.exhaustAcousticMassFlowKgPerSecond[0]);
+                    if (portDensity > 0.0) {
+                        portVolumeFlowSum[b] += portMassFlow / portDensity;
+                        portDensitySum += portDensity;
+                        portDensityCount += 1.0;
+                    }
+                    portMassFlowSum[b] += portMassFlow;
                 }
                 enginelab::ExhaustAcousticSample acoustic;
                 while (simulator->tryPopExhaustAcousticSample(acoustic)) {
@@ -326,8 +340,9 @@ int main(int argc, char** argv) {
             ? outletDensitySum / outletDensityCount : 0.0;
         // Bins the coupling clock skipped are interpolated from their
         // neighbours; false when too few bins were sampled.
-        const auto fillBins = [&](const std::array<double, bins>& total,
-                                  std::array<double, bins>& out) {
+        const auto fillBinsBy = [&](const std::array<double, bins>& total,
+                                    const std::array<double, bins>& flowCount,
+                                    std::array<double, bins>& out) {
             std::size_t filled = 0;
             for (std::size_t b = 0; b < bins; ++b)
                 if (flowCount[b] > 0.0) { out[b] = total[b] / flowCount[b]; ++filled; }
@@ -341,6 +356,10 @@ int main(int argc, char** argv) {
                 out[b] = out[before] + weight * (out[after] - out[before]);
             }
             return filled;
+        };
+        const auto fillBins = [&](const std::array<double, bins>& total,
+                                  std::array<double, bins>& out) {
+            return fillBinsBy(total, flowCount, out);
         };
         // p = rho0 dQ/dt / (4 pi r), harmonic by harmonic.
         const auto printMonopole = [&](const std::array<double, bins>& flow) {
@@ -377,6 +396,23 @@ int main(int argc, char** argv) {
                       << "\nharmonic,frequency_hz,outlet_monopole_mean_density_spl_db_at_"
                       << settings.observerM << "_m\n";
             printMonopole(massFlow);
+        }
+        // Cylinder 1's port flow as the same monopole: what enters the
+        // exhaust, at the port's instantaneous and at its mean density.
+        std::array<double, bins> portFlow {};
+        if (fillBinsBy(portVolumeFlowSum, cylinderCount, portFlow) > 0) {
+            std::cout << "harmonic,frequency_hz,port_monopole_spl_db_at_"
+                      << settings.observerM << "_m\n";
+            printMonopole(portFlow);
+        }
+        std::array<double, bins> portMass {};
+        if (fillBinsBy(portMassFlowSum, cylinderCount, portMass) > 0 && portDensityCount > 0.0) {
+            const auto meanPortDensity = portDensitySum / portDensityCount;
+            for (auto& value : portMass) value /= meanPortDensity;
+            std::cout << "# mean_port_density_kg_m3 " << meanPortDensity
+                      << "\nharmonic,frequency_hz,port_monopole_mean_density_spl_db_at_"
+                      << settings.observerM << "_m\n";
+            printMonopole(portMass);
         }
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
