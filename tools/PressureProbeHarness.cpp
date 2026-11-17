@@ -202,6 +202,13 @@ int main(int argc, char** argv) {
         simulator->setPressureSamplingEnabled(true);
         std::array<double, bins> flowSum {};
         std::array<double, bins> flowCount {};
+        // The outlets' mass flow alone, binned the same way, and the outlet
+        // gas density averaged over the run: mass flow over that MEAN density
+        // is the volume flow a uniform-medium acoustic model can carry. The
+        // difference from mass flow over the instantaneous density is the
+        // exit's temperature (entropy) modulation of its volume flux.
+        std::array<double, bins> massFlowSum {};
+        auto outletDensitySum = 0.0, outletDensityCount = 0.0;
         // Cylinder 1's pressure, binned the same way: the state a measured
         // case gives at the exhaust opening (Jones & Brown's pc(0)).
         std::array<double, bins> cylinderSum {};
@@ -237,14 +244,19 @@ int main(int argc, char** argv) {
                 enginelab::ExhaustAcousticSample acoustic;
                 while (simulator->tryPopExhaustAcousticSample(acoustic)) {
                     if (!(spanSeconds > 0.0)) continue;
-                    auto volumeFlow = 0.0;
+                    auto volumeFlow = 0.0, massFlow = 0.0;
                     for (std::size_t o = 0; o < acoustic.outletCount; ++o)
-                        if (acoustic.outletDensityKgPerM3[o] > 0.0F)
+                        if (acoustic.outletDensityKgPerM3[o] > 0.0F) {
                             volumeFlow += acoustic.outletMassFlowKgPerSecond[o] / acoustic.outletDensityKgPerM3[o];
+                            massFlow += acoustic.outletMassFlowKgPerSecond[o];
+                            outletDensitySum += acoustic.outletDensityKgPerM3[o];
+                            outletDensityCount += 1.0;
+                        }
                     const auto fraction = std::clamp((acoustic.timeSeconds - startSeconds) / spanSeconds, 0.0, 1.0);
                     const auto degrees = forward(startDegrees + fraction * spanDegrees, cycle);
                     const auto b = std::min<std::size_t>(bins - 1, static_cast<std::size_t>(degrees / cycle * bins));
                     flowSum[b] += volumeFlow;
+                    massFlowSum[b] += massFlow;
                     flowCount[b] += 1.0;
                 }
             }
@@ -308,24 +320,30 @@ int main(int argc, char** argv) {
         // The outlets' monopole at `--observer-m` in the ambient air:
         // p = rho0 dQ/dt / (4 pi r), harmonic by harmonic. Bins the coupling
         // clock skipped are interpolated from their neighbours.
-        std::array<double, bins> flow {};
-        std::size_t filled = 0;
-        for (std::size_t b = 0; b < bins; ++b)
-            if (flowCount[b] > 0.0) { flow[b] = flowSum[b] / flowCount[b]; ++filled; }
-        if (filled > bins / 4) {
+        const auto ambientDensity = config.ambientPressureKpa * 1'000.0
+            / (287.05 * (config.ambientTemperatureC + 273.15));
+        const auto meanOutletDensity = outletDensityCount > 0.0
+            ? outletDensitySum / outletDensityCount : 0.0;
+        // Bins the coupling clock skipped are interpolated from their
+        // neighbours; false when too few bins were sampled.
+        const auto fillBins = [&](const std::array<double, bins>& total,
+                                  std::array<double, bins>& out) {
+            std::size_t filled = 0;
+            for (std::size_t b = 0; b < bins; ++b)
+                if (flowCount[b] > 0.0) { out[b] = total[b] / flowCount[b]; ++filled; }
+            if (filled <= bins / 4) return std::size_t { 0 };
             for (std::size_t b = 0; b < bins; ++b) {
                 if (flowCount[b] > 0.0) continue;
                 std::size_t before = b, after = b, back = 0, ahead = 0;
                 do { before = (before + bins - 1) % bins; ++back; } while (flowCount[before] <= 0.0);
                 do { after = (after + 1) % bins; ++ahead; } while (flowCount[after] <= 0.0);
                 const auto weight = static_cast<double>(back) / static_cast<double>(back + ahead);
-                flow[b] = flow[before] + weight * (flow[after] - flow[before]);
+                out[b] = out[before] + weight * (out[after] - out[before]);
             }
-            const auto ambientDensity = config.ambientPressureKpa * 1'000.0
-                / (287.05 * (config.ambientTemperatureC + 273.15));
-            std::cout << "# outlet_bins_sampled " << filled << " of " << bins
-                      << "\n# mean_outlet_volume_flow_m3_s " << std::accumulate(flow.begin(), flow.end(), 0.0) / bins
-                      << "\nharmonic,frequency_hz,outlet_monopole_spl_db_at_" << settings.observerM << "_m\n";
+            return filled;
+        };
+        // p = rho0 dQ/dt / (4 pi r), harmonic by harmonic.
+        const auto printMonopole = [&](const std::array<double, bins>& flow) {
             for (int k = 1; k <= settings.harmonics; ++k) {
                 auto re = 0.0, im = 0.0;
                 for (std::size_t b = 0; b < bins; ++b) {
@@ -341,6 +359,24 @@ int main(int argc, char** argv) {
                 std::cout << k << ',' << static_cast<double>(k) * cycleHz << ','
                           << 20.0 * std::log10(std::max(rmsPa, 1.0e-12) / 20.0e-6) << '\n';
             }
+        };
+        // The outlets' monopole at `--observer-m` in the ambient air.
+        std::array<double, bins> flow {};
+        const auto filled = fillBins(flowSum, flow);
+        if (filled > 0) {
+            std::cout << "# outlet_bins_sampled " << filled << " of " << bins
+                      << "\n# mean_outlet_volume_flow_m3_s " << std::accumulate(flow.begin(), flow.end(), 0.0) / bins
+                      << "\nharmonic,frequency_hz,outlet_monopole_spl_db_at_" << settings.observerM << "_m\n";
+            printMonopole(flow);
+        }
+        // The same monopole with the outlet gas held at its mean density.
+        std::array<double, bins> massFlow {};
+        if (fillBins(massFlowSum, massFlow) > 0 && meanOutletDensity > 0.0) {
+            for (auto& value : massFlow) value /= meanOutletDensity;
+            std::cout << "# mean_outlet_density_kg_m3 " << meanOutletDensity
+                      << "\nharmonic,frequency_hz,outlet_monopole_mean_density_spl_db_at_"
+                      << settings.observerM << "_m\n";
+            printMonopole(massFlow);
         }
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

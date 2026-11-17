@@ -78,9 +78,9 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [V06](#v06) | P2 | None of the ten field-recording references documents engine speed | owner decision |
 | [V07](#v07) | P2 | Designed-engine manufacturer checks never fail CI for a performance miss | owner decision |
 | [V08](#v08) | P3 | Documentation describes obsolete validation, format and live-edit behavior | fixed ec9db53 |
-| [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | owner decision |
+| [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | analysed 2026-11-17: amplitude-dependent, cause open |
 | [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | owner decision |
-| [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | owner decision |
+| [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | analysed 2026-11-17: (a) born upstream of the audio network |
 | [PG-01](#pg-01) | P1 | Exhaust boundary history is shorter than its fixed reconstruction delay | fixed a97ccdf |
 | [PG-02](#pg-02) | P2 | Wet nitrous fuel is omitted from fuel consumption | fixed c3de893 |
 | [PG-04](#pg-04) | P2 | The internal reordered-duct test executes one ascending chunk | fixed 58816e5 |
@@ -793,6 +793,8 @@ The latest TS125 record (`docs/journal.md:15`) compares three exhausts at 4,000 
 
 **Impact:** a substantial part of the physically generated low-frequency exhaust pressure is absent from the sound on this controlled two-stroke case, directly relevant to the sound-first criterion. The journal explicitly leaves the precise port-source cause untested; it is not established here.
 
+**Analysis 2026-11-17** (journal, same date): the gap holds on 0.10.0 and grows with load. Against the finite-volume outlet monopole the network radiates −1.8 dB at 67–200 Hz at 0.39 kW and −6.7 to −7.3 dB at 1.2 and 2.3 kW, so it is a finite-amplitude effect a linear network does not carry. Measured and set aside: the double-counted acoustic velocity in the port's resistance (≤ 0.6 dB), the port's ρc against the duct's (0.4 dB), the port model as such (rigid port fed the solver's exact flow: −4 to −9 dB remain), the exit's temperature modulation of its volume flux (1.5 dB). The port-face pressure is no proxy for the sound: the solver keeps ~152 dB at 67 Hz at all three loads. Side finding: every outlet's solver opening carries Cd 0.72 by default, which the network does not model; on the TS125 it changes the radiated low band by 0.6 dB.
+
 <a id="k02"></a>
 
 ### K02 — The current exhaust port thermal model has no separate cooled-head port region
@@ -812,6 +814,8 @@ The latest TS125 record (`docs/journal.md:15`) compares three exhausts at 4,000 
 After the recorded taper passivity change, the ACME overall levels are within −0.1/−1.3/−0.5 dB of the three published silencer cases, but 500–1,000 Hz remains **−9 dB** for case (a) and **−12 dB** for (c), and case (b) below 250 Hz is **−5 dB** (`docs/journal.md:82`). The source scan may account for part of the high-frequency difference; that uncertainty is explicitly retained.
 
 **Impact:** agreement in overall level does not establish agreement in exhaust timbre. The earlier 6–9 dB overall excess is resolved in the record and is not counted as a remaining defect.
+
+**Analysis 2026-11-17** (journal, same date; 0.10.0): at 500–1,000 Hz case (a)'s render is −12.3 dB against the book, and the solver's own pressure 130 mm from the valve is already −9.7 dB there: the gap is born on the gas side (the lifts and valve Cd are named estimates of this case), not in the audio network. Case (c) is now −7.9 dB (−3.9 dB already in the pipe); case (b) below 250 Hz −4.6 dB with the pipe +3.5 dB.
 
 ## Leads excluded from confirmed findings
 

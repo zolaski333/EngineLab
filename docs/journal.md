@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — K01 and K03: where the measured sound gaps are born
+
+- K01, TS125 at 4,000 rpm, 0.10.0 (`OfflineAudioExporter --exhaust-tap`, `PressureProbeHarness`, 25 mm): the render against Jones & Brown at 63/125/200 Hz reads -9.0/-12.3/-10.5 (short pipe), -4.2/-8.3/-13.6 (chamber); the network at 0.10 m is 7.0/5.4 dB under the solver (8.2/7.2 on 2026-11-16).
+- Load is the factor: against the solver's outlet monopole the network radiates -1.8 dB at 67-200 Hz at 0.39 kW, -7.3 at 1.16 kW, -6.7 at 2.32 kW (short pipe). A finite-amplitude effect the linear network does not carry; which one is not found.
+- Refuted, one factor each: the port resistance counting the acoustic velocity twice (raw flow plus the network's own; off: <= 0.6 dB); the port's flow-weighted rho*c against the duct's (234 against 244, 0.4 dB); the port model itself (rigid, fed the solver's exact flow: radiated -4.2/-6.6/-9.4 dB at 67/133/200 Hz against -6.7/-8.2/-5.1).
+- The exit's temperature modulation of its volume flux (`PressureProbeHarness` now also prints the monopole at the outlet's mean density): 1.4-1.5 dB of the short pipe's 67-200 Hz, +-3 dB on the chamber.
+- The port-face pressure is no proxy for the sound: the solver keeps ~152 dB at 67 Hz at 0.39, 1.16 and 2.32 kW while its monopole moves 15 dB. Its near-exit pressure is the outlets' default Cd 0.72 (Cd 1.0: 153.0 -> 134.5 dB at 67 Hz, the network's 133.6), worth 0.6 dB of the radiated low band; the network has no such opening.
+- K03, ACME at 0.10.0, 500-1,000 Hz: (a) render -12.3 dB against the book, the solver 130 mm from the valve already -9.7 (its lifts and Cd are named estimates); (c) -7.9 (pipe -3.9); (b) below 250 Hz -4.6 (pipe +3.5). The gaps are born on the gas side, not in the audio network.
+- Physics and default sound untouched: diagnostics were temporary and reverted, only the harness gained a column (its old table identical).
+
 ## 2026-11-17 — audit lots 7-8 and V08: interface, 3-D routing, licences, documentation
 
 - Lot 7 checked on real JUCE components (`EngineLab.AppLayout`, new; `EngineLab.AudioWorkshop`): the top bar at 1,280/1,440/1,920 px has no two buttons overlapping (10 shown at 1,920); the VTEC row adds 24 px and moves the buttons below it; every tool window's enabled buttons take the focus; the tuner's anti-lag page and maps stay above UNDO at 30 px under the minimum height. Snapshots looked at; the running app not toured by hand.
