@@ -70,6 +70,7 @@ std::vector<int> bindGasField(const EngineModel3D& model, const GasFieldSnapshot
             // of each other type.
             auto componentType = duct.componentType;
             std::optional<std::uint32_t> cylinderId;
+            auto midpipe = false;
             if (duct.componentType == ExhaustComponentType::pipe) {
                 const auto drawn = makeEditableExhaustNetwork(path, config.cylinders);
                 for (const auto& connection : drawn.cylinderConnections)
@@ -88,11 +89,22 @@ std::vector<int> bindGasField(const EngineModel3D& model, const GasFieldSnapshot
                         });
                     componentType = fromPrimary ? ExhaustComponentType::merge : ExhaustComponentType::muffler;
                 }
+                midpipe = !cylinderId && duct.elementId == editableMidpipeId(path);
             }
             const auto type = static_cast<std::uint8_t>(nodeTypeOf(componentType));
+            // The solver's mid pipe is the path's one pipe node that is no
+            // cylinder's primary (its id is generated, the primaries' are the
+            // cylinders'): the first pipe would be cylinder 1's primary (audit
+            // RENDER-01).
+            const auto isPrimaryId = [&config](std::uint32_t nodeId) {
+                return std::any_of(config.cylinders.begin(), config.cylinders.end(),
+                                   [nodeId](const auto& cylinder) { return cylinder.id == nodeId; });
+            };
             binding[d] = find([&](const GasFieldElement& e) {
-                return isExhaust(e.kind) && e.pathIndex == *pathIndex && e.nodeType == type
-                    && (!cylinderId || e.nodeId == *cylinderId);
+                if (!isExhaust(e.kind) || e.pathIndex != *pathIndex || e.nodeType != type) return false;
+                if (cylinderId) return e.nodeId == *cylinderId;
+                if (midpipe) return !isPrimaryId(e.nodeId);
+                return true;
             });
             break;
         }

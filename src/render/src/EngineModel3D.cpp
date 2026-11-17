@@ -1109,8 +1109,8 @@ void EngineModel3D::buildGearbox() {
         // (a V-twin's or a V4's sits under the rear cylinders).
         float smallestRatio = 1.0e9F, largestRatio = 0.0F, stroke = 0.0F;
         for (const auto ratio : ratios) {
-            smallestRatio = std::min(smallestRatio, static_cast<float>(std::max(0.2, ratio)));
-            largestRatio = std::max(largestRatio, static_cast<float>(std::max(0.2, ratio)));
+            smallestRatio = std::min(smallestRatio, static_cast<float>(std::max(0.05, ratio)));
+            largestRatio = std::max(largestRatio, static_cast<float>(std::max(0.05, ratio)));
         }
         for (const auto& cylinder : config_.cylinders) stroke = std::max(stroke, static_cast<float>(cylinder.strokeMm));
         const auto reachMargin = 0.12F * b / pi + 0.12F * b;
@@ -1201,9 +1201,14 @@ void EngineModel3D::buildGearbox() {
     float inputReach = 0.0F, outputReach = 0.0F;
     const auto targetToothModule = 0.12F * b / pi;
     for (std::size_t k = 0; k < pairCount; ++k) {
-        const auto ratio = static_cast<float>(std::max(0.2, ratios[k]));
+        // The configuration accepts ratios down to 0.05: a deep overdrive's
+        // output gear keeps nine teeth and its input gear takes as many as the
+        // ratio asks, finer, rather than drawing another ratio (audit RENDER-02).
+        const auto ratio = static_cast<float>(std::max(0.05, ratios[k]));
         const auto inputTarget = centre / (1.0F + ratio);
-        const auto inputTeeth = std::max(9, static_cast<int>(std::lround(2.0F * inputTarget / targetToothModule)));
+        auto inputTeeth = std::max(9, static_cast<int>(std::lround(2.0F * inputTarget / targetToothModule)));
+        if (static_cast<float>(inputTeeth) * ratio < 9.0F)
+            inputTeeth = static_cast<int>(std::lround(9.0F / ratio));
         const auto outputTeeth = std::max(9, static_cast<int>(std::lround(static_cast<float>(inputTeeth) * ratio)));
         const auto toothModule = 2.0F * centre / static_cast<float>(inputTeeth + outputTeeth);
         const auto z = zStart + spacing * static_cast<float>(k + 1U);

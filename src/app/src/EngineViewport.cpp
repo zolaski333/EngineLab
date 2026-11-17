@@ -816,7 +816,8 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
         g.setFont(monoFont(11.5F, false));
         g.drawText(formatValue(index, value), valueArea, juce::Justification::centred, false);
     }
-    area.removeFromTop(inspectorEditButtons);
+    // The button rows `resized` lays out: two with a second choice (audit APP-13).
+    area.removeFromTop(inspectorEditButtons * (hasSecondChoice() ? 2 : 1));
     for (const auto* text : { &edit_->note, &editStatus_ }) {
         if (text->isEmpty()) continue;
         area.removeFromTop(4);
@@ -3262,13 +3263,14 @@ void EngineViewport::renderOpenGL() {
     frame_.antiAliasing = shared.antiAliasing;
     frame_.pose = shared.pose;
     frame_.pose.afterfire = gasFieldView_.afterfire();
-    // The turbo shaft turns at its simulated speed, slowed down with the crank.
-    const auto shaftDegreesPerSecond
-        = 6.0 * shared.turboShaftRpm * (shared.playbackFactor >= 0.999 ? shared.rate : shared.playbackFactor);
+    // The turbo shaft and the gearbox turn at their simulated speeds, slowed
+    // down with the crank: the simulation's own rate (zero when paused) times
+    // the strobe's factor, as `CrankClock::displayDegreesPerSecond` (audit APP-08).
+    const auto shaftRate = shared.rate * (shared.playbackFactor >= 0.999 ? 1.0 : shared.playbackFactor);
+    const auto shaftDegreesPerSecond = 6.0 * shared.turboShaftRpm * shaftRate;
     turboShaftDegrees_ = std::fmod(turboShaftDegrees_ + shaftDegreesPerSecond * dt, 360.0);
     frame_.pose.turboShaftDegrees = turboShaftDegrees_;
-    const auto gearboxDegreesPerSecond
-        = 6.0 * shared.gearboxInputRpm * (shared.playbackFactor >= 0.999 ? shared.rate : shared.playbackFactor);
+    const auto gearboxDegreesPerSecond = 6.0 * shared.gearboxInputRpm * shaftRate;
     gearboxInputDegrees_ += gearboxDegreesPerSecond * dt;
     frame_.pose.gearboxInputDegrees = gearboxInputDegrees_;
     frame_.gasField = gasFieldView_.valid() ? &gasFieldView_ : nullptr;

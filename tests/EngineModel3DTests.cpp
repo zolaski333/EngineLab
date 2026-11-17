@@ -99,6 +99,16 @@ void checkGasFieldBinding(const EngineModel3D& model) {
         if (binding[d] < 0) continue;
         const auto& element = field.elements[static_cast<std::size_t>(binding[d])];
         require(element.sampleCount > 0, label + ": a bound element has samples");
+        // A geometry-only path's mid pipe is its own solver node, never a
+        // cylinder's primary (audit RENDER-01).
+        if (duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::pipe) {
+            const auto& path = *std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+                [&duct](const ExhaustPathConfig& item) { return item.id == duct.pathId; });
+            if ((!path.network || path.network->components.empty()) && duct.elementId == editableMidpipeId(path))
+                require(std::none_of(config.cylinders.begin(), config.cylinders.end(),
+                            [&element](const auto& cylinder) { return cylinder.id == element.nodeId; }),
+                        label + ": the mid pipe shows its own gas, not a primary's");
+        }
         for (std::size_t s = 0; s < element.sampleCount; ++s)
             require(element.pressurePa[s] > 1'000.0F && element.gasTemperatureK[s] > 100.0F,
                     label + ": the captured gas is physical");
@@ -1517,6 +1527,23 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    {
+        // A geometry-only exhaust with a mid pipe: the binding the catalogue's
+        // authored networks never reach (audit RENDER-01).
+        auto scalar = catalogue.entries.front().config;
+        scalar.exhaust.midpipeLengthMm = 200.0;
+        for (auto& path : scalar.exhaustPaths) {
+            path.network.reset();
+            path.geometry.midpipeLengthMm = 200.0;
+        }
+        const EngineModel3D drawn(scalar);
+        const auto midpipeDrawn = std::any_of(drawn.ducts().begin(), drawn.ducts().end(), [&](const SceneDuct& duct) {
+            return duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::pipe
+                && duct.elementId == editableMidpipeId(scalar.exhaustPaths.front());
+        });
+        require(midpipeDrawn, scalar.name + ": a geometry-only path draws its mid pipe");
+        checkGasFieldBinding(drawn);
+    }
     // The compression ratio moves the head: above the crown at top dead
     // centre stands the clearance volume over the bore's area (owner
     // 2026-11-14: a new ratio changed nothing in the picture).
@@ -1774,6 +1801,13 @@ int main() {
         [](const auto& entry) { return entry.config.transmission.gearRatios.size() >= 2U; });
     require(gearboxesDrawn == static_cast<int>(withGears) && gearboxesDrawn >= 10,
             "every catalogue engine with gears has its gearbox drawn (" + std::to_string(gearboxesDrawn) + ")");
+    {
+        // A ratio the configuration accepts (down to 0.05) is drawn as itself
+        // (audit RENDER-02: 0.1 was drawn 9/41).
+        auto overdrive = catalogue.entries.front().config;
+        overdrive.transmission.gearRatios = { 1.0, 0.1 };
+        checkGearbox(EngineModel3D(overdrive));
+    }
     // The catalogue compiles every exhaust path into a network at load; a
     // path authored as scalar geometry (an imported file) on a copy.
     auto scalar = catalogue.entries.front().config;
