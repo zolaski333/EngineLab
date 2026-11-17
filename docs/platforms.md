@@ -10,7 +10,7 @@ why, so a difference is read as a platform difference rather than a regression.
 
 | Platform | Compiler | Generator | Preset |
 | --- | --- | --- | --- |
-| Windows x64 (reference) | MSVC 14.44, Visual Studio 2022 BuildTools | Visual Studio 17 | `windows-vs2022`, `windows-ninja-release` |
+| Windows x64 (reference) | MSVC 14.44, Visual Studio 2022 BuildTools | Visual Studio 17 | `windows-vs2022`, `ninja-release` |
 | Linux x64 | GCC 13.3 (Ubuntu 24.04) | Ninja | `linux-gcc-release`, `linux-gcc-debug` |
 | Linux x64 (second opinion) | Clang 18 with libstdc++ | Ninja | `linux-clang-release` |
 
@@ -110,12 +110,15 @@ the encoding its own `path` is native in.
 -Wshadow` (GCC and Clang) or `/W4` (MSVC), and `-Werror` / `/WX` when
 `ENGINELAB_ENABLE_WARNINGS_AS_ERRORS` is on, as CI has it.
 
-JUCE's module units are compiled **into** the targets that link them, because
-they arrive as interface sources, so they would inherit that set. They are not
-EngineLab's code and they do not build clean under `-Wconversion`: on the first
-Linux build they produced about 400 diagnostics around EngineLab's own 125.
-`enginelab_quiet_vendor_units` turns the categories they trip off for those
-units only, leaving EngineLab's own sources under the full set.
+JUCE's module units arrive as interface sources, so every target linking one
+used to compile JUCE again. They are now compiled once, into the static
+library `EngineLabJuce` (top-level `CMakeLists.txt`), which re-exports their
+include directories and definitions; EngineLab's targets link it and never a
+`juce::` module directly. Those units are not EngineLab's code and they do not
+build clean under `-Wconversion`: on the first Linux build they produced about
+400 diagnostics around EngineLab's own 125. `enginelab_quiet_vendor_units`
+turns the categories they trip off for those units only, leaving EngineLab's
+own sources under the full set.
 
 A header is a different problem: it is compiled as part of whatever includes
 it, so no per-source property can reach it. One `-Wconversion` line of JUCE's

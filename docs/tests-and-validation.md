@@ -111,10 +111,10 @@ The main registered tests are:
 
 `ctest --preset windows-release -N` lists the complete set.
 
-`EngineLab.AudioRender` only emits a warning when spectral signatures are too
-close; that threshold is not yet a failure cause. This nuance is documented on
-purpose: the test prevents invalid or crushed outputs, but does not prove good
-perceptual differentiation.
+`EngineLab.AudioRender` fails when two engines' spectral signatures are too
+close (a similarity above 0.985). Separating the catalogue's engines from one
+another is all it proves: it does not show that any of them sounds like the
+real engine.
 
 ## Comparison harness
 
@@ -251,5 +251,10 @@ visible.
 
 They do not prove the accuracy of a real torque curve, the fidelity of a
 specific exhaust, stability on every possible configuration or that an engine
-sounds like the real one. Those claims need external data, A/B protocols and
-physical references that the repository does not hold today.
+sounds like the real one. The repository holds a few external references --
+makers' torque and power points (`tests/reference-data/catalog-manufacturer-points.csv`,
+`designed-manufacturer-points.csv`) and three published pressure or spectral
+cases (Winterbone's ACME single, Blair and Spechko's BSA A50, Jones and Brown's
+TS125, each under `tests/reference-data/`) -- and every comparison against
+them is a measurement in `docs/journal.md`, not a guarantee for other engines.
+Real recordings stay outside the repository.

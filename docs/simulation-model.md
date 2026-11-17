@@ -85,9 +85,12 @@ During valve overlap, intake and exhaust are evaluated from the same starting
 state and then applied together. This transaction prevents an arbitrary call
 order from changing the gradient seen by the second valve.
 
-The model nonetheless stays 0D per volume. Momentum provides directional
-inertia; it does not turn a runner into a meshed tube where a wave propagates
-spatially.
+The cylinders and the plenum stay 0D volumes. Each intake runner, though,
+is a 1-D finite-volume duct (`buildIntakeRunnerNetwork`) in which a wave
+travels between plenum and valve; when the runners share a plenum the
+simulator joins them and it in one manifold network
+(`EngineSimulator::jointIntakeManifold`), so a pulse from one valve reaches
+the others.
 
 A stopped crank (below 20 rpm, starter off) passes no gas through its valves,
 and the 1-D intake runners stand at their plenum's pressure instead of
@@ -107,10 +110,11 @@ applies it on a base circle, and the event generator, the physics' cam
 metrics and the 3-D view follow the cam each cylinder actually runs
 (`EngineState::vtecHighCylinderMask`).
 
-`HelmholtzRunnerModel` attaches a damped mode to each runner. Its frequency
-depends on the area, the length, the volume and the local speed of sound. The
-pressure of this mode changes the admittance of the conservative restriction:
-it creates neither mass nor a torque bonus independent of filling.
+The filling comes from those 1-D runners. `HelmholtzRunnerModel` still
+attaches a damped mode to each runner, its frequency set by the area, the
+length, the volume and the port's speed of sound from the runner network; it
+feeds the telemetry and the acoustic intake excitation, not the gas: it
+creates neither mass nor torque.
 
 ### Two-stroke engines
 
@@ -923,14 +927,14 @@ edit, taken live.
 - `automated_manual`: one clutch the gearbox works itself (an AMT: a
   Selespeed, an SMG, a truck's). It has the dual clutch's own launch clutch,
   creep and over-rev protection, and no pedal, but its upshift is the manual
-  way: the engine's torque taken fully away over the first 20 % of
-  `shift_duration_s` (whatever `shift_torque_cut_fraction` says: the
-  driver's foot stays down, and a part cut flared the engine onto its
-  limiter while the clutch was open), the clutch opened, a gap in the drive,
-  then the torque back only once the clutch has pulled the engine down to the
-  new gear's speed. It starts the upshift ahead of the point by 0.35 x the
-  shift time's worth of the engine's present acceleration, so the clutch
-  opens near the point instead of after it. No ignition cut, no retard.
+  way, with the controller cutting for the driver: fuel and spark are cut at
+  the start with the clutch still shut (whatever `shift_torque_cut_fraction`
+  says: the driver's foot stays down, and a part cut flared the engine onto
+  its limiter while the clutch was open), the clutch opens once the cycle's
+  torque is gone (at most 0.15 s), the cut holds while it is open, a gap in
+  the drive, then the torque comes back with the clutch's slip as it pulls
+  the engine down to the new gear's speed. The controller changes up at the
+  shift point itself (journal 2026-11-14).
   A downshift is blipped as above. The shift time is the gearbox's; the
   truck part's 0.8 s is an estimate, not a unit's figure.
 
@@ -1062,8 +1066,8 @@ full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
 - two-stroke engines lose about a tenth of their full-load torque at the
   100 mm real-time exhaust mesh against 25 mm cells (see *Two-stroke
   engines*);
-- 0D gas volumes and an aggregated Helmholtz mode, without CFD or meshed 1D
-  acoustics on the intake side;
+- 0D cylinders and plenums with 1-D finite-volume runners, without CFD or a
+  3-D flow at the port;
 - semi-empirical global reaction, turbulence, walls, blow-by, film and knock;
 - no spray, temperature field or 3D flame front;
 - multiple crankshafts linked by rigid ratios, without torsion of their own;

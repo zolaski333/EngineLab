@@ -36,8 +36,8 @@ the second does not stand for any precise certified model.
 `measured-curves/` holds whole torque curves read off published dyno charts, for
 the curve SHAPE (where the torque peaks and how it falls away), which rated
 points cannot show. They are rear-wheel figures on a chassis dyno: compare
-shapes, or allow for the drivetrain (the MT-07's rear-wheel peak, 61.6 Nm, is
-about 0.9 of its rated crank torque).
+shapes, or allow for the drivetrain (the CP2's traced rear-wheel peak, 59.1 Nm
+or 43.6 lb-ft, is about 0.9 of its rated crank torque).
 
 | File | Engine | How it was read | Source |
 | --- | --- | --- | --- |

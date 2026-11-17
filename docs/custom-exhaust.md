@@ -62,9 +62,13 @@ not touch the running engine until the copy is applied.
    or YAML.
 
 An error keeps the copy for correction and leaves the current runtime
-unchanged. A valid application is a structural change: it replaces the runtime,
-resets engine speed and thermal states, and is not allowed during a dyno run.
-It is therefore not the no-reset hot reload of the ECU tuner.
+unchanged. An edit that only resizes the running exhaust -- the same
+components and connections, new lengths, diameters or volumes -- is applied
+live (`EngineRuntime::applyLiveExhaust`): the simulation thread swaps its gas
+network and the audio its graph, and the engine keeps running. Any other
+change (a component or a connection added or removed), an edit during a dyno
+run, or one the audio cannot follow replaces the runtime instead, resetting
+engine speed and thermal states.
 
 ## YAML example
 

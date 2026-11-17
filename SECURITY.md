@@ -4,10 +4,10 @@
 
 Only the latest release receives fixes.
 
-| Version | Supported |
-| ------- | --------- |
-| 0.3.x   | yes       |
-| < 0.3   | no        |
+| Version            | Supported |
+| ------------------ | --------- |
+| the latest release | yes       |
+| any earlier one    | no        |
 
 ## Reporting a vulnerability
 

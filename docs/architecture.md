@@ -37,7 +37,7 @@ catalog + diagnostics + serialization + scripting
 | `EngineLabSimulation` | Deterministic orchestration of the models and state integration; a bit-identical worker pool for the gas networks |
 | `EngineLabRuntime` | Simulation thread, transmission/vehicle, dyno, snapshots and bridge to audio |
 | `EngineLabAudio` | SI exhaust characteristics, passive radiation, explicit convolution and non-exhaust layers |
-| `EngineLabSerialization` | JSON/YAML round-trip in engine schema 2 and migration of v1 files |
+| `EngineLabSerialization` | JSON/YAML round-trip in the current engine schema (9) and migration of older files |
 | `EngineLabScripting` | Safe compilation of the `.els` DSL and a background dependency watcher |
 | `EngineLabCatalog` | Loading of the shipped engines and parts |
 | `EngineLabDiagnostics` | Explanatory diagnostics for the UI |
@@ -187,8 +187,9 @@ limiter in the current integration.
 ### Structural configuration
 
 JSON, YAML and `.els` all produce a complete `EngineConfig`. The decoders accept
-engine schemas 1 and 2; normalisation migrates v1 to v2 in memory, and every new
-export writes v2. Normalisation makes explicit topologies authoritative, then
+engine schemas 1 to 9 (`currentEngineSchemaVersion`); normalisation migrates an
+older file to schema 9 in memory, filling what each later schema added with its
+documented default, and every export writes schema 9. Normalisation makes explicit topologies authoritative, then
 validation checks identifiers, ranges, cylinder assignments, solver frequency
 and acyclic graphs. An accepted configuration is used to build a new runtime.
 The old one is stopped only after its replacement could be created.

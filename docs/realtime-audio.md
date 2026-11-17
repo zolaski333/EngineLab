@@ -8,10 +8,14 @@ semi-empirical. The complete physical description and its limits are in
 
 ## Simulation → callback flow
 
-Two SPSC queues separate the responsibilities:
+Three SPSC queues separate the responsibilities:
 
 - `CylinderPressureSample` carries, at every sub-step, the chamber pressure and
   the exhaust boundary (`p`, `ṁ`, `ρ`, `c`, `CdA`, path, validity);
+- `ExhaustAcousticSample` carries, each time the finite-volume network
+  advances, what only changes then: the ducts' density and speed of sound,
+  the outlets' flow and the exhaust's reaction heat, kept out of the per-step
+  sample so that kilobytes are not copied on every sub-step;
 - `FiringEvent` carries the combustion phasing, misfires, knock and the sources
   not tied to the physical exhaust.
 
