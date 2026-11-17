@@ -12,8 +12,9 @@ and ships with, the following third-party work.
 | yaml-cpp | 0.8.0 | MIT | <https://github.com/jbeder/yaml-cpp> |
 
 The libraries are fetched by CMake at the pinned revisions above and linked
-statically into the executable. Their full license texts are in their
-repositories.
+statically into the executable. Release archives carry their full license
+texts in `licenses/` (`nlohmann-json-LICENSE.txt`, `yaml-cpp-LICENSE.txt`,
+`JUCE-LICENSE.md`), copied from the pinned sources.
 
 JUCE is dual-licensed: its modules are available under the AGPLv3 or under the
 [JUCE 8 End User Licence Agreement](https://juce.com/legal/juce-8-licence/).

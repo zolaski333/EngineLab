@@ -196,6 +196,15 @@ install(DIRECTORY engines parts assets examples voicing DESTINATION . COMPONENT 
 install(FILES packaging/README.txt LICENSE.md THIRD_PARTY_NOTICES.md DESTINATION . COMPONENT EngineLab)
 install(FILES src/app/resources/fonts/OFL-Inter.txt src/app/resources/fonts/OFL-JetBrainsMono.txt
     DESTINATION licenses COMPONENT EngineLab)
+# The statically linked libraries' own notices, taken from the pinned sources
+# CMake fetched: MIT asks for the copyright and permission text to travel with
+# every copy (audit PKG-01).
+install(FILES "${nlohmann_json_SOURCE_DIR}/LICENSE.MIT"
+    DESTINATION licenses RENAME nlohmann-json-LICENSE.txt COMPONENT EngineLab)
+install(FILES "${yaml_cpp_SOURCE_DIR}/LICENSE"
+    DESTINATION licenses RENAME yaml-cpp-LICENSE.txt COMPONENT EngineLab)
+install(FILES "${juce_SOURCE_DIR}/LICENSE.md"
+    DESTINATION licenses RENAME JUCE-LICENSE.md COMPONENT EngineLab)
 
 # Ship the MSVC runtime next to the executable (app-local deployment), so the
 # archive runs on a machine without the Visual C++ Redistributable installed.
