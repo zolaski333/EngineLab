@@ -5,6 +5,11 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — K03 (b) against K01's outlet low band: not the same gap
+
+- ACME case (b) (W&P Fig 6.11b, 3,140 rpm, 25 mm, float32 stems) rendered with `--outlet-low-band 200` against off: below 250 Hz -4.6 -> -4.0 dB against the book, 250-500 Hz +2.4 -> +4.2 (already over), 500-1,000 -1.6 -> -0.9.
+- The solver's own outlet monopole is -6.3 dB under the book below 250 Hz: unlike the TS125, the gas side is low there, so taking the low band from it cannot close (b). (a) and (c) are born on the gas side too (estimated lifts and Cd). K03 waits on the case's measured valve data; not measured: (a) and (c) with the low band.
+
 ## 2026-11-17 — K01: the port split fails at high amplitude; the solver's mouth flow fills the low band
 
 - Render dumps of the port source (TS125 short pipe, 2.3 kW, 25 mm): at 67 Hz the linear split of the solver's port state gives an INCOMING wave 1.9x the outgoing (1.6x at 133 Hz), which a passive pipe cannot return. The port velocity is ~90 m/s rms: the port pressure is not a small-amplitude field there and 0.5(p +- Zc U) misplaces it; the network's port flow comes out 2.5 dB under the solver's at 67 Hz.

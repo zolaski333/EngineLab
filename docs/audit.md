@@ -78,9 +78,9 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [V06](#v06) | P2 | None of the ten field-recording references documents engine speed | owner decision |
 | [V07](#v07) | P2 | Designed-engine manufacturer checks never fail CI for a performance miss | owner decision |
 | [V08](#v08) | P3 | Documentation describes obsolete validation, format and live-edit behavior | fixed ec9db53 |
-| [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | analysed 2026-11-17: the solver's pipe gains low band with amplitude, the linear network does not |
-| [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | analysed 2026-11-17: a Caton-sized port stage cools EGT 33-115 C, torque < 1 %; waits on a measured EGT |
-| [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | analysed 2026-11-17: (a) born upstream of the audio network |
+| [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | fix built 2026-11-17 (outlet low band, off by default), waits on the owner's A/B |
+| [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | blocked 2026-11-17: no measured EGT or port-exit temperature of a catalogue engine to fix against |
+| [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | blocked 2026-11-17: (a)/(c) born on the gas side (estimated lifts and Cd); (b) the solver's own monopole is low |
 | [PG-01](#pg-01) | P1 | Exhaust boundary history is shorter than its fixed reconstruction delay | fixed a97ccdf |
 | [PG-02](#pg-02) | P2 | Wet nitrous fuel is omitted from fuel consumption | fixed c3de893 |
 | [PG-04](#pg-04) | P2 | The internal reordered-duct test executes one ascending chunk | fixed 58816e5 |
@@ -797,6 +797,8 @@ The latest TS125 record (`docs/journal.md:15`) compares three exhausts at 4,000 
 
 **Deeper, 2026-11-17:** the network's own amplitude-dependent elements are not it (edge loss off, steepening off: <= 0.3 dB; mean taken on the volume flow: +0.5-1 dB). At 67 Hz the solver's port-to-outlet volume-flow ratio rises with load (-7.5 / -2.5 / +0.2 dB at 0.39 / 1.16 / 2.32 kW) while the network's stays near -6.4 dB: the high-load low band is generated in the solver's pipe by a finite-amplitude effect a linear zero-mean network fed at the port cannot carry.
 
+**Fix built, 2026-11-17** (journal, same date): the linear port split misplaces a ~90 m/s rms port field (incoming wave 1.9x the outgoing at 67 Hz). `AcousticExhaustNetwork::setOutletSolverLowBand` takes each outlet's far field below a 200 Hz crossover from the solver's own mouth volume flow: TS125 63/125/200 Hz -9.2/-12.6/-11.1 -> -4.7/-6.7/-7.2 dB. Off by default (bit-identical); the catalogue pairs are in `essai-grave/` for the owner's A/B.
+
 <a id="k02"></a>
 
 ### K02 — The current exhaust port thermal model has no separate cooled-head port region
@@ -820,6 +822,8 @@ After the recorded taper passivity change, the ACME overall levels are within �
 **Impact:** agreement in overall level does not establish agreement in exhaust timbre. The earlier 6–9 dB overall excess is resolved in the record and is not counted as a remaining defect.
 
 **Analysis 2026-11-17** (journal, same date; 0.10.0): at 500–1,000 Hz case (a)'s render is −12.3 dB against the book, and the solver's own pressure 130 mm from the valve is already −9.7 dB there: the gap is born on the gas side (the lifts and valve Cd are named estimates of this case), not in the audio network. Case (c) is now −7.9 dB (−3.9 dB already in the pipe); case (b) below 250 Hz −4.6 dB with the pipe +3.5 dB.
+
+**Blocked, 2026-11-17:** case (b)'s solver outlet monopole is itself −6.3 dB under the book below 250 Hz, so K01's low band cannot fill it (measured: −4.6 -> −4.0 dB, and 250–500 Hz +2.4 -> +4.2, over). (a) and (c) wait on the case's measured lifts and valve Cd, which the book does not give.
 
 ## Leads excluded from confirmed findings
 
