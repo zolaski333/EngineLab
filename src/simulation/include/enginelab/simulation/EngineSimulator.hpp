@@ -217,6 +217,14 @@ public:
         return exhaustAcousticSamples_ && exhaustAcousticSamples_->tryPop(sample);
     }
     void setPressureSamplingEnabled(bool enabled);
+    /** Instrument use: publish the exhaust acoustic state (outlet flows) on
+     * every exhaust coupling, not only when a reaction source exists or the
+     * 240 Hz refresh is due. A probe binning the outlets by crank angle needs
+     * it: at 240 Hz a held speed only samples a few phases of its cycle.
+     * Off by default; the audio path is unchanged either way. */
+    void setExhaustAcousticEveryCoupling(bool enabled) noexcept {
+        exhaustAcousticEveryCoupling_ = enabled;
+    }
     /** Diagnostic oracle: advance the nonlinear exhaust network on every
      * mechanical substep instead of using the production multirate interval.
      *
@@ -605,6 +613,7 @@ private:
         exhaustDuctSpeedOfSoundMps_ {};
     std::size_t exhaustDuctMediumCount_ { 0 };
     double lastExhaustAcousticStatePublishSeconds_ { -1.0 };
+    bool exhaustAcousticEveryCoupling_ { false };
     std::array<double, 32> chamberPressureBar_ {};
     /** Each cylinder's highest pressure since it last entered its gas
      * exchange (kPa), the highest of its last completed cycle, and whether it

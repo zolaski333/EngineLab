@@ -5679,7 +5679,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto projectedTimeSeconds =
                 state_.simulationTimeSeconds + subDt;
             publishExhaustAcousticState = exhaustAcousticSamples_
-                && (exhaustFuelReaction.sourceCount > 0
+                && (exhaustAcousticEveryCoupling_
+                    || exhaustFuelReaction.sourceCount > 0
                     || lastExhaustAcousticStatePublishSeconds_ < 0.0
                     || projectedTimeSeconds
                         - lastExhaustAcousticStatePublishSeconds_

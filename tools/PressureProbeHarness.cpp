@@ -200,6 +200,7 @@ int main(int argc, char** argv) {
         // network in between. Samples carry time; the crank angle is
         // interpolated across the frame (the held speed is steady).
         simulator->setPressureSamplingEnabled(true);
+        simulator->setExhaustAcousticEveryCoupling(true);
         std::array<double, bins> flowSum {};
         std::array<double, bins> flowCount {};
         // The outlets' mass flow alone, binned the same way, and the outlet
@@ -225,6 +226,7 @@ int main(int argc, char** argv) {
             return std::fmod(std::fmod(degrees, cycle) + cycle, cycle); };
         std::int32_t previous = -1;
         auto rpmSum = 0.0, torqueSum = 0.0, frames = 0.0, couplingHzSum = 0.0;
+        std::size_t acousticSamples = 0, droppedAcousticSamples = 0, staleAcousticSamples = 0;
         for (int step = 0; step < static_cast<int>(settings.sampleSeconds / dt); ++step) {
             const auto controls = controlsAt(settings.rpm);
             const auto startSeconds = simulator->state().simulationTimeSeconds;
@@ -234,6 +236,8 @@ int main(int argc, char** argv) {
             couplingHzSum += frame.state.exhaustCouplingFrequencyHz;
             torqueSum += controls.dynamometerTorqueNm;
             frames += 1.0;
+            acousticSamples += frame.exhaustAcousticSampleCount;
+            droppedAcousticSamples += frame.droppedExhaustAcousticSampleCount;
             {
                 const auto cycle = cycleOf();
                 const auto spanSeconds = frame.state.simulationTimeSeconds - startSeconds;
@@ -258,6 +262,9 @@ int main(int argc, char** argv) {
                 enginelab::ExhaustAcousticSample acoustic;
                 while (simulator->tryPopExhaustAcousticSample(acoustic)) {
                     if (!(spanSeconds > 0.0)) continue;
+                    if (acoustic.timeSeconds < startSeconds - 1.0e-9
+                        || acoustic.timeSeconds > startSeconds + spanSeconds + 1.0e-9)
+                        ++staleAcousticSamples;
                     auto volumeFlow = 0.0, massFlow = 0.0;
                     for (std::size_t o = 0; o < acoustic.outletCount; ++o)
                         if (acoustic.outletDensityKgPerM3[o] > 0.0F) {
@@ -382,6 +389,8 @@ int main(int argc, char** argv) {
         // The outlets' monopole at `--observer-m` in the ambient air.
         std::array<double, bins> flow {};
         const auto filled = fillBins(flowSum, flow);
+        std::cout << "# outlet_samples " << acousticSamples << " dropped " << droppedAcousticSamples
+                  << " outside_frame " << staleAcousticSamples << " bins_sampled " << filled << '\n';
         if (filled > 0) {
             std::cout << "# outlet_bins_sampled " << filled << " of " << bins
                       << "\n# mean_outlet_volume_flow_m3_s " << std::accumulate(flow.begin(), flow.end(), 0.0) / bins

@@ -5,6 +5,11 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — PressureProbeHarness's missing outlet table: the outlets were sampled at 240 Hz
+
+- The simulator publishes the outlets' state on an exhaust coupling only when a reaction source exists, otherwise at its 240 Hz refresh. TS125 at 2.3 kW after `--settle 60`: no reaction left, 480 samples on 3.6 frames a cycle, 0 of 360 bins after the coupling-clock fill rule, so no table. At 4 s the pipe still reacted: 283 of 360 bins.
+- `EngineSimulator::setExhaustAcousticEveryCoupling` (instrument only, off by default, read-only) now publishes on every coupling for the probe: 25,870 samples, 360 bins at 4 s and 60 s. The earlier 4 s outlet table moves under 0.3 dB to the 24th harmonic, the port tables not at all: the K01 figures stand.
+
 ## 2026-11-17 — K02: what a cooled-head port stage would move (measured, not kept)
 
 - Temporary switch, one factor: on the first cell of each cylinder's exhaust duct, an extra loss k x the cell's own Gnielinski coefficient over 114 mm of wall (Caton & Heywood's port) held at 373 K (a coolant-held head). k = 2 is Caton's 2.2 fit over pipe correlations; k = 5 the mean-flow hand estimate of 2026-11-15. Removed; the default sweep is bit-identical (CSV and pipe temperatures).
