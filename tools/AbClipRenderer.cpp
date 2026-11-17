@@ -35,6 +35,8 @@
 #include <juce_dsp/juce_dsp.h>
 #include <nlohmann/json.hpp>
 
+#include "ToolCatalogRoot.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -788,7 +790,7 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate,
 
 int main(int argc, char** argv) {
     std::cout << std::unitbuf;
-    std::filesystem::path root = ENGINELAB_CATALOG_ROOT;
+    std::filesystem::path root = enginelab::tools::defaultCatalogRoot(ENGINELAB_CATALOG_ROOT);
     std::filesystem::path outRoot = "listening-test";
     std::filesystem::path manifestPath;
     double targetLufs = -20.0;

@@ -2,6 +2,8 @@
 #include <enginelab/audio/OfflineAudioExporter.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 
+#include "ToolCatalogRoot.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -69,7 +71,7 @@ void printUsage() {
 int main(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::filesystem::path catalogRoot =
-        ENGINELAB_CATALOG_ROOT;
+        enginelab::tools::defaultCatalogRoot(ENGINELAB_CATALOG_ROOT);
     std::filesystem::path outputDirectory;
     std::filesystem::path scenarioFile;
     std::string engineFilter;
