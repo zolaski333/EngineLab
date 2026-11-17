@@ -112,6 +112,16 @@ PipeRadiationSample UnflangedPipeRadiation::process(
     return result;
 }
 
+double UnflangedPipeRadiation::farFieldPressureForVolumeAcceleration(
+    double volumeAccelerationM3PerS2) const noexcept {
+    if (!prepared_ || !std::isfinite(volumeAccelerationM3PerS2)) return 0.0;
+    const auto farFieldDensity = farFieldDensityKgPerM3_ > 0.0
+        ? farFieldDensityKgPerM3_ : densityKgPerM3_;
+    const auto pressure = farFieldDensity * volumeAccelerationM3PerS2
+        / (4.0 * std::numbers::pi * observerDistanceM_);
+    return std::isfinite(pressure) ? pressure : 0.0;
+}
+
 std::complex<double> UnflangedPipeRadiation::reflectionCoefficient(
     double frequencyHz) const noexcept {
     if (!prepared_ || !std::isfinite(frequencyHz)

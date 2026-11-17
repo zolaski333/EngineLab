@@ -155,6 +155,15 @@ struct AcousticExhaustNetwork::Impl final {
         double outletMach { 0.0 };
         double outletMachTarget { 0.0 };
         double convectiveReflection { 1.0 };
+        /** The gas solver's mouth volume flow this sample and whether one was
+         *  given (setOutletSolverVolumeFlow), and the low-band filter of
+         *  Q_solver - Q_network with its last output (setOutletSolverLowBand). */
+        float solverVolumeFlowM3PerS { 0.0F };
+        bool solverVolumeFlowValid { false };
+        bool solverLowBandPrimed { false };
+        std::array<double, 2> solverLowBandInput {};
+        std::array<double, 2> solverLowBandOutput {};
+        double solverLowBandPrevious { 0.0 };
         AcousticPoint3M acousticPositionM {};
         AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
         AcousticTerminationType acousticTermination {
@@ -223,6 +232,63 @@ struct AcousticExhaustNetwork::Impl final {
     double farFieldDensityKgPerM3 { 0.0 };
     bool outletPressureRelease { false };
     bool outletConvectiveLoss { false };
+    /** setOutletSolverLowBand: crossover (0 off) and its Butterworth
+     *  low-pass coefficients at the render rate. */
+    double solverLowBandHz { 0.0 };
+    double solverLowBandB0 { 0.0 };
+    double solverLowBandB1 { 0.0 };
+    double solverLowBandB2 { 0.0 };
+    double solverLowBandA1 { 0.0 };
+    double solverLowBandA2 { 0.0 };
+    void updateSolverLowBand() noexcept {
+        solverLowBandB0 = solverLowBandB1 = solverLowBandB2 = 0.0;
+        solverLowBandA1 = solverLowBandA2 = 0.0;
+        if (!(solverLowBandHz > 0.0) || !(sampleRateHz > 0.0)
+            || solverLowBandHz >= 0.45 * sampleRateHz)
+            return;
+        const auto k = std::tan(std::numbers::pi * solverLowBandHz / sampleRateHz);
+        const auto norm = 1.0 / (1.0 + std::numbers::sqrt2 * k + k * k);
+        solverLowBandB0 = k * k * norm;
+        solverLowBandB1 = 2.0 * solverLowBandB0;
+        solverLowBandB2 = solverLowBandB0;
+        solverLowBandA1 = 2.0 * (k * k - 1.0) * norm;
+        solverLowBandA2 = (1.0 - std::numbers::sqrt2 * k + k * k) * norm;
+    }
+    /** The far field of one outlet: the radiation model's, with its low band
+     *  replaced by the solver's mouth flow when that is enabled and given. */
+    [[nodiscard]] double outletFarField(Outlet& outlet,
+                                        const PipeRadiationSample& radiation) noexcept {
+        auto farField = radiation.farFieldPressurePa;
+        if (!(solverLowBandHz > 0.0) || !outlet.solverVolumeFlowValid) {
+            outlet.solverLowBandPrimed = false;
+            return farField;
+        }
+        const auto difference = static_cast<double>(outlet.solverVolumeFlowM3PerS)
+            - radiation.outletVolumeVelocityM3PerS;
+        if (!std::isfinite(difference)) return farField;
+        if (!outlet.solverLowBandPrimed) {
+            // Start at rest on the present difference: its mean (the solver's
+            // mean outflow) must not step into the far field as a thump.
+            outlet.solverLowBandInput.fill(difference);
+            outlet.solverLowBandOutput.fill(difference);
+            outlet.solverLowBandPrevious = difference;
+            outlet.solverLowBandPrimed = true;
+        }
+        const auto lowBand = solverLowBandB0 * difference
+            + solverLowBandB1 * outlet.solverLowBandInput[0]
+            + solverLowBandB2 * outlet.solverLowBandInput[1]
+            - solverLowBandA1 * outlet.solverLowBandOutput[0]
+            - solverLowBandA2 * outlet.solverLowBandOutput[1];
+        outlet.solverLowBandInput[1] = outlet.solverLowBandInput[0];
+        outlet.solverLowBandInput[0] = difference;
+        outlet.solverLowBandOutput[1] = outlet.solverLowBandOutput[0];
+        outlet.solverLowBandOutput[0] = std::isfinite(lowBand) ? lowBand : 0.0;
+        const auto acceleration = (outlet.solverLowBandOutput[0]
+            - outlet.solverLowBandPrevious) * sampleRateHz;
+        outlet.solverLowBandPrevious = outlet.solverLowBandOutput[0];
+        return farField
+            + outlet.radiation.farFieldPressureForVolumeAcceleration(acceleration);
+    }
     bool mediaInitialised { false };
     /** Diagnostic pressure tap (setPressureTap). */
     std::size_t tapDuct { invalidEndpoint };
@@ -1161,6 +1227,7 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
         return false;
     impl_->sampleRateHz = sampleRateHz;
     impl_->maximumDelayScale = maximumDelayScale;
+    impl_->updateSolverLowBand();
     constexpr double minimumExhaustSoundSpeedMps = 289.8;
     for (auto& duct : impl_->ducts) {
         const auto maximumSamples = static_cast<std::size_t>(std::ceil(
@@ -1711,7 +1778,7 @@ AcousticExhaustNetwork::process(
             const auto path = std::min<std::size_t>(
                 outlet.pathIndex, result.size() - 1U);
             const auto observed = outlet.observer.process(
-                static_cast<float>(radiation.farFieldPressurePa));
+                static_cast<float>(impl_->outletFarField(outlet, radiation)));
             auto observedJet = StereoPressure {};
             if (impl_->jetNoiseEnabled) {
                 const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp)
@@ -1743,7 +1810,7 @@ AcousticExhaustNetwork::process(
         const auto path = std::min<std::size_t>(
             outlet.pathIndex, result.size() - 1U);
         const auto observed = outlet.observer.process(
-            static_cast<float>(radiation.farFieldPressurePa));
+            static_cast<float>(impl_->outletFarField(outlet, radiation)));
         auto observedJet = StereoPressure {};
         if (impl_->jetNoiseEnabled) {
             const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp)
@@ -1913,6 +1980,47 @@ void AcousticExhaustNetwork::setOutletPressureRelease(bool enabled) noexcept {
 void AcousticExhaustNetwork::setOutletConvectiveLoss(bool enabled) noexcept {
     if (!impl_) return;
     impl_->outletConvectiveLoss = enabled;
+}
+
+std::uint32_t AcousticExhaustNetwork::outletNodeId(std::size_t index) const noexcept {
+    return impl_ && index < impl_->outlets.size() ? impl_->outlets[index].nodeId : 0U;
+}
+
+std::uint32_t AcousticExhaustNetwork::outletPathIndex(std::size_t index) const noexcept {
+    return impl_ && index < impl_->outlets.size() ? impl_->outlets[index].pathIndex : 0U;
+}
+
+void AcousticExhaustNetwork::setOutletSolverLowBand(double crossoverHz) noexcept {
+    if (!impl_) return;
+    impl_->solverLowBandHz = std::isfinite(crossoverHz) && crossoverHz > 0.0
+        ? crossoverHz : 0.0;
+    impl_->updateSolverLowBand();
+    for (auto& outlet : impl_->outlets) outlet.solverLowBandPrimed = false;
+}
+
+double AcousticExhaustNetwork::outletSolverLowBandHz() const noexcept {
+    return impl_ ? impl_->solverLowBandHz : 0.0;
+}
+
+void AcousticExhaustNetwork::setOutletSolverVolumeFlow(
+    std::span<const float> volumeFlowM3PerS,
+    std::span<const std::uint32_t> nodeIds,
+    std::span<const std::uint8_t> pathIndices) noexcept {
+    if (!impl_) return;
+    const auto count = std::min({volumeFlowM3PerS.size(), nodeIds.size(),
+        pathIndices.size()});
+    for (auto& outlet : impl_->outlets) {
+        outlet.solverVolumeFlowValid = false;
+        for (std::size_t index = 0; index < count; ++index) {
+            if (nodeIds[index] != outlet.nodeId
+                || pathIndices[index] != outlet.pathIndex
+                || !std::isfinite(volumeFlowM3PerS[index]))
+                continue;
+            outlet.solverVolumeFlowM3PerS = volumeFlowM3PerS[index];
+            outlet.solverVolumeFlowValid = true;
+            break;
+        }
+    }
 }
 
 bool AcousticExhaustNetwork::outletJetNoiseEnabled() const noexcept {

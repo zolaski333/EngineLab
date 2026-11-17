@@ -6644,6 +6644,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ? static_cast<float>(1.0 / subDt) : 0.0F;
             pressureSample.cylinderCount = config_.cylinders.size();
             pressureSample.structural.cylinderCount = config_.cylinders.size();
+            if (exhaustNetworkCompleted) {
+                const auto outletFlows = physicalExhaustNetwork.outletSamples();
+                pressureSample.exhaustOutletCount = std::min(
+                    outletFlows.size(), CylinderPressureSample::maximumExhaustOutlets);
+                for (std::size_t outlet = 0;
+                     outlet < pressureSample.exhaustOutletCount; ++outlet) {
+                    pressureSample.exhaustOutletVolumeFlowM3PerS[outlet] =
+                        static_cast<float>(outletFlows[outlet].volumeFlowM3PerS);
+                    pressureSample.exhaustOutletNodeId[outlet] =
+                        outletFlows[outlet].outletNodeId;
+                    pressureSample.exhaustOutletPathIndex[outlet] =
+                        static_cast<std::uint8_t>(outletFlows[outlet].pathIndex);
+                }
+            }
             pressureSample.intakePathCount = std::min(
                 intakePlenumCount_, pressureSample.intakeThrottleConductanceAreaM2.size());
             for (std::size_t path = 0; path < pressureSample.intakePathCount; ++path) {

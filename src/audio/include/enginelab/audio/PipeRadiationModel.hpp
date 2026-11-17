@@ -55,6 +55,13 @@ public:
         return true;
     }
 
+    /** The far-field monopole pressure this model gives a mouth volume
+     * acceleration, m3/s2: rho dQ/dt / (4 pi r), with the far-field density
+     * process() uses. For a volume flow taken from elsewhere (the gas
+     * solver's mouth, AcousticExhaustNetwork::setOutletSolverLowBand). */
+    [[nodiscard]] double farFieldPressureForVolumeAcceleration(
+        double volumeAccelerationM3PerS2) const noexcept;
+
     /** Replace the Levine-Schwinger load by an ideal pressure release, R = -1
      * at every frequency: the mouth returns all the energy to the pipe and the
      * far field still follows the mouth volume acceleration. Not physical above

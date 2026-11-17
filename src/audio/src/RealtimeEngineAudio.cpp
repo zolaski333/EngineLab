@@ -176,6 +176,7 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
     handoff->network->setOutletFarFieldDensity(resolvedOutletFarFieldDensityKgPerM3());
     handoff->network->setOutletPressureRelease(outletPressureRelease_);
     handoff->network->setOutletConvectiveLoss(outletConvectiveLoss_);
+    handoff->network->setOutletSolverLowBand(outletSolverLowBandHz_);
     handoff->sampleRate = sampleRate;
     // A change the audio thread has not taken yet is replaced, and freed here.
     delete incomingExhaustNetwork_.exchange(handoff.release(), std::memory_order_acq_rel);
@@ -1428,6 +1429,10 @@ void RealtimeEngineAudio::renderSynthesis(
         std::array<float, maximumPaths> physicalBlowdownLeft {};
         std::array<float, maximumPaths> physicalBlowdownRight {};
         std::array<float, 32> cylinderExhaustPulse {};
+        // The gas solver's outlet mouth flows at this sample's time, for the
+        // far field's low band (setOutletSolverLowBand).
+        std::array<float, CylinderPressureSample::maximumExhaustOutlets> outletSolverFlow {};
+        std::size_t outletSolverFlowCount = 0;
         std::array<std::uint8_t, 32> cylinderExhaustPath {};
         std::array<float, maximumPaths> pathDensitySum {};
         std::array<float, maximumPaths> pathSoundSpeedSum {};
@@ -1596,6 +1601,23 @@ void RealtimeEngineAudio::renderSynthesis(
                 // overshoot when a substep cadence changes or a queue sample was
                 // deliberately rate-limited by the runtime.
                 const auto f = static_cast<float>(fraction);
+                if (outletSolverLowBandHz_ > 0.0) {
+                    outletSolverFlowCount = std::min(
+                        currentPressureSample_.exhaustOutletCount, outletSolverFlow.size());
+                    const auto nextMatches = hasNextPressureSample_
+                        && nextPressureSample_.exhaustOutletCount
+                            == currentPressureSample_.exhaustOutletCount;
+                    for (std::size_t outlet = 0; outlet < outletSolverFlowCount; ++outlet) {
+                        const auto current =
+                            currentPressureSample_.exhaustOutletVolumeFlowM3PerS[outlet];
+                        const auto next = nextMatches
+                            && nextPressureSample_.exhaustOutletNodeId[outlet]
+                                == currentPressureSample_.exhaustOutletNodeId[outlet]
+                            ? nextPressureSample_.exhaustOutletVolumeFlowM3PerS[outlet]
+                            : current;
+                        outletSolverFlow[outlet] = std::lerp(current, next, f);
+                    }
+                }
                 for (std::size_t path = 0; path < maximumPaths; ++path) {
                     const auto currentThrottle = path
                             < currentPressureSample_.intakePathCount
@@ -2125,6 +2147,18 @@ void RealtimeEngineAudio::renderSynthesis(
                     && audioTimeSeconds_ - voice.lastUpdateTimeSeconds
                         > voice.holdSeconds + 0.35)
                     voice = {};
+            }
+            if (outletSolverLowBandHz_ > 0.0) {
+                const auto flows = std::span<const float>(
+                    outletSolverFlow.data(), outletSolverFlowCount);
+                const auto nodes = std::span<const std::uint32_t>(
+                    currentPressureSample_.exhaustOutletNodeId.data(), outletSolverFlowCount);
+                const auto paths = std::span<const std::uint8_t>(
+                    currentPressureSample_.exhaustOutletPathIndex.data(), outletSolverFlowCount);
+                acousticExhaustNetwork_->setOutletSolverVolumeFlow(flows, nodes, paths);
+                if (swappingExhaustNetwork_ != nullptr)
+                    swappingExhaustNetwork_->network->setOutletSolverVolumeFlow(
+                        flows, nodes, paths);
             }
             auto observerPressure = acousticExhaustNetwork_->process(
                 std::span<const float>(cylinderExhaustPulse.data(), activeCylinderCount),

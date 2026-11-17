@@ -82,6 +82,10 @@ struct OfflineAudioExportRequest final {
      *  (RealtimeEngineAudio::setOutletConvectiveLoss); absent keeps the
      *  renderer's default. */
     std::optional<bool> outletConvectiveLoss;
+    /** The far field's low band from the gas solver's mouth flow below this
+     *  crossover, Hz, 0 off (RealtimeEngineAudio::setOutletSolverLowBand);
+     *  absent keeps the renderer's default. */
+    std::optional<double> outletSolverLowBandHz;
 };
 
 /** Speed actually reached inside one scenario stage.

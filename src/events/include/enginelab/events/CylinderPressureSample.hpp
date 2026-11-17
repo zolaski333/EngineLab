@@ -71,6 +71,16 @@ struct CylinderPressureSample final {
     std::array<std::uint8_t, 32> exhaustPathIndex {};
     /** 1 only when all SI thermoacoustic boundary fields above are valid. */
     std::array<std::uint8_t, 32> thermoacousticBoundaryValid {};
+    /** Each exhaust outlet's volume flow out of the gas solver's mouth over
+     *  its latest coupling interval, m3/s, positive leaving, with the graph
+     *  node and path that name it in the audio network. It is the solver's
+     *  own radiated monopole: AcousticExhaustNetwork::setOutletSolverLowBand
+     *  takes the low band of the far field from it. */
+    static constexpr std::size_t maximumExhaustOutlets = 16;
+    std::array<float, maximumExhaustOutlets> exhaustOutletVolumeFlowM3PerS {};
+    std::array<std::uint32_t, maximumExhaustOutlets> exhaustOutletNodeId {};
+    std::array<std::uint8_t, maximumExhaustOutlets> exhaustOutletPathIndex {};
+    std::size_t exhaustOutletCount { 0 };
     /** Structure-borne excitation sampled on the same mechanical substep. */
     StructuralExcitationSample structural;
     std::size_t cylinderCount { 0 };

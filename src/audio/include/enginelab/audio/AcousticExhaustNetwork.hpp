@@ -126,6 +126,22 @@ public:
      * refute (journal 2026-11-16). Production leaves it off: the pressure
      * reflection is Levine-Schwinger's. */
     void setOutletConvectiveLoss(bool enabled) noexcept;
+    /** Below `crossoverHz` each outlet's far field follows the gas solver's
+     * own mouth volume flow (setOutletSolverVolumeFlow) instead of the
+     * network's: the radiated Q becomes Q_network + LP(Q_solver - Q_network),
+     * a second-order Butterworth low-pass, so the two bands are complementary
+     * and the sound is unchanged wherever the two flows agree. The linear
+     * network fed at the port misses the finite-amplitude low band the solver
+     * carries (K01, journal 2026-11-17). Zero (the default) is off; only the
+     * far field changes, never the waves in the pipes. */
+    void setOutletSolverLowBand(double crossoverHz) noexcept;
+    [[nodiscard]] double outletSolverLowBandHz() const noexcept;
+    /** The gas solver's outlet volume flows for this sample, m3/s positive
+     * leaving, named by graph node and path; an outlet the list does not name
+     * keeps its own far field. Audio thread, before process(). */
+    void setOutletSolverVolumeFlow(std::span<const float> volumeFlowM3PerS,
+                                   std::span<const std::uint32_t> nodeIds,
+                                   std::span<const std::uint8_t> pathIndices) noexcept;
     /** Every outlet's microphones glide to `left` and `right`
      * (FreeFieldObserver::moveMicrophones). Audio thread. */
     void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,
@@ -157,6 +173,10 @@ public:
     [[nodiscard]] std::size_t ductCount() const noexcept;
     [[nodiscard]] std::size_t junctionCount() const noexcept;
     [[nodiscard]] std::size_t outletCount() const noexcept;
+    /** Graph node and path of outlet `index` (setOutletSolverVolumeFlow's
+     *  names); 0 past the end. */
+    [[nodiscard]] std::uint32_t outletNodeId(std::size_t index) const noexcept;
+    [[nodiscard]] std::uint32_t outletPathIndex(std::size_t index) const noexcept;
 
 private:
     struct Impl;

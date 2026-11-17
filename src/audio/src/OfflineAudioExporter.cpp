@@ -727,6 +727,8 @@ OfflineAudioExportResult exportOfflineAudio(
 
         if (request.outletConvectiveLoss)
             renderer->setOutletConvectiveLoss(*request.outletConvectiveLoss);
+        if (request.outletSolverLowBandHz)
+            renderer->setOutletSolverLowBand(*request.outletSolverLowBandHz);
         renderer->prepare(
             static_cast<double>(request.sampleRateHz),
             samplesPerStep);

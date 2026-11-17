@@ -293,6 +293,14 @@ public:
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletConvectiveLoss(enabled);
     }
+    /** The low band of every outlet's far field from the gas solver's mouth
+     * flow below `crossoverHz`, 0 off (AcousticExhaustNetwork::
+     * setOutletSolverLowBand). Same threading rule. */
+    void setOutletSolverLowBand(double crossoverHz) noexcept {
+        outletSolverLowBandHz_ = crossoverHz;
+        if (acousticExhaustNetwork_)
+            acousticExhaustNetwork_->setOutletSolverLowBand(crossoverHz);
+    }
     /** Diagnostic: every sample the compiled exhaust network runs, append its
      * pressure at `axialFraction` of graph node `nodeId` to a recording of
      * at most `capacitySamples` (AcousticExhaustNetwork::setPressureTap).
@@ -679,6 +687,7 @@ private:
     }
     bool outletPressureRelease_ { false };
     bool outletConvectiveLoss_ { false };
+    double outletSolverLowBandHz_ { 0.0 };
     /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
     std::atomic<std::uint64_t> microphoneSequence_ { 0 };
     std::array<std::atomic<double>, 6> publishedMicrophones_ {};

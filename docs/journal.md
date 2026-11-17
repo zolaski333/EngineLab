@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — K01: the port split fails at high amplitude; the solver's mouth flow fills the low band
+
+- Render dumps of the port source (TS125 short pipe, 2.3 kW, 25 mm): at 67 Hz the linear split of the solver's port state gives an INCOMING wave 1.9x the outgoing (1.6x at 133 Hz), which a passive pipe cannot return. The port velocity is ~90 m/s rms: the port pressure is not a small-amplitude field there and 0.5(p +- Zc U) misplaces it; the network's port flow comes out 2.5 dB under the solver's at 67 Hz.
+- Refuted, one factor: driving the network by the solver's port flow alone (rigid port): 63/125/200 Hz -6.7/-11.0/-15.4 dB against Jones & Brown (default -9.2/-12.6/-11.1). The probe's port flow is ~2.6 dB above the render's own at 67 Hz (absorber against governed hold; m/rho against m'/rho).
+- Kept, off by default: `AcousticExhaustNetwork::setOutletSolverLowBand(Hz)` (`OfflineAudioExporter --outlet-low-band`): each outlet's far field below a 2nd-order Butterworth crossover follows the solver's own mouth volume flow (Q_net + LP(Q_solver - Q_net), complementary; published in `CylinderPressureSample`). TS125 at 200 Hz: -4.7/-6.7/-7.2 dB, overall -2.1 -> +0.7 dB; 400 Hz: -5.1/-6.6/-6.8, 250-630 Hz +2.8 (over). Off is bit-identical (render cmp); `EngineLab.OutletLowBand` checks it.
+- Catalogue showcase at 200 Hz against off (`essai-grave/`): exhaust stem +1.5 to +3.4 dB at 125-250 Hz, +1 dB at 500, < 0.5 dB above; 31.5 Hz -0.2 to -5.3 (RD350 -14 at 16-31 Hz). For the owner's A/B. Not measured: a four-stroke reference recording, real-time cost (one biquad per outlet), the chamber case.
+
 ## 2026-11-17 — PressureProbeHarness's missing outlet table: the outlets were sampled at 240 Hz
 
 - The simulator publishes the outlets' state on an exhaust coupling only when a reaction source exists, otherwise at its 240 Hz refresh. TS125 at 2.3 kW after `--settle 60`: no reaction left, 480 samples on 3.6 frames a cycle, 0 of 360 bins after the coupling-clock fill rule, so no table. At 4 s the pipe still reacted: 283 of 360 bins.

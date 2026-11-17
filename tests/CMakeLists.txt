@@ -427,6 +427,16 @@ if(MSVC)
     target_link_options(EngineLabExhaustValveTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabOutletLowBandTests OutletLowBandTests.cpp)
+target_link_libraries(EngineLabOutletLowBandTests PRIVATE
+    EngineLab::Audio EngineLab::Catalog EngineLab::Exhaust EngineLab::GasDynamics)
+target_compile_definitions(EngineLabOutletLowBandTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabOutletLowBandTests)
+add_test(NAME EngineLab.OutletLowBand
+    COMMAND EngineLabOutletLowBandTests)
+set_tests_properties(EngineLab.OutletLowBand PROPERTIES TIMEOUT 300)
+
 add_executable(EngineLabAntiLagTests AntiLagTests.cpp)
 target_link_libraries(EngineLabAntiLagTests PRIVATE
     EngineLab::Catalog EngineLab::Calibration EngineLab::Simulation EngineLab::Ecu

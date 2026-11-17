@@ -46,6 +46,7 @@ void printUsage() {
         << "  [--exhaust-cell-mm <mm>]  (a measurement mesh, not the application's)\n"
         << "  [--exhaust-tap <component>:<fraction>]  (the audio network's own pressure there, exhaust_tap_pa.f32)\n"
         << "  [--outlet-convective-loss on|off]  (diagnostic: the outlets' (1-M)/(1+M) reflection factor; absent keeps the default)\n"
+        << "  [--outlet-low-band off|<Hz>]  (the outlets' far field below <Hz> from the gas solver's mouth flow; absent keeps the default)\n"
         << "  [--loop-pack [--loop-step <rpm>] [--loop-seconds <s>] [--ogg]]\n"
         << "      seamless loops for a game instead of the showcase (48 kHz)\n"
         << "  --list-engines\n";
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
     auto format = enginelab::OfflineWaveFormat::pcm24;
     bool writeStems = true;
     std::optional<bool> outletConvectiveLoss;
+    std::optional<double> outletSolverLowBandHz;
     bool overwrite = false;
     bool listEngines = false;
     bool loopPack = false;
@@ -128,6 +130,17 @@ int main(int argc, char** argv) {
                 return 1;
             }
             outletConvectiveLoss = text == "on";
+            continue;
+        }
+        if (option == "--outlet-low-band") {
+            const auto* value = requireValue();
+            const std::string text = value != nullptr ? value : "";
+            double hz {};
+            if (text != "off" && (!parseDouble(text.c_str(), hz) || !(hz > 0.0) || hz > 5'000.0)) {
+                std::cerr << "--outlet-low-band takes off or a crossover in Hz, (0, 5000].\n";
+                return 1;
+            }
+            outletSolverLowBandHz = text == "off" ? 0.0 : hz;
             continue;
         }
         if (option == "--overwrite") {
@@ -383,6 +396,7 @@ int main(int argc, char** argv) {
     if (exhaustCellMm) request.exhaustCellLengthM = *exhaustCellMm * 1.0e-3;
     request.exhaustPressureTap = exhaustTap;
     request.outletConvectiveLoss = outletConvectiveLoss;
+    request.outletSolverLowBandHz = outletSolverLowBandHz;
 
     std::cout << "Engine: " << request.engine.name << '\n'
               << "Scenario: " << request.scenario.name << '\n'
