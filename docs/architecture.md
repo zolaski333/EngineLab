@@ -590,10 +590,18 @@ authored. Joints are not clashes: near an end that plugs into a port, a box
 or another duct, within two radii. Over the 16 catalogue engines, before the
 router: 107 clashes, 51 self-clashes, 0 through the engine, 259 tight bends,
 6 stretched; with it: 7, 4, 0, 48, 7; over the 18 of 2026-11-14: 4, 4, 0,
-46, 6. `EngineLab.EngineModel3D` keeps every count from growing. A pipe
-that must span more than its length is drawn longer: the four 140 mm pipes
-of the LS3's X and the two end primaries of the 2JZ, whose 430 mm cannot
-reach a collector they must enter along its axis. `EngineLabSceneExport` writes the scene and the
+46, 6; since 2026-11-17 (a plenum's face as far out as a runner's bend
+allows, a merge balanced between its routed inputs): 4, 4, 0, 21, 6.
+`EngineLab.EngineModel3D` keeps every count from growing. A pipe that must
+span more than its length is drawn longer, and the inspector shows its drawn
+length beside the authored one: the two 140 mm pipes of the LS3's X (3.4
+times), the two 1,070 mm pipes after it (6 %) and the two end primaries of
+the 2JZ, whose 430 mm cannot reach a collector they
+must enter along its axis. What remains is authored geometry the layout
+cannot fit without moving parts: the 2JZ's middle primaries coil to spend
+430 mm over 230 (its 4 clashes), each 4-2-1's later secondary spends 256 mm
+over about 130 between Y pieces 100 mm apart (2 self-clashes), and the
+LS3's long primaries coil beside the head (2). `EngineLabSceneExport` writes the scene and the
 issues as JSON, to look at them outside the app.
 
 **Turbocharger.** The gas solver's turbine is a restriction face on the

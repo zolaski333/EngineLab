@@ -127,6 +127,8 @@ factor is shown in the diagnostics.
   configuration — the component graph with its real lengths, diameters and
   volumes (4-2-1, X-pipe, twin mufflers…), runners, plenum, throttle bores,
   airbox and inlet duct — and an *Exhaust* view frames the whole system. A
+  pipe too short to reach between the parts it joins is drawn longer, and
+  its inspector shows the drawn length beside the simulated one. A
   2-D cutaway remains for machines without OpenGL 3.2.
 - **A catalogue of 18 engines** — naturally aspirated and turbocharged I4s, a
   V8, a flat-six, a supercharged V12, motorcycle twins and triples, an inline

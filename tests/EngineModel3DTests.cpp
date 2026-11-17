@@ -1846,7 +1846,13 @@ int main() {
     // chambers (2JZ +2 clashes, +1 bend); the I5's and the TDI's collectors
     // turn to face their primaries (I5 2, 4, 1 -> 0; TDI 1 clash, 1 bend
     // -> 0); the RD350's chambers part by their bellies' width (6 -> 0).
-    const std::array<std::size_t, 5> measured { 4, 4, 0, 46, 6 };
+    // 2026-11-17 (audit R01-R03): 4, 4, 0, 21, 6. A plenum's face stands out
+    // as far as one arc of three runner diameters leaves room for (the CP2's,
+    // CP3's, CP4's and LS3's runners, 21 -> 0); a merge sits at its routed
+    // inputs' mean target within the earliest's reach (the 4-2-1s' later
+    // secondary no longer coils through the other: Hayabusa 21 -> 4.5 mm,
+    // CP4 37 -> 14 mm deep, 4 bends fewer).
+    const std::array<std::size_t, 5> measured { 4, 4, 0, 21, 6 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

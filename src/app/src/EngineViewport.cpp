@@ -2857,7 +2857,15 @@ void EngineViewport::updateInspector() {
         }
         subtitle = (exhaust ? "Exhaust path " : "Intake path ") + juce::String(duct.pathId);
         if (duct.kind == render::DuctKind::intakeRunner) subtitle = cylinderName;
-        if (duct.authoredLengthMm > 1.0F) add("Length", millimetres(model_.units, duct.authoredLengthMm));
+        if (duct.authoredLengthMm > 1.0F) {
+            add("Length", millimetres(model_.units, duct.authoredLengthMm));
+            // A pipe too short to reach its ends between the placed parts is
+            // drawn longer than the solver's: the inspector says by how much
+            // (audit R02).
+            const auto drawn = render::polylineLength(duct.centreline);
+            if (drawn > 1.03F * duct.authoredLengthMm)
+                add("Drawn", millimetres(model_.units, drawn) + " (stretched to reach)");
+        }
         if (exhaust) {
             for (const auto& path : config.exhaustPaths) {
                 if (path.id != duct.pathId) continue;

@@ -598,6 +598,13 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         // Pipes routed in from junctions further up: close enough for the
         // earliest, clear of the latest.
         float routedEarliest = std::numeric_limits<float>::max(), routedLatest = z;
+        // Where each would sit at three quarters of its length, and the
+        // furthest it reaches (audit R01/R03: a 4-2-1's two secondaries
+        // leave Y pieces 100 mm apart, and the earlier rule set the merge
+        // three quarters along the earlier one, so the later one coiled
+        // through it).
+        float routedTargets = 0.0F, routedFurthest = std::numeric_limits<float>::max();
+        int routedCount = 0;
         Vec3 laneSum {};
         int lanes = 0;
         bool spreadSet = false;
@@ -615,6 +622,9 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
                 const auto from = exitZ(nodes[upstream.ins.front()]);
                 routedEarliest = std::min(routedEarliest, from + 0.75F * upstream.drawLength);
                 routedLatest = std::max(routedLatest, from + 0.25F * upstream.drawLength);
+                routedTargets += from + 0.75F * upstream.drawLength;
+                routedFurthest = std::min(routedFurthest, from + 0.9F * upstream.drawLength);
+                ++routedCount;
                 candidate = -std::numeric_limits<float>::max();
                 laneSum += upstream.lane;
             } else {
@@ -640,7 +650,15 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
                 if (!spreadSet) node.spread = base.spread;
             }
         }
-        if (routedLatest > -std::numeric_limits<float>::max()) z = std::max(z, std::max(routedEarliest, routedLatest));
+        if (routedLatest > -std::numeric_limits<float>::max()) {
+            // Their mean target, clear of the latest and within the reach of
+            // the earliest.
+            const auto target = routedCount > 1
+                ? std::clamp(routedTargets / static_cast<float>(routedCount), routedLatest,
+                             std::max(routedLatest, routedFurthest))
+                : std::max(routedEarliest, routedLatest);
+            z = std::max(z, target);
+        }
         if (lanes == 0) z = 0.0F;
         node.lane = lanes > 0 ? laneSum * (1.0F / static_cast<float>(lanes)) : Vec3 {};
         node.zIn = z;
@@ -1735,8 +1753,18 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             // 8 % long once its heads stood off by their real combustion
             // chamber.
             const auto sideways = 1.1F * residual;
-            const auto reach = std::sqrt(std::max(0.0625F * shortest * shortest,
-                                                  0.81F * shortest * shortest - sideways * sideways));
+            const auto straightReach = std::sqrt(std::max(0.0625F * shortest * shortest,
+                                                          0.81F * shortest * shortest - sideways * sideways));
+            // A short, wide runner cannot spend a tenth of its length in a
+            // bend: the face stands out at least as far as one arc of two
+            // diameters' radius leaves room for, past the straight leads
+            // (audit R03: a CP2's 120 mm by 35 mm runners bent at 0.6 of a
+            // diameter).
+            const auto bendRadius = 3.0F * widest;
+            const auto curved = std::max(0.0F, shortest - 1.8F * widest);
+            const auto halfAngle = std::min(0.5F * pi, curved / (2.0F * bendRadius));
+            const auto chord = std::min(0.97F * shortest, 1.8F * widest + 2.0F * bendRadius * std::sin(halfAngle));
+            const auto reach = std::max(straightReach, std::sqrt(std::max(0.0F, chord * chord - sideways * sideways)));
             float zMin = std::numeric_limits<float>::max(), zMax = -zMin, latMin = zMin, latMax = -zMin;
             for (std::size_t i = 0; i < runners.size(); ++i) {
                 const auto offset = runners[i].port->position - centre;
