@@ -46,7 +46,7 @@ void printUsage() {
         << "  [--exhaust-cell-mm <mm>]  (a measurement mesh, not the application's)\n"
         << "  [--exhaust-tap <component>:<fraction>]  (the audio network's own pressure there, exhaust_tap_pa.f32)\n"
         << "  [--outlet-convective-loss on|off]  (diagnostic: the outlets' (1-M)/(1+M) reflection factor; absent keeps the default)\n"
-        << "  [--outlet-low-band off|<Hz>]  (the outlets' far field below <Hz> from the gas solver's mouth flow; absent keeps the default)\n"
+        << "  [--outlet-low-band off|<Hz>]  (the outlets' far field below <Hz> from the gas solver's mouth flow; default 200 Hz)\n"
         << "  [--loop-pack [--loop-step <rpm>] [--loop-seconds <s>] [--ogg]]\n"
         << "      seamless loops for a game instead of the showcase (48 kHz)\n"
         << "  --list-engines\n";

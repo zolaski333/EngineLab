@@ -78,7 +78,7 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [V06](#v06) | P2 | None of the ten field-recording references documents engine speed | owner decision |
 | [V07](#v07) | P2 | Designed-engine manufacturer checks never fail CI for a performance miss | owner decision |
 | [V08](#v08) | P3 | Documentation describes obsolete validation, format and live-edit behavior | fixed ec9db53 |
-| [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | fix built 2026-11-17 (outlet low band, off by default), waits on the owner's A/B |
+| [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | fixed 2026-11-17: outlet low band at 200 Hz, on by default after the owner's A/B |
 | [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | blocked 2026-11-17: no measured EGT or port-exit temperature of a catalogue engine to fix against |
 | [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | blocked 2026-11-17: (a)/(c) born on the gas side (estimated lifts and Cd); (b) the solver's own monopole is low |
 | [PG-01](#pg-01) | P1 | Exhaust boundary history is shorter than its fixed reconstruction delay | fixed a97ccdf |
@@ -797,7 +797,7 @@ The latest TS125 record (`docs/journal.md:15`) compares three exhausts at 4,000 
 
 **Deeper, 2026-11-17:** the network's own amplitude-dependent elements are not it (edge loss off, steepening off: <= 0.3 dB; mean taken on the volume flow: +0.5-1 dB). At 67 Hz the solver's port-to-outlet volume-flow ratio rises with load (-7.5 / -2.5 / +0.2 dB at 0.39 / 1.16 / 2.32 kW) while the network's stays near -6.4 dB: the high-load low band is generated in the solver's pipe by a finite-amplitude effect a linear zero-mean network fed at the port cannot carry.
 
-**Fix built, 2026-11-17** (journal, same date): the linear port split misplaces a ~90 m/s rms port field (incoming wave 1.9x the outgoing at 67 Hz). `AcousticExhaustNetwork::setOutletSolverLowBand` takes each outlet's far field below a 200 Hz crossover from the solver's own mouth volume flow: TS125 63/125/200 Hz -9.2/-12.6/-11.1 -> -4.7/-6.7/-7.2 dB. Off by default (bit-identical); the catalogue pairs are in `essai-grave/` for the owner's A/B.
+**Fix built, 2026-11-17** (journal, same date): the linear port split misplaces a ~90 m/s rms port field (incoming wave 1.9x the outgoing at 67 Hz). `AcousticExhaustNetwork::setOutletSolverLowBand` takes each outlet's far field below a 200 Hz crossover from the solver's own mouth volume flow: TS125 63/125/200 Hz -9.2/-12.6/-11.1 -> -4.7/-6.7/-7.2 dB. Kept by the owner after the A/B of the catalogue pairs (2026-11-17): on by default at 200 Hz.
 
 <a id="k02"></a>
 

@@ -91,7 +91,10 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
         auto compiled = std::make_unique<AcousticExhaustNetwork>(
             *exhaustGraph,
             std::span<const std::uint32_t>(cylinderIds.data(), count));
-        if (compiled->valid()) acousticExhaustNetwork_ = std::move(compiled);
+        if (compiled->valid()) {
+            compiled->setOutletSolverLowBand(outletSolverLowBandHz_);
+            acousticExhaustNetwork_ = std::move(compiled);
+        }
         authoredMicrophones_ = {
             effectiveMicrophonePosition(exhaustGraph->acousticObserver(), false),
             effectiveMicrophonePosition(exhaustGraph->acousticObserver(), true) };

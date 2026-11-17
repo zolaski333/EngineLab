@@ -7,6 +7,15 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Changed
+
+- **A fuller exhaust low end.** Below 200 Hz the sound at each tailpipe now
+  follows the gas simulation's own flow out of the pipe, which the acoustic
+  network under-rendered on hard-working engines (a two-stroke expansion
+  chamber measured 5-6 dB closer to its published recording at 63-200 Hz).
+  The exhaust gains about 1.5-3.5 dB at 125-250 Hz; the deepest sub-bass
+  (under 31 Hz) is slightly lower. Chosen by listening.
+
 ## [0.10.0] — 2026-11-17
 
 ### Added

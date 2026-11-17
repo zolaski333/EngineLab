@@ -5,6 +5,10 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — K01's outlet low band kept by the owner: on by default at 200 Hz
+
+- Owner A/B of the six catalogue pairs (`essai-grave/`, showcase, 200 Hz against off): kept. `RealtimeEngineAudio` now starts at 200 Hz, and the first compiled network takes it too (before, only a network swapped in later did). `--outlet-low-band off` renders the network alone.
+
 ## 2026-11-17 — K03 (b) against K01's outlet low band: not the same gap
 
 - ACME case (b) (W&P Fig 6.11b, 3,140 rpm, 25 mm, float32 stems) rendered with `--outlet-low-band 200` against off: below 250 Hz -4.6 -> -4.0 dB against the book, 250-500 Hz +2.4 -> +4.2 (already over), 500-1,000 -1.6 -> -0.9.

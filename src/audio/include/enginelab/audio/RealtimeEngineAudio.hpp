@@ -687,7 +687,8 @@ private:
     }
     bool outletPressureRelease_ { false };
     bool outletConvectiveLoss_ { false };
-    double outletSolverLowBandHz_ { 0.0 };
+    /** 200 Hz: kept by the owner after an A/B (2026-11-17, K01). */
+    double outletSolverLowBandHz_ { 200.0 };
     /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
     std::atomic<std::uint64_t> microphoneSequence_ { 0 };
     std::array<std::atomic<double>, 6> publishedMicrophones_ {};

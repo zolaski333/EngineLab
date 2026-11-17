@@ -212,6 +212,18 @@ two. The band shape changes only through the balance with the outlet jet
 noise, which keeps its own jet density (journal). The monitor full scale rose
 from 134 to 140 dB SPL with it (§ levels below).
 
+Below 200 Hz (`setOutletSolverLowBand`, on by default since 2026-11-17, K01)
+the far field's volume acceleration is the network's own plus the low band of
+the gas solver's mouth flow minus it: Q_net + LP(Q_solver - Q_net), a
+second-order Butterworth, so the two bands are complementary. The reason: the
+port drive splits the solver's port state linearly, 0.5(p +- Zc U), and at
+~90 m/s rms (a hard-working engine) that misplaces the field, so the network's
+low band falls short of the solver's (TS125 -9 to -13 dB against Jones & Brown
+at 63-200 Hz, -5 to -7 with it). The solver's flow is published per outlet in
+`CylinderPressureSample` and interpolated per sample; with no solver flow (an
+old producer) the network is unchanged. `--outlet-low-band off` measures the
+network alone.
+
 `setOutletPressureRelease` (also off by default; `--pressure-release-ab`)
 replaces the load by an ideal pressure release, R = -1 at every frequency.
 Measured 2026-10-13: level within 0.4 dB, but up to +10 dB in the top band,
