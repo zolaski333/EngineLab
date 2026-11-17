@@ -79,7 +79,7 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [V07](#v07) | P2 | Designed-engine manufacturer checks never fail CI for a performance miss | owner decision |
 | [V08](#v08) | P3 | Documentation describes obsolete validation, format and live-edit behavior | fixed ec9db53 |
 | [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | analysed 2026-11-17: the solver's pipe gains low band with amplitude, the linear network does not |
-| [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | owner decision |
+| [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | analysed 2026-11-17: a Caton-sized port stage cools EGT 33-115 C, torque < 1 %; waits on a measured EGT |
 | [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | analysed 2026-11-17: (a) born upstream of the audio network |
 | [PG-01](#pg-01) | P1 | Exhaust boundary history is shorter than its fixed reconstruction delay | fixed a97ccdf |
 | [PG-02](#pg-02) | P2 | Wet nitrous fuel is omitted from fuel consumption | fixed c3de893 |
@@ -806,6 +806,8 @@ The latest TS125 record (`docs/journal.md:15`) compares three exhausts at 4,000 
 `docs/journal.md:67` records that the exhaust port uses the same fully developed pipe correlation and steel wall as its primary. The production four-stroke mesh is 360 mm per cell while the published port case is 114 mm long. The hand comparison against Caton–Heywood gives about one fifth of the measured heat loss at mean flow, nearer half with pulsation; it explicitly states this was not measured end-to-end in the simulator because that port region cannot be isolated.
 
 **Impact:** exhaust temperature, sound speed and turbine input lack a separately validated port heat-loss stage. The quoted heat-loss ratios are the journal's estimate, not a new measured error of the complete engine.
+
+**Analysis 2026-11-17** (journal, same date): a temporary stage on each port's first cell (k x Gnielinski over 114 mm, wall at 373 K; k = 2 Caton's fit, k = 5 the mean-flow estimate) on the K20: EGT -33 to -51 C (k = 2) and -71 to -115 C (k = 5), primaries' sound speed -2.1 / -4.9 % at 8,000 rpm, torque within 0.15 % below 7,000 rpm and +0.6 / +0.9 % above. Not kept: the catalogue's EGT is already low and its makers' points were fitted under the present port; the stage waits on a measured EGT of a catalogue engine and an owner A/B.
 
 <a id="k03"></a>
 

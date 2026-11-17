@@ -5,7 +5,11 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
-## 2026-11-17 — K01 at small amplitude: no network defect
+## 2026-11-17 — K02: what a cooled-head port stage would move (measured, not kept)
+
+- Temporary switch, one factor: on the first cell of each cylinder's exhaust duct, an extra loss k x the cell's own Gnielinski coefficient over 114 mm of wall (Caton & Heywood's port) held at 373 K (a coolant-held head). k = 2 is Caton's 2.2 fit over pipe correlations; k = 5 the mean-flow hand estimate of 2026-11-15. Removed; the default sweep is bit-identical (CSV and pipe temperatures).
+- `DynoSweepHarness --filter K20 --step 1000`, 2,000-8,000 rpm: `egt_c` 435-707 C -> 402-656 (k = 2), 364-592 (k = 5); primaries' mean gas 632-764 -> 590-721 / 537-665 C, so their sound speed -2.1 % / -4.9 % at 8,000 rpm (tuned resonances move down by as much). Torque within 0.15 % below 7,000 rpm, +0.6 / +0.9 % at 7,000-8,000; `held_rpm_stddev` unchanged up to 6,000, 1.28-1.30 -> 1.66-1.77 at k = 5 above.
+- Not kept: the catalogue's EGT is already low (2026-10-30, still 384-707 C) and its makers' points were refitted under the present port; a cooled port alone would widen that gap. Cooling the head is right in kind, but it waits on a measured EGT (or port-exit temperature) of a catalogue engine, then on an owner A/B (sound speed). Not measured: real-time cost, idles, turbo engines.
 
 - The network alone (`AcousticTransferProbe`, TS125 short pipe, uniform 0.5 kg/m3 at 500 m/s, impulse at the port) against an open pipe's plane-wave transfer (Levine-Schwinger 0.61a, ambient far field at 5 m): -79.6/-78.8/-78.1/-77.1/-75.8 dB at 33/67/133/200/267 Hz for -78.7/-78.5/-78.0/-77.1/-75.7. Linear and right within 0.3 dB.
 - The "-6.4 dB port-to-outlet" of the entry below compared the render with the solver's sampled port flow, which the network does not receive as such (its orifice port sits between): a comparison artefact, not a loss.
