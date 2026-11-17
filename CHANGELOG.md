@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-17
+
 ### Added
 
 - **A turbocharger's top speed line.** Past it (1.3 times the design speed
