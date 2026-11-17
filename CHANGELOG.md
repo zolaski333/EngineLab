@@ -274,7 +274,7 @@ file formats, always with an in-memory migration).
   kept, however far from a real fuel), and the top speed line holds the
   shaft.
 
-The audit of 2026-11-16 (`docs/audit.md`, lots 0-6):
+The audit of 2026-11-16 (`docs/audit.md`, lots 0-8):
 
 - **Crashes**: a deeply nested expression in an engine script, ECU tables
   in a YAML alias loop, a click on a gearbox's last ratio after the gear
@@ -321,6 +321,31 @@ The audit of 2026-11-16 (`docs/audit.md`, lots 0-6):
   some bands, the overall level within half a decibel). A closing
   valve and the exhaust boundary's history were also corrected, measured
   at no more than a fraction of a decibel on the catalogue.
+- **Keyboard**: Ctrl+M opens the More menu and Ctrl+P the engine picker;
+  the More menu lists every tool window (Exhaust designer, Fuel,
+  Equipment, Pass-by, Vehicle, ECU tuner, Audio workshop, the datalog, the
+  A/B switch). In the tool windows Tab reaches every button and choice,
+  with a visible focus ring, and the arrow keys move a choice. A key
+  binding that would also fire with Shift, or a save chord, is refused
+  when the key map is read; the dyno-statistics key opens the Dyno tab.
+- **Layouts at the smallest window**: the top bar hides its least-used
+  buttons instead of drawing them on top of one another; the readouts
+  shrink their figures instead of cutting them, and drop the coolant and
+  exhaust-gas cells under 100 px; the ECU tuner's anti-lag page and maps
+  stay above their buttons; the Pass-by window keeps its microphone level;
+  a VTEC engine's telemetry tab makes room for its row; the small section
+  headings are easier to read.
+- **3-D view**: the paused stroboscope holds the turbo and gearbox shafts;
+  a scalar exhaust's mid pipe shows its own gas, not the first primary's;
+  a 0.1 gear is drawn as 0.1; an inspector with two choices no longer hides
+  its note. Intake runners no longer bend tighter than a diameter (the
+  plenum stands where they have room), a 4-2-1's secondaries no longer
+  coil through each other as deeply, and a pipe drawn longer than the
+  simulated one says so in its inspector (6 catalogue pipes, where the
+  authored length cannot reach between the parts).
+- **Release archive**: it carries the licence texts of nlohmann/json,
+  yaml-cpp and JUCE, and its command-line tools read the catalogue shipped
+  beside them instead of the build machine's.
 
 ## [0.9.1] — 2026-11-10
 

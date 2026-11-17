@@ -60,16 +60,16 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [DR-09](#dr-09) | P2 | Starting two logs or pass-by recordings within the same second reuses the same output file | fixed 8e26a01 |
 | [DR-10](#dr-10) | P3 | Windows reserved device names pass saved-engine name validation | fixed b144b8a |
 | [UA-01](#ua-01) | P1 | Audio Workshop exports discard the running engine's ECU tuning | fixed 0d46f4e |
-| [UA-02](#ua-02) | P2 | Anti-lag settings overlap the toolbar and leave the tuner at its allowed minimum size | open |
-| [UA-03](#ua-03) | P2 | Distinct accepted Shift bindings can trigger the same event | open |
-| [UA-04](#ua-04) | P2 | The key-binding editor accepts Ctrl+S for an action that can never receive it | open |
+| [UA-02](#ua-02) | P2 | Anti-lag settings overlap the toolbar and leave the tuner at its allowed minimum size | fixed 9fe99c9 |
+| [UA-03](#ua-03) | P2 | Distinct accepted Shift bindings can trigger the same event | fixed 9fe99c9 |
+| [UA-04](#ua-04) | P2 | The key-binding editor accepts Ctrl+S for an action that can never receive it | fixed 9fe99c9 |
 | [UA-05](#ua-05) | P2 | A failed offline overwrite can already have destroyed the old render | fixed ea253b4 |
 | [UA-06](#ua-06) | P2 | A diagnostic export overwrites an existing tap despite overwrite being disabled | fixed ea253b4 |
-| [UA-07](#ua-07) | P2 | Pointer-only controls block ordinary keyboard access to several features | open |
+| [UA-07](#ua-07) | P2 | Pointer-only controls block ordinary keyboard access to several features | fixed 9fe99c9 |
 | [UA-08](#ua-08) | P1 | The A/B audio measurement harness aborts on its first engine | fixed 61095e2 |
-| [R01](#r01) | P2 | Catalogue pipes still intersect other pipes or themselves | open |
-| [R02](#r02) | P2 | Some drawn pipes are substantially longer than the authored physics geometry | open |
-| [R03](#r03) | P3 | The routing checker reports 46 bends below its minimum bend-radius criterion | open |
+| [R01](#r01) | P2 | Catalogue pipes still intersect other pipes or themselves | reduced 1d569d4 (deepest 37 -> 28 mm; counts 4, 4 remain) |
+| [R02](#r02) | P2 | Some drawn pipes are substantially longer than the authored physics geometry | shown 1d569d4 (inspector gives the drawn length; 6 remain) |
+| [R03](#r03) | P3 | The routing checker reports 46 bends below its minimum bend-radius criterion | reduced 1d569d4 (46 -> 21) |
 | [V01](#v01) | P1 | An A/B response copied twenty times becomes twenty independent votes | fixed 78a71f7 |
 | [V02](#v02) | P2 | Entirely missing answers are accepted as a complete response set | fixed 78a71f7 |
 | [V03](#v03) | P2 | Known condition-mismatched recordings still enter global realism statistics | fixed 78a71f7 |
@@ -77,7 +77,7 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [V05](#v05) | P2 | The shipped recording manifest cannot run its documented required-reference comparison | owner decision |
 | [V06](#v06) | P2 | None of the ten field-recording references documents engine speed | owner decision |
 | [V07](#v07) | P2 | Designed-engine manufacturer checks never fail CI for a performance miss | owner decision |
-| [V08](#v08) | P3 | Documentation describes obsolete validation, format and live-edit behavior | open |
+| [V08](#v08) | P3 | Documentation describes obsolete validation, format and live-edit behavior | fixed ec9db53 |
 | [K01](#k01) | P1 | The TS125 audio path loses roughly 7–9 dB at the low-frequency port source | owner decision |
 | [K02](#k02) | P2 | The current exhaust port thermal model has no separate cooled-head port region | owner decision |
 | [K03](#k03) | P2 | Significant ACME spectral errors remain after the cone-gain defect was removed | owner decision |
@@ -108,17 +108,17 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [APP-04](#app-04) | P2 | Engine switching leaves Audio Workshop physics controls on the preceding engine | fixed 0d46f4e |
 | [APP-05](#app-05) | P2 | Escape in a vehicle numeric field does not cancel its pending value | fixed 843166a |
 | [APP-06](#app-06) | P2 | Build can use the previous designer state during its 250 ms text debounce | fixed 843166a |
-| [APP-07](#app-07) | P3 | VTEC adds a telemetry row without increasing its layout or content height | open |
-| [APP-08](#app-08) | P2 | Strobe playback keeps turbo and gearbox shafts moving while paused | open |
-| [APP-09](#app-09) | P2 | The minimum-width toolbar places A/B, Log and Exhaust on top of one another | open |
-| [APP-10](#app-10) | P2 | Primary numerical readouts are clipped at the supported main-window minimum | open |
-| [APP-11](#app-11) | P3 | The Pass-by minimum height removes the microphone level control | open |
+| [APP-07](#app-07) | P3 | VTEC adds a telemetry row without increasing its layout or content height | fixed 9fe99c9 |
+| [APP-08](#app-08) | P2 | Strobe playback keeps turbo and gearbox shafts moving while paused | fixed fe8dc7b |
+| [APP-09](#app-09) | P2 | The minimum-width toolbar places A/B, Log and Exhaust on top of one another | fixed 9fe99c9 |
+| [APP-10](#app-10) | P2 | Primary numerical readouts are clipped at the supported main-window minimum | fixed 9fe99c9 |
+| [APP-11](#app-11) | P3 | The Pass-by minimum height removes the microphone level control | fixed 9fe99c9 |
 | [APP-12](#app-12) | P2 | A last-ratio click can read beyond the resized inspector values | fixed b0f31f3 |
-| [APP-13](#app-13) | P3 | A second inspector choice draws the authored note beneath the buttons | open |
-| [RENDER-01](#render-01) | P2 | Scalar midpipe gas colouring binds the first primary's field | open |
+| [APP-13](#app-13) | P3 | A second inspector choice draws the authored note beneath the buttons | fixed fe8dc7b |
+| [RENDER-01](#render-01) | P2 | Scalar midpipe gas colouring binds the first primary's field | fixed fe8dc7b |
 | [EXHAUST-01](#exhaust-01) | P2 | Removing a path can silently reassign the remaining turbochargers | fixed 0328b58 |
 | [EXHAUST-02](#exhaust-02) | P2 | Converting a supported scalar exhaust to editable geometry changes its model | fixed e15b858 |
-| [RENDER-02](#render-02) | P3 | Valid low gearbox ratios are drawn with a different gear ratio | open |
+| [RENDER-02](#render-02) | P3 | Valid low gearbox ratios are drawn with a different gear ratio | fixed fe8dc7b |
 | [TEST-01](#test-01) | P3 | The idle slow-coast exception accepts a high, flat recovery | fixed aaf498f |
 | [TEST-02](#test-02) | P2 | Saved-audio sample identity is accepted from only RMS and peak | fixed aaf498f |
 | [RT-01](#rt-01) | P2 | A normal recording with no detected pops produces non-standard JSON | fixed 78a71f7 |
@@ -127,11 +127,11 @@ Status: `fixed <commit>` on branch `fix/audit-2026-11-16` (lots 0-4); `owner dec
 | [RT-06](#rt-06) | P2 | Scene export reports success when its index cannot be written | fixed 265c219 |
 | [RT-07](#rt-07) | P2 | Scene export emits invalid JSON for an accepted engine name | fixed 265c219 |
 | [RT-08](#rt-08) | P2 | A positive sub-sample measurement duration crashes the transfer probe | fixed fa56ab1 |
-| [RT-03](#rt-03) | P3 | Small active section headings have low contrast | open |
+| [RT-03](#rt-03) | P3 | Small active section headings have low contrast | fixed 9fe99c9 |
 | [RT-04](#rt-04) | P2 | Two generated-engine rated points miss the project's own 15% acceptance band | owner decision |
-| [PKG-01](#pkg-01) | P2 | The release install set omits two statically linked libraries' full MIT notices | open |
-| [PKG-02](#pkg-02) | P2 | Shipped command-line tools default to the developer's source catalogue | open |
-| [UA-09](#ua-09) | P3 | The default dyno-statistics shortcut has no observable application effect | open |
+| [PKG-01](#pkg-01) | P2 | The release install set omits two statically linked libraries' full MIT notices | fixed 88ae161 |
+| [PKG-02](#pkg-02) | P2 | Shipped command-line tools default to the developer's source catalogue | fixed 0f2bbdd |
+| [UA-09](#ua-09) | P3 | The default dyno-statistics shortcut has no observable application effect | fixed 9fe99c9 |
 | [PLAT-01](#plat-01) | P1 | Standard Linux GCC Release build is blocked by an omitted aggregate member | fixed ca9c1bb |
 
 ## Physics, ECU and driveline

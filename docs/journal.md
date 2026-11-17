@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-17 — audit lots 7-8 and V08: interface, 3-D routing, licences, documentation
+
+- Lot 7 checked on real JUCE components (`EngineLab.AppLayout`, new; `EngineLab.AudioWorkshop`): the top bar at 1,280/1,440/1,920 px has no two buttons overlapping (10 shown at 1,920); the VTEC row adds 24 px and moves the buttons below it; every tool window's enabled buttons take the focus; the tuner's anti-lag page and maps stay above UNDO at 30 px under the minimum height. Snapshots looked at; the running app not toured by hand.
+- 3-D (`EngineLabSceneExport`, 18 engines; clash, self, engine, tight bend, stretched): 4, 4, 0, 46, 6 -> 4, 4, 0, 21, 6. One change each: the plenum's face as far out as one arc of three runner diameters allows (a 2-diameter arc left the CP2's runners at 0.63 and stretched them 8 % until the chord was capped at 0.97 of the runner): 46 -> 25, every runner bend gone; a merge at its routed inputs' mean target: 25 -> 21, Hayabusa self-clash 21.4 -> 4.5 mm, CP4 37.0 -> 14.2.
+- Refuted: ending the relaxation on the bend pass (10 alternations) moves nothing (46/25 unchanged): the tight exhaust bends are where the authored length cannot fit the placed ends, not a solver order.
+- Left: the 2JZ's middle primaries spend 430 mm over 230 (4 clashes, 5 bends), each 4-2-1's later secondary 256 mm over about 130 between Y pieces 100 mm apart, the LS3's long primaries (2 self-clashes) and its X's 140 mm pipes (3.4x, now shown in the inspector). Moving the parts themselves is a layout change not attempted.
+- Physics and default sound untouched: drawing, UI, docs and packaging only.
+
 ## 2026-11-16 — audit lot 6: sound, each change measured on the catalogue
 
 - Method: the 18 catalogue showcase masters rendered by the offline exporter before/after each fix alone, octave bands 63 Hz-16 kHz on 2 s windows (a band counts above 1e-5 of the window's power).
