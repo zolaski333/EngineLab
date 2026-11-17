@@ -51,7 +51,12 @@ public:
     ActionButton audioButton { "Audio", ActionButton::Style::tool };
     ActionButton moreButton { {}, ActionButton::Style::tool };
 
+    /** Opens the engine menu under the picker (also from the keyboard). */
+    void showEngineMenu();
+
     void paint(juce::Graphics&) override;
+    /** A bar too narrow for every tool button hides the least used ones
+     *  first; each stays in the `...` menu's window list (audit APP-09). */
     void resized() override;
     static constexpr int height = 56;
 
@@ -68,7 +73,6 @@ private:
         bool modified_ { false };
     };
 
-    void showEngineMenu();
     EnginePicker picker_;
     std::vector<EngineChoice> choices_;
     std::vector<UnloadedEngine> unloaded_;

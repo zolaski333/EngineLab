@@ -4,9 +4,10 @@
 #include <functional>
 
 /** Small reusable controls of the main window. None of them takes keyboard
-    focus: the main component owns the keyboard, because every key is a
+    focus there: the main component owns the keyboard, because every key is a
     simulator control (arrows shift gears, Enter reloads, Space is the fine
-    throttle modifier). */
+    throttle modifier). A tool window, which has no simulator keys, makes its
+    own controls reachable with Tab (`enableKeyboardNavigation`). */
 namespace enginelab::ui {
 
 /** Rounded button with an optional key cap on its right and an optional icon. */
@@ -23,9 +24,13 @@ public:
     void setEngaged(bool);
     [[nodiscard]] bool engaged() const noexcept { return engaged_; }
     [[nodiscard]] int idealWidth() const;
+    /** Takes Tab focus; Space or Return then clicks it. */
+    void setKeyboardNavigable(bool);
 
 protected:
     void paintButton(juce::Graphics&, bool highlighted, bool down) override;
+    void focusGained(FocusChangeType) override { repaint(); }
+    void focusLost(FocusChangeType) override { repaint(); }
 
 private:
     Style style_;
@@ -46,12 +51,17 @@ public:
     [[nodiscard]] int selected() const noexcept { return selected_; }
     [[nodiscard]] int idealWidth() const;
     void setOptionTooltip(int index, const juce::String&);
+    /** Takes Tab focus; the left and right arrows, Home and End then pick. */
+    void setKeyboardNavigable(bool);
     std::function<void(int)> onChange;
 
     void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
     void mouseDown(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress&) override;
+    void focusGained(FocusChangeType) override { repaint(); }
+    void focusLost(FocusChangeType) override { repaint(); }
 
 private:
     [[nodiscard]] juce::Rectangle<float> optionBounds(int index) const;
@@ -63,6 +73,10 @@ private:
     int selected_ { 0 };
     int hovered_ { -1 };
 };
+
+/** Every `ActionButton` and `SegmentedControl` inside `root` takes Tab focus
+    (a tool window's controls, audit UA-07). */
+void enableKeyboardNavigation(juce::Component& root);
 
 /** A labelled horizontal slider whose current value is printed in the header. */
 class SliderRow final : public juce::Component, private juce::Slider::Listener {

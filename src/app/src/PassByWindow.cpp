@@ -226,8 +226,15 @@ public:
         programChanged();
         setState(EngineState {});
         microphoneEdited();
-        setSize(760, 600);
+        setSize(760, minimumHeight);
+        ui::enableKeyboardNavigation(*this);
     }
+
+    /** What `resized` stacks top to bottom: the window may not be shorter, or
+     *  the last rows (the microphone level) get no height (audit APP-11). */
+    static constexpr int minimumHeight = 14 + stripHeight + rowGap + 22 + 22 + rowGap + 34 + 16
+        + titleHeight + 4 + 4 * (rowHeight + rowGap) + 10 + titleHeight + 4 + 3 * (rowHeight + rowGap)
+        - rowGap + 14;
 
     void setEngine(const EngineConfig& config) {
         const auto gears = std::max<std::size_t>(1, config.transmission.gearRatios.size());
@@ -399,7 +406,7 @@ PassByWindow::PassByWindow(const EngineConfig& config, Callbacks callbacks)
     setContentOwned(content_, true);
     setUsingNativeTitleBar(true);
     setResizable(true, false);
-    setResizeLimits(640, 560, 2000, 2000);
+    setResizeLimits(640, Content::minimumHeight, 2000, 2000);
     centreWithSize(getWidth(), getHeight());
 }
 

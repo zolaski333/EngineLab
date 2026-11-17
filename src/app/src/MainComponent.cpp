@@ -1342,6 +1342,20 @@ void MainComponent::showMoreMenu() {
     add(utf8("Export engine…"), true, {}, &MainComponent::exportEngine);
     add(utf8("Export dyno CSV…"), true, {}, &MainComponent::exportDynoCsv);
     menu.addSeparator();
+    // Every window of the top bar, so the keyboard (and a bar too narrow to
+    // show them all) reaches each one (audits UA-07, APP-09).
+    menu.addSectionHeader(utf8("Windows"));
+    add(utf8("Exhaust designer"), !running, {}, &MainComponent::showExhaustDesigner);
+    add(utf8("Fuel"), true, {}, &MainComponent::showFuelWindow);
+    add(utf8("Equipment"), true, {}, &MainComponent::showEquipmentWindow);
+    add(utf8("Pass-by"), true, {}, &MainComponent::showPassByWindow);
+    add(utf8("Vehicle"), true, {}, &MainComponent::showVehicleWindow);
+    add(utf8("ECU tuner"), !running, {}, &MainComponent::showEcuTuner);
+    add(utf8("Audio workshop"), true, {}, &MainComponent::showAudioWorkshop);
+    add(dataLogger_.recording() ? utf8("Stop the datalog") : utf8("Start a datalog"), true,
+        actionMap_.shortcut(AppAction::datalog), &MainComponent::toggleDatalog);
+    add(utf8("Switch A/B version"), true, actionMap_.shortcut(AppAction::abSwitch), &MainComponent::switchAbVersion);
+    menu.addSeparator();
     add(utf8("Reload engine"), !running, "Return", &MainComponent::reloadEngine);
     add(utf8("Key bindings…"), true, {}, &MainComponent::showKeyBindingsEditor);
     juce::PopupMenu unitsMenu;
@@ -2070,7 +2084,21 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
             window->setFullScreen(!window->isFullScreen());
         return true;
     }
-    if (actionMap_.matches(AppAction::dynoStats, key)) { showDynoStats_ = !showDynoStats_; return true; }
+    // The dyno's curves and runs: shows the Dyno tab, and again goes back.
+    if (actionMap_.matches(AppAction::dynoStats, key)) {
+        if (side_.currentTab() != ui::SidePanel::dynoTab) {
+            tabBeforeDynoStats_ = side_.currentTab();
+            side_.showTab(ui::SidePanel::dynoTab);
+        } else {
+            side_.showTab(tabBeforeDynoStats_);
+        }
+        return true;
+    }
+    if (actionMap_.matches(AppAction::moreMenu, key)) { showMoreMenu(); return true; }
+    if (actionMap_.matches(AppAction::engineMenu, key)) {
+        if (!runtime_ || !runtime_->dynoRunning()) topBar_.showEngineMenu();
+        return true;
+    }
     if (actionMap_.matches(AppAction::exhaustPreset, key)) {
         if (!physicalExhaustTopology_) applyExhaustPreset((exhaustPresetIndex_ + 1) % 5);
         return true;

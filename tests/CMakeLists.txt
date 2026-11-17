@@ -509,6 +509,42 @@ if(MSVC)
     target_link_options(EngineLabAudioWorkshopTests PRIVATE /STACK:8388608)
 endif()
 
+# The main window's components (audit lot 7): no window is shown, but the
+# components are real JUCE ones, so Linux runs it through the display wrapper.
+add_executable(EngineLabAppLayoutTests
+    AppLayoutTests.cpp
+    "${CMAKE_SOURCE_DIR}/src/app/src/ActionMap.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/DashboardModel.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/DynoPanel.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/ReadoutStrip.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/SidePanel.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/Theme.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/TopBar.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/UnitFormat.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/Widgets.cpp")
+target_include_directories(EngineLabAppLayoutTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/src/app/include")
+target_link_libraries(EngineLabAppLayoutTests PRIVATE
+    EngineLab::Audio EngineLab::Catalog EngineLab::Diagnostics EngineLab::Render
+    EngineLabJuce EngineLabFonts
+    juce::juce_recommended_config_flags)
+target_compile_definitions(EngineLabAppLayoutTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}"
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+enginelab_set_warnings(EngineLabAppLayoutTests)
+set(enginelab_app_layout_command EngineLabAppLayoutTests)
+if(UNIX AND NOT APPLE)
+    set(enginelab_app_layout_command
+        "${CMAKE_SOURCE_DIR}/scripts/run-gui-test.sh"
+        "$<TARGET_FILE:EngineLabAppLayoutTests>")
+endif()
+add_test(NAME EngineLab.AppLayout COMMAND ${enginelab_app_layout_command})
+set_tests_properties(EngineLab.AppLayout PROPERTIES TIMEOUT 120)
+if(MSVC)
+    target_link_options(EngineLabAppLayoutTests PRIVATE /STACK:8388608)
+endif()
+
 if(TARGET EngineLabComparisonHarness)
     add_test(NAME EngineLab.CatalogPhysics COMMAND EngineLabComparisonHarness
         --output "${CMAKE_BINARY_DIR}/catalog-physics-test"

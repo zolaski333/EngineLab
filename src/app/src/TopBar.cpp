@@ -2,6 +2,7 @@
 
 #include <enginelab/app/Theme.hpp>
 #include <algorithm>
+#include <array>
 
 namespace enginelab::ui {
 namespace {
@@ -222,9 +223,33 @@ void TopBar::resized() {
 
     auto tools = area;
     moreButton.setBounds(tools.removeFromRight(36).withSizeKeepingCentre(36, 34));
-    for (auto* button : { &audioButton, &ecuButton, &vehicleButton, &passByButton, &equipmentButton, &fuelButton,
-                          &exhaustButton, &logButton, &abButton }) {
-        tools.removeFromRight(6);
+    // Right to left, as drawn.
+    const std::array<ActionButton*, 9> order { &audioButton, &ecuButton, &vehicleButton, &passByButton,
+                                               &equipmentButton, &fuelButton, &exhaustButton, &logButton,
+                                               &abButton };
+    // The first to go when the bar is short: windows the `...` menu lists.
+    const std::array<ActionButton*, 9> dropOrder { &passByButton, &vehicleButton, &equipmentButton,
+                                                   &fuelButton, &ecuButton, &audioButton, &exhaustButton,
+                                                   &logButton, &abButton };
+    constexpr int gap = 6;
+    auto shown = std::array<bool, 9> {};
+    shown.fill(true);
+    const auto required = [&] {
+        auto total = 0;
+        for (std::size_t index = 0; index < order.size(); ++index)
+            if (shown[index]) total += gap + order[index]->idealWidth();
+        return total;
+    };
+    for (auto* dropped : dropOrder) {
+        if (required() <= tools.getWidth()) break;
+        const auto position = std::find(order.begin(), order.end(), dropped) - order.begin();
+        shown[static_cast<std::size_t>(position)] = false;
+    }
+    for (std::size_t index = 0; index < order.size(); ++index) {
+        auto* button = order[index];
+        button->setVisible(shown[index]);
+        if (!shown[index]) continue;
+        tools.removeFromRight(gap);
         const auto width = button->idealWidth();
         button->setBounds(tools.removeFromRight(width).withSizeKeepingCentre(width, 34));
     }

@@ -8,9 +8,19 @@ namespace {
 [[nodiscard]] juce::KeyPress letter(juce::juce_wchar value) {
     return { static_cast<int>(value), {}, value };
 }
+[[nodiscard]] juce::KeyPress command(juce::juce_wchar value) {
+    return { static_cast<int>(value), juce::ModifierKeys::commandModifier, 0 };
+}
+[[nodiscard]] int upper(int keyCode) noexcept {
+    return keyCode >= 'a' && keyCode <= 'z' ? keyCode - 'a' + 'A' : keyCode;
+}
 }
 
-ActionMap::ActionMap()
+ActionMap::ActionMap() : ActionMap(DefaultsOnly {}) {
+    load();
+}
+
+ActionMap::ActionMap(DefaultsOnly)
     : entries_ {{
         { "ignition", letter('A') }, { "starter", letter('S') }, { "dyno", letter('D') },
         { "dyno_hold", letter('H') }, { "fullscreen", letter('F') }, { "dyno_stats", letter('I') },
@@ -45,9 +55,28 @@ ActionMap::ActionMap()
         // The active exhaust valve: automatic, shut, open, automatic...
         { "exhaust_valve", letter('-') },
         // Held: the nitrous kit's push button (with the kit armed).
-        { "nitrous", letter('=') }
-    }} {
-    load();
+        { "nitrous", letter('=') },
+        // Chords on keys no held control reads (M is the layer step, P the
+        // pause), so holding them drives nothing.
+        { "more_menu", command('M') },
+        { "engine_menu", command('P') }
+    }} {}
+
+bool ActionMap::sameEvent(const juce::KeyPress& left, const juce::KeyPress& right) noexcept {
+    if (upper(left.getKeyCode()) != upper(right.getKeyCode())) return false;
+    const auto strip = [](const juce::KeyPress& key) {
+        return key.getModifiers().withoutMouseButtons().withoutFlags(juce::ModifierKeys::shiftModifier);
+    };
+    return strip(left) == strip(right);
+}
+
+bool ActionMap::reserved(const juce::KeyPress& key) noexcept {
+    const auto code = key.getKeyCode();
+    if (code == juce::KeyPress::escapeKey || code == juce::KeyPress::returnKey
+        || (code >= juce::KeyPress::F1Key && code <= juce::KeyPress::F12Key))
+        return true;
+    const auto mods = key.getModifiers();
+    return upper(code) == 'S' && mods.isCommandDown() && !mods.isAltDown();
 }
 
 bool ActionMap::matches(AppAction action, const juce::KeyPress& key) const noexcept {
@@ -104,9 +133,7 @@ bool ActionMap::fromJson(const juce::String& json, juce::String& error) {
         if (!value.isString()) { error = juce::String(entry.id) + " must be a string."; return false; }
         const auto key = juce::KeyPress::createFromDescription(value.toString());
         if (!key.isValid()) { error = "Invalid key binding for " + juce::String(entry.id); return false; }
-        if (key.getKeyCode() == juce::KeyPress::escapeKey
-            || key.getKeyCode() == juce::KeyPress::returnKey
-            || (key.getKeyCode() >= juce::KeyPress::F1Key && key.getKeyCode() <= juce::KeyPress::F12Key)) {
+        if (reserved(key)) {
             error = "Reserved key binding for " + juce::String(entry.id);
             return false;
         }
@@ -114,7 +141,7 @@ bool ActionMap::fromJson(const juce::String& json, juce::String& error) {
     }
     for (std::size_t left = 0; left < candidate.size(); ++left) {
         for (std::size_t right = left + 1; right < candidate.size(); ++right) {
-            if (candidate[left].key == candidate[right].key) {
+            if (sameEvent(candidate[left].key, candidate[right].key)) {
                 error = "Conflict between " + juce::String(candidate[left].id) + " and " + juce::String(candidate[right].id);
                 return false;
             }

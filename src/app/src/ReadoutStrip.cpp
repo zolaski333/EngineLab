@@ -18,21 +18,27 @@ struct Readout final {
 
 void drawReadout(juce::Graphics& g, juce::Rectangle<float> cell, const Readout& readout) {
     auto body = cell.reduced(13.0F, 11.0F);
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.setFont(sectionFont());
     g.drawFittedText(readout.label.toUpperCase(), body.removeFromTop(16.0F).toNearestInt(),
                      juce::Justification::centredLeft, 1, 0.8F);
     body.removeFromTop(3.0F);
     auto valueRow = body.removeFromTop(30.0F);
-    const auto valueFont = monoFont(26.0F);
+    // The value and its unit shrink together to the cell's width rather than
+    // lose a digit (audit APP-10).
+    const auto natural = juce::GlyphArrangement::getStringWidth(monoFont(26.0F), readout.value)
+        + (readout.unit.isEmpty() ? 0.0F : 4.0F + juce::GlyphArrangement::getStringWidth(uiFont(14.0F), readout.unit));
+    const auto scale = natural > valueRow.getWidth() && natural > 0.0F
+        ? std::max(0.5F, valueRow.getWidth() / natural) : 1.0F;
+    const auto valueFont = monoFont(26.0F * scale);
     const auto valueWidth = juce::GlyphArrangement::getStringWidth(valueFont, readout.value);
     g.setColour(readout.colour);
     g.setFont(valueFont);
     g.drawText(readout.value, valueRow, juce::Justification::centredLeft, false);
     if (readout.unit.isNotEmpty()) {
         g.setColour(colours::muted);
-        g.setFont(uiFont(14.0F));
-        g.drawText(readout.unit, valueRow.withTrimmedLeft(valueWidth + 4.0F).withTrimmedTop(6.0F),
+        g.setFont(uiFont(14.0F * scale));
+        g.drawText(readout.unit, valueRow.withTrimmedLeft(valueWidth + 4.0F).withTrimmedTop(6.0F * scale),
                    juce::Justification::centredLeft, true);
     }
     g.setColour(colours::muted);
@@ -54,7 +60,9 @@ void ReadoutStrip::drawTachometer(juce::Graphics& g, juce::Rectangle<float> area
     constexpr auto end = std::numbers::pi_v<float> * 2.7F;
     // The arc's ends sit cos(0.3 pi) of a radius below the centre: size the
     // radius so the whole stroke fits the cell height.
-    const auto gauge = area.removeFromLeft(area.getHeight() * 1.2F).reduced(2.0F, 12.0F);
+    // A narrow strip keeps the speed's digits before the gauge's size.
+    const auto gauge = area.removeFromLeft(std::min(area.getHeight() * 1.2F, area.getWidth() * 0.47F))
+                           .reduced(2.0F, 12.0F);
     const auto strokeWidth = std::max(4.0F, gauge.getHeight() * 0.09F);
     const auto radius = (gauge.getHeight() - strokeWidth)
                         / (1.0F + std::cos(std::numbers::pi_v<float> * 0.3F));
@@ -99,15 +107,22 @@ void ReadoutStrip::drawTachometer(juce::Graphics& g, juce::Rectangle<float> area
         if (!state.vtecEnabled)
             g.drawLine(light.getX() + 3.0F, light.getCentreY(), light.getRight() - 3.0F, light.getCentreY(), 1.0F);
     }
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.setFont(sectionFont());
-    g.drawText("ENGINE SPEED", heading, juce::Justification::centredLeft, true);
+    // Beside the VTEC light, or in a narrow strip, the heading is the unit.
+    const auto narrow = juce::GlyphArrangement::getStringWidth(sectionFont(), "ENGINE SPEED") > heading.getWidth();
+    g.drawText(narrow ? "RPM" : "ENGINE SPEED", heading, juce::Justification::centredLeft, true);
     g.setColour(state.rpm > redline ? colours::critical : colours::text);
-    g.setFont(monoFont(34.0F));
-    g.drawText(groupedInteger(state.rpm), text.removeFromTop(36.0F), juce::Justification::centredLeft, false);
+    const auto speed = groupedInteger(state.rpm);
+    // Sized for five digits and a separator ("10,500"), so the font does not
+    // jump as the speed crosses 1,000 or 10,000.
+    const auto speedNatural = juce::GlyphArrangement::getStringWidth(monoFont(34.0F), "00,000");
+    const auto speedScale = speedNatural > text.getWidth() ? std::max(0.5F, text.getWidth() / speedNatural) : 1.0F;
+    g.setFont(monoFont(34.0F * speedScale));
+    g.drawText(speed, text.removeFromTop(36.0F), juce::Justification::centredLeft, false);
     g.setColour(colours::muted);
     g.setFont(uiFont(13.5F));
-    g.drawFittedText(utf8("rpm  \xc2\xb7  redline ") + groupedInteger(redline),
+    g.drawFittedText((narrow ? juce::String {} : utf8("rpm  \xc2\xb7  ")) + "redline " + groupedInteger(redline),
                      text.toNearestInt(), juce::Justification::topLeft, 1, 0.8F);
 }
 
@@ -154,8 +169,13 @@ void ReadoutStrip::paint(juce::Graphics& g) {
           "oil " + unit.pressureDifference(state.oilPressureKpa, unit.preferences.of(Quantity::pressure).id == "kpa" ? 0 : 1),
           state.coolantTemperatureC > 110.0 ? colours::warn : colours::text },
     }};
-    const auto cellWidth = (area.getWidth() - static_cast<float>(readouts.size())) / static_cast<float>(readouts.size());
-    for (const auto& readout : readouts) {
+    // Under 100 px a cell cuts its figures: a narrow window drops the coolant,
+    // then the exhaust gas (both stay on the Telemetry tab).
+    std::size_t shown = readouts.size();
+    while (shown > 4 && (area.getWidth() - static_cast<float>(shown)) / static_cast<float>(shown) < 100.0F) --shown;
+    const auto cellWidth = (area.getWidth() - static_cast<float>(shown)) / static_cast<float>(shown);
+    for (std::size_t index = 0; index < shown; ++index) {
+        const auto& readout = readouts[index];
         area.removeFromLeft(1.0F);
         const auto cell = area.removeFromLeft(cellWidth);
         g.setColour(colours::background);

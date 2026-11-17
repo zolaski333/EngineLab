@@ -285,7 +285,8 @@ private:
     bool throttleKeyActive_ { false };
     double targetClutchPressure_ { 1.0 };
     double currentClutchPressure_ { 1.0 };
-    bool showDynoStats_ { true };
+    /** The side tab the dyno-statistics key (I) returns to (audit UA-09). */
+    int tabBeforeDynoStats_ { ui::SidePanel::telemetryTab };
     double audioVolume_ { 1.0 };
     double audioConvolution_ { 0.45 };
     double highFrequencyGain_ { 1.0 };

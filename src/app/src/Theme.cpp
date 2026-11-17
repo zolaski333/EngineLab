@@ -95,7 +95,7 @@ void fillCard(juce::Graphics& g, juce::Rectangle<float> area, float radius, juce
 
 void drawSectionLabel(juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text,
                       juce::Justification justification) {
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.setFont(sectionFont());
     g.drawText(text.toUpperCase(), area, justification, true);
 }

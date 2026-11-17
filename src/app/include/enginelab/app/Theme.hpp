@@ -22,6 +22,9 @@ inline const juce::Colour grid { 0xff1d2624 };
 inline const juce::Colour text { 0xffe6ece9 };
 inline const juce::Colour muted { 0xff8a9893 };
 inline const juce::Colour faint { 0xff5c6a65 };
+// Section headings and readout labels: small text the user reads, so at least
+// 4.5:1 on every panel fill (WCAG 2.1 1.4.3; `faint` reads 2.9-3.4, audit RT-03).
+inline const juce::Colour label { 0xff808e89 };
 inline const juce::Colour accent { 0xffef6f3c };
 inline const juce::Colour accentDeep { 0xffd85b2b };
 inline const juce::Colour accentLight { 0xfff6a15d };

@@ -161,9 +161,6 @@ struct Trace final {
 };
 
 constexpr int traceChartHeight = 190;
-constexpr int engineRowCount = 13;
-constexpr int injectionRowCount = 5;
-constexpr int drivelineRowCount = 13;
 constexpr int mixRowHeight = 34;
 constexpr int mixRowCount = 9;
 } // namespace
@@ -182,17 +179,20 @@ TelemetryPanel::TelemetryPanel(const DashboardModel& model) : model_(model) {
     addAndMakeVisible(showFuel_);
 }
 
+// The sections' heights follow the rows `paint` draws: a VTEC engine has one
+// engine row more (audit APP-07).
 int TelemetryPanel::preferredHeight() const {
+    const auto rows = [](std::size_t count) { return static_cast<int>(count) * rowHeight; };
     return padding + sectionHeight + traceChartHeight + 30 + 12
-        + sectionHeight + engineRowCount * rowHeight + 18
-        + sectionHeight + injectionRowCount * rowHeight + 18
-        + sectionHeight + drivelineRowCount * rowHeight + padding;
+        + sectionHeight + rows(engineRows(model_).size()) + 18
+        + sectionHeight + rows(injectionRows(model_).size()) + 18
+        + sectionHeight + rows(drivelineRows(model_).size()) + padding;
 }
 
 void TelemetryPanel::resized() {
     // On the right of the fuel-injection section's label.
     const auto top = padding + sectionHeight + traceChartHeight + 30 + 12 + sectionHeight
-        + engineRowCount * rowHeight + 18;
+        + static_cast<int>(engineRows(model_).size()) * rowHeight + 18;
     const auto width = showInjectors_.idealWidth();
     showInjectors_.setBounds(getWidth() - padding - width, top, width, sectionHeight - 2);
     const auto fuelWidth = showFuel_.idealWidth();

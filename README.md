@@ -210,7 +210,10 @@ deterministic harnesses and sanitizer builds are in
 ## Controls
 
 Key bindings can be changed from **Key bindings…** in the `⋯` menu; `keybindings.json`
-rejects unknown actions, duplicates and reserved shortcuts. The **Drive** section of
+rejects unknown actions, duplicates (a binding without Shift also answers its key
+with Shift held, so `Q` and `Shift+Q` count as one) and reserved shortcuts (Escape,
+Return, F1-F12, Ctrl+S and Ctrl+Shift+S). In a tool window (Fuel, Equipment, Pass-by)
+Tab reaches every button and choice; the arrows then change a choice. The **Drive** section of
 the left column has a button for every driving action, showing its key. Display
 units (km/h or mph, L/100 km or MPG, bar or psi, gauge or absolute...) are chosen
 under **Units** in the same menu.
@@ -222,6 +225,8 @@ under **Units** in the same menu.
 | `D` / `H` | automatic dyno / hold engine speed |
 | `7` | A/B: switch between the two kept versions of the engine |
 | `P` / `Tab` | pause / next side-panel tab |
+| `I` | show the Dyno tab; again, back to the tab before |
+| `Ctrl+M` / `Ctrl+P` | the `⋯` menu (every window is listed there) / the engine picker |
 | `M` / `,` | next / previous engine view layer |
 | `1` to `5` | time scale 0.25×, 0.5×, 1×, 2×, 4× |
 | up / down arrow | upshift, downshift (a gear key takes an automatic gearbox back to manual) |

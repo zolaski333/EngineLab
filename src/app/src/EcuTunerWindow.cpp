@@ -812,21 +812,34 @@ void EcuTunerComponent::resized() {
     selectionLabel_.setBounds(tools);
 
     if (!cellIds_.empty()) {
-        // A group page: one row per setting, its name then its value.
-        const auto rowHeight = std::clamp((getHeight() - 190) / static_cast<int>(std::max<std::size_t>(1, yCount_)),
-                                          30, 40);
-        const auto labelWidth = std::clamp(getWidth() - 24 - 160, 200, 460);
+        // A group page: one row per setting, its name then its value, between
+        // the description and the tool row. Rows that do not fit at 30 px go
+        // on in a second column, and only then get shorter, so no value runs
+        // under the tools (audit UA-02).
+        constexpr int pageTop = 108;
+        const auto bottom = getHeight() - 76;
+        const auto available = std::max(1, bottom - pageTop);
+        const auto count = static_cast<int>(std::max<std::size_t>(1, valueEditors_.size()));
+        const auto columns = count * 30 > available && getWidth() >= 680 ? 2 : 1;
+        const auto perColumn = (count + columns - 1) / columns;
+        const auto rowHeight = std::clamp(available / perColumn, 22, 40);
+        const auto columnWidth = (getWidth() - 24 - (columns - 1) * 16) / columns;
+        const auto labelWidth = std::clamp(columnWidth - 148, 120, 460);
         for (std::size_t row = 0; row < valueEditors_.size(); ++row) {
-            const auto y = 108 + static_cast<int>(row) * rowHeight;
-            if (row < rowLabels_.size()) rowLabels_[row]->setBounds(12, y, labelWidth, rowHeight);
-            valueEditors_[row]->setBounds(12 + labelWidth + 8, y + 2, 140, rowHeight - 4);
+            const auto column = static_cast<int>(row) / perColumn;
+            const auto x = 12 + column * (columnWidth + 16);
+            const auto y = pageTop + (static_cast<int>(row) % perColumn) * rowHeight;
+            if (row < rowLabels_.size()) rowLabels_[row]->setBounds(x, y, labelWidth, rowHeight);
+            valueEditors_[row]->setBounds(x + labelWidth + 8, y + 2, 140, rowHeight - 4);
         }
         return;
     }
     const auto availableWidth = std::max(100, getWidth() - 126);
     const auto cellWidth = std::clamp(availableWidth / static_cast<int>(std::max<std::size_t>(1, xCount_)), 58, 112);
-    const auto cellHeight = std::clamp((getHeight() - 190)
-        / static_cast<int>(std::max<std::size_t>(1, yCount_)), 34, 54);
+    // Between the axis labels and the tool row: the ten load rows fit the
+    // window's minimum height.
+    const auto cellHeight = std::clamp((getHeight() - 116 - 76)
+        / static_cast<int>(std::max<std::size_t>(1, yCount_)), 28, 54);
     const auto gridWidth = cellWidth * static_cast<int>(xCount_);
     const auto originX = 108 + std::max(0, (availableWidth - gridWidth) / 2);
     const auto originY = 116;
@@ -849,7 +862,7 @@ EcuTunerWindow::EcuTunerWindow(std::shared_ptr<calibration::CalibrationStore> st
     setContentOwned(tuner_, true);
     setUsingNativeTitleBar(true);
     setResizable(true, false);
-    setResizeLimits(720, 450, 1'400, 900);
+    setResizeLimits(720, 520, 1'400, 900);
     centreWithSize(980, 620);
 }
 

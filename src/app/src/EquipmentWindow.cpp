@@ -868,6 +868,7 @@ EquipmentWindow::EquipmentWindow(const EngineConfig& config, std::shared_ptr<cal
     : juce::DocumentWindow(utf8("Equipment"), ui::colours::panel, juce::DocumentWindow::closeButton) {
     content_ = new Content(config, std::move(store), std::move(callbacks));
     setContentOwned(content_, false);
+    ui::enableKeyboardNavigation(*content_);
     setUsingNativeTitleBar(true);
     setResizable(true, false);
     setResizeLimits(560, 300, 2000, 2000);

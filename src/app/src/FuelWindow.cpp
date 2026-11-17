@@ -323,6 +323,7 @@ FuelWindow::FuelWindow(const EngineConfig& config, std::vector<FuelPreset> prese
     : juce::DocumentWindow("EngineLab - Fuel", ui::colours::background, juce::DocumentWindow::closeButton, true) {
     content_ = new Content(config, std::move(presets), std::move(applyCallback));
     setContentOwned(content_, false);
+    ui::enableKeyboardNavigation(*content_);
     setUsingNativeTitleBar(true);
     setResizable(false, false);
     centreWithSize(520, Content::preferredHeight(config.fuel == FuelType::diesel));

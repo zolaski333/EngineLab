@@ -129,6 +129,14 @@ void ActionButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
     const auto centred = keyCap_.isEmpty() && icon_.isEmpty() && style_ == Style::compact;
     g.drawFittedText(getButtonText(), content.toNearestInt(),
                      centred ? juce::Justification::centred : juce::Justification::centredLeft, 1);
+    if (hasKeyboardFocus(false)) {
+        g.setColour(colours::accentLight);
+        g.drawRoundedRectangle(bounds.reduced(1.0F), radius, 2.0F);
+    }
+}
+
+void ActionButton::setKeyboardNavigable(bool navigable) {
+    setWantsKeyboardFocus(navigable);
 }
 
 SegmentedControl::SegmentedControl(juce::StringArray options, Style style)
@@ -144,6 +152,31 @@ void SegmentedControl::setSelected(int index, juce::NotificationType notificatio
     selected_ = index;
     repaint();
     if (notification != juce::dontSendNotification && onChange) onChange(selected_);
+}
+
+void SegmentedControl::setKeyboardNavigable(bool navigable) {
+    setWantsKeyboardFocus(navigable);
+}
+
+bool SegmentedControl::keyPressed(const juce::KeyPress& key) {
+    if (!getWantsKeyboardFocus() || options_.isEmpty()) return false;
+    const auto last = options_.size() - 1;
+    auto target = selected_;
+    if (key.isKeyCode(juce::KeyPress::leftKey)) target = selected_ <= 0 ? 0 : selected_ - 1;
+    else if (key.isKeyCode(juce::KeyPress::rightKey)) target = std::min(selected_ + 1, last);
+    else if (key.isKeyCode(juce::KeyPress::homeKey)) target = 0;
+    else if (key.isKeyCode(juce::KeyPress::endKey)) target = last;
+    else return false;
+    setSelected(target, juce::sendNotificationSync);
+    return true;
+}
+
+void enableKeyboardNavigation(juce::Component& root) {
+    for (auto* child : root.getChildren()) {
+        if (auto* button = dynamic_cast<ActionButton*>(child)) button->setKeyboardNavigable(true);
+        else if (auto* segments = dynamic_cast<SegmentedControl*>(child)) segments->setKeyboardNavigable(true);
+        enableKeyboardNavigation(*child);
+    }
 }
 
 void SegmentedControl::setOptionTooltip(int index, const juce::String& tooltip) {
@@ -211,6 +244,10 @@ void SegmentedControl::paint(juce::Graphics& g) {
         g.setColour(active ? colours::text : (index == hovered_ ? colours::text.withAlpha(0.8F)
                                                                 : colours::muted));
         g.drawText(options_[index], option, juce::Justification::centred, false);
+    }
+    if (hasKeyboardFocus(false)) {
+        g.setColour(colours::accentLight);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0F), 8.0F, 2.0F);
     }
 }
 

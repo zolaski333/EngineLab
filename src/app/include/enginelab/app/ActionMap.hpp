@@ -24,12 +24,22 @@ enum class AppAction : std::size_t {
     engineBrake,
     exhaustValve,
     nitrous,
+    // The keyboard's way to every window and command: the top bar's buttons
+    // take no focus (the main component keeps the keyboard), so the `...`
+    // menu, which lists every window, and the engine picker have their own
+    // chords (audit UA-07).
+    moreMenu,
+    engineMenu,
     count
 };
 
 class ActionMap final {
 public:
+    /** The defaults, then the user's `keybindings.json` over them. */
     ActionMap();
+    /** The defaults only: no file is read or written (tests). */
+    struct DefaultsOnly final {};
+    explicit ActionMap(DefaultsOnly);
     [[nodiscard]] bool matches(AppAction action, const juce::KeyPress& key) const noexcept;
     [[nodiscard]] bool isDown(AppAction action) const noexcept;
     [[nodiscard]] juce::String toJson() const;
@@ -44,6 +54,12 @@ private:
         juce::KeyPress key;
     };
     [[nodiscard]] static juce::File settingsFile();
+    /** True when one key event can match both bindings: Shift is ignored by
+     *  a binding that does not ask for it (`matches`). */
+    [[nodiscard]] static bool sameEvent(const juce::KeyPress&, const juce::KeyPress&) noexcept;
+    /** Keys the main component handles before any action: Escape, Return,
+     *  F1-F12 and the save chords Ctrl+S / Ctrl+Shift+S. */
+    [[nodiscard]] static bool reserved(const juce::KeyPress&) noexcept;
     std::array<Entry, static_cast<std::size_t>(AppAction::count)> entries_;
 };
 

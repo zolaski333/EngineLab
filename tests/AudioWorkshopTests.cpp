@@ -1205,6 +1205,96 @@ int main() {
         require(button("Restart") != nullptr && !button("Restart")->isEnabled(), "the dyno locks it");
     }
 
+    {
+        // At its smallest accepted size the Pass-by window still lays out every
+        // row: the microphone level had no height at 560 px (audit APP-11).
+        // Its choices take Tab focus and answer the arrows (audit UA-07).
+        enginelab::PassByWindow passBy(engine, {});
+        const auto* limits = passBy.getConstrainer();
+        require(limits != nullptr, "the Pass-by window has resize limits");
+        passBy.setSize(limits->getMinimumWidth(), limits->getMinimumHeight());
+        auto& root = *passBy.content();
+        root.setSize(limits->getMinimumWidth(), limits->getMinimumHeight());
+        std::vector<enginelab::ui::SegmentedControl*> choices;
+        for (auto* child : root.getChildren())
+            if (auto* choice = dynamic_cast<enginelab::ui::SegmentedControl*>(child)) choices.push_back(choice);
+        require(choices.size() == 3, "program, ground and level are segmented choices");
+        for (auto* choice : choices) {
+            require(choice->getHeight() >= 20 && choice->getBottom() <= root.getHeight(),
+                    "at the minimum size every choice keeps its row (" + std::to_string(choice->getBottom())
+                        + " of " + std::to_string(root.getHeight()) + ")");
+            require(choice->getWantsKeyboardFocus(), "a Pass-by choice takes Tab focus");
+        }
+        auto* level = choices.back();
+        level->setSelected(0);
+        require(level->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)) && level->selected() == 1,
+                "the right arrow picks the next option");
+        require(level->keyPressed(juce::KeyPress(juce::KeyPress::homeKey)) && level->selected() == 0,
+                "Home picks the first option");
+        // A disabled button (Stop before a run) is skipped by Tab: JUCE reads
+        // no focus wish from a disabled component.
+        auto focusable = 0;
+        for (auto* child : root.getChildren())
+            if (auto* action = dynamic_cast<enginelab::ui::ActionButton*>(child); action != nullptr
+                && action->isEnabled()) {
+                require(action->getWantsKeyboardFocus(), "a Pass-by button takes Tab focus");
+                ++focusable;
+            }
+        require(focusable >= 2, "Start and Record take Tab focus");
+        enginelab::ui::SegmentedControl mainWindowChoice { juce::StringArray { "a", "b" } };
+        require(!mainWindowChoice.getWantsKeyboardFocus() && !mainWindowChoice.keyPressed(
+                    juce::KeyPress(juce::KeyPress::rightKey)),
+                "in the main window a choice leaves the arrows to the gearbox");
+    }
+
+    {
+        // The anti-lag settings page at the tuner's smallest window: every value
+        // inside the page, none under the tool row (audit UA-02).
+        const auto twoJz = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [](const auto& entry) { return entry.config.name.find("2JZ") != std::string::npos; });
+        require(twoJz != catalog.entries.end(), "catalog has the 2JZ");
+        auto store = std::make_shared<enginelab::calibration::CalibrationStore>();
+        require(store->publish(enginelab::calibration::makeDefaultEcuCalibration(twoJz->config),
+                               { 0, "engine-default" }).published, "the 2JZ calibration publishes");
+        enginelab::EcuTunerWindow tunerWindow(store);
+        const auto* limits = tunerWindow.getConstrainer();
+        require(limits != nullptr && limits->getMinimumHeight() >= 520, "the tuner's minimum height fits its maps");
+        enginelab::EcuTunerComponent tuner(store);
+        tuner.setSize(limits->getMinimumWidth(), limits->getMinimumHeight() - 30);
+        juce::ComboBox* selector = nullptr;
+        for (auto* child : tuner.getChildren())
+            if (auto* box = dynamic_cast<juce::ComboBox*>(child)) selector = box;
+        require(selector != nullptr, "the tuner lists its pages");
+        auto pageItem = -1;
+        for (int index = 0; index < selector->getNumItems(); ++index)
+            if (selector->getItemText(index).containsIgnoreCase("anti-lag settings")) pageItem = index;
+        require(pageItem >= 0, "the tuner lists the anti-lag settings page");
+        juce::Rectangle<int> tools;
+        const auto checkInside = [&](const char* what) {
+            auto editors = 0;
+            for (auto* child : tuner.getChildren()) {
+                auto* button = dynamic_cast<juce::TextButton*>(child);
+                if (button != nullptr && button->getButtonText() == "UNDO") tools = button->getBounds();
+            }
+            for (auto* child : tuner.getChildren()) {
+                auto* editor = dynamic_cast<juce::TextEditor*>(child);
+                if (editor == nullptr || !editor->isVisible()) continue;
+                ++editors;
+                require(editor->getBottom() <= tools.getY() && editor->getRight() <= tuner.getWidth(),
+                        std::string(what) + ": a value stays above the tool row ("
+                            + std::to_string(editor->getBottom()) + " / " + std::to_string(tools.getY()) + ")");
+            }
+            return editors;
+        };
+        selector->setSelectedItemIndex(pageItem, juce::sendNotificationSync);
+        require(checkInside("anti-lag page") >= 10, "the anti-lag page shows its settings");
+        for (int index = 0; index < selector->getNumItems(); ++index) {
+            if (selector->getItemText(index).contains("settings")) continue;
+            selector->setSelectedItemIndex(index, juce::sendNotificationSync);
+            (void)checkInside(selector->getItemText(index).toRawUTF8());
+        }
+    }
+
     std::cout
         << "Audio workshop: layout, truthful availability, physical A/B, "
            "live telemetry, mute/solo routing, HQ export controls and in-window boxes PASS\n";
