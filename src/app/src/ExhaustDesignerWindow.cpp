@@ -1948,9 +1948,9 @@ private:
             auto nextOutputPort = std::uint8_t { 0 };
             // A merge and a splitter keep their side branch (an H's balance pipe).
             const auto junction = type == ExhaustComponentType::merge || type == ExhaustComponentType::splitter;
-            const auto port = [&](std::uint8_t current, std::uint8_t& next) {
+            const auto port = [&](std::uint8_t authored, std::uint8_t& next) {
                 if (type == ExhaustComponentType::crossover && next <= 1U) return next++;
-                return junction && current == exhaustSideBranchPort ? current : unspecifiedExhaustComponentPort;
+                return junction && authored == exhaustSideBranchPort ? authored : unspecifiedExhaustComponentPort;
             };
             for (auto& connection : network->connections) {
                 if (connection.toComponentId == newId) connection.toPort = port(connection.toPort, nextInputPort);

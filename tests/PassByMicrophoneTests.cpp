@@ -47,7 +47,7 @@ Run play(PassByMicrophone& passBy, double hertz, double seconds) {
     Run run;
     const auto samples = static_cast<std::size_t>(seconds * rate);
     for (std::size_t index = 0; index < samples; ++index) {
-        const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * hertz * index / rate));
+        const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * hertz * static_cast<double>(index) / rate));
         const auto heard = passBy.process(tone, tone);
         run.left.push_back(heard.leftPa);
         run.right.push_back(heard.rightPa);
@@ -158,7 +158,7 @@ void checkTwoSources() {
         passBy.reset(-60.0);
         std::vector<float> heard;
         for (std::size_t index = 0; index < static_cast<std::size_t>(4.0 * rate); ++index) {
-            const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * 500.0 * index / rate));
+            const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * 500.0 * static_cast<double>(index) / rate));
             const auto share = exhaust ? tone : 0.0F;
             heard.push_back(passBy.process(tone, tone, share, share).leftPa);
         }
@@ -400,7 +400,7 @@ void checkSwitching() {
         // On at the tone's crest: an empty delay line faded in would step.
         if (index == static_cast<std::size_t>(0.50125 * rate)) passBy.setEnabled(true);
         if (index == static_cast<std::size_t>(1.0 * rate)) passBy.setEnabled(false);
-        const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * 200.0 * index / rate));
+        const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * 200.0 * static_cast<double>(index) / rate));
         output.push_back(passBy.process(tone, tone).leftPa);
     }
     const auto toneStep = 2.0 * std::numbers::pi * 200.0 / rate;

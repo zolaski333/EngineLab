@@ -545,8 +545,8 @@ int main() {
                 "selecting a part, then another, kept its length to the hundredth");
 
         // What the cylinder feeds, by type.
-        const auto feeds = [cylinderId](const enginelab::EngineConfig& engine, enginelab::ExhaustComponentType type) {
-            const auto& graph = *engine.exhaustPaths.front().network;
+        const auto feeds = [cylinderId](const enginelab::EngineConfig& design, enginelab::ExhaustComponentType type) {
+            const auto& graph = *design.exhaustPaths.front().network;
             const auto root = std::find_if(graph.cylinderConnections.begin(), graph.cylinderConnections.end(),
                 [cylinderId](const auto& item) { return item.cylinderId == cylinderId; });
             if (root == graph.cylinderConnections.end()) return false;

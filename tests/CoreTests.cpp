@@ -3072,17 +3072,17 @@ int main() {
         // at half its design tip speed radiates (1/2)^2.5 of the tonal
         // power, so 0.42 of the tone's pressure.
         const auto settledTonePeak = [&](float shaftRpm) {
-            auto config = toneConfig;
-            config.designShaftSpeedRpm = 100'000.0;
-            enginelab::ForcedInductionAcoustics compressor(config);
+            auto tuned = toneConfig;
+            tuned.designShaftSpeedRpm = 100'000.0;
+            enginelab::ForcedInductionAcoustics compressor(tuned);
             require(compressor.prepare(48'000.0), "tip-speed fixture must prepare");
             enginelab::ForcedInductionAcoustics::Input input;
             input.shaftSpeedRpm = shaftRpm;
             input.compressorPowerWatts = 2'000.0F;
             double peak = 0.0;
             for (int sample = 0; sample < 9'600; ++sample) {
-                const auto value = std::abs(static_cast<double>(compressor.process(input)));
-                if (sample >= 4'800) peak = std::max(peak, value);
+                const auto magnitude = std::abs(static_cast<double>(compressor.process(input)));
+                if (sample >= 4'800) peak = std::max(peak, magnitude);
             }
             return peak;
         };

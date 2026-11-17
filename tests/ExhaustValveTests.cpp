@@ -271,12 +271,12 @@ AcousticRun renderAcoustic(const enginelab::EngineConfig& config, Opening openin
     constexpr std::size_t block = 240;
     for (std::size_t sample = 0; sample < samples; ++sample) {
         if (sample % block == 0) {
-            network.setExhaustValveOpening(static_cast<float>(opening(sample / rate)));
+            network.setExhaustValveOpening(static_cast<float>(opening(static_cast<double>(sample) / rate)));
             network.beginBlock(media, 1.0);
         }
-        const auto phase = std::fmod(sample / rate * 50.0, 1.0);
+        const auto phase = std::fmod(static_cast<double>(sample) / rate * 50.0, 1.0);
         for (std::size_t cylinder = 0; cylinder < sources.size(); ++cylinder) {
-            const auto local = std::fmod(phase + static_cast<double>(cylinder) / sources.size(), 1.0);
+            const auto local = std::fmod(phase + static_cast<double>(cylinder) / static_cast<double>(sources.size()), 1.0);
             sources[cylinder] = local < 0.02
                 ? static_cast<float>(2'000.0 * std::sin(std::numbers::pi * local / 0.02)) : 0.0F;
         }
