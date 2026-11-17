@@ -15,7 +15,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - A2-08 (the valve flow's high band published 625 us ahead of the network's low band, around one crossover): clear, 3-9 dB in single bands (RD350 -13.8 at 16 kHz), median 0.11-0.99 dB, overall level within +-0.5 dB (CP3 -0.81). The owner heard the pairs (`listening-test/2026-11-16/`) and kept it on 2026-11-17 (60c4ad5).
 - Rebuilt and rerun without the fix, failing on their own message: A2-02, A2-04, A2-03, A2-05. A2-08 has no new test; PG-01's is the static_assert.
 - Benches against the lot 0 baseline: IntakeDuctBench identical; DynoSweep K20/RD350 torque, power and held_rpm_stddev identical to the digit, the reported egt_c and exh_kpa move (PG-01: K20A -0.003 C; RD350 egt up to +2.0 C, exh_kpa peak -1.7 % at the top, where its history was short). Full build green; ctest 111/113 at -j 4, AudioRender and LoadedAccelerationCatalogDfcoResume timed out and pass alone.
-- Not measured: A2-08 against a real recording.
+- With A2-08, AudioRender failed alone: the 13B radiated 130.3 dB at 1 m over the 130 dB guard (129.8 before; the harness's held point rises 0.1-1 dB on most engines, RD350 -2.6). The owner moved the guard to 132 dB. Not measured: A2-08 against a real recording.
 
 ## 2026-11-16 — audit lot 5: physics, each change measured
 

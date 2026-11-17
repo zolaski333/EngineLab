@@ -369,7 +369,9 @@ configuration; the catalogue and `EngineRuntime` require zero samples from that 
 The monitor full scale stays fixed at 140 dB SPL (134 dB until the outlets
 radiated into ambient air, 2026-10-13). The render uses the microphone
 position published by each engine; the power guard extrapolates that pressure to
-one metre with the same `1/r` law before applying 90–130 dB SPL. It therefore
+one metre with the same `1/r` law before applying 90–132 dB SPL (130 until
+2026-11-17: the aligned exhaust bands put the 13B at 130.3 dB; a runaway
+guard, not a measured reference). It therefore
 does not confuse a distant observer with a weak source. The harness additionally
 requires the sum of the physical layers to stay under the limiter knee (`0.82`)
 with a strictly unity safety gain. A calibration change or an AGC therefore

@@ -2495,8 +2495,12 @@ int main(int argc, char** argv) {
             if (soundPressureLevelDb < 90.0)
                 fail("radiated level is below 90 dB SPL at one-metre equivalent ("
                      + std::to_string(static_cast<int>(soundPressureLevelDb)) + " dB)" + suffix);
-            if (soundPressureLevelDb > 130.0)
-                fail("radiated level exceeds 130 dB SPL at one-metre equivalent ("
+            // The ceiling is a runaway guard, not a measured reference: it was
+            // 130 dB until the exhaust bands were aligned (audit A2-08) put the
+            // 13B at 130.3 dB (129.8 before). The owner kept the change and
+            // moved the guard to 132 dB on 2026-11-17.
+            if (soundPressureLevelDb > 132.0)
+                fail("radiated level exceeds 132 dB SPL at one-metre equivalent ("
                      + std::to_string(static_cast<int>(soundPressureLevelDb)) + " dB)" + suffix);
             // Digital safety is separate and still absolute.
             if (channel->window.rms > 0.40)
