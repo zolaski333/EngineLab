@@ -25,7 +25,10 @@ file formats, always with an in-memory migration).
   shape bent as a tube bender would (straights and smooth arcs), the
   clearest of several, so fewer pipes cross, kink or knot near their ports
   and collectors; a collector turns to face primaries that arrive from
-  behind it. On every engine, catalogue included, only the drawing changes.
+  behind it. The collector also moves with the primaries' length -- further
+  back, or hanging below the engine -- so long primaries no longer fold into
+  hairpins and short ones no longer curl. On every engine, catalogue
+  included, only the drawing changes.
 
 ### Changed
 

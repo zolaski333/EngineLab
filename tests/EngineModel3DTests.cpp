@@ -1606,7 +1606,71 @@ void checkEngineEnvelope() {
                                + std::to_string(failing) + " do)");
 }
 
+/**
+ * A collector's place follows its primaries' length: kept behind the last
+ * port whatever their length, a 4 m primary spent it in a hairpin 1.5 m out
+ * (owner 2026-11-18, chord a twelfth of its length). Designed engines with
+ * every primary set to 1.5 and 4 m: each primary's chord is at least 0.6 of
+ * its length.
+ */
+void checkCollectorFollowsPrimaries() {
+    struct Case final {
+        const char* name;
+        EngineLayout layout;
+        std::uint32_t cylinders;
+        double bankAngle;
+        ExhaustSystem system;
+    };
+    const std::array cases { Case { "I6", EngineLayout::inlineLayout, 6, 0.0, ExhaustSystem::single },
+                             Case { "V8", EngineLayout::vLayout, 8, 90.0, ExhaustSystem::dual } };
+    for (const auto& shape : cases)
+        for (const auto lengthMm : { 1500.0, 4000.0 }) {
+            EngineSpec spec;
+            spec.name = std::string("Designed ") + shape.name;
+            spec.use = EngineUse::sportCar;
+            spec.layout = shape.layout;
+            spec.cylinderCount = shape.cylinders;
+            spec.bankAngleDegrees = shape.bankAngle;
+            spec.boreMm = 86.0;
+            spec.strokeMm = 86.0;
+            spec.exhaustSystem = shape.system;
+            auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+            require(designed.config.has_value(), std::string("a ") + shape.name + " designs: " + designed.error);
+            auto config = *designed.config;
+            std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> primaries;
+            for (auto& path : config.exhaustPaths) {
+                auto network = path.network ? *path.network : makeEditableExhaustNetwork(path, config.cylinders);
+                for (const auto& mapping : network.cylinderConnections)
+                    for (auto& component : network.components)
+                        if (component.id == mapping.componentId && component.type == ExhaustComponentType::pipe) {
+                            component.lengthMm = lengthMm;
+                            primaries[path.id].push_back(component.id);
+                        }
+                path.network = network;
+            }
+            const EngineModel3D model(config);
+            float tightest = 1.0F;
+            std::size_t seen = 0;
+            for (const auto& duct : model.ducts()) {
+                if (duct.kind != DuctKind::exhaustComponent || duct.centreline.size() < 2U) continue;
+                const auto& ids = primaries[duct.pathId];
+                if (std::find(ids.begin(), ids.end(), duct.elementId) == ids.end()) continue;
+                float drawn = 0.0F;
+                for (std::size_t i = 1; i < duct.centreline.size(); ++i)
+                    drawn += length(duct.centreline[i] - duct.centreline[i - 1U]);
+                tightest = std::min(tightest, length(duct.centreline.back() - duct.centreline.front()) / drawn);
+                ++seen;
+            }
+            std::cout << "  " << shape.name << " primaries of " << lengthMm << " mm: " << seen
+                      << " drawn, the slackest's chord " << tightest << " of its length\n";
+            require(seen >= shape.cylinders, "every primary is drawn");
+            require(tightest >= 0.6F, std::string("no primary of a ") + shape.name
+                                          + " is drawn as a hairpin: its collector moves with their length");
+        }
+}
+
 int main() {
+    checkCollectorFollowsPrimaries();
     checkEngineBrakeValves();
     checkHPipeDrawing();
     checkSingleCylinderTurbo();
@@ -1946,7 +2010,11 @@ int main() {
     // of 36 shapes bent as a tube bender would (straights and arcs of 1.5
     // diameters), and a collector with ports beyond its mouth turns to face
     // them even where its end primaries fall short (2JZ 3, 0, 0, 4, 2 -> 0).
-    const std::array<std::size_t, 5> measured { 0, 4, 0, 9, 4 };
+    // 2026-11-18: 0, 2, 0, 7, 4. A collector sits as far out as its
+    // primaries reach, back along the trunk or turned below the engine,
+    // whichever leaves the slackest the least to spend (LS3 0, 2, 0, 6, 4
+    // -> 0, 0, 0, 4, 4).
+    const std::array<std::size_t, 5> measured { 0, 2, 0, 7, 4 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

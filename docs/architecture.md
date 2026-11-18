@@ -623,6 +623,17 @@ A collector whose ports lie behind its mouth now always turns to face them,
 even where its end primaries fall short and are drawn longer: along the trunk
 they had to turn back on themselves, and 25 of 26 that did were knotted.
 
+**A collector's place follows its primaries' length** (since 2026-11-18).
+Back along the trunk it sits as far as every primary still reaches it
+(`collectorZ`: straight reach plus a fifth for the bends); turned, below the
+engine facing its ports, it moves out as far as they reach. It turns where
+ports lie behind its mouth, or where turning leaves its slackest primary
+clearly less to spend (+0.05 of its length) and the pipe after it can bend
+within its own length; a radial's stays on its axis. Turned trunks that come
+down onto another junction's draw back towards their heads a step at a time,
+alike. Kept just behind the last port, a 4 m primary spent its length in a
+1.5 m hairpin.
+
 **Route check.** `checkRoutes` measures what a physical system could not do:
 two ducts through each other, a duct through itself, a duct, a turbo or an
 intake box through the engine or its gearbox (since 2026-11-18), a centreline bent tighter than one diameter (circle through the

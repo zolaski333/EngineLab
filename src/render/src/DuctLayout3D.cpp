@@ -689,12 +689,13 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
     the last port when every primary still reaches it with room to bend (long
     tubes), else no further back than the shortest allows, and never ahead of
     `centre`, the middle of its ports. Primaries enter along the trunk, so one
-    whose port lies behind the mouth has to turn back to reach it. With
-    `farthest`, as far back as every primary still reaches: a rotary's few
-    ports stand close together, and its primaries coiled to spend their
-    length beside them. */
+    whose port lies behind the mouth has to turn back to reach it. Where they
+    all reach behind the last port, as far back as every primary still
+    reaches: the place follows their length. Kept just behind the last port, a
+    4 m primary spent its length in a hairpin a metre and a half out (owner
+    2026-11-18), as a rotary's coiled beside its ports. */
 [[nodiscard]] float collectorZ(const std::vector<Node>& nodes, const Node& node, const std::vector<PortAnchor>& ports,
-                               float centre, bool farthest = false) {
+                               float centre) {
     float last = centre;
     for (const auto in : node.ins)
         for (const auto cylinder : nodes[in].cylinders)
@@ -715,7 +716,7 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
     };
     const auto back = last + node.diameter;
     constexpr int steps = 24;
-    if (farthest && reaches(back)) {
+    if (reaches(back)) {
         float longest = 0.0F;
         for (const auto in : node.ins) longest = std::max(longest, nodes[in].drawLength);
         for (int k = 0; k < steps; ++k) {
@@ -1267,7 +1268,7 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
             node.spread = base.spread;
             node.zIn = base.z;
             if (node.cylinders.empty())
-                node.zIn = collectorZ(nodes, node, ports, base.z, config.cycle == EngineCycle::rotary);
+                node.zIn = collectorZ(nodes, node, ports, base.z);
             junctions.push_back({ p, i });
         }
     }
@@ -1405,17 +1406,38 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
             node.lane += node.spread * (away * step);
         }
     }
-    // A collector of three or more primaries whose mouth, facing back along
-    // the trunk, has ports beyond it turns its mouth to face them: the
-    // primaries then come straight across into it instead of looping back,
-    // and the pipe after it bends onto the trunk -- or, on a collector that
-    // carries its turbo, the gas goes straight on into the volute, whose
-    // exducer already faces along the trunk. Only where that pipe is long
-    // enough to bend without a kink; a rotary's collectors keep their
-    // places.
-    for (const auto& junction : junctions) {
-        auto& nodes = layouts[junction.path].nodes;
-        auto& node = nodes[junction.node];
+    // How much of its length the slackest (or, with `slackest` false, the
+    // tightest) primary of `node` spends getting to a mouth at `to` facing
+    // along `axis`: straight-line reach plus a fifth for the bends, as
+    // `collectorZ`. Above 1, one falls short.
+    const auto spentBy = [&](const std::vector<Node>& nodes, const Node& node, Vec3 to, Vec3 axis, bool slackest) {
+        float result = slackest ? std::numeric_limits<float>::max() : 0.0F;
+        for (const auto in : node.ins) {
+            const auto& primary = nodes[in];
+            const auto* port = primary.cylinders.empty() ? nullptr : portOf(ports, primary.cylinders.front());
+            if (port == nullptr) continue;
+            const auto lead = startLead(primary, true);
+            const auto entry = endLead(primary);
+            const auto from = port->position + port->direction * lead;
+            const auto need = lead + entry + 1.2F * length(to - axis * entry - from);
+            const auto share = need / std::max(1.0F, primary.drawLength);
+            result = slackest ? std::min(result, share) : std::max(result, share);
+        }
+        return result;
+    };
+    struct Turn final {
+        std::size_t junction {};
+        Vec3 base;
+        Vec3 outward;
+        float step {};
+        int steps {};
+        bool forced {};
+        float trunkScore {};
+    };
+    std::vector<Turn> turns;
+    for (std::size_t j = 0; j < junctions.size(); ++j) {
+        auto& nodes = layouts[junctions[j].path].nodes;
+        auto& node = nodes[junctions[j].node];
         if (config.cycle == EngineCycle::rotary || node.turboAtInlet || !node.cylinders.empty()
             || throughIns(node) < 3U || node.sideIns != 0U || throughOuts(node) != 1U)
             continue;
@@ -1424,23 +1446,130 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
             && (after.routed || after.component->type != ExhaustComponentType::pipe || throughIns(after) != 1U
                 || after.drawLength < 1.6F * turnRadius(after)))
             continue;
-        Vec3 centroid {};
+        Vec3 centroid {}, facing {};
         std::size_t count = 0;
         bool behind = false;
+        float longest = 0.0F;
         for (const auto in : node.ins) {
             const auto& primary = nodes[in];
+            longest = std::max(longest, primary.drawLength);
             for (const auto cylinder : primary.cylinders)
                 if (const auto* port = portOf(ports, cylinder)) {
                     centroid += port->position;
+                    facing += port->direction;
                     ++count;
                     behind = behind || port->position.z > node.zIn - endLead(primary);
                 }
         }
-        if (count < 3U || !behind) continue;
+        // Ports facing along the crankshaft (a radial) gather on its axis
+        // behind them, as a collector ring does: turned out to the side, a
+        // radial's collector sat in its own cylinders (2026-11-18).
+        facing = normalise(facing);
+        if (count < 3U || (!behind && std::hypot(facing.x, facing.y) < 0.3F)) continue;
         centroid = centroid * (1.0F / static_cast<float>(count));
-        const auto mouth = at(node.lane, centroid.z);
-        const auto across = Vec3 { mouth.x - centroid.x, mouth.y - centroid.y, 0.0F };
+        Turn turn;
+        turn.junction = j;
+        turn.base = at(node.lane, centroid.z);
+        const auto across = Vec3 { turn.base.x - centroid.x, turn.base.y - centroid.y, 0.0F };
         if (length(across) < 1.0F) continue;
+        turn.outward = normalise(across);
+        turn.forced = behind;
+        turn.trunkScore = spentBy(nodes, node, at(node.lane, node.zIn), zAxis, true);
+        // Out from the ports as far as every primary still reaches it with
+        // room to bend, as a 6-into-1 hangs below its engine: kept beside the
+        // head, a 700 mm primary curled to spend its length (owner
+        // 2026-11-18).
+        constexpr int steps = 24;
+        turn.step = longest / static_cast<float>(steps);
+        if (spentBy(nodes, node, turn.base, turn.outward, false) <= 1.0F)
+            for (int k = steps; k > 0; --k)
+                if (spentBy(nodes, node, turn.base + turn.outward * (turn.step * static_cast<float>(k)), turn.outward,
+                            false)
+                    <= 1.0F) {
+                    turn.steps = k;
+                    break;
+                }
+        turns.push_back(turn);
+    }
+    // Where a turned trunk comes down onto another junction's, both draw
+    // back towards their heads a step at a time, alike: the two banks of a
+    // flat-6 turned towards each other and met under the crank (2026-11-18).
+    const auto turnedNode = [&](const Turn& turn) -> Node& {
+        return layouts[junctions[turn.junction].path].nodes[junctions[turn.junction].node];
+    };
+    const auto widthOf = [](const Node& node) { return std::max(node.body, node.diameter); };
+    const auto trunkOf = [&](const Turn& turn, int k) {
+        const auto& nodes = layouts[junctions[turn.junction].path].nodes;
+        const auto& node = turnedNode(turn);
+        const auto& after = nodes[node.outs.front()];
+        const auto reach = static_cast<float>(k) * turn.step + node.drawLength + (node.turbo ? 0.0F : turnRadius(after));
+        const auto lane = turn.base + turn.outward * reach;
+        return Vec3 { lane.x, lane.y, 0.0F };
+    };
+    const auto trunkWidth = [&](const Turn& turn) {
+        const auto& nodes = layouts[junctions[turn.junction].path].nodes;
+        const auto& node = turnedNode(turn);
+        const auto& after = nodes[node.outs.front()];
+        return std::max(widthOf(node), std::max(after.body, after.diameter));
+    };
+    std::vector<int> wanted(turns.size(), -1);
+    for (std::size_t t = 0; t < turns.size(); ++t) wanted[t] = turns[t].steps;
+    for (int pass = 0; pass <= 24; ++pass) {
+        std::vector<bool> crowded(turns.size(), false);
+        for (std::size_t t = 0; t < turns.size(); ++t) {
+            const auto mine = trunkOf(turns[t], wanted[t]);
+            const auto width = trunkWidth(turns[t]);
+            for (std::size_t j = 0; j < junctions.size() && !crowded[t]; ++j) {
+                if (j == turns[t].junction) continue;
+                Vec3 theirs;
+                float theirWidth = 0.0F;
+                const auto other = std::find_if(turns.begin(), turns.end(),
+                                                [j](const Turn& turn) { return turn.junction == j; });
+                if (other != turns.end()) {
+                    theirs = trunkOf(*other, wanted[static_cast<std::size_t>(other - turns.begin())]);
+                    theirWidth = trunkWidth(*other);
+                } else {
+                    const auto& node = layouts[junctions[j].path].nodes[junctions[j].node];
+                    theirs = Vec3 { node.lane.x, node.lane.y, 0.0F };
+                    theirWidth = widthOf(node);
+                }
+                crowded[t] = length(mine - theirs) < 0.5F * (width + theirWidth) + 10.0F;
+            }
+        }
+        bool moved = false;
+        for (std::size_t t = 0; t < turns.size(); ++t)
+            if (crowded[t] && wanted[t] > 0) {
+                --wanted[t];
+                moved = true;
+            } else if (crowded[t] && !turns[t].forced) {
+                wanted[t] = -1;
+            }
+        if (!moved) break;
+    }
+    // A collector of three or more primaries whose mouth, facing back along
+    // the trunk, has ports beyond it turns its mouth to face them: the
+    // primaries then come straight across into it instead of looping back,
+    // and the pipe after it bends onto the trunk -- or, on a collector that
+    // carries its turbo, the gas goes straight on into the volute, whose
+    // exducer already faces along the trunk. Only where that pipe is long
+    // enough to bend without a kink; a rotary's collectors keep their
+    // places. Where none comes from behind, it turns only if that leaves its
+    // slackest primary clearly less to spend than the place back along the
+    // trunk: there, the ports nearest the mouth had a metre to lose in a
+    // hairpin on 1.5 m primaries (owner 2026-11-18); and only where the pipe
+    // after it makes its quarter bend within its own length (a Fireblade's
+    // 4-1 was drawn 11 % longer).
+    for (std::size_t t = 0; t < turns.size(); ++t) {
+        const auto& turn = turns[t];
+        auto& nodes = layouts[junctions[turn.junction].path].nodes;
+        auto& node = nodes[junctions[turn.junction].node];
+        const auto& after = nodes[node.outs.front()];
+        if (wanted[t] < 0) continue;
+        const auto mouth = turn.base + turn.outward * (turn.step * static_cast<float>(wanted[t]));
+        if (!turn.forced
+            && (spentBy(nodes, node, mouth, turn.outward, true) < turn.trunkScore + 0.05F
+                || (!node.turbo && 0.8F * after.drawLength < 0.5F * pi * turnRadius(after))))
+            continue;
         // Even where a primary is too short to reach the turned mouth with
         // room to bend: along the trunk it had to turn back on itself as
         // well, and 25 of the 26 primaries that did were knotted or kinked
@@ -1448,7 +1577,7 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
         // flagged as stretched either way.
         node.turned = true;
         node.mouthCentre = mouth;
-        node.mouthAxis = normalise(across);
+        node.mouthAxis = turn.outward;
         node.spread = zAxis;
         const auto end = mouth + node.mouthAxis * node.drawLength;
         node.lane = { end.x, end.y, 0.0F };

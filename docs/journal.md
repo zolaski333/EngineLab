@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-18 — 3-D tubing: a collector's place follows its primaries' length
+
+- Owner: at 300 or 4,000 mm primaries the collector stayed put. Measured on four owner engines with every primary at 300/700/1,500/4,000 mm (`EngineLabSceneExport`, chord over drawn length of each primary): at 4,000 mm the slackest was 0.02-0.08 (a hairpin 1.5-1.9 m out), at 1,500 mm 0.06-0.21.
+- Kept: a collector goes back along the trunk as far as every primary reaches (the rotary's rule, now all), or turns below the engine and moves out as far as they reach, whichever leaves the slackest the least to spend (turned only if +0.05; radials stay on their axis; only where the pipe after it bends within its length). Turned trunks that meet back off alike (a flat-6's two banks met under the crank).
+- After: slackest 0.72-0.82 at 4,000 mm, 0.59-0.81 at 1,500 mm (I4 700 mm 0.41, X12-2 relocated 0.48-0.74 unchanged). Owner engines 34/27/0/196/21 -> 15/2/0/75/27 (V4-2S headers 2 x 3 drawn 1.18x instead of curled); catalogue 0/4/0/9/4 -> 0/2/0/7/4. Export 28 -> 20 s.
+- Refuted: a tenth of the length kept spare (I6 700 mm 0.67 -> 0.54, V8 Truck bends 0 -> 26, V4-2S still stretched); a place at 0.75 of the length for a blocked collector (nothing changed).
+- `checkCollectorFollowsPrimaries`: designed I6/V8 at 1.5 and 4 m, chord >= 0.6 (old code 0.15; now 0.80-0.82). `EngineModel3D` 77 s and `AppLayout` pass. Not seen in the app.
+
 ## 2026-11-18 — 3-D tubing: bent first guesses, collectors turned to face their primaries
 
 - Issues sat within 3 D of pipe ends, and 25 of the 26 primaries entering an axial mouth from beyond it were knotted or kinked. Kept: each pipe starts from the clearest of 36 tube-bender shapes (arcs of 1.5 D), and such a mouth always turns.
