@@ -634,6 +634,26 @@ down onto another junction's draw back towards their heads a step at a time,
 alike. Kept just behind the last port, a 4 m primary spent its length in a
 1.5 m hairpin.
 
+**The vehicle's corridor** (since 2026-11-18). The layout works in the
+vehicle's frame (a motorcycle's engine turned into it): pipes stay within
+150 mm of the engine-and-gearbox box across, 250 mm under it, no higher
+than two port diameters over the top port, from 100 mm ahead; walls keep
+the router inside. A collector goes down, then back along the corridor,
+spending its primaries' length there; a primary with more length than the
+room between its ends (1.3 x its straight reach, three diameters more at least)
+is drawn folded. A V or flat engine's banks are mirror images (an H's two
+ends, a pair of routes bent alike, an X fed side by side at the centre). A
+straight even tail running past 1.5 engine-and-gearbox lengths behind the
+gearbox is drawn short enough to end there (`breakTails`). Every piece
+drawn shorter than authored carries two collars half way along
+(`DuctPiece::foldedMm`); its outlet sounds from the drawn tip. A radial
+keeps its pipes round it; only its tail is broken. `checkPlausibility`
+gauges the result: beside, below, above, ahead, behind (a straight even
+pipe past the plane by more than three diameters), coiled, astray outlets,
+mirror asymmetry. The catalogue went from 17 implausible of 18 to 1 (the
+EJ25's 120 mm asymmetry); the price is more bends in less room (route
+counts below).
+
 **Route check.** `checkRoutes` measures what a physical system could not do:
 two ducts through each other, a duct through itself, a duct, a turbo or an
 intake box through the engine or its gearbox (since 2026-11-18), a centreline bent tighter than one diameter (circle through the
@@ -643,7 +663,9 @@ or another duct, within two radii. Over the 16 catalogue engines, before the
 router: 107 clashes, 51 self-clashes, 0 through the engine, 259 tight bends,
 6 stretched; with it: 7, 4, 0, 48, 7; over the 18 of 2026-11-14: 4, 4, 0,
 46, 6; since 2026-11-17 (a plenum's face as far out as a runner's bend
-allows, a merge balanced between its routed inputs): 4, 4, 0, 21, 6.
+allows, a merge balanced between its routed inputs): 4, 4, 0, 21, 6; in
+the vehicle's corridor (2026-11-18, after the tubing work had brought it to
+0, 2, 0, 7, 4): 3, 0, 0, 16, 2.
 `EngineLab.EngineModel3D` keeps every count from growing, and designs 80
 engines (inline, V, flat, X and W from 4 to 16 cylinders, with each of the
 designer's exhaust systems, a turbo on one pipe or the family's) of which none

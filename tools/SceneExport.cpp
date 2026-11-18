@@ -9,8 +9,8 @@
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
 // port anchors, and the route check (RouteCheck) issues; plus index.json
 // listing the files. Prints the issue counts per engine, then the exhaust's
-// plausibility (checkPlausibility): mm beside, below, above and ahead of the
-// engine past the allowances, coiled pipes, astray outlets, the mirror
+// plausibility (checkPlausibility): mm beside, below, above, ahead of and
+// behind the engine past the allowances, coiled pipes, astray outlets, the mirror
 // asymmetry ("-" where the ports are not mirror images) and pipes drawn
 // folded. `--saved` exports the saved engines of a folder (the app's, e.g.
 // %APPDATA%/EngineLab/engines) instead of the catalogue; `--designed all`, the

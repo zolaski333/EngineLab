@@ -42,7 +42,11 @@ the 3-D layout's envelope and clean tubing (no pipe, collector or turbo
 through an engine or its gearbox, the X12-2's 12-into-1 kept, bent first
 guesses, a collector placed by its primaries' length; drawing only; journal
 2026-11-18). **Closed by the owner 2026-11-18**, merged into `main` with
-K01 (not pushed). No current priority: ask the owner.
+K01 (not pushed). Owner go 2026-11-18 (exhaust placement "catastrophic"):
+the 7-step plan on `feat/exhaust-corridor` -- a plausibility gauge, the
+vehicle's corridor, collectors down then back, mirrored banks, broken
+tails with collars (drawing only; journal 2026-11-18). Done, unmerged,
+awaiting the owner's look in the app.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a

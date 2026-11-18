@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-18 — 3-D exhaust in the vehicle's corridor (owner: V8 HPIPE, X16 "catastrophic")
+
+- New gauge `checkPlausibility` (vehicle frame; beside/below/above/ahead/behind, coiled, astray, mirror asymmetry). Before: catalogue 17 of 18 implausible (beside up to 1,405 mm, below 471, 10 outlets astray), owner engines 54 of 57 (beside 1,830, above 605, asymmetry 899).
+- Kept, one step each, `EngineLabSceneExport` (catalogue / `--saved` / `--designed all`): a corridor with walls; collectors down then back, primaries folded past 1.3 x their reach; banks mirrored (H ends, routes bent alike, X fed side by side); a straight tail past 1.5 engine lengths drawn broken; two collars on every piece drawn short.
+- After: catalogue 1 of 18 (EJ25 asymmetry 120 mm), owner 3 of 57 (Four-Rotor coiled; R8, Radial Eight 21-28 mm above), designed 0 of 80 (9 when first measured, already in the corridor). V8 HPIPE asymmetry 235 -> 7 mm, tailpipes 3 m out -> inside the plane.
+- Price, clash/self/engine/bend/stretch: catalogue 0/2/0/7/4 -> 3/0/0/16/2, owner 15/2/0/75/29 -> 32/0/0/147/28 (more bends in less room); designed (first measured in the corridor) 138/20/2/417/225 -> 127/20/0/419/224.
+- Refuted: an X centred on any engine (CP4 +2 bends; banked only), mirror fallback without a bend check (V4-2S +2 each), a tail keeping 3 D before its S (LS3 +4 bends). The outlet sounds from its drawn tip (contract kept; a moved mic hears a broken tail nearer).
+- `EngineLab.EngineModel3D` passes (gates 3/0/0/16/2, behind and collars fail on the old code); export of the owner engines 28 s (20 s at 3decac7, not interleaved), X16 3.2 s, X12-2 2.5 s. Physics and default sound untouched (render only). Not seen in the app on screen.
+
 ## 2026-11-18 — 3-D tubing: a collector's place follows its primaries' length
 
 - Owner: at 300 or 4,000 mm primaries the collector stayed put. Measured on four owner engines with every primary at 300/700/1,500/4,000 mm (`EngineLabSceneExport`, chord over drawn length of each primary): at 4,000 mm the slackest was 0.02-0.08 (a hairpin 1.5-1.9 m out), at 1,500 mm 0.06-0.21.
