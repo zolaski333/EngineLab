@@ -45,8 +45,9 @@ guesses, a collector placed by its primaries' length; drawing only; journal
 K01 (not pushed). Owner go 2026-11-18 (exhaust placement "catastrophic"):
 the 7-step plan on `feat/exhaust-corridor` -- a plausibility gauge, the
 vehicle's corridor, collectors down then back, mirrored banks, broken
-tails with collars (drawing only; journal 2026-11-18). Done, unmerged,
-awaiting the owner's look in the app.
+tails with collars (drawing only; journal 2026-11-18). **Validated by the
+owner 2026-11-19**, merged into `main` (not pushed). No current priority:
+ask the owner.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a
