@@ -322,6 +322,9 @@ PlausibilityReport checkPlausibility(const EngineModel3D& model) {
         frontPort = std::min(frontPort, p.z - 3.0F * port.diameterMm);
     }
     const auto front = std::min(low.z, frontPort) - 100.0F;
+    // A tail runs on out of the picture past one and a half engine (and
+    // gearbox) lengths behind it: drawn broken there.
+    const auto back = high.z + 1.5F * (high.z - low.z) + 50.0F;
 
     const auto& ducts = model.ducts();
     for (std::size_t d = 0; d < ducts.size(); ++d) {
@@ -340,6 +343,27 @@ PlausibilityReport checkPlausibility(const EngineModel3D& model) {
             mark(report.belowMm, low.y - 250.0F - p.y);
             mark(report.aboveMm, p.y - topPort);
             mark(report.aheadMm, front - p.z);
+        }
+        // A straight, even pipe still running on past the plane: one a
+        // broken view could have shortened (a muffler, a chamber's cone or
+        // a radial's collector keeps its size).
+        if (duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::pipe
+            && !duct.radii.empty()) {
+            const auto [thinnest, widest] = std::minmax_element(duct.radii.begin(), duct.radii.end());
+            float arc = 0.0F;
+            Vec3 first {}, last {};
+            bool any = false;
+            for (std::size_t i = 1; i < duct.centreline.size(); ++i) {
+                const auto a = local(duct.centreline[i - 1U]), b = local(duct.centreline[i]);
+                if (b.z <= back) continue;
+                if (!any) first = a.z > back ? a : b;
+                any = true;
+                arc += length(b - a);
+                last = b;
+            }
+            const auto diameter = 2.0F * *widest;
+            if (any && *widest - *thinnest < 0.5F && length(last - first) > 0.98F * arc)
+                mark(report.behindMm, arc - 3.0F * diameter - 1.0F);
         }
         // Total turning, a direction every diameter or so along the line.
         const auto step = std::max(10.0F, 2.0F * (duct.radii.empty() ? 10.0F : duct.radii.front()));

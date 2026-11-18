@@ -292,7 +292,7 @@ int main(int argc, char** argv) {
     index << '[';
     int written = 0;
     std::array<std::size_t, 5> totals {};
-    std::array<float, 4> worst {};
+    std::array<float, 5> worst {};
     std::array<std::size_t, 3> counts {};
     float worstAsymmetry = 0.0F;
     std::size_t implausible = 0;
@@ -321,14 +321,15 @@ int main(int argc, char** argv) {
         char asymmetry[32] = "-";
         if (p.mirrored) std::snprintf(asymmetry, sizeof(asymmetry), "%.0f", static_cast<double>(p.asymmetryMm));
         std::snprintf(line, sizeof(line),
-                      "         plausibility: beside %5.0f  below %5.0f  above %5.0f  ahead %5.0f  coiled %2zu"
-                      "  astray %2zu  asymmetry %5s  folded %2zu%s\n",
+                      "         plausibility: beside %5.0f  below %5.0f  above %5.0f  ahead %5.0f  behind %5.0f"
+                      "  coiled %2zu  astray %2zu  asymmetry %5s  folded %2zu%s\n",
                       static_cast<double>(p.besideMm), static_cast<double>(p.belowMm),
-                      static_cast<double>(p.aboveMm), static_cast<double>(p.aheadMm), p.coiled, p.astray, asymmetry,
-                      p.folded, p.plausible() ? "" : "  IMPLAUSIBLE");
+                      static_cast<double>(p.aboveMm), static_cast<double>(p.aheadMm),
+                      static_cast<double>(p.behindMm), p.coiled, p.astray, asymmetry, p.folded,
+                      p.plausible() ? "" : "  IMPLAUSIBLE");
         std::cout << line;
         worst = { std::max(worst[0], p.besideMm), std::max(worst[1], p.belowMm), std::max(worst[2], p.aboveMm),
-                  std::max(worst[3], p.aheadMm) };
+                  std::max(worst[3], p.aheadMm), std::max(worst[4], p.behindMm) };
         counts[0] += p.coiled;
         counts[1] += p.astray;
         counts[2] += p.folded;
@@ -345,7 +346,8 @@ int main(int argc, char** argv) {
     std::cout << "total: clash " << totals[0] << ", self " << totals[1] << ", engine " << totals[2] << ", bend "
               << totals[3] << ", stretch " << totals[4] << '\n';
     std::cout << "plausibility: " << implausible << " of " << written << " implausible; worst beside " << worst[0]
-              << ", below " << worst[1] << ", above " << worst[2] << ", ahead " << worst[3] << " mm; coiled "
+              << ", below " << worst[1] << ", above " << worst[2] << ", ahead " << worst[3] << ", behind "
+              << worst[4] << " mm; coiled "
               << counts[0] << ", astray " << counts[1] << ", folded " << counts[2] << "; worst asymmetry "
               << worstAsymmetry << " mm\n";
     return 0;

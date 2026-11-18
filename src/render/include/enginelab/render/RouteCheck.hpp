@@ -65,6 +65,10 @@ struct RouteReport final {
  * - above: over the highest exhaust port, beyond two port diameters;
  * - ahead: in front of the engine (or of a motorcycle's forward-facing
  *   ports, three port diameters out), beyond 100 mm;
+ * - behind: a straight, even pipe running on more than three diameters
+ *   past one and a half engine-and-gearbox lengths (and 50 mm) behind them:
+ *   a long tail is drawn broken there (DuctPiece::foldedMm); a muffler, a
+ *   chamber's cone or a radial's collector keeps its size;
  * - coiled: exhaust pipes whose centreline turns through more than 450
  *   degrees in all (a header that drops and runs back turns 180-270);
  * - astray: outlets not pointing rearwards (within 45 degrees);
@@ -80,6 +84,7 @@ struct PlausibilityReport final {
     float belowMm {};
     float aboveMm {};
     float aheadMm {};
+    float behindMm {};
     std::size_t coiled {};
     std::size_t astray {};
     float asymmetryMm {};
@@ -90,7 +95,8 @@ struct PlausibilityReport final {
     /** The exhaust ducts concerned (indices in EngineModel3D::ducts()). */
     std::vector<int> offenders;
     [[nodiscard]] bool plausible(float asymmetryAllowanceMm = 40.0F) const noexcept {
-        return besideMm <= 0.0F && belowMm <= 0.0F && aboveMm <= 0.0F && aheadMm <= 0.0F && coiled == 0U
+        return besideMm <= 0.0F && belowMm <= 0.0F && aboveMm <= 0.0F && aheadMm <= 0.0F && behindMm <= 0.0F
+            && coiled == 0U
             && astray == 0U && asymmetryMm <= asymmetryAllowanceMm;
     }
 };

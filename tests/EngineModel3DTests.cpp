@@ -971,11 +971,15 @@ void checkEngine(const EngineConfig& config) {
     // exhaust out beside, under, over or ahead of the engine, none coiled
     // nor pointing anywhere but back. Before the corridor, 17 of the 18.
     const auto plausibility = checkPlausibility(model);
+    // Nor running on more than one and a half engine lengths behind it: a
+    // V8's 1.4 m tailpipes ran 3 m out of the picture (owner 2026-11-18;
+    // the LS3 1,240 mm past before the broken view).
     require(plausibility.besideMm <= 0.0F && plausibility.belowMm <= 0.0F && plausibility.aboveMm <= 0.0F
-                && plausibility.aheadMm <= 0.0F,
+                && plausibility.aheadMm <= 0.0F && plausibility.behindMm <= 0.0F,
             name + ": the exhaust stays within its corridor (beside " + std::to_string(plausibility.besideMm)
                 + ", below " + std::to_string(plausibility.belowMm) + ", above "
-                + std::to_string(plausibility.aboveMm) + ", ahead " + std::to_string(plausibility.aheadMm) + " mm)");
+                + std::to_string(plausibility.aboveMm) + ", ahead " + std::to_string(plausibility.aheadMm)
+                + ", behind " + std::to_string(plausibility.behindMm) + " mm)");
     require(plausibility.coiled == 0U, name + ": no exhaust pipe is drawn coiled");
     if (!plausibility.plausible()) ++implausibleEngines;
     checkStations(model);
@@ -1607,7 +1611,8 @@ void checkEngineEnvelope() {
                     std::cout << "EngineModel3D: " << shape.name << " exhaust " << static_cast<int>(system)
                               << (induction == Induction::turbocharged ? " turbo" : "") << " implausible: beside "
                               << placement.besideMm << ", below " << placement.belowMm << ", above "
-                              << placement.aboveMm << ", ahead " << placement.aheadMm << ", coiled "
+                              << placement.aboveMm << ", ahead " << placement.aheadMm << ", behind "
+                              << placement.behindMm << ", coiled "
                               << placement.coiled << ", astray " << placement.astray << ", asymmetry "
                               << placement.asymmetryMm << " mm\n";
                 }

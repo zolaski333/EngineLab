@@ -155,6 +155,9 @@ struct Node final {
     float outletDiameter {};
     float body {};
     float drawLength {};
+    /** A straight tail pipe drawn shorter than authored (a broken view):
+        by how much. */
+    float folded {};
     /** Radius of the circle the inputs plug into, and of the mouth that
         holds them: wide enough for every input side by side. */
     float slots {};
@@ -1392,6 +1395,9 @@ namespace {
     that gives no engine). */
 struct Corridor final {
     bool active {};
+    /** Whether the engine's bounds below are known (a radial's too, for
+        its tail only). */
+    bool bounded {};
     /** Bounds of a centreline: across, from under the engine up to over its
         highest port, from just ahead of it; no bound rearwards. */
     Vec3 low;
@@ -1408,6 +1414,53 @@ struct Corridor final {
                 && p.z >= low.z + margin);
     }
 };
+
+/** A straight pipe all of whose downstream is single pieces and splits to
+    open ends (no merge, no routed pipe, no turbo), where that runs on past
+    1.5 engine-and-gearbox lengths behind the gearbox, is drawn short enough
+    for it to end there, as a broken view: a V8's 1.4 m tailpipes ran 3 m
+    out of the picture, each to its own end. */
+void breakTails(PathLayout& layout, const Corridor& corridor) {
+    const auto plane = corridor.engineHigh.z + 1.5F * (corridor.engineHigh.z - corridor.engineLow.z);
+    auto& nodes = layout.nodes;
+    for (const auto i : layout.order) {
+        auto& node = nodes[i];
+        // An even pipe only: a two-stroke chamber's cones keep their shape.
+        if (node.routed || node.stack || node.turbo || !node.cylinders.empty() || node.ins.size() != 1U
+            || node.component->type != ExhaustComponentType::pipe
+            || std::abs(node.outletDiameter - node.diameter) > 0.5F)
+            continue;
+        std::vector<std::size_t> after;
+        bool tree = true;
+        for (std::size_t k = 0; tree && k <= after.size(); ++k) {
+            const auto& from = k == 0 ? node : nodes[after[k - 1U]];
+            for (const auto out : from.outs) {
+                const auto& next = nodes[out];
+                tree = tree && !next.routed && !next.turbo && next.ins.size() == 1U;
+                after.push_back(out);
+            }
+        }
+        if (!tree) continue;
+        float end = node.zOut;
+        for (const auto k : after) end = std::max(end, nodes[k].zOut);
+        // A pipe moving over to its own lane (after an X) keeps the run its
+        // S-bend needs: cut to three diameters, an LS3's bent 0.9 diameters.
+        const auto& parent = nodes[node.ins.front()];
+        float lateral = 0.0F;
+        if (!parent.routed && !parent.turned)
+            lateral = length(outSlot(layout, parent, indexIn(parent.outs, i)) - at(node.lane, node.zIn));
+        const auto keep = std::max(3.0F * node.diameter, 1.7F * lateral + node.diameter);
+        const auto cut = std::min(end - plane, node.drawLength - keep);
+        if (cut <= 1.0F) continue;
+        node.drawLength -= cut;
+        node.zOut -= cut;
+        node.folded += cut;
+        for (const auto k : after) {
+            nodes[k].zIn -= cut;
+            nodes[k].zOut -= cut;
+        }
+    }
+}
 
 /** The exhaust laid out once; the junctions of the paths in `movable` move
     off their places where the engine blocks them. With `stuck`, a path whose
@@ -2611,6 +2664,7 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
             mirrorSlots(seatLayout, seatLayout.nodes[junctions[pair.seat].node], layout,
                         layout.nodes[junctions[pair.twin].node], pair.dz, ports);
         }
+        if (corridor.bounded) breakTails(layout, corridor);
         auto& nodes = layout.nodes;
         const auto pathId = layout.path->id;
         const auto pieceFor = [&](const Node& node, DuctKind kind) {
@@ -2667,6 +2721,9 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
                 }
             }
             shapeComponent(piece, node, std::move(points));
+            // The outlet still sounds from its drawn tip: a moved microphone
+            // hears the tailpipe where the picture shows it.
+            piece.foldedMm = node.folded;
             pieces.push_back(std::move(piece));
 
             // Joins with no authored duct: ports and side branches straight
@@ -2908,6 +2965,7 @@ Corridor corridorFor(const std::vector<PortAnchor>& ports, const std::vector<Eng
     }
     // RouteCheck's plausibility bounds.
     corridor.active = true;
+    corridor.bounded = true;
     corridor.engineLow = low;
     corridor.engineHigh = high;
     corridor.low = { low.x - 150.0F, low.y - 250.0F, std::min(low.z, frontPort) - 100.0F };
@@ -2961,7 +3019,13 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             for (auto& axis : solid.axes) axis = toLocal(axis);
         }
     }
-    const auto corridor = frame.radial ? Corridor {} : corridorFor(localPorts, localSolids, frame.engineSolids);
+    // A radial's pipes stand round it, wherever its cylinders are: only its
+    // tail is broken off past the same plane.
+    auto corridor = corridorFor(localPorts, localSolids, frame.engineSolids);
+    if (frame.radial) {
+        corridor.active = false;
+        corridor.walls.clear();
+    }
     auto pieces = layoutLocal(config, localPorts, boreMm, localAvoid, localSolids, turbos, corridor);
     if (!turned) return pieces;
     for (auto& piece : pieces) {
