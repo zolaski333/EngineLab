@@ -1462,6 +1462,33 @@ void breakTails(PathLayout& layout, const Corridor& corridor) {
     }
 }
 
+/** A pipe drawn shorter than authored says so: two collars half way along
+    it, a diameter apart, as a drawing marks a broken view. */
+void markFold(DuctPiece& piece) {
+    const auto& line = piece.centreline;
+    if (piece.foldedMm <= 0.0F || line.size() < 2U || piece.radii.size() != line.size()) return;
+    const auto total = polylineLength(line);
+    const auto radius = *std::max_element(piece.radii.begin(), piece.radii.end());
+    const auto pointAt = [&line](float arc) {
+        for (std::size_t i = 1; i < line.size(); ++i) {
+            const auto span = length(line[i] - line[i - 1U]);
+            if (arc <= span || i + 1U == line.size()) {
+                const auto t = span > 1.0e-3F ? std::clamp(arc / span, 0.0F, 1.0F) : 0.0F;
+                return line[i - 1U] + (line[i] - line[i - 1U]) * t;
+            }
+            arc -= span;
+        }
+        return line.back();
+    };
+    const auto width = 0.3F * radius;
+    if (total < 4.0F * radius + 2.0F * width) return;
+    for (const auto side : { -1.0F, 1.0F }) {
+        const auto middle = 0.5F * total + side * radius;
+        appendTube(piece.mesh, { pointAt(middle - width), pointAt(middle + width) }, { 1.2F * radius, 1.2F * radius },
+                   segmentsFor(2.0F * radius), true, true);
+    }
+}
+
 /** The exhaust laid out once; the junctions of the paths in `movable` move
     off their places where the engine blocks them. With `stuck`, a path whose
     junction is blocked and a routed pipe of which starts out deep in the
@@ -3027,6 +3054,7 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         corridor.walls.clear();
     }
     auto pieces = layoutLocal(config, localPorts, boreMm, localAvoid, localSolids, turbos, corridor);
+    for (auto& piece : pieces) markFold(piece);
     if (!turned) return pieces;
     for (auto& piece : pieces) {
         for (auto& vertex : piece.mesh.vertices) {

@@ -123,6 +123,8 @@ RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const s
             << ",\"element\":" << duct.elementId << ",\"type\":" << static_cast<int>(duct.componentType)
             << ",\"part\":" << duct.part << ",\"authored\":";
         writeNumber(out, duct.authoredLengthMm);
+        out << ",\"folded\":";
+        writeNumber(out, duct.foldedMm);
         out << ",\"centreline\":[";
         for (std::size_t i = 0; i < duct.centreline.size(); ++i) {
             if (i > 0) out << ',';

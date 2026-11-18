@@ -56,6 +56,7 @@ void require(bool condition, const std::string& message) {
 }
 
 int stretchedPipes = 0;
+int markedFolds = 0;
 int checkedPipes = 0;
 std::array<std::size_t, 5> routeIssues {};
 /** Catalogue engines whose exhaust is not placed as one fitted to a vehicle. */
@@ -448,6 +449,24 @@ void checkDucts(const EngineModel3D& model) {
                     label + ": a pipe is folded by less than its length");
             ++checkedPipes;
             if (drawn > 1.03F * duct.authoredLengthMm) ++stretchedPipes;
+            // A pipe drawn broken shows it: collars stand proud of it.
+            if (duct.foldedMm > 0.0F && !duct.radii.empty()) {
+                const auto radius = *std::max_element(duct.radii.begin(), duct.radii.end());
+                const auto& mesh = model.parts()[duct.part].mesh;
+                const auto proud = std::any_of(mesh.vertices.begin(), mesh.vertices.end(), [&](const auto& vertex) {
+                    float nearest = std::numeric_limits<float>::max();
+                    for (std::size_t i = 1; i < duct.centreline.size(); ++i) {
+                        const auto a = duct.centreline[i - 1U], b = duct.centreline[i];
+                        const auto span = dot(b - a, b - a);
+                        const auto t = span > 1.0e-6F ? std::clamp(dot(vertex.position - a, b - a) / span, 0.0F, 1.0F)
+                                                      : 0.0F;
+                        nearest = std::min(nearest, length(vertex.position - (a + (b - a) * t)));
+                    }
+                    return nearest > 1.1F * radius;
+                });
+                require(proud || drawn < 4.6F * radius, label + ": a pipe drawn broken is marked so");
+                ++markedFolds;
+            }
         }
         if (duct.kind == DuctKind::intakeRunner) {
             require(std::abs(drawn - duct.authoredLengthMm) < 0.03F * duct.authoredLengthMm,
@@ -2019,6 +2038,9 @@ int main() {
     // primaries, which then reach it.
     require(stretchedPipes <= 4, "no more exhaust pipes are drawn longer than authored than when measured ("
                                      + std::to_string(stretchedPipes) + ")");
+    // Some catalogue pipe is drawn broken (the K20A's tail, 2026-11-18), so
+    // the marking above is checked on something.
+    require(markedFolds > 0, "some catalogue pipe is drawn broken");
     // Route check over the catalogue, measured 2026-10-05 with the router
     // (before it: 107 clashes, 51 self-clashes, 0, 259 tight bends, 6).
     // 2026-10-07: 43 tight bends once a branch leaving an X turns away at

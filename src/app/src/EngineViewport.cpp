@@ -2865,6 +2865,11 @@ void EngineViewport::updateInspector() {
             const auto drawn = render::polylineLength(duct.centreline);
             if (drawn > 1.03F * duct.authoredLengthMm)
                 add("Drawn", millimetres(model_.units, drawn) + " (stretched to reach)");
+            // A long one is drawn broken (the two collars): the sound keeps
+            // its full length.
+            else if (duct.foldedMm > 1.0F)
+                add("Drawn", millimetres(model_.units, drawn) + " (shown broken: "
+                                 + millimetres(model_.units, duct.foldedMm) + " left out)");
         }
         if (exhaust) {
             for (const auto& path : config.exhaustPaths) {
