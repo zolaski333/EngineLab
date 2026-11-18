@@ -38,10 +38,11 @@ the owner after its A/B (2026-11-17). Lots 7-8 done, released 0.10.0
 (not to be touched); K01-K03 analysed (journal 2026-11-17). Owner go
 2026-11-17: fix K01-K03 and the probe's missing table, on `exp/k-gaps` (K01
 kept after an A/B; K02/K03 wait on reference data). Owner go 2026-11-18:
-**now: the 3-D layout's envelope** on `fix/route-envelope` -- no pipe,
-collector or turbo through an engine or its gearbox, the X12-2's 12-into-1
-and dimensions kept, X/W intakes in two plenum boxes (drawing only; journal
-2026-11-18); full ctest only before a merge.
+the 3-D layout's envelope and clean tubing (no pipe, collector or turbo
+through an engine or its gearbox, the X12-2's 12-into-1 kept, bent first
+guesses, a collector placed by its primaries' length; drawing only; journal
+2026-11-18). **Closed by the owner 2026-11-18**, merged into `main` with
+K01 (not pushed). No current priority: ask the owner.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a
