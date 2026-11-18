@@ -346,9 +346,14 @@ void buildNodes(PathLayout& layout) {
             node.body = std::max(node.diameter, std::sqrt(4.0F * volume / (pi * drawLength)));
         if (c.type == ExhaustComponentType::crossover) node.body = 1.25F * node.diameter;
         node.stack = !node.cylinders.empty() && node.ins.empty() && node.outs.empty();
+        // The pipe onto an H's near end too: left straight on its
+        // collector's lane, the far end could not mirror it (a V8's trunks
+        // 432 mm apart for a 250 mm crossover).
         node.routed = !node.stack && c.type == ExhaustComponentType::pipe
             && (!node.cylinders.empty()
-                || (node.outs.size() == 1U && layout.nodes[node.outs.front()].ins.size() > 1U));
+                || (node.outs.size() == 1U
+                    && (layout.nodes[node.outs.front()].ins.size() > 1U
+                        || layout.nodes[node.outs.front()].sideOuts > 0U)));
     }
 }
 
@@ -1277,6 +1282,9 @@ void mirrorRoutes(std::vector<RoutedPipe>& routes, const std::vector<RouteTube>&
         std::size_t left;
         std::size_t right;
         float dz;
+        /** The stagger at the far ends: an H's two ends face each other
+            across, unstaggered, at the end of staggered banks' trunks. */
+        float dzEnd;
     };
     std::vector<Pair> pairs;
     std::vector<bool> paired(routes.size(), false);
@@ -1292,8 +1300,11 @@ void mirrorRoutes(std::vector<RoutedPipe>& routes, const std::vector<RouteTube>&
             if (std::abs(a.x + b.x) > 1.0F || std::abs(a.y - b.y) > 1.0F) continue;
             const auto dz = b.z - a.z;
             const auto end = left.points.back(), otherEnd = right.points.back();
-            if (length(Vec3 { -end.x, end.y, end.z + dz } - otherEnd) > 1.0F) continue;
-            pairs.push_back({ l, r, dz });
+            const auto dzEnd = otherEnd.z - end.z;
+            if (std::abs(end.x + otherEnd.x) > 1.0F || std::abs(end.y - otherEnd.y) > 1.0F
+                || std::abs(dzEnd - dz) > std::max(1.0F, 2.0F * std::abs(dz)))
+                continue;
+            pairs.push_back({ l, r, dz, dzEnd });
             paired[l] = paired[r] = true;
             break;
         }
@@ -1305,32 +1316,69 @@ void mirrorRoutes(std::vector<RoutedPipe>& routes, const std::vector<RouteTube>&
         rightTurning += turningOf(routes[pair.right].points, 2.0F * routes[pair.right].radius);
     }
     const auto fromLeft = leftTurning <= rightTurning;
-    std::vector<std::vector<Vec3>> images(pairs.size());
+    // The image of `pair`'s source side (the left one when `left`).
+    const auto imageOf = [&](const Pair& pair, bool left) {
+        const auto source = left ? pair.left : pair.right;
+        const auto dz = left ? pair.dz : -pair.dz;
+        const auto dzEnd = left ? pair.dzEnd : -pair.dzEnd;
+        const auto& points = routes[source].points;
+        const auto total = std::max(1.0e-3F, polylineLength(points));
+        std::vector<Vec3> image;
+        float walked = 0.0F;
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            if (i > 0) walked += length(points[i] - points[i - 1U]);
+            const auto t = walked / total;
+            image.push_back({ -points[i].x, points[i].y, points[i].z + dz + (dzEnd - dz) * t });
+        }
+        return image;
+    };
     std::vector<bool> replaced(routes.size(), false);
-    for (std::size_t p = 0; p < pairs.size(); ++p) {
-        const auto& pair = pairs[p];
-        const auto source = fromLeft ? pair.left : pair.right;
-        const auto dz = fromLeft ? pair.dz : -pair.dz;
-        for (const auto& point : routes[source].points) images[p].push_back({ -point.x, point.y, point.z + dz });
-        replaced[fromLeft ? pair.right : pair.left] = true;
-    }
-    for (std::size_t p = 0; p < pairs.size(); ++p) {
-        const auto target = fromLeft ? pairs[p].right : pairs[p].left;
-        const auto radius = routes[target].radius;
-        const auto& image = images[p];
-        if (tubeSunk(image, radius, blocks, true)) continue;
-        bool touches = false;
+    for (const auto& pair : pairs) replaced[fromLeft ? pair.right : pair.left] = true;
+    // Whether `image`, drawn in place of `target`, is clear; `skip` leaves
+    // out the routes to be replaced by images as well.
+    const auto clear = [&](const std::vector<Vec3>& image, std::size_t target, float radius, bool skip) {
+        if (tubeSunk(image, radius, blocks, true)) return false;
         for (const auto& point : image) {
             if (length(point - image.front()) < 2.0F * radius || length(point - image.back()) < 2.0F * radius) continue;
-            for (std::size_t o = 0; o < routes.size() && !touches; ++o)
-                if (!replaced[o] && o != target)
-                    touches = tubeContact(point, radius, routes[o].points, nullptr, routes[o].radius).depth
-                        > grazeMm(radius);
-            for (std::size_t o = 0; o < obstacles.size() && !touches; ++o)
-                touches = tubeContact(point, radius, obstacles[o].points, &obstacles[o].radii).depth > grazeMm(radius);
-            if (touches) break;
+            for (std::size_t o = 0; o < routes.size(); ++o)
+                if (!(skip && replaced[o]) && o != target
+                    && tubeContact(point, radius, routes[o].points, nullptr, routes[o].radius).depth > grazeMm(radius))
+                    return false;
+            for (const auto& obstacle : obstacles)
+                if (tubeContact(point, radius, obstacle.points, &obstacle.radii).depth > grazeMm(radius)) return false;
         }
-        if (!touches) routes[target].points = image;
+        return true;
+    };
+    // Points where the circle through neighbours half a diameter apart is
+    // under a diameter, as RouteCheck counts a bend too tight.
+    const auto tightBends = [](const std::vector<Vec3>& points, float radius) {
+        const auto even = resample(points, std::max(1.0F, radius));
+        std::size_t count = 0;
+        for (std::size_t k = 1; k + 1U < even.size(); ++k) {
+            const auto ab = even[k] - even[k - 1U], bc = even[k + 1U] - even[k], ca = even[k - 1U] - even[k + 1U];
+            const auto area2 = length(cross(ab, bc));
+            if (area2 < 1.0e-6F) continue;
+            if (length(ab) * length(bc) * length(ca) / (2.0F * area2) < 2.0F * radius) ++count;
+        }
+        return count;
+    };
+    std::vector<std::vector<Vec3>> images(pairs.size());
+    for (std::size_t p = 0; p < pairs.size(); ++p) images[p] = imageOf(pairs[p], fromLeft);
+    for (std::size_t p = 0; p < pairs.size(); ++p) {
+        const auto target = fromLeft ? pairs[p].right : pairs[p].left;
+        if (clear(images[p], target, routes[target].radius, true)) {
+            routes[target].points = images[p];
+            continue;
+        }
+        // The other way round: a flat-12's right trunk, the source, crossed
+        // the middle, so its image met it, while the left's bowed out clear.
+        const auto other = fromLeft ? pairs[p].left : pairs[p].right;
+        // Never with bends tighter than the route it replaces has (a V4
+        // two-stroke's then had two more).
+        auto image = imageOf(pairs[p], !fromLeft);
+        const auto radius = routes[other].radius;
+        if (tightBends(image, radius) <= tightBends(routes[other].points, radius) && clear(image, other, radius, false))
+            routes[other].points = std::move(image);
     }
 }
 
@@ -2194,9 +2242,55 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
     // collectors already in the corridor, goes where they reach it with the
     // least left over: left where the rules put it, a Hayabusa's secondaries
     // ran 340 mm on 256 (owner 2026-11-18).
+    //
+    // A merge a side branch also feeds (an H's far end) stays on the side of
+    // its through pipes, as near as it can to `target` (the mirror image of
+    // the junction the branch leaves), with the branch reaching it too: by
+    // least slack, a V8's left trunk crossed to the right and its 250 mm
+    // crossover ran 512 (owner 2026-11-18).
+    // Banks on either side of the crank's plane (a V, a flat, an X), each
+    // bank's ports at one distance out, not ports spread along a crank lying
+    // across a motorcycle's frame (a CP4's 2-into-1 then sat on the middle).
+    bool banked = false;
+    {
+        bool onLeft = false, onRight = false;
+        float nearest = std::numeric_limits<float>::max(), furthest = 0.0F;
+        for (const auto& port : ports) {
+            const auto out = std::abs(port.position.x);
+            if (out < 25.0F) continue;
+            onLeft = onLeft || port.position.x < 0.0F;
+            onRight = onRight || port.position.x > 0.0F;
+            nearest = std::min(nearest, out);
+            furthest = std::max(furthest, out);
+        }
+        banked = onLeft && onRight && furthest - nearest < 0.25F * furthest;
+    }
     const auto mergeInCorridor = [&](const Junction& self, Node& node, const std::vector<Primary>& primaries,
-                                     Footprint& placed) {
+                                     const std::vector<Primary>& branches, const Vec3* target, Footprint& placed) {
         if (primaries.empty()) return false;
+        float meanX = 0.0F;
+        for (const auto& primary : primaries) meanX += primary.from.x;
+        meanX /= static_cast<float>(primaries.size());
+        const auto side = target == nullptr || std::abs(meanX) < 25.0F ? 0.0F : (meanX > 0.0F ? 1.0F : -1.0F);
+        if (target != nullptr) {
+            // The image itself where every pipe in is at least as long as
+            // the straight line to it: a V8's two 770 mm trunks then run
+            // side by side, the crossover straight across.
+            bool fits = true;
+            for (const auto& pipe : primaries)
+                fits = fits && pipe.lead + length(*target - zAxis * pipe.entry - pipe.from) + pipe.entry <= pipe.length;
+            for (const auto& pipe : branches)
+                fits = fits && pipe.lead + length(*target - pipe.from) <= pipe.length;
+            if (fits) {
+                auto candidate = seatedAt(node, *target, zAxis);
+                auto footprint = footprintOf(self, candidate, true);
+                if (clearOf(footprint, footprints.size())) {
+                    node = candidate;
+                    placed = std::move(footprint);
+                    return true;
+                }
+            }
+        }
         float lastZ = -std::numeric_limits<float>::max(), firstZ = std::numeric_limits<float>::max();
         for (const auto& primary : primaries) {
             lastZ = std::max(lastZ, primary.from.z);
@@ -2217,28 +2311,49 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
         Node chosen = original, stretched = original;
         Footprint chosenFootprint, stretchedFootprint;
         bool found = false, anyStretched = false;
-        for (auto z = firstZ; z <= zHigh + 1.0F; z += step) {
-            for (auto y = corridor.low.y + half; y <= top + 1.0F; y += step) {
-                for (auto x = corridor.low.x + half; x <= corridor.high.x - half + 1.0F; x += step) {
-                    const Vec3 mouth { x, y, z };
-                    float slack = 0.0F, excess = 0.0F;
-                    const auto reached = reach(primaries, mouth, zAxis, slack, excess);
-                    // Down before back, as a collector.
-                    slack += std::max(0.0F, mouth.y);
-                    if (reached ? slack >= best : (found || excess >= leastExcess)) continue;
-                    auto candidate = seatedAt(original, mouth, zAxis);
-                    auto footprint = footprintOf(self, candidate, true);
-                    if (!clearOf(footprint, footprints.size())) continue;
-                    if (reached) {
-                        best = slack;
-                        chosen = candidate;
-                        chosenFootprint = std::move(footprint);
-                        found = true;
-                    } else {
-                        leastExcess = excess;
-                        stretched = candidate;
-                        stretchedFootprint = std::move(footprint);
-                        anyStretched = true;
+        // Fed from both sides, on the crank's plane where it can be: off it
+        // by a step of the grid, the two inputs' slots were no images.
+        bool left = false, right = false;
+        for (const auto& primary : primaries) {
+            left = left || primary.from.x < -25.0F;
+            right = right || primary.from.x > 25.0F;
+        }
+        std::vector<float> across;
+        for (auto x = corridor.low.x + half; x <= corridor.high.x - half + 1.0F; x += step)
+            if (side * x >= -1.0F) across.push_back(x);
+        const auto centred = banked && left && right && side == 0.0F && corridor.low.x + half < 0.0F
+            && corridor.high.x - half > 0.0F;
+        for (int pass = centred ? 0 : 1; pass < 2 && !found && !anyStretched; ++pass) {
+            for (auto z = firstZ; z <= zHigh + 1.0F; z += step) {
+                for (auto y = corridor.low.y + half; y <= top + 1.0F; y += step) {
+                    for (const auto x : pass == 0 ? std::vector<float> { 0.0F } : across) {
+                        const Vec3 mouth { x, y, z };
+                        float slack = 0.0F, excess = 0.0F;
+                        auto reached = reach(primaries, mouth, zAxis, slack, excess);
+                        for (const auto& branch : branches) {
+                            // A side branch comes in across, straight from where it leaves.
+                            const auto way = mouth - branch.from;
+                            if (length(way) > 1.0F)
+                                reached = reach({ branch }, mouth, way * (1.0F / length(way)), slack, excess) && reached;
+                        }
+                        // Down before back, as a collector; an H's end as near
+                        // its mirror image as it can.
+                        slack = target != nullptr ? length(mouth - *target) : slack + std::max(0.0F, mouth.y);
+                        if (reached ? slack >= best : (found || excess >= leastExcess)) continue;
+                        auto candidate = seatedAt(original, mouth, zAxis);
+                        auto footprint = footprintOf(self, candidate, true);
+                        if (!clearOf(footprint, footprints.size())) continue;
+                        if (reached) {
+                            best = slack;
+                            chosen = candidate;
+                            chosenFootprint = std::move(footprint);
+                            found = true;
+                        } else {
+                            leastExcess = excess;
+                            stretched = candidate;
+                            stretchedFootprint = std::move(footprint);
+                            anyStretched = true;
+                        }
                     }
                 }
             }
@@ -2247,6 +2362,17 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
         node = found ? chosen : stretched;
         placed = std::move(found ? chosenFootprint : stretchedFootprint);
         return true;
+    };
+    // A junction one pipe from each bank feeds (an X, a Y under the middle)
+    // takes them side by side, each on its own side: slots one above the
+    // other, a V8's X came in from two heights and its left trunk climbed
+    // over itself (asymmetry 68 mm).
+    const auto sideBySide = [&](Node& node, const std::vector<Primary>& primaries) {
+        if (!banked || node.turbo || primaries.size() != 2U) return;
+        const auto a = primaries[0].from.x, b = primaries[1].from.x;
+        if (a * b >= 0.0F || std::abs(a) < 25.0F || std::abs(b) < 25.0F) return;
+        // The first slot is at minus the spread.
+        node.spread = { a > b ? -1.0F : 1.0F, 0.0F, 0.0F };
     };
     // Collectors placed as each other's mirror images: their slots are
     // given as images too, once the slots are assigned.
@@ -2411,9 +2537,46 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
                                   0.5F * std::max(upstream.diameter, upstream.outletDiameter) });
         }
         const Junction self { l, i };
+        // An H's far end: the side branch, from the junction it leaves.
+        std::vector<Primary> branches;
+        Vec3 image {};
+        bool mirrored = false;
+        if (node.sideOuts > 0U && !primaries.empty()) {
+            // An H's near end: on its own side, as far in as leaves its
+            // crossover room to run straight across to the far end's
+            // image, and as far back as its pipe runs straight.
+            const auto& crossing = layout.nodes[node.outs.back()];
+            Vec3 mean {};
+            float run = std::numeric_limits<float>::max();
+            for (const auto& primary : primaries) {
+                mean += primary.from;
+                run = std::min(run, primary.length - primary.lead);
+            }
+            mean = mean * (1.0F / static_cast<float>(primaries.size()));
+            const auto half = 0.4F * crossing.drawLength;
+            const auto x = std::abs(mean.x) > half ? (mean.x > 0.0F ? half : -half) : mean.x;
+            const auto across = x - mean.x;
+            image = { x, mean.y, mean.z + 0.95F * std::sqrt(std::max(0.0F, run * run - across * across)) };
+            mirrored = true;
+        }
+        for (std::size_t k = throughIns(node); k < node.ins.size(); ++k) {
+            const auto in = node.ins[k];
+            const auto& branch = layout.nodes[in];
+            if (!branch.routed || branch.ins.empty()) continue;
+            Vec3 start, direction;
+            bool fromPort = false;
+            if (!routeStart(layout, in, ports, start, direction, fromPort)) continue;
+            const auto lead = startLead(branch, fromPort);
+            branches.push_back({ start + direction * lead, direction, lead, endLead(branch), branch.drawLength,
+                                 0.5F * std::max(branch.diameter, branch.outletDiameter) });
+            const auto& source = layout.nodes[branch.ins.front()];
+            image = { -source.lane.x, source.lane.y, source.zIn };
+            mirrored = true;
+        }
         if (corridor.active) {
             Footprint footprint;
-            if (mergeInCorridor(self, node, primaries, footprint)) {
+            sideBySide(node, primaries);
+            if (mergeInCorridor(self, node, primaries, branches, mirrored ? &image : nullptr, footprint)) {
                 footprints.push_back(std::move(footprint));
                 return;
             }
@@ -2545,9 +2708,11 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
             const auto joins = !node.outs.empty();
             Vec3 b = a + dirA * node.drawLength;
             auto dirB = joins ? zAxis : dirA;
+            bool crossover = false;
             if (joins) {
                 const auto& downstream = nodes[node.outs.front()];
                 const auto k = indexIn(downstream.ins, i);
+                crossover = k >= throughIns(downstream);
                 dirB = entryAxis(downstream);
                 if (downstream.turboAtInlet) {
                     // Onto the turbine, along the trunk.
@@ -2569,6 +2734,13 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
             auto bulge = downAxis;
             if (fromPort && std::abs(dirA.z) > 0.9F && std::abs(a.x) + std::abs(a.y) > 1.0F)
                 bulge = normalise(Vec3 { a.x, a.y, 0.0F });
+            // On the corridor's floor a sag has nowhere to go: outwards
+            // instead, so the two banks' pipes bow as mirror images (a V8's
+            // trunks both bowed to its right).
+            const auto side = a.x + b.x;
+            if (corridor.active && !fromPort && std::abs(side) > 1.0F
+                && std::min(a.y, b.y) - corridor.low.y < 3.0F * node.diameter)
+                bulge = { side > 0.0F ? 1.0F : -1.0F, 0.0F, 0.0F };
             RoutedPipe route;
             route.radius = 0.5F * std::max(node.diameter, node.outletDiameter);
             route.startLead = startLead(node, fromPort);
@@ -2584,7 +2756,9 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
                 const auto behind = std::max(0.0F, dot(from - to, dirB));
                 auto straight = route.startLead + route.endLead + length(to - from);
                 if (behind > 0.0F) straight += 2.0F * behind + 3.0F * pi * route.radius;
-                const auto room = std::max(1.3F * straight, straight + 3.0F * node.diameter);
+                // An H's crossover runs straight across: given the room of
+                // any other pipe, a V8's 250 mm one looped on its 186 mm span.
+                const auto room = crossover ? straight : std::max(1.3F * straight, straight + 3.0F * node.diameter);
                 if (node.drawLength > room) {
                     piece.foldedMm = node.drawLength - room;
                     route.lengthMm = room;

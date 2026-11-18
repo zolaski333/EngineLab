@@ -1572,7 +1572,7 @@ void checkEngineEnvelope() {
     };
     const std::array systems { ExhaustSystem::automatic, ExhaustSystem::single, ExhaustSystem::dual,
                                ExhaustSystem::dualHPipe, ExhaustSystem::dualXPipe };
-    std::size_t drawn = 0, stretched = 0, failing = 0;
+    std::size_t drawn = 0, stretched = 0, failing = 0, implausible = 0;
     for (const auto& shape : shapes)
         for (const auto system : systems)
             for (const auto induction : { Induction::natural, Induction::turbocharged }) {
@@ -1598,6 +1598,19 @@ void checkEngineEnvelope() {
                 const auto routes = checkRoutes(model);
                 ++drawn;
                 stretched += routes.count(RouteIssueKind::stretched);
+                // Placed as fitted to a vehicle, the two banks' pipes mirror
+                // images: an H's far end crossed to the other bank, an X
+                // came in from two heights (owner 2026-11-18; 9 of 80).
+                const auto placement = checkPlausibility(model);
+                if (!placement.plausible()) {
+                    ++implausible;
+                    std::cout << "EngineModel3D: " << shape.name << " exhaust " << static_cast<int>(system)
+                              << (induction == Induction::turbocharged ? " turbo" : "") << " implausible: beside "
+                              << placement.besideMm << ", below " << placement.belowMm << ", above "
+                              << placement.aboveMm << ", ahead " << placement.aheadMm << ", coiled "
+                              << placement.coiled << ", astray " << placement.astray << ", asymmetry "
+                              << placement.asymmetryMm << " mm\n";
+                }
                 const auto inside = routes.count(RouteIssueKind::engineClash);
                 if (inside == 0U) continue;
                 ++failing;
@@ -1623,6 +1636,8 @@ void checkEngineEnvelope() {
     require(drawn >= 60U, "most layouts design with most exhaust systems (" + std::to_string(drawn) + ")");
     require(failing == 0U, "no designed engine has a pipe, collector or turbo through its engine or gearbox ("
                                + std::to_string(failing) + " do)");
+    require(implausible == 0U, "every designed engine's exhaust is placed as on a vehicle, its banks mirrored ("
+                                   + std::to_string(implausible) + " are not)");
 }
 
 /**
