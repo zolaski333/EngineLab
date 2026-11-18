@@ -141,6 +141,13 @@ EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
     // The gearbox is placed first: the ducts are laid out round it.
     buildGearbox(false);
     engineSolids_ = solids_.size();
+    // A motorcycle's crank lies across the frame, its gearbox towards the
+    // rear wheel; a car's in-line engine drives back along its crank.
+    if (config_.vehicle.massKg < 500.0 && length(gearbox_.outputAxis - gearbox_.inputAxis) > 0.0F) {
+        const auto origin = throws_.empty() ? Vec3 {} : throws_.front().origin;
+        const auto back = gearbox_.inputAxis - Vec3 { origin.x, origin.y, 0.0F };
+        if (std::abs(back.x) > 0.3F * length(back)) rear_ = { back.x > 0.0F ? 1.0F : -1.0F, 0.0F, 0.0F };
+    }
     buildDucts();
     buildGearbox(true);
     computeBounds();
@@ -996,7 +1003,7 @@ void EngineModel3D::buildDucts() {
             farParts_[part] = !piece.nearEngine;
             ducts_.push_back({ piece.kind, piece.pathId, piece.elementId, piece.componentType, part,
                                std::move(piece.centreline), piece.authoredLengthMm, std::move(piece.radii),
-                               piece.opensToAtmosphere, piece.openEnd, piece.openAxis });
+                               piece.opensToAtmosphere, piece.openEnd, piece.openAxis, piece.foldedMm });
             if (piece.kind == DuctKind::intakeRunner)
                 for (std::size_t i = 0; i < cylinders_.size(); ++i)
                     if (config_.cylinders[i].id == piece.elementId) cylinders_[i].runnerPart = part;

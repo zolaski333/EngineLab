@@ -107,6 +107,8 @@ struct SceneDuct final {
     bool opensToAtmosphere {};
     Vec3 openEnd;
     Vec3 openAxis { 0.0F, 1.0F, 0.0F };
+    /** DuctPiece::foldedMm: how much shorter than authored it is drawn. */
+    float foldedMm {};
 };
 
 /** What a part is, for the part inspector. */
@@ -225,6 +227,11 @@ public:
         std::vector<float> pairZ;
     };
     [[nodiscard]] const GearboxPlacement& gearbox() const noexcept { return gearbox_; }
+    /** The way the vehicle's rear lies from the engine, horizontal and unit:
+        a car's in-line engine has its gearbox and its exhaust's run along +Z;
+        a motorcycle's crank lies across the frame, the rear the side its
+        gearbox stands on (+X or -X). The exhaust is laid out towards it. */
+    [[nodiscard]] Vec3 rear() const noexcept { return rear_; }
     /** Output gear `pair`'s angle about its shaft, radians, for an input shaft
         angle: it turns the other way at the pair's tooth ratio. */
     [[nodiscard]] float outputGearRadians(std::size_t pair, double inputDegrees) const noexcept;
@@ -345,6 +352,7 @@ private:
     /** Housing (with the charge pipe) and impeller. */
     std::array<std::uint16_t, 2> superchargerParts_ { 0xFFFFU, 0xFFFFU };
     GearboxPlacement gearbox_;
+    Vec3 rear_ { 0.0F, 0.0F, 1.0F };
     /** Case, input shaft with its gears, output shaft, selector collar. */
     std::array<std::uint16_t, 4> gearboxParts_ { 0xFFFFU, 0xFFFFU, 0xFFFFU, 0xFFFFU };
     std::vector<std::uint16_t> outputGearParts_;

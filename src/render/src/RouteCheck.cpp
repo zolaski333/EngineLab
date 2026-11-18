@@ -1,8 +1,11 @@
 #include <enginelab/render/RouteCheck.hpp>
 
+#include <enginelab/render/FreeSpace.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace enginelab::render {
 namespace {
@@ -286,6 +289,147 @@ RouteReport checkRoutes(const EngineModel3D& model) {
             report.issues.push_back({ RouteIssueKind::stretched, static_cast<int>(d), -1,
                                       meanPoint(duct.centreline.front(), duct.centreline.back()),
                                       drawn / duct.authoredLengthMm });
+    }
+    return report;
+}
+
+PlausibilityReport checkPlausibility(const EngineModel3D& model) {
+    PlausibilityReport report;
+    const auto rear = model.rear();
+    const Vec3 up { 0.0F, 1.0F, 0.0F };
+    const auto across = normalise(cross(up, rear));
+    // The vehicle's frame: across, up, rearwards.
+    const auto local = [&](Vec3 p) { return Vec3 { dot(p, across), p.y, dot(p, rear) }; };
+    Vec3 low { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+    Vec3 high = low * -1.0F;
+    const auto& solids = model.solids();
+    for (std::size_t s = 0; s < model.engineSolidCount() && s < solids.size(); ++s) {
+        const auto half = solidHalfExtent(solids[s]);
+        for (int corner = 0; corner < 8; ++corner) {
+            const Vec3 offset { (corner & 1) != 0 ? half.x : -half.x, (corner & 2) != 0 ? half.y : -half.y,
+                                (corner & 4) != 0 ? half.z : -half.z };
+            const auto p = local(solids[s].centre + offset);
+            low = { std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z) };
+            high = { std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z) };
+        }
+    }
+    const auto& ports = model.exhaustPorts();
+    if (ports.empty() || high.x < low.x) return report;
+    float topPort = -std::numeric_limits<float>::max(), frontPort = std::numeric_limits<float>::max();
+    for (const auto& port : ports) {
+        const auto p = local(port.position);
+        topPort = std::max(topPort, p.y + 2.0F * port.diameterMm);
+        frontPort = std::min(frontPort, p.z - 3.0F * port.diameterMm);
+    }
+    const auto front = std::min(low.z, frontPort) - 100.0F;
+
+    const auto& ducts = model.ducts();
+    std::vector<Vec3> cloud;
+    for (std::size_t d = 0; d < ducts.size(); ++d) {
+        const auto& duct = ducts[d];
+        if ((duct.kind != DuctKind::exhaustComponent && duct.kind != DuctKind::exhaustFeeder) || duct.centreline.size() < 2U)
+            continue;
+        bool offends = false;
+        const auto mark = [&](float& worst, float excess) {
+            if (excess <= 0.0F) return;
+            worst = std::max(worst, excess);
+            offends = true;
+        };
+        for (const auto& point : duct.centreline) {
+            const auto p = local(point);
+            mark(report.besideMm, std::max(low.x - p.x, p.x - high.x) - 150.0F);
+            mark(report.belowMm, low.y - 250.0F - p.y);
+            mark(report.aboveMm, p.y - topPort);
+            mark(report.aheadMm, front - p.z);
+        }
+        // Total turning, a direction every diameter or so along the line.
+        const auto step = std::max(10.0F, 2.0F * (duct.radii.empty() ? 10.0F : duct.radii.front()));
+        float turning = 0.0F, carried = 0.0F;
+        Vec3 anchor = duct.centreline.front();
+        Vec3 last {};
+        bool haveLast = false;
+        for (std::size_t i = 1; i < duct.centreline.size(); ++i) {
+            carried += length(duct.centreline[i] - duct.centreline[i - 1U]);
+            if (carried < step && i + 1U < duct.centreline.size()) continue;
+            const auto chord = duct.centreline[i] - anchor;
+            if (length(chord) > 1.0e-3F) {
+                const auto direction = normalise(chord);
+                if (haveLast) turning += std::acos(std::clamp(dot(last, direction), -1.0F, 1.0F));
+                last = direction;
+                haveLast = true;
+            }
+            anchor = duct.centreline[i];
+            carried = 0.0F;
+        }
+        if (duct.kind == DuctKind::exhaustComponent && turning > 2.5F * std::numbers::pi_v<float>) {
+            ++report.coiled;
+            offends = true;
+        }
+        // A stack (an aircraft's, a radial's) opens straight off its port:
+        // it points where the port does.
+        const auto stack = std::any_of(ports.begin(), ports.end(), [&](const PortAnchor& port) {
+            return length(port.position - duct.centreline.front()) < std::max(5.0F, 0.5F * port.diameterMm);
+        });
+        if (duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::outlet && !stack) {
+            const auto axis = duct.centreline.back() - duct.centreline[duct.centreline.size() - 2U];
+            if (length(axis) > 1.0e-3F && dot(normalise(axis), rear) < 0.7071F) {
+                ++report.astray;
+                offends = true;
+            }
+        }
+        if (duct.foldedMm > 0.0F) ++report.folded;
+        if (offends) report.offenders.push_back(static_cast<int>(d));
+        const auto& c = duct.centreline;
+        float run = 0.0F;
+        cloud.push_back(c.front());
+        for (std::size_t i = 1; i < c.size(); ++i) {
+            run += length(c[i] - c[i - 1U]);
+            if (run >= 20.0F || i + 1U == c.size()) {
+                cloud.push_back(c[i]);
+                run = 0.0F;
+            }
+        }
+    }
+
+    // Mirror images across the crank's vertical plane (world x = 0), a bank
+    // staggered along the crank by its rod's width: measured only where every
+    // port has its image, and only in a car's frame (a motorcycle's banks
+    // stand front and rear).
+    if (std::abs(rear.z) < 0.99F) return report;
+    float leftZ = 0.0F, rightZ = 0.0F;
+    std::size_t left = 0, right = 0;
+    for (const auto& port : ports) {
+        if (port.position.x > 1.0F) {
+            rightZ += port.position.z;
+            ++right;
+        } else if (port.position.x < -1.0F) {
+            leftZ += port.position.z;
+            ++left;
+        }
+    }
+    if (left == 0U || left != right) return report;
+    const auto stagger = leftZ / static_cast<float>(left) - rightZ / static_cast<float>(right);
+    const auto image = [stagger](Vec3 p) { return Vec3 { -p.x, p.y, p.z + (p.x > 0.0F ? stagger : -stagger) }; };
+    for (const auto& port : ports) {
+        const auto mirrored = image(port.position);
+        const auto matched = std::any_of(ports.begin(), ports.end(), [&](const PortAnchor& other) {
+            return length(other.position - mirrored) < 5.0F;
+        });
+        if (!matched) return report;
+    }
+    report.mirrored = true;
+    std::vector<float> gaps;
+    gaps.reserve(cloud.size());
+    for (const auto& point : cloud) {
+        const auto mirrored = image(point);
+        float nearest = std::numeric_limits<float>::max();
+        for (const auto& other : cloud) nearest = std::min(nearest, length(other - mirrored));
+        gaps.push_back(nearest);
+    }
+    if (!gaps.empty()) {
+        const auto k = static_cast<std::size_t>(0.9 * static_cast<double>(gaps.size() - 1U));
+        std::nth_element(gaps.begin(), gaps.begin() + static_cast<std::ptrdiff_t>(k), gaps.end());
+        report.asymmetryMm = gaps[k];
     }
     return report;
 }

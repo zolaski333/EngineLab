@@ -2,15 +2,22 @@
 // laid-out geometry outside the app (a three.js page, a script).
 //
 //   EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]
-//                        [--catalog-root <directory>] [--two-stroke-intake <crankcase_reed|cylinder_port>]
+//                        [--catalog-root <directory>] [--saved <folder>]
+//                        [--two-stroke-intake <crankcase_reed|cylinder_port>]
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
 // port anchors, and the route check (RouteCheck) issues; plus index.json
-// listing the files. Prints the issue counts per engine. `--two-stroke-intake`
+// listing the files. Prints the issue counts per engine, then the exhaust's
+// plausibility (checkPlausibility): mm beside, below, above and ahead of the
+// engine past the allowances, coiled pipes, astray outlets, the mirror
+// asymmetry ("-" where the ports are not mirror images) and pipes drawn
+// folded. `--saved` exports the saved engines of a folder (the app's, e.g.
+// %APPDATA%/EngineLab/engines) instead of the catalogue. `--two-stroke-intake`
 // redraws every two-stroke with that intake, so both layouts can be looked at.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
 #include <enginelab/render/RouteCheck.hpp>
@@ -67,9 +74,10 @@ void writeVec(std::ostream& out, Vec3 v) {
 
 /** `written` is false when the file could not be written (audit RT-06). */
 RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const std::filesystem::path& file,
-                        bool& written) {
+                        PlausibilityReport& plausibility, bool& written) {
     const EngineModel3D model(config);
     const auto report = checkRoutes(model);
+    plausibility = checkPlausibility(model);
     std::vector<SceneInstance> instances;
     ScenePoseInput input;
     input.crankAngleDegrees = crankDegrees;
@@ -150,7 +158,9 @@ RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const s
         writeVec(out, solid.half);
         out << '}';
     }
-    out << "],\"exhaustPorts\":[";
+    out << "],\"rear\":";
+    writeVec(out, model.rear());
+    out << ",\"exhaustPorts\":[";
     for (std::size_t i = 0; i < model.exhaustPorts().size(); ++i) {
         const auto& port = model.exhaustPorts()[i];
         if (i > 0) out << ',';
@@ -172,6 +182,7 @@ int main(int argc, char** argv) {
     std::string filter;
     double crank = 0.0;
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
+    std::filesystem::path savedFolder;
     std::optional<TwoStrokeIntake> twoStrokeIntake;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string_view key = argv[i];
@@ -179,6 +190,7 @@ int main(int argc, char** argv) {
         else if (key == "--filter") filter = argv[i + 1];
         else if (key == "--crank") crank = std::stod(argv[i + 1]);
         else if (key == "--catalog-root") catalogRoot = argv[i + 1];
+        else if (key == "--saved") savedFolder = argv[i + 1];
         else if (key == "--two-stroke-intake") {
             twoStrokeIntake = parseTwoStrokeIntake(argv[i + 1]);
             if (!twoStrokeIntake) {
@@ -189,7 +201,8 @@ int main(int argc, char** argv) {
     }
     if (outDirectory.empty()) {
         std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]"
-                     " [--catalog-root <directory>] [--two-stroke-intake <crankcase_reed|cylinder_port>]\n";
+                     " [--catalog-root <directory>] [--saved <folder>]"
+                     " [--two-stroke-intake <crankcase_reed|cylinder_port>]\n";
         return 2;
     }
     const auto catalogue = loadEngineCatalog(catalogRoot);
@@ -198,18 +211,31 @@ int main(int argc, char** argv) {
         for (const auto& error : catalogue.errors) std::cerr << "  " << error << '\n';
         return 1;
     }
+    std::vector<EngineConfig> configs;
+    if (savedFolder.empty()) {
+        for (const auto& entry : catalogue.entries) configs.push_back(entry.config);
+    } else {
+        const auto saved = loadSavedEngines(savedFolder, catalogRoot);
+        for (const auto& error : saved.errors) std::cerr << "  " << error << '\n';
+        for (const auto& entry : saved.engines) configs.push_back(entry.config);
+    }
     std::filesystem::create_directories(outDirectory);
     std::ofstream index(outDirectory / "index.json", std::ios::binary);
     index << '[';
     int written = 0;
     std::array<std::size_t, 5> totals {};
-    for (std::size_t e = 0; e < catalogue.entries.size(); ++e) {
-        auto config = catalogue.entries[e].config;
+    std::array<float, 4> worst {};
+    std::array<std::size_t, 3> counts {};
+    float worstAsymmetry = 0.0F;
+    std::size_t implausible = 0;
+    for (std::size_t e = 0; e < configs.size(); ++e) {
+        auto config = configs[e];
         if (twoStrokeIntake && config.cycle == EngineCycle::twoStroke) config.twoStroke.intake = *twoStrokeIntake;
         if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
         const auto file = std::to_string(e + 1U) + ".json";
         auto sceneWritten = false;
-        const auto report = writeEngine(config, crank, outDirectory / file, sceneWritten);
+        PlausibilityReport plausibility;
+        const auto report = writeEngine(config, crank, outDirectory / file, plausibility, sceneWritten);
         if (!sceneWritten) {
             std::cerr << "cannot write " << (outDirectory / file).string() << '\n';
             return 1;
@@ -223,6 +249,23 @@ int main(int argc, char** argv) {
                       report.count(RouteIssueKind::tightBend), report.count(RouteIssueKind::stretched));
         std::cout << line;
         for (std::size_t k = 0; k < totals.size(); ++k) totals[k] += report.count(static_cast<RouteIssueKind>(k));
+        const auto& p = plausibility;
+        char asymmetry[32] = "-";
+        if (p.mirrored) std::snprintf(asymmetry, sizeof(asymmetry), "%.0f", static_cast<double>(p.asymmetryMm));
+        std::snprintf(line, sizeof(line),
+                      "         plausibility: beside %5.0f  below %5.0f  above %5.0f  ahead %5.0f  coiled %2zu"
+                      "  astray %2zu  asymmetry %5s  folded %2zu%s\n",
+                      static_cast<double>(p.besideMm), static_cast<double>(p.belowMm),
+                      static_cast<double>(p.aboveMm), static_cast<double>(p.aheadMm), p.coiled, p.astray, asymmetry,
+                      p.folded, p.plausible() ? "" : "  IMPLAUSIBLE");
+        std::cout << line;
+        worst = { std::max(worst[0], p.besideMm), std::max(worst[1], p.belowMm), std::max(worst[2], p.aboveMm),
+                  std::max(worst[3], p.aheadMm) };
+        counts[0] += p.coiled;
+        counts[1] += p.astray;
+        counts[2] += p.folded;
+        if (p.mirrored) worstAsymmetry = std::max(worstAsymmetry, p.asymmetryMm);
+        if (!p.plausible()) ++implausible;
     }
     index << "]\n";
     index.close();
@@ -233,5 +276,9 @@ int main(int argc, char** argv) {
     }
     std::cout << "total: clash " << totals[0] << ", self " << totals[1] << ", engine " << totals[2] << ", bend "
               << totals[3] << ", stretch " << totals[4] << '\n';
+    std::cout << "plausibility: " << implausible << " of " << written << " implausible; worst beside " << worst[0]
+              << ", below " << worst[1] << ", above " << worst[2] << ", ahead " << worst[3] << " mm; coiled "
+              << counts[0] << ", astray " << counts[1] << ", folded " << counts[2] << "; worst asymmetry "
+              << worstAsymmetry << " mm\n";
     return 0;
 }

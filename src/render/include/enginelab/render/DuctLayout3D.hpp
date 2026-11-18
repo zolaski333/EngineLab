@@ -68,6 +68,11 @@ struct DuctPiece final {
     bool opensToAtmosphere {};
     Vec3 openEnd;
     Vec3 openAxis { 0.0F, 1.0F, 0.0F };
+    /** How much shorter than its authored length the pipe is drawn: a length
+        no vehicle has room for (a primary longer than the run back to the
+        gearbox, a tailpipe far past the engine) is drawn as a broken view,
+        the cut marked by two bands. The simulator keeps the whole length. */
+    float foldedMm {};
 };
 
 /**
