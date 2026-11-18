@@ -2,7 +2,7 @@
 // laid-out geometry outside the app (a three.js page, a script).
 //
 //   EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]
-//                        [--catalog-root <directory>] [--saved <folder>]
+//                        [--catalog-root <directory>] [--saved <folder>] [--designed all]
 //                        [--two-stroke-intake <crankcase_reed|cylinder_port>]
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
@@ -13,10 +13,13 @@
 // engine past the allowances, coiled pipes, astray outlets, the mirror
 // asymmetry ("-" where the ports are not mirror images) and pipes drawn
 // folded. `--saved` exports the saved engines of a folder (the app's, e.g.
-// %APPDATA%/EngineLab/engines) instead of the catalogue. `--two-stroke-intake`
+// %APPDATA%/EngineLab/engines) instead of the catalogue; `--designed all`, the
+// designer's engines over its layouts and exhaust systems, with and without a
+// turbo (EngineModel3DTests' envelope check). `--two-stroke-intake`
 // redraws every two-stroke with that intake, so both layouts can be looked at.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
@@ -177,12 +180,74 @@ RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const s
 }
 } // namespace
 
+/** The designer's engines the envelope check draws: its layouts, each with
+ *  the designer's exhaust systems, and a turbo on the one pipe. */
+std::vector<EngineConfig> designedEngines(const std::filesystem::path& catalogRoot) {
+    struct Shape final {
+        const char* name;
+        EngineLayout layout;
+        std::uint32_t cylinders;
+        double bankAngle;
+        std::vector<double> banks;
+        EngineUse use;
+        double bore;
+        double stroke;
+    };
+    const std::vector<Shape> shapes {
+        { "I4", EngineLayout::inlineLayout, 4, 0.0, {}, EngineUse::roadCar, 86.0, 86.0 },
+        { "I6", EngineLayout::inlineLayout, 6, 0.0, {}, EngineUse::sportCar, 86.0, 86.0 },
+        { "V8", EngineLayout::vLayout, 8, 90.0, {}, EngineUse::sportCar, 100.0, 92.0 },
+        { "V12", EngineLayout::vLayout, 12, 60.0, {}, EngineUse::sportCar, 89.0, 80.0 },
+        { "flat-6", EngineLayout::flat, 6, 0.0, {}, EngineUse::sportCar, 102.0, 76.0 },
+        { "flat-12", EngineLayout::flat, 12, 0.0, {}, EngineUse::sportCar, 80.0, 74.0 },
+        { "X8", EngineLayout::custom, 8, 0.0, { -135.0, -45.0, 45.0, 135.0 }, EngineUse::sportCar, 86.0, 86.0 },
+        { "X12", EngineLayout::custom, 12, 0.0, { -135.0, -45.0, 45.0, 135.0 }, EngineUse::sportCar, 86.0, 86.0 },
+        { "X16", EngineLayout::custom, 16, 0.0, { -135.0, -45.0, 45.0, 135.0 }, EngineUse::sportCar, 86.0, 86.0 },
+        { "W8", EngineLayout::custom, 8, 0.0, { -52.5, -37.5, 37.5, 52.5 }, EngineUse::sportCar, 84.0, 90.0 },
+        { "W12", EngineLayout::custom, 12, 0.0, { -60.0, 0.0, 60.0 }, EngineUse::sportCar, 84.0, 90.0 },
+        { "V4 motorcycle", EngineLayout::vLayout, 4, 65.0, {}, EngineUse::sportMotorcycle, 81.0, 53.5 },
+    };
+    const std::array<std::pair<ExhaustSystem, const char*>, 5> systems { {
+        { ExhaustSystem::automatic, "automatic" },
+        { ExhaustSystem::single, "single" },
+        { ExhaustSystem::dual, "dual" },
+        { ExhaustSystem::dualHPipe, "H-pipe" },
+        { ExhaustSystem::dualXPipe, "X-pipe" },
+    } };
+    std::vector<EngineConfig> configs;
+    for (const auto& shape : shapes)
+        for (const auto& [system, systemName] : systems)
+            for (const auto induction : { Induction::natural, Induction::turbocharged }) {
+                if (induction == Induction::turbocharged && system != ExhaustSystem::single
+                    && system != ExhaustSystem::automatic)
+                    continue;
+                EngineSpec spec;
+                spec.name = std::string("Designed ") + shape.name;
+                spec.use = shape.use;
+                spec.layout = shape.layout;
+                spec.cylinderCount = shape.cylinders;
+                spec.bankAngleDegrees = shape.bankAngle;
+                spec.bankAnglesDegrees = shape.banks;
+                spec.boreMm = shape.bore;
+                spec.strokeMm = shape.stroke;
+                spec.induction = induction;
+                spec.exhaustSystem = system;
+                auto designed = designCatalogueEngine(spec, catalogRoot);
+                if (!designed.config) continue;
+                designed.config->name = std::string(shape.name) + " " + systemName
+                    + (induction == Induction::turbocharged ? " turbo" : "");
+                configs.push_back(std::move(*designed.config));
+            }
+    return configs;
+}
+
 int main(int argc, char** argv) {
     std::filesystem::path outDirectory;
     std::string filter;
     double crank = 0.0;
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
     std::filesystem::path savedFolder;
+    bool designed = false;
     std::optional<TwoStrokeIntake> twoStrokeIntake;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string_view key = argv[i];
@@ -191,6 +256,7 @@ int main(int argc, char** argv) {
         else if (key == "--crank") crank = std::stod(argv[i + 1]);
         else if (key == "--catalog-root") catalogRoot = argv[i + 1];
         else if (key == "--saved") savedFolder = argv[i + 1];
+        else if (key == "--designed") designed = std::string_view(argv[i + 1]) == "all";
         else if (key == "--two-stroke-intake") {
             twoStrokeIntake = parseTwoStrokeIntake(argv[i + 1]);
             if (!twoStrokeIntake) {
@@ -201,7 +267,7 @@ int main(int argc, char** argv) {
     }
     if (outDirectory.empty()) {
         std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]"
-                     " [--catalog-root <directory>] [--saved <folder>]"
+                     " [--catalog-root <directory>] [--saved <folder>] [--designed all]"
                      " [--two-stroke-intake <crankcase_reed|cylinder_port>]\n";
         return 2;
     }
@@ -212,7 +278,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::vector<EngineConfig> configs;
-    if (savedFolder.empty()) {
+    if (designed) {
+        configs = designedEngines(catalogRoot);
+    } else if (savedFolder.empty()) {
         for (const auto& entry : catalogue.entries) configs.push_back(entry.config);
     } else {
         const auto saved = loadSavedEngines(savedFolder, catalogRoot);

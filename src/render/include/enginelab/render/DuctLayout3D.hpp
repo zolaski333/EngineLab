@@ -154,6 +154,27 @@ struct SuperchargerPlacement final {
 void appendSuperchargerHousing(Mesh& mesh, const SuperchargerPlacement& supercharger);
 
 /**
+ * The vehicle round the engine, for the exhaust: which way is rearwards (a
+ * car's flywheel end, +Z; a motorcycle's gearbox side, across its crank), and
+ * how many of the solids given are the engine and its gearbox (the rest are
+ * bolted on: a supercharger, turbos).
+ *
+ * With `engineSolids` set, the exhaust is kept in the room a vehicle gives it
+ * (owner 2026-11-18: pipes coiled out to the side, turbos a metre off the
+ * block): a corridor as wide as the engine and 150 mm more each side, from
+ * 250 mm under it up to two port diameters over its highest port, and from
+ * just ahead of it back. Collectors sit in it, low and back along the
+ * gearbox, as far as their primaries reach; a pipe longer than the room
+ * there is drawn as a broken view (DuctPiece::foldedMm). A radial is left
+ * as it is: its pipes stand round it.
+ */
+struct ExhaustFrame final {
+    Vec3 rear { 0.0F, 0.0F, 1.0F };
+    std::size_t engineSolids {};
+    bool radial {};
+};
+
+/**
  * Lays out every exhaust path of `config` from its component graph (or from
  * the scalar geometry when the path has none), with the authored lengths and
  * diameters: junctions and bodies sit on a trunk running along +Z (towards
@@ -177,7 +198,8 @@ void appendSuperchargerHousing(Mesh& mesh, const SuperchargerPlacement& supercha
                                                    float boreMm,
                                                    const std::vector<RouteTube>& avoid = {},
                                                    const std::vector<EngineSolid>& solids = {},
-                                                   std::vector<TurboPlacement>* turbos = nullptr);
+                                                   std::vector<TurboPlacement>* turbos = nullptr,
+                                                   const ExhaustFrame& frame = {});
 
 /** The solids a placed turbo occupies (turbine housing centre, bearing
     housing, compressor), for the router and the route check. */

@@ -69,8 +69,11 @@ struct RouteReport final {
  *   degrees in all (a header that drops and runs back turns 180-270);
  * - astray: outlets not pointing rearwards (within 45 degrees);
  * - asymmetry: where the exhaust ports are mirror images across the crank's
- *   vertical plane (a V, a flat, an X), the 90th percentile distance from a
- *   mirrored exhaust point to the nearest drawn one; 0 otherwise.
+ *   vertical plane (a V, a flat, an X), on twin pipes (one type and length,
+ *   starting at each other's images: the primaries of mirror ports, what
+ *   follows two mirrored collectors), the 90th percentile distance from a
+ *   mirrored point of one to the nearest point of the other; 0 otherwise. A
+ *   single turbo on one side is the design's, not measured.
  */
 struct PlausibilityReport final {
     float besideMm {};

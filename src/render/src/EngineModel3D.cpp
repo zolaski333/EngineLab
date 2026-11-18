@@ -1030,7 +1030,8 @@ void EngineModel3D::buildDucts() {
         }
         avoid.push_back(boxBetween(low, high));
     }
-    add(layoutExhaust(config_, exhaustPorts_, bore, intakeTubes, avoid, &turbos_));
+    add(layoutExhaust(config_, exhaustPorts_, bore, intakeTubes, avoid, &turbos_,
+                      ExhaustFrame { rear_, engineSolids_, radialLike_ }));
     buildTurbo();
 
     // A plume at every outlet, lit only by an afterfire.

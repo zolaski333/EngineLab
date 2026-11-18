@@ -324,7 +324,6 @@ PlausibilityReport checkPlausibility(const EngineModel3D& model) {
     const auto front = std::min(low.z, frontPort) - 100.0F;
 
     const auto& ducts = model.ducts();
-    std::vector<Vec3> cloud;
     for (std::size_t d = 0; d < ducts.size(); ++d) {
         const auto& duct = ducts[d];
         if ((duct.kind != DuctKind::exhaustComponent && duct.kind != DuctKind::exhaustFeeder) || duct.centreline.size() < 2U)
@@ -379,23 +378,15 @@ PlausibilityReport checkPlausibility(const EngineModel3D& model) {
         }
         if (duct.foldedMm > 0.0F) ++report.folded;
         if (offends) report.offenders.push_back(static_cast<int>(d));
-        const auto& c = duct.centreline;
-        float run = 0.0F;
-        cloud.push_back(c.front());
-        for (std::size_t i = 1; i < c.size(); ++i) {
-            run += length(c[i] - c[i - 1U]);
-            if (run >= 20.0F || i + 1U == c.size()) {
-                cloud.push_back(c[i]);
-                run = 0.0F;
-            }
-        }
     }
 
     // Mirror images across the crank's vertical plane (world x = 0), a bank
     // staggered along the crank by its rod's width: measured only where every
     // port has its image, and only in a car's frame (a motorcycle's banks
     // stand front and rear).
-    if (std::abs(rear.z) < 0.99F) return report;
+    // A radial's pipes stand round it, the same for every cylinder: its
+    // symmetry is a turn about the crank, not a mirror.
+    if (std::abs(rear.z) < 0.99F || model.config().layout == EngineLayout::radial) return report;
     float leftZ = 0.0F, rightZ = 0.0F;
     std::size_t left = 0, right = 0;
     for (const auto& port : ports) {
@@ -418,13 +409,41 @@ PlausibilityReport checkPlausibility(const EngineModel3D& model) {
         if (!matched) return report;
     }
     report.mirrored = true;
+    // Measured on twins: two pipes of one type and length that start at each
+    // other's images (the primaries of mirror ports, and whatever follows
+    // two mirrored collectors). A design one side of which differs from the
+    // other -- a single turbo, a collector fed by both banks -- is measured
+    // only on its primaries, which carry where that collector sits.
+    const auto sampled = [](const std::vector<Vec3>& line) {
+        std::vector<Vec3> points { line.front() };
+        float run = 0.0F;
+        for (std::size_t i = 1; i < line.size(); ++i) {
+            run += length(line[i] - line[i - 1U]);
+            if (run >= 20.0F || i + 1U == line.size()) {
+                points.push_back(line[i]);
+                run = 0.0F;
+            }
+        }
+        return points;
+    };
     std::vector<float> gaps;
-    gaps.reserve(cloud.size());
-    for (const auto& point : cloud) {
-        const auto mirrored = image(point);
-        float nearest = std::numeric_limits<float>::max();
-        for (const auto& other : cloud) nearest = std::min(nearest, length(other - mirrored));
-        gaps.push_back(nearest);
+    for (const auto& duct : ducts) {
+        if (duct.kind != DuctKind::exhaustComponent || duct.centreline.size() < 2U) continue;
+        const auto start = image(duct.centreline.front());
+        const auto twin = std::find_if(ducts.begin(), ducts.end(), [&](const SceneDuct& other) {
+            return &other != &duct && other.kind == DuctKind::exhaustComponent && other.centreline.size() >= 2U
+                && other.componentType == duct.componentType
+                && std::abs(other.authoredLengthMm - duct.authoredLengthMm) < 1.0F
+                && length(other.centreline.front() - start) < 5.0F;
+        });
+        if (twin == ducts.end()) continue;
+        const auto theirs = sampled(twin->centreline);
+        for (const auto& point : sampled(duct.centreline)) {
+            const auto mirrored = image(point);
+            float nearest = std::numeric_limits<float>::max();
+            for (const auto& other : theirs) nearest = std::min(nearest, length(other - mirrored));
+            gaps.push_back(nearest);
+        }
     }
     if (!gaps.empty()) {
         const auto k = static_cast<std::size_t>(0.9 * static_cast<double>(gaps.size() - 1U));

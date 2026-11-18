@@ -58,6 +58,8 @@ void require(bool condition, const std::string& message) {
 int stretchedPipes = 0;
 int checkedPipes = 0;
 std::array<std::size_t, 5> routeIssues {};
+/** Catalogue engines whose exhaust is not placed as one fitted to a vehicle. */
+std::size_t implausibleEngines = 0;
 
 /** A simulator with the models it borrows. */
 struct Bench final {
@@ -435,10 +437,15 @@ void checkDucts(const EngineModel3D& model) {
         const auto label = name + " path " + std::to_string(duct.pathId) + " element " + std::to_string(duct.elementId);
         if (duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::pipe
             && duct.authoredLengthMm > 1.0F) {
-            // A pipe is never drawn shorter than it is; it is drawn longer
-            // only when it must span more than its length.
-            require(drawn > 0.99F * duct.authoredLengthMm, label + ": a pipe is never drawn shorter than authored ("
-                        + std::to_string(drawn) + " for " + std::to_string(duct.authoredLengthMm) + " mm)");
+            // A pipe is never drawn shorter than it is but for the length it
+            // is drawn folded by (a broken view); it is drawn longer only
+            // when it must span more than its length.
+            require(drawn > 0.99F * (duct.authoredLengthMm - duct.foldedMm),
+                    label + ": a pipe is never drawn shorter than authored, folded length aside ("
+                        + std::to_string(drawn) + " for " + std::to_string(duct.authoredLengthMm) + " mm, "
+                        + std::to_string(duct.foldedMm) + " folded)");
+            require(duct.foldedMm >= 0.0F && duct.foldedMm < duct.authoredLengthMm,
+                    label + ": a pipe is folded by less than its length");
             ++checkedPipes;
             if (drawn > 1.03F * duct.authoredLengthMm) ++stretchedPipes;
         }
@@ -959,6 +966,18 @@ void checkEngine(const EngineConfig& config) {
     checkDucts(model);
     const auto routes = checkRoutes(model);
     for (std::size_t k = 0; k < routeIssues.size(); ++k) routeIssues[k] += routes.count(static_cast<RouteIssueKind>(k));
+    // Placed as in a vehicle (owner 2026-11-18: a truck's collectors a
+    // metre out beside the block, an X16's tailpipes out to the sides): no
+    // exhaust out beside, under, over or ahead of the engine, none coiled
+    // nor pointing anywhere but back. Before the corridor, 17 of the 18.
+    const auto plausibility = checkPlausibility(model);
+    require(plausibility.besideMm <= 0.0F && plausibility.belowMm <= 0.0F && plausibility.aboveMm <= 0.0F
+                && plausibility.aheadMm <= 0.0F,
+            name + ": the exhaust stays within its corridor (beside " + std::to_string(plausibility.besideMm)
+                + ", below " + std::to_string(plausibility.belowMm) + ", above "
+                + std::to_string(plausibility.aboveMm) + ", ahead " + std::to_string(plausibility.aheadMm) + " mm)");
+    require(plausibility.coiled == 0U, name + ": no exhaust pipe is drawn coiled");
+    if (!plausibility.plausible()) ++implausibleEngines;
     checkStations(model);
     checkTurbo(model);
     checkSupercharger(model);
@@ -2014,12 +2033,23 @@ int main() {
     // primaries reach, back along the trunk or turned below the engine,
     // whichever leaves the slackest the least to spend (LS3 0, 2, 0, 6, 4
     // -> 0, 0, 0, 4, 4).
-    const std::array<std::size_t, 5> measured { 0, 2, 0, 7, 4 };
+    // 2026-11-18 (owner): 3, 0, 0, 16, 2. Each collector in its corridor,
+    // low and back, primaries folded rather than coiled: plausible 17 of 18
+    // (was 1). The cost: the 2JZ's turbo against its head on 430 mm
+    // primaries (+2 clashes, +5 bends), the Hayabusa's 4-2-1 dropped down
+    // the front (+1 clash), the I5's collector (+3 bends), the CP4's (+1);
+    // the Hayabusa's and CP4's self-clashes gone (-2), the LS3's stretch
+    // halved (-2).
+    const std::array<std::size_t, 5> measured { 3, 0, 0, 16, 2 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)
         require(routeIssues[k] <= measured[k], std::string("no more ") + names[k] + " than when measured ("
                                                    + std::to_string(routeIssues[k]) + ")");
+    // 2026-11-18: the EJ25's alone, its one collector fed by both banks
+    // hung towards its turbo (asymmetry 120 mm).
+    require(implausibleEngines <= 1U, "no more implausible exhausts than when measured ("
+                                          + std::to_string(implausibleEngines) + ")");
     checkCrankClock();
     checkGasFieldCapture(catalogue.entries.front().config);
     checkGasProbe(catalogue.entries.front().config);
