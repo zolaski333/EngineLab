@@ -21,6 +21,11 @@ file formats, always with an in-memory migration).
   drawing changes: the simulation and the sound are untouched. A very large
   engine may take a little longer to redraw after an edit (an X12 2.0 ->
   2.9 s).
+- **Cleaner exhaust tubing in the 3-D view.** Each pipe now starts from a
+  shape bent as a tube bender would (straights and smooth arcs), the
+  clearest of several, so fewer pipes cross, kink or knot near their ports
+  and collectors; a collector turns to face primaries that arrive from
+  behind it. On every engine, catalogue included, only the drawing changes.
 
 ### Changed
 

@@ -1912,8 +1912,9 @@ int main() {
     // must cross between the banks, the end primary of the I5, and the two
     // end primaries of the 2JZ, whose 430 mm cannot reach a collector they
     // must enter along its axis. 2026-11-14: 6, the I5's collector turned to
-    // face its primaries.
-    require(stretchedPipes <= 6, "no more exhaust pipes are drawn longer than authored than when measured ("
+    // face its primaries. 2026-11-18: 4, the 2JZ's turned to face its
+    // primaries, which then reach it.
+    require(stretchedPipes <= 4, "no more exhaust pipes are drawn longer than authored than when measured ("
                                      + std::to_string(stretchedPipes) + ")");
     // Route check over the catalogue, measured 2026-10-05 with the router
     // (before it: 107 clashes, 51 self-clashes, 0, 259 tight bends, 6).
@@ -1941,7 +1942,11 @@ int main() {
     // inputs' mean target within the earliest's reach (the 4-2-1s' later
     // secondary no longer coils through the other: Hayabusa 21 -> 4.5 mm,
     // CP4 37 -> 14 mm deep, 4 bends fewer).
-    const std::array<std::size_t, 5> measured { 4, 4, 0, 21, 6 };
+    // 2026-11-18: 0, 4, 0, 9, 4. Each routed pipe starts from the clearest
+    // of 36 shapes bent as a tube bender would (straights and arcs of 1.5
+    // diameters), and a collector with ports beyond its mouth turns to face
+    // them even where its end primaries fall short (2JZ 3, 0, 0, 4, 2 -> 0).
+    const std::array<std::size_t, 5> measured { 0, 4, 0, 9, 4 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

@@ -612,6 +612,17 @@ exhaust stubs), and three things follow the relaxation:
   between their faces; the simulation still has one plenum. A throttle,
   airbox or inlet duct goes where it clears the engine.
 
+**Bent first guesses** (since 2026-11-18). The relaxation keeps a pipe near
+its guess, so the guess sets the look. Before it, `spreadGuesses` gives each
+pipe the clearest of 36 shapes bent as a tube bender would: straights and arcs
+of 1.5 diameters (`bent`), one or two tops pushed out at 12 angles round the
+chord, the height bisected to the pipe's length. Their cost counts overlap
+with the other pipes and the fixed tubes, depth in the solids, self overlap
+and bends under the minimum; up to three sweeps, a pipe already clear is kept.
+A collector whose ports lie behind its mouth now always turns to face them,
+even where its end primaries fall short and are drawn longer: along the trunk
+they had to turn back on themselves, and 25 of 26 that did were knotted.
+
 **Route check.** `checkRoutes` measures what a physical system could not do:
 two ducts through each other, a duct through itself, a duct, a turbo or an
 intake box through the engine or its gearbox (since 2026-11-18), a centreline bent tighter than one diameter (circle through the

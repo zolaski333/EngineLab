@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-18 — 3-D tubing: bent first guesses, collectors turned to face their primaries
+
+- Issues sat within 3 D of pipe ends, and 25 of the 26 primaries entering an axial mouth from beyond it were knotted or kinked. Kept: each pipe starts from the clearest of 36 tube-bender shapes (arcs of 1.5 D), and such a mouth always turns.
+- `EngineLabSceneExport`, clash/self/engine/bend/stretch: owner engines 87/29/0/252/27 -> 34/27/0/196/21; catalogue 4/4/0/21/6 -> 0/4/0/9/4 (2JZ 3/0/0/4/2 -> 0); X12-2 18/0/0/21/0 -> 3/0/0/11/3, its collector now on top, 3 primaries drawn 1.24-1.26x (it has no free place in reach).
+- Envelope gate: 272 -> 264 pipes drawn longer, 0 through the engine; `EngineLab.EngineModel3D` (gates now 0/4/0/9/4, stretched <= 4; fails on the old code) and `AppLayout` pass. Physics and sound untouched (render only).
+- Time: owner engines' export 33-36 -> 28-29 s; X12-2 3.8 -> 4.3-4.6 s (message thread).
+- Refuted, one factor each: a cone entry (catalogue worse), smoothing (bends -8 only), relocating further, 800 passes (bends -48, 2.3x slower), 120 shape passes (bends -32, clashes +6), a 1.5 D bend target (clashes +5), holding clean guesses (no change).
+- Left: LS3 self-clashes (690 mm primary on a 115 mm chord) and its X-pipes 3.4x; fat short user primaries (V8 53 mm x 430 mm) stay tight. Not seen in the app on screen.
+
 ## 2026-11-18 — 3-D layout: nothing through the engine or its gearbox (owner's X12-2)
 
 - `checkRoutes` now counts the gearbox and turbo/intake bodies. Before the fix, over the 56 owner engines (`EngineLabSceneExport`): 105 clashes, 43 self, 148 through the engine, 299 bends, 45 stretched; after: 87, 29, 0, 252, 27. X12-2 28/7/81/35/7 -> 18/0/0/21/0 (its 12-into-1 and dimensions kept); X16 12/6/46/34/8 -> 4/2/0/12/0.

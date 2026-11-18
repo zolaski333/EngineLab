@@ -889,6 +889,252 @@ void boundsOf(const std::vector<EngineSolid>& solids, const std::vector<RouteTub
     return controls.size() < 3U ? controls : smoothCurve(controls, 8);
 }
 
+/** Points every `step` of arc along `points`, both ends included. */
+[[nodiscard]] std::vector<Vec3> evenly(const std::vector<Vec3>& points, float step) {
+    std::vector<Vec3> result;
+    if (points.empty()) return result;
+    result.push_back(points.front());
+    float carried = 0.0F;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        const auto span = length(points[i] - points[i - 1U]);
+        if (span < 1.0e-4F) continue;
+        auto at = step - carried;
+        while (at <= span) {
+            result.push_back(lerp(points[i - 1U], points[i], at / span));
+            at += step;
+        }
+        carried = span - (at - step);
+    }
+    if (length(result.back() - points.back()) > 0.25F * step) result.push_back(points.back());
+    else result.back() = points.back();
+    return result;
+}
+
+/** `corners` with each inner corner rounded by an arc of radius `radius`,
+    or as wide as the straights beside it leave room for; the first
+    `keepStart` and last `keepEnd` of the line stay straight. */
+[[nodiscard]] std::vector<Vec3> bent(const std::vector<Vec3>& corners, float radius, float keepStart, float keepEnd) {
+    if (corners.size() < 3U) return corners;
+    std::vector<Vec3> result { corners.front() };
+    for (std::size_t i = 1; i + 1U < corners.size(); ++i) {
+        const auto in = corners[i] - corners[i - 1U], out = corners[i + 1U] - corners[i];
+        const auto lengthIn = length(in), lengthOut = length(out);
+        if (lengthIn < 1.0e-3F || lengthOut < 1.0e-3F) continue;
+        const auto dIn = in * (1.0F / lengthIn), dOut = out * (1.0F / lengthOut);
+        const auto cosine = std::clamp(dot(dIn, dOut), -1.0F, 1.0F);
+        const auto turn = std::acos(cosine);
+        if (turn < 1.0e-3F) {
+            result.push_back(corners[i]);
+            continue;
+        }
+        // The first and last straights end in a lead each; the others are
+        // shared by the arcs at their two ends.
+        const auto roomIn = i == 1U ? std::max(0.0F, lengthIn - keepStart) : 0.5F * lengthIn;
+        const auto roomOut = i + 2U == corners.size() ? std::max(0.0F, lengthOut - keepEnd) : 0.5F * lengthOut;
+        if (std::min(roomIn, roomOut) < 1.0e-3F) {
+            result.push_back(corners[i]);
+            continue;
+        }
+        const auto half = std::tan(0.5F * std::min(turn, pi - 1.0e-3F));
+        const auto reach = std::min({ radius * half, roomIn, roomOut });
+        const auto r = reach / half;
+        const auto start = corners[i] - dIn * reach;
+        const auto axis = normalise(cross(dIn, dOut));
+        const auto centre = start + normalise(cross(axis, dIn)) * r;
+        const auto spoke = start - centre;
+        const auto steps = std::max(2, static_cast<int>(std::ceil(turn / 0.15F)));
+        for (int s = 0; s <= steps; ++s) {
+            const auto angle = turn * static_cast<float>(s) / static_cast<float>(steps);
+            // Rodrigues: the spoke turned about the axis (square to it).
+            const auto turned = spoke * std::cos(angle) + cross(axis, spoke) * std::sin(angle);
+            result.push_back(centre + turned);
+        }
+    }
+    result.push_back(corners.back());
+    return result;
+}
+
+/** A first guess bent as a tube is, straights and arcs of `bendRadius`:
+    from `a` straight along `dirA` past its lead, out along `bulge` to one
+    corner (`width` 0) or across a top `width` long, and back to arrive at
+    `b` along `dirB` -- as far out as `lengthMm` asks. Empty when even the
+    flattest is longer. */
+[[nodiscard]] std::vector<Vec3> bentGuess(Vec3 a, Vec3 dirA, float leadA, Vec3 b, Vec3 dirB, float leadB,
+                                          float lengthMm, float bendRadius, Vec3 bulge, float width) {
+    const auto from = a + dirA * leadA, to = b - dirB * leadB;
+    auto along = to - from;
+    along = along - bulge * dot(along, bulge);
+    along = length(along) > 1.0F ? normalise(along) : normalise(cross(bulge, std::abs(bulge.x) < 0.9F ? Vec3 { 1.0F, 0.0F, 0.0F } : Vec3 { 0.0F, 1.0F, 0.0F }));
+    const auto middle = lerp(from, to, 0.5F);
+    // Straight on past a lead far enough for the bend after it: a tube
+    // bender's arc of `bendRadius` reaches R tan(turn / 2) along each side.
+    const auto past = [&](Vec3 at, Vec3 direction, Vec3 next) {
+        const auto toward = next - at;
+        const auto turn = length(toward) > 1.0e-3F ? std::acos(std::clamp(dot(direction, normalise(toward)), -1.0F, 1.0F)) : 0.0F;
+        return bendRadius * std::min(4.0F, std::tan(0.5F * std::min(turn, 2.8F)));
+    };
+    const auto make = [&](float height) {
+        std::vector<Vec3> tops;
+        if (width <= 0.0F) {
+            tops.push_back(middle + bulge * height);
+        } else {
+            tops.push_back(middle + bulge * height - along * (0.5F * width));
+            tops.push_back(middle + bulge * height + along * (0.5F * width));
+        }
+        std::vector<Vec3> corners { a };
+        corners.push_back(from + dirA * past(from, dirA, tops.front()));
+        corners.insert(corners.end(), tops.begin(), tops.end());
+        corners.push_back(to - dirB * past(to, dirB * -1.0F, tops.back()));
+        corners.push_back(b);
+        return bent(corners, bendRadius, leadA, leadB);
+    };
+    if (polylineLength(make(0.0F)) >= lengthMm) return {};
+    float low = 0.0F, high = std::max(lengthMm, 1.0F);
+    for (int iteration = 0; iteration < 24; ++iteration) {
+        const auto height = 0.5F * (low + high);
+        if (polylineLength(make(height)) < lengthMm) low = height;
+        else high = height;
+    }
+    return make(0.5F * (low + high));
+}
+
+/**
+ * Chooses each route's first guess among shapes of its length -- which way
+ * it rises off the straight line between its ends, and how wide its top is
+ * -- for the one that keeps clearest of the others, of `obstacles` and of
+ * `solids`, of itself, and of bends tighter than the minimum. The relaxation
+ * only polishes a guess: from guesses through one another it kept each
+ * pipe's length by coiling it (owner 2026-11-18: a 12-into-1 of metre-long
+ * primaries, 18 clashes and 21 kinks). A route whose guess is already clear
+ * keeps it.
+ */
+void spreadGuesses(std::vector<RoutedPipe>& routes, const std::vector<RouteTube>& obstacles,
+                   const std::vector<EngineSolid>& solids, const RouteSettings& routing) {
+    if (routes.empty()) return;
+    struct Sampled final {
+        std::vector<Vec3> points;
+        float radius {};
+        Vec3 low, high;
+    };
+    const auto sample = [](const std::vector<Vec3>& points, float radius) {
+        Sampled s;
+        s.radius = radius;
+        s.points = evenly(points, std::clamp(radius, 4.0F, 20.0F));
+        s.low = s.high = s.points.front();
+        for (const auto& p : s.points) {
+            s.low = { std::min(s.low.x, p.x), std::min(s.low.y, p.y), std::min(s.low.z, p.z) };
+            s.high = { std::max(s.high.x, p.x), std::max(s.high.y, p.y), std::max(s.high.z, p.z) };
+        }
+        return s;
+    };
+    const auto apart = [](const Sampled& s, Vec3 low, Vec3 high, float reach) {
+        return s.low.x > high.x + reach || s.high.x < low.x - reach || s.low.y > high.y + reach || s.high.y < low.y - reach
+            || s.low.z > high.z + reach || s.high.z < low.z - reach;
+    };
+    struct Box final {
+        Vec3 low, high;
+    };
+    std::vector<Box> obstacleBoxes;
+    for (const auto& tube : obstacles) {
+        Box box { tube.points.empty() ? Vec3 {} : tube.points.front(), tube.points.empty() ? Vec3 {} : tube.points.front() };
+        for (std::size_t k = 0; k < tube.points.size(); ++k) {
+            const auto r = k < tube.radii.size() ? tube.radii[k] : 0.0F;
+            const auto& p = tube.points[k];
+            box.low = { std::min(box.low.x, p.x - r), std::min(box.low.y, p.y - r), std::min(box.low.z, p.z - r) };
+            box.high = { std::max(box.high.x, p.x + r), std::max(box.high.y, p.y + r), std::max(box.high.z, p.z + r) };
+        }
+        obstacleBoxes.push_back(box);
+    }
+    const auto gap = routing.gapMm;
+    // How far `s`, route `self`'s candidate, is from clear of everything.
+    std::vector<Sampled> current;
+    for (const auto& route : routes) current.push_back(sample(route.points, route.radius));
+    const auto cost = [&](const Sampled& s, std::size_t self) {
+        const auto r = s.radius;
+        const auto& p = s.points;
+        float total = 0.0F;
+        for (std::size_t j = 0; j < current.size(); ++j) {
+            if (j == self) continue;
+            const auto& other = current[j];
+            const auto reach = r + other.radius + gap;
+            if (apart(s, other.low, other.high, reach)) continue;
+            for (const auto& point : p) {
+                float worst = 0.0F;
+                for (const auto& q : other.points) worst = std::max(worst, reach - length(point - q));
+                total += worst;
+            }
+        }
+        for (std::size_t o = 0; o < obstacles.size(); ++o) {
+            if (obstacles[o].points.size() < 2U || obstacles[o].radii.size() != obstacles[o].points.size()
+                || apart(s, obstacleBoxes[o].low, obstacleBoxes[o].high, r + gap)) continue;
+            for (const auto& point : p) {
+                const auto contact = tubeContact(point, r + gap, obstacles[o].points, &obstacles[o].radii);
+                total += std::max(0.0F, contact.depth);
+            }
+        }
+        // A pipe's ends are in the head it leaves or the box it ends on.
+        for (const auto& point : p) {
+            if (length(point - p.front()) < 2.0F * r || length(point - p.back()) < 2.0F * r) continue;
+            for (const auto& solid : solids) total += 4.0F * std::max(0.0F, r + gap - signedDistance(solid, point));
+        }
+        const auto step = p.size() >= 2U ? length(p[1] - p[0]) : 1.0F;
+        const auto window = static_cast<std::size_t>(std::ceil(4.0F * r / std::max(step, 1.0e-3F)));
+        for (std::size_t k = 0; k + window < p.size(); ++k)
+            for (std::size_t l = k + window; l < p.size(); ++l) total += std::max(0.0F, 2.0F * r + gap - length(p[k] - p[l]));
+        // Bends: the circle through points a diameter apart, as RouteCheck
+        // measures it, against the minimum radius.
+        const auto diameter = 2.0F * r;
+        const auto half = std::max<std::size_t>(1U, static_cast<std::size_t>(std::lround(0.5F * diameter / std::max(step, 1.0e-3F))));
+        const auto tightest = routing.minimumBendDiameters * diameter;
+        for (std::size_t k = half; k + half < p.size(); ++k) {
+            const auto ab = p[k] - p[k - half], bc = p[k + half] - p[k], ca = p[k - half] - p[k + half];
+            const auto area2 = length(cross(ab, bc));
+            if (area2 < 1.0e-6F) continue;
+            const auto radius = length(ab) * length(bc) * length(ca) / (2.0F * area2);
+            total += std::max(0.0F, tightest - radius);
+        }
+        return total;
+    };
+    std::vector<float> costs(routes.size());
+    for (std::size_t i = 0; i < routes.size(); ++i) costs[i] = cost(current[i], i);
+    constexpr int angles = 12;
+    for (int sweep = 0; sweep < 3; ++sweep) {
+        bool changed = false;
+        for (std::size_t i = 0; i < routes.size(); ++i) {
+            auto& route = routes[i];
+            costs[i] = cost(current[i], i);
+            if (costs[i] <= 0.0F || route.points.size() < 2U) continue;
+            const auto a = route.points.front(), b = route.points.back();
+            const auto chord = (b - route.endDirection * route.endLead) - (a + route.startDirection * route.startLead);
+            const auto along = length(chord) > 1.0F ? normalise(chord) : route.startDirection;
+            auto first = downAxis - along * dot(downAxis, along);
+            if (length(first) < 0.1F) first = Vec3 { 1.0F, 0.0F, 0.0F } - along * along.x;
+            first = normalise(first);
+            const auto second = normalise(cross(along, first));
+            const auto diameter = 2.0F * route.radius;
+            const auto bendRadius = 1.5F * diameter;
+            for (const auto width : { 0.0F, 2.0F * bendRadius, 4.0F * bendRadius }) {
+                for (int k = 0; k < angles; ++k) {
+                    const auto angle = 2.0F * pi * static_cast<float>(k) / static_cast<float>(angles);
+                    const auto bulge = first * std::cos(angle) + second * std::sin(angle);
+                    auto points = bentGuess(a, route.startDirection, route.startLead, b, route.endDirection,
+                                            route.endLead, route.lengthMm, bendRadius, bulge, width);
+                    if (points.size() < 2U) continue;
+                    auto candidate = sample(points, route.radius);
+                    const auto value = cost(candidate, i);
+                    if (value < costs[i] - 1.0e-3F) {
+                        costs[i] = value;
+                        current[i] = std::move(candidate);
+                        route.points = std::move(points);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if (!changed) break;
+    }
+}
+
 /**
  * Bends `routes` together; then every one still through a solid of `blocks`
  * (beyond a graze, its ends left out) starts again from a guess round them,
@@ -901,6 +1147,7 @@ void boundsOf(const std::vector<EngineSolid>& solids, const std::vector<RouteTub
  */
 std::vector<std::size_t> routeRound(std::vector<RoutedPipe>& routes, const std::vector<RouteTube>& obstacles,
                                     const std::vector<EngineSolid>& blocks, const RouteSettings& routing) {
+    spreadGuesses(routes, obstacles, blocks, routing);
     const auto guesses = routes;
     relaxRoutes(routes, obstacles, blocks, routing);
     std::vector<std::size_t> stuck;
@@ -1194,20 +1441,11 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
         const auto mouth = at(node.lane, centroid.z);
         const auto across = Vec3 { mouth.x - centroid.x, mouth.y - centroid.y, 0.0F };
         if (length(across) < 1.0F) continue;
-        // Every primary must still reach the turned mouth with room to bend
-        // (as collectorZ asks of one along the trunk); else it keeps its place.
-        const auto axis = normalise(across);
-        bool reached = true;
-        for (const auto in : node.ins) {
-            const auto& primary = nodes[in];
-            const auto* port = primary.cylinders.empty() ? nullptr : portOf(ports, primary.cylinders.front());
-            if (port == nullptr) continue;
-            const auto lead = startLead(primary, true);
-            const auto entry = endLead(primary);
-            const auto from = port->position + port->direction * lead;
-            const auto to = mouth - axis * entry;
-            reached = reached && lead + entry + 1.2F * length(to - from) <= primary.drawLength;        }
-        if (!reached) continue;
+        // Even where a primary is too short to reach the turned mouth with
+        // room to bend: along the trunk it had to turn back on itself as
+        // well, and 25 of the 26 primaries that did were knotted or kinked
+        // (owner engines, 2026-11-18); too short, it is drawn longer and
+        // flagged as stretched either way.
         node.turned = true;
         node.mouthCentre = mouth;
         node.mouthAxis = normalise(across);
@@ -1621,13 +1859,13 @@ std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::
             if (fromPort && std::abs(dirA.z) > 0.9F && std::abs(a.x) + std::abs(a.y) > 1.0F)
                 bulge = normalise(Vec3 { a.x, a.y, 0.0F });
             RoutedPipe route;
-            route.points = routeWithLength(a, dirA, b, dirB, node.drawLength, bulge);
             route.radius = 0.5F * std::max(node.diameter, node.outletDiameter);
+            route.startLead = startLead(node, fromPort);
+            route.endLead = joins ? endLead(node) : 0.0F;
+            route.points = routeWithLength(a, dirA, b, dirB, node.drawLength, bulge);
             route.lengthMm = node.drawLength;
             route.startDirection = dirA;
             route.endDirection = dirB;
-            route.startLead = startLead(node, fromPort);
-            route.endLead = joins ? endLead(node) : 0.0F;
             routes.push_back(std::move(route));
             pending.push_back({ l, i, std::move(piece) });
         }
