@@ -1,6 +1,6 @@
 add_library(EngineLabRender STATIC
     src/RenderSnapshot.cpp src/Mesh.cpp src/EngineModel3D.cpp src/DuctLayout3D.cpp src/CrankClock.cpp
-    src/GasFieldView.cpp src/RouteCheck.cpp src/RouteSolver.cpp
+    src/GasFieldView.cpp src/RouteCheck.cpp src/RouteSolver.cpp src/FreeSpace.cpp
     src/Turbo3D.cpp src/ListenerFrame.cpp)
 add_library(EngineLab::Render ALIAS EngineLabRender)
 target_include_directories(EngineLabRender PUBLIC include)

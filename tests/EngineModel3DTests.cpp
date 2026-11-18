@@ -1518,6 +1518,94 @@ void checkEngineBrakeValves() {
     for (std::size_t c = 2; c < 6; ++c) require(moved[c] < 1.0e-4F, "the others stay on their cam");
 }
 
+/**
+ * No pipe, collector, turbo or intake box is drawn through the engine or its
+ * gearbox, whatever the layout and the exhaust: an X12's 12-into-1 ran its
+ * primaries through the block and its collector into the gearbox (owner
+ * 2026-11-18). Designed engines over the layouts and the designer's exhaust
+ * systems, with and without a turbo; a pipe too short to go round is drawn
+ * longer (a stretch), never through the engine.
+ */
+void checkEngineEnvelope() {
+    struct Shape final {
+        const char* name;
+        EngineLayout layout;
+        std::uint32_t cylinders;
+        double bankAngle;
+        std::vector<double> banks;
+        EngineUse use;
+        double bore;
+        double stroke;
+    };
+    const std::vector<Shape> shapes {
+        { "I4", EngineLayout::inlineLayout, 4, 0.0, {}, EngineUse::roadCar, 86.0, 86.0 },
+        { "I6", EngineLayout::inlineLayout, 6, 0.0, {}, EngineUse::sportCar, 86.0, 86.0 },
+        { "V8", EngineLayout::vLayout, 8, 90.0, {}, EngineUse::sportCar, 100.0, 92.0 },
+        { "V12", EngineLayout::vLayout, 12, 60.0, {}, EngineUse::sportCar, 89.0, 80.0 },
+        { "flat-6", EngineLayout::flat, 6, 0.0, {}, EngineUse::sportCar, 102.0, 76.0 },
+        { "flat-12", EngineLayout::flat, 12, 0.0, {}, EngineUse::sportCar, 80.0, 74.0 },
+        { "X8", EngineLayout::custom, 8, 0.0, { -135.0, -45.0, 45.0, 135.0 }, EngineUse::sportCar, 86.0, 86.0 },
+        { "X12", EngineLayout::custom, 12, 0.0, { -135.0, -45.0, 45.0, 135.0 }, EngineUse::sportCar, 86.0, 86.0 },
+        { "X16", EngineLayout::custom, 16, 0.0, { -135.0, -45.0, 45.0, 135.0 }, EngineUse::sportCar, 86.0, 86.0 },
+        { "W8", EngineLayout::custom, 8, 0.0, { -52.5, -37.5, 37.5, 52.5 }, EngineUse::sportCar, 84.0, 90.0 },
+        { "W12", EngineLayout::custom, 12, 0.0, { -60.0, 0.0, 60.0 }, EngineUse::sportCar, 84.0, 90.0 },
+        { "V4 motorcycle", EngineLayout::vLayout, 4, 65.0, {}, EngineUse::sportMotorcycle, 81.0, 53.5 },
+    };
+    const std::array systems { ExhaustSystem::automatic, ExhaustSystem::single, ExhaustSystem::dual,
+                               ExhaustSystem::dualHPipe, ExhaustSystem::dualXPipe };
+    std::size_t drawn = 0, stretched = 0, failing = 0;
+    for (const auto& shape : shapes)
+        for (const auto system : systems)
+            for (const auto induction : { Induction::natural, Induction::turbocharged }) {
+                // A turbo on the one pipe and on the family's (the owner's X12-2: 12-into-1, one turbo).
+                if (induction == Induction::turbocharged && system != ExhaustSystem::single
+                    && system != ExhaustSystem::automatic)
+                    continue;
+                EngineSpec spec;
+                spec.name = std::string("Designed ") + shape.name;
+                spec.use = shape.use;
+                spec.layout = shape.layout;
+                spec.cylinderCount = shape.cylinders;
+                spec.bankAngleDegrees = shape.bankAngle;
+                spec.bankAnglesDegrees = shape.banks;
+                spec.boreMm = shape.bore;
+                spec.strokeMm = shape.stroke;
+                spec.induction = induction;
+                spec.exhaustSystem = system;
+                const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+                // A system a layout has no use for (two pipes on one bank's motorcycle) is refused.
+                if (!designed.config) continue;
+                const EngineModel3D model(*designed.config);
+                const auto routes = checkRoutes(model);
+                ++drawn;
+                stretched += routes.count(RouteIssueKind::stretched);
+                const auto inside = routes.count(RouteIssueKind::engineClash);
+                if (inside == 0U) continue;
+                ++failing;
+                std::cout << "EngineModel3D: " << shape.name << " exhaust " << static_cast<int>(system)
+                          << (induction == Induction::turbocharged ? " turbo" : "") << ": " << inside
+                          << " pieces through the engine\n";
+                for (const auto& issue : routes.issues) {
+                    if (issue.kind != RouteIssueKind::engineClash) continue;
+                    std::cout << "    ";
+                    if (issue.duct >= 0) {
+                        const auto& duct = model.ducts()[static_cast<std::size_t>(issue.duct)];
+                        std::cout << "duct kind " << static_cast<int>(duct.kind) << " path " << duct.pathId
+                                  << " element " << duct.elementId;
+                    } else {
+                        std::cout << "a body";
+                    }
+                    std::cout << " in solid " << issue.other << " by " << issue.value << " mm at (" << issue.where.x
+                              << ", " << issue.where.y << ", " << issue.where.z << ")\n";
+                }
+            }
+    std::cout << "EngineModel3D: envelope: " << drawn << " designed engines, " << failing << " with a pipe through the "
+              << "engine, " << stretched << " pipes drawn longer\n";
+    require(drawn >= 60U, "most layouts design with most exhaust systems (" + std::to_string(drawn) + ")");
+    require(failing == 0U, "no designed engine has a pipe, collector or turbo through its engine or gearbox ("
+                               + std::to_string(failing) + " do)");
+}
+
 int main() {
     checkEngineBrakeValves();
     checkHPipeDrawing();
@@ -1631,6 +1719,7 @@ int main() {
                   << " in all\n";
         require(chambers == 0, "a V4 two-stroke's expansion chambers clear each other");
     }
+    checkEngineEnvelope();
     checkRotaryExhausts(catalogue);
     for (const auto& entry : catalogue.entries)
         if (entry.config.cycle == EngineCycle::twoStroke) checkTwoStrokeDrawing(entry.config);

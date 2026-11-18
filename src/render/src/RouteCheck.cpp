@@ -179,6 +179,70 @@ RouteReport checkRoutes(const EngineModel3D& model) {
         }
     }
 
+    // Bodies against the engine and its gearbox: a plenum or an airbox (its
+    // drawn box), a turbocharger or a supercharger (its solids). Owner
+    // 2026-11-18: an X12's collector and turbo sat inside the gearbox, which
+    // nothing here looked at.
+    const auto engineSolids = std::min(model.engineSolidCount(), solids.size());
+    const auto bodyIssue = [&](int duct, const std::vector<Vec3>& points) {
+        for (std::size_t s = 0; s < engineSolids; ++s) {
+            RouteIssue worst { RouteIssueKind::engineClash, duct, static_cast<int>(s), {}, 0.0F };
+            for (const auto& point : points) {
+                const auto depth = -signedDistance(solids[s], point);
+                if (depth > 2.0F && depth > worst.value) {
+                    worst.value = depth;
+                    worst.where = point;
+                }
+            }
+            if (worst.value > 0.0F) report.issues.push_back(worst);
+        }
+    };
+    // Points spread through a body: its corners pulled a little towards its
+    // centre (a face resting on the engine is not inside it), and the centre.
+    const auto inside = [](const std::vector<Vec3>& corners) {
+        Vec3 centre {};
+        for (const auto& corner : corners) centre += corner;
+        centre = centre * (1.0F / static_cast<float>(std::max<std::size_t>(1U, corners.size())));
+        std::vector<Vec3> points { centre };
+        for (const auto& corner : corners)
+            for (const auto t : { 0.5F, 0.9F }) points.push_back(lerp(centre, corner, t));
+        return points;
+    };
+    for (std::size_t d = 0; d < ducts.size(); ++d) {
+        const auto& duct = ducts[d];
+        if (duct.centreline.size() >= 2U && duct.radii.size() == duct.centreline.size()) continue;
+        // A rotor's port passage is in its housing, and a two-stroke's reed
+        // block bolts onto its crankcase, by construction.
+        const auto intakeBody = duct.kind == DuctKind::intakePlenum || duct.kind == DuctKind::intakeThrottle
+            || duct.kind == DuctKind::intakeAirbox;
+        if (!intakeBody || (duct.kind == DuctKind::intakePlenum && model.config().cycle == EngineCycle::twoStroke))
+            continue;
+        std::vector<Vec3> corners;
+        for (const auto& vertex : model.parts()[duct.part].mesh.vertices) corners.push_back(vertex.position);
+        if (!corners.empty()) bodyIssue(static_cast<int>(d), inside(corners));
+    }
+    const auto solidCorners = [](const EngineSolid& solid) {
+        std::vector<Vec3> corners;
+        const auto& h = solid.half;
+        for (int k = 0; k < 8; ++k) {
+            const auto sx = (k & 1) != 0 ? 1.0F : -1.0F, sy = (k & 2) != 0 ? 1.0F : -1.0F, sz = (k & 4) != 0 ? 1.0F : -1.0F;
+            if (solid.shape == EngineSolid::Shape::box)
+                corners.push_back(solid.centre + solid.axes[0] * (sx * h.x) + solid.axes[1] * (sy * h.y)
+                                  + solid.axes[2] * (sz * h.z));
+            else {
+                // The axis is axes[1]; the other two are not kept square to it.
+                const auto axis = solid.axes[1];
+                const auto u = normalise(std::abs(axis.x) < 0.9F ? cross(axis, Vec3 { 1.0F, 0.0F, 0.0F })
+                                                                  : cross(axis, Vec3 { 0.0F, 1.0F, 0.0F }));
+                const auto v = cross(axis, u);
+                const auto a = 0.25F * 3.14159265F * static_cast<float>(k);
+                corners.push_back(solid.centre + (u * std::cos(a) + v * std::sin(a)) * h.x + axis * (sz * h.y));
+            }
+        }
+        return corners;
+    };
+    for (std::size_t s = engineSolids; s < solids.size(); ++s) bodyIssue(-1, inside(solidCorners(solids[s])));
+
     // Bends: the circle through three points half a diameter apart along the
     // centreline must have a radius of at least one diameter.
     for (const auto& tube : tubes) {

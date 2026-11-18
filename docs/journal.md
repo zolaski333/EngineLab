@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-18 — 3-D layout: nothing through the engine or its gearbox (owner's X12-2)
+
+- `checkRoutes` now counts the gearbox and turbo/intake bodies. Before the fix, over the 56 owner engines (`EngineLabSceneExport`): 105 clashes, 43 self, 148 through the engine, 299 bends, 45 stretched; after: 87, 29, 0, 252, 27. X12-2 28/7/81/35/7 -> 18/0/0/21/0 (its 12-into-1 and dimensions kept); X16 12/6/46/34/8 -> 4/2/0/12/0.
+- Catalogue: counts 4/4/0/21/6 unchanged; geometry bit-identical but the Big Twin's rear pipe (it crossed the gearbox by 71 mm, unseen before step 0) and the RD350's gearbox (36.5 mm, clear of its carburettors).
+- New gate in `EngineLab.EngineModel3D`: 80 designed engines (I4-I6, V8, V12, flat-6/12, X8/12/16, W8/12, V4 motorcycle x 5 exhaust systems, turbo on single/automatic): 29 failed before, 0 after (`EngineLab.EngineModel3D` 111 s, `EngineLab.AppLayout` pass).
+- Model build time (SceneExport, the 54 engines matched by name): 22.7 -> 24.7 s; X12-2 2.0 -> 2.9 s (4.4 s with both layout passes whole, 8.8 s before the held re-bend). It runs on the message thread at each edit.
+- Not measured: the app on screen; the X12-2's 18 remaining clashes are pipe against pipe (4-26 mm, its 12 primaries converging under the engine, two lower runners).
+
 ## 2026-11-17 — K01's outlet low band kept by the owner: on by default at 200 Hz
 
 - Owner A/B of the six catalogue pairs (`essai-grave/`, showcase, 200 Hz against off): kept. `RealtimeEngineAudio` now starts at 200 Hz, and the first compiled network takes it too (before, only a network swapped in later did). `--outlet-low-band off` renders the network alone.

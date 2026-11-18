@@ -7,6 +7,21 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **No more pipes through the engine in the 3-D view.** On X, W and other
+  large layouts the exhaust primaries could run through the block and the
+  collector sit inside the gearbox (an X12's 12-into-1). Pipes now go round
+  the engine and its gearbox; a collector that has no room where it was
+  moves to free space its primaries reach, and a pipe too short to go round
+  is drawn longer (shown as stretched in the inspector) instead of through
+  the engine. A V's Y behind the engine, a turbo, carburettors and intake
+  boxes follow the same rule. X and W intakes with ports on opposite sides
+  are drawn with two plenum boxes joined by a balance tube. Only the
+  drawing changes: the simulation and the sound are untouched. A very large
+  engine may take a little longer to redraw after an edit (an X12 2.0 ->
+  2.9 s).
+
 ### Changed
 
 - **A fuller exhaust low end.** Below 200 Hz the sound at each tailpipe now

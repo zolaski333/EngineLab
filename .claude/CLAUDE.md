@@ -36,9 +36,12 @@ off the fix branch). Lot 6 done 2026-11-16; A2-08, the one clear change, kept by
 the owner after its A/B (2026-11-17). Lots 7-8 done, released 0.10.0
 (2026-11-17). Owner 2026-11-17: PH-05, V07/RT-04 and V05/V06 stay as they are
 (not to be touched); K01-K03 analysed (journal 2026-11-17). Owner go
-2026-11-17: **now: fix K01-K03** and the probe's missing table, on `exp/k-gaps`,
-without needless full builds or full ctest; every sound change waits on an
-owner A/B pair (the owner is available to listen).
+2026-11-17: fix K01-K03 and the probe's missing table, on `exp/k-gaps` (K01
+kept after an A/B; K02/K03 wait on reference data). Owner go 2026-11-18:
+**now: the 3-D layout's envelope** on `fix/route-envelope` -- no pipe,
+collector or turbo through an engine or its gearbox, the X12-2's 12-into-1
+and dimensions kept, X/W intakes in two plenum boxes (drawing only; journal
+2026-11-18); full ctest only before a merge.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a

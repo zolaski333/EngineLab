@@ -1,10 +1,12 @@
 #include <enginelab/render/DuctLayout3D.hpp>
 
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
+#include <enginelab/render/FreeSpace.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <numbers>
 #include <unordered_map>
@@ -552,8 +554,11 @@ void placeTurbo(const PathLayout& layout, Node& node, const TurboSpec& spec, Tur
     node.exitZ = turbo.outlet.z;
 }
 
+/** Places the path's junctions and trunk down from its first junctions;
+    `settle` may move each later junction, once placed, before its turbo and
+    what follows it. */
 void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float clearance, const TurboSpec& spec,
-               std::vector<TurboPlacement>* turbos) {
+               std::vector<TurboPlacement>* turbos, const std::function<void(std::size_t)>& settle) {
     auto& nodes = layout.nodes;
     for (const auto i : layout.order) {
         auto& node = nodes[i];
@@ -674,6 +679,7 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
             node.zIn = parent.zOut + radius;
             node.zOut = node.zIn + std::max(0.2F * node.drawLength, node.drawLength - 0.5F * pi * radius);
         }
+        settle(i);
         if (node.turbo && !node.turboAtInlet && turbos != nullptr)
             placeTurbo(layout, node, spec, (*turbos)[node.turboSlot]);
     }
@@ -825,11 +831,151 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
     piece.radii = std::move(radii);
 }
 
+/** A graze is not a clash: RouteCheck's own allowance for a tube of radius
+    `radius`. */
+[[nodiscard]] float grazeMm(float radius) noexcept { return 0.5F + 0.15F * radius; }
+
+/** Whether the tube of radius `radius` along `points` sits in a solid beyond a
+    graze, leaving out what lies within two radii of an end in `ends` (a
+    pipe's end is in the head it leaves, or the box it ends on). */
+[[nodiscard]] bool tubeSunk(const std::vector<Vec3>& points, float radius, const std::vector<EngineSolid>& solids,
+                            bool ends = false) {
+    if (points.empty()) return false;
+    for (const auto& point : points) {
+        if (ends && (length(point - points.front()) < 2.0F * radius || length(point - points.back()) < 2.0F * radius))
+            continue;
+        for (const auto& solid : solids)
+            if (radius - signedDistance(solid, point) > grazeMm(radius)) return true;
+    }
+    return false;
+}
+
+/** Whether `body` sits in a solid by more than 2 mm (RouteCheck's measure). */
+[[nodiscard]] bool bodySunk(const EngineSolid& body, const std::vector<EngineSolid>& solids) {
+    for (const auto& point : solidSamples(body))
+        for (const auto& solid : solids)
+            if (-signedDistance(solid, point) > 2.0F) return true;
+    return false;
+}
+
+/** The box round `solids`, `ports` and `tubes`. */
+void boundsOf(const std::vector<EngineSolid>& solids, const std::vector<RouteTube>& tubes, Vec3& low, Vec3& high) {
+    const auto add = [&](Vec3 centre, Vec3 half) {
+        low = { std::min(low.x, centre.x - half.x), std::min(low.y, centre.y - half.y), std::min(low.z, centre.z - half.z) };
+        high = { std::max(high.x, centre.x + half.x), std::max(high.y, centre.y + half.y),
+                 std::max(high.z, centre.z + half.z) };
+    };
+    for (const auto& solid : solids) add(solid.centre, solidHalfExtent(solid));
+    for (const auto& tube : tubes)
+        for (std::size_t i = 0; i < tube.points.size(); ++i) {
+            const auto r = i < tube.radii.size() ? tube.radii[i] : 0.0F;
+            add(tube.points[i], { r, r, r });
+        }
+}
+
+/** A guess from `a` (leaving along `dirA`) to `b` (arriving along `dirB`)
+    round everything `space` holds, through the straight leads; empty when
+    there is no way. */
+[[nodiscard]] std::vector<Vec3> freeGuess(const FreeSpace& space, Vec3 a, Vec3 dirA, float leadA, Vec3 b, Vec3 dirB,
+                                          float leadB, float maximumRunMm) {
+    const auto from = a + dirA * leadA, to = b - dirB * leadB;
+    const auto field = space.reach(from, dirA, maximumRunMm);
+    auto way = space.path(field, from, to, dirB, maximumRunMm);
+    if (way.empty()) return way;
+    std::vector<Vec3> controls { a };
+    for (const auto& point : way)
+        if (length(point - controls.back()) > 1.0F) controls.push_back(point);
+    if (length(b - controls.back()) > 1.0F) controls.push_back(b);
+    return controls.size() < 3U ? controls : smoothCurve(controls, 8);
+}
+
+/**
+ * Bends `routes` together; then every one still through a solid of `blocks`
+ * (beyond a graze, its ends left out) starts again from a guess round them,
+ * drawn longer than authored where the way round needs it, and is bent again
+ * with the others held -- or, where they are in its way, with them all from
+ * their first guesses. The relaxation only
+ * moves a guess locally: one through the crankcase stays there (owner
+ * 2026-11-18, an X12's primaries through its block). Returns the routes that
+ * were stuck.
+ */
+std::vector<std::size_t> routeRound(std::vector<RoutedPipe>& routes, const std::vector<RouteTube>& obstacles,
+                                    const std::vector<EngineSolid>& blocks, const RouteSettings& routing) {
+    const auto guesses = routes;
+    relaxRoutes(routes, obstacles, blocks, routing);
+    std::vector<std::size_t> stuck;
+    float widest = 0.0F;
+    for (std::size_t r = 0; r < routes.size(); ++r)
+        if (tubeSunk(routes[r].points, routes[r].radius, blocks, true)) {
+            stuck.push_back(r);
+            widest = std::max(widest, routes[r].radius);
+        }
+    if (stuck.empty()) return stuck;
+    auto held = obstacles;
+    for (std::size_t r = 0; r < routes.size(); ++r)
+        if (std::find(stuck.begin(), stuck.end(), r) == stuck.end())
+            held.push_back({ routes[r].points, std::vector<float>(routes[r].points.size(), routes[r].radius) });
+    Vec3 low { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+    Vec3 high = low * -1.0F;
+    boundsOf(blocks, obstacles, low, high);
+    float longest = 0.0F;
+    for (const auto r : stuck) {
+        longest = std::max(longest, guesses[r].lengthMm);
+        for (const auto& point : guesses[r].points) boundsOf({}, { { { point }, { guesses[r].radius } } }, low, high);
+    }
+    const auto margin = std::max(150.0F, 0.4F * longest);
+    low = low - Vec3 { margin, margin, margin };
+    high = high + Vec3 { margin, margin, margin };
+    const auto clearance = widest + routing.gapMm + 5.0F;
+    const FreeSpace space(low, high, std::max(20.0F, widest), blocks, obstacles, clearance);
+    // How far an end may be from the free room: a port's mouth is in its head.
+    const auto escape = std::max(80.0F, 3.0F * clearance);
+    std::vector<RoutedPipe> retry;
+    for (const auto r : stuck) {
+        auto route = guesses[r];
+        if (route.points.size() >= 2U) {
+            const auto way = freeGuess(space, route.points.front(), route.startDirection, route.startLead,
+                                       route.points.back(), route.endDirection, route.endLead, escape);
+            if (way.size() >= 2U) {
+                route.points = way;
+                route.lengthMm = std::max(route.lengthMm, 1.03F * polylineLength(way));
+            }
+        }
+        retry.push_back(std::move(route));
+    }
+    relaxRoutes(retry, held, blocks, routing);
+    const auto still = std::any_of(retry.begin(), retry.end(), [&](const RoutedPipe& route) {
+        return tubeSunk(route.points, route.radius, blocks, true);
+    });
+    if (!still) {
+        for (std::size_t k = 0; k < stuck.size(); ++k) routes[stuck[k]] = std::move(retry[k]);
+        return stuck;
+    }
+    // The others in the way: all bent together again, the others from their
+    // first guesses.
+    auto together = guesses;
+    for (std::size_t k = 0; k < stuck.size(); ++k) {
+        together[stuck[k]].points = retry[k].points;
+        together[stuck[k]].lengthMm = retry[k].lengthMm;
+    }
+    relaxRoutes(together, obstacles, blocks, routing);
+    routes = std::move(together);
+    return stuck;
+}
+
 } // namespace
 
-std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
-                                     const std::vector<RouteTube>& avoid, const std::vector<EngineSolid>& solids,
-                                     std::vector<TurboPlacement>* turbos) {
+namespace {
+
+/** The exhaust laid out once; the junctions of the paths in `movable` move
+    off their places where the engine blocks them. With `stuck`, a path whose
+    junction is blocked and a routed pipe of which starts out deep in the
+    engine is added there, and the layout stops short: it is to be laid out
+    again. */
+std::vector<DuctPiece> layoutExhaustOnce(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
+                                         const std::vector<RouteTube>& avoid, const std::vector<EngineSolid>& solids,
+                                         std::vector<TurboPlacement>* turbos, const std::vector<std::uint32_t>& movable,
+                                         std::vector<std::uint32_t>* stuck) {
     const auto clearance = std::max(60.0F, 0.8F * boreMm);
     const RouteSettings routing;
     std::vector<PathLayout> layouts(config.exhaustPaths.size());
@@ -1071,6 +1217,274 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         node.zIn = node.zOut = mouth.z;
     }
 
+    // A collector whose trunk -- its body, the run along its lane, its turbo
+    // -- would sit in the engine, its gearbox or an intake box moves to the
+    // free space where its primaries reach it with the least of their length
+    // left over (owner 2026-11-18: an X12's 12-into-1 sat in its gearbox, its
+    // primaries through the block). Every other keeps the place the rules
+    // above gave it.
+    struct Footprint final {
+        std::vector<RouteTube> tubes;
+        std::vector<EngineSolid> bodies;
+    };
+    // As drawn, each piece at its own width; `padded`, with the router's gap
+    // (a place to move to keeps it).
+    const auto footprintOf = [&](const Junction& junction, const Node& node, bool padded) {
+        const auto& layout = layouts[junction.path];
+        const auto& nodes = layout.nodes;
+        const auto gap = padded ? routing.gapMm : 0.0F;
+        Footprint footprint;
+        const auto tube = [&](Vec3 a, Vec3 b, float radius) {
+            auto points = resample({ a, b }, 10.0F);
+            footprint.tubes.push_back({ points, std::vector<float>(points.size(), radius + gap) });
+        };
+        const auto inlet = node.turned ? node.mouthCentre : at(node.lane, node.zIn);
+        tube(inlet, at(node.lane, node.zOut), 0.5F * std::max(node.body, node.diameter));
+        auto lane = node.lane;
+        auto z = node.zOut;
+        if (node.turbo && !node.turboAtInlet && turbos != nullptr) {
+            auto copy = node;
+            TurboPlacement turbo;
+            placeTurbo(layout, copy, spec, turbo);
+            footprint.tubes.push_back({ turbo.scroll, turbo.scrollRadii });
+            for (auto& radius : footprint.tubes.back().radii) radius += gap;
+            footprint.bodies = turboSolids(turbo);
+            lane = copy.exitLane;
+            z = copy.exitZ;
+        }
+        // The straight run on along its lane, to where a pipe is routed away.
+        for (const auto* walk = &node; walk->outs.size() == 1U;) {
+            const auto& next = nodes[walk->outs.front()];
+            if (next.routed || next.stack || next.ins.size() != 1U) break;
+            tube(at(lane, z), at(lane, z + next.drawLength), 0.5F * std::max(next.body, next.diameter));
+            z += next.drawLength;
+            walk = &next;
+        }
+        // The straight runs its routed inputs keep into its mouth: a
+        // radial's ring sat just behind its gearbox, so its primaries came
+        // in through it.
+        float entryRun = 0.0F, widestIn = 0.0F;
+        for (std::size_t k = 0; k < throughIns(node); ++k) {
+            const auto& upstream = nodes[node.ins[k]];
+            if (!upstream.routed) continue;
+            entryRun = std::max(entryRun, endLead(upstream));
+            widestIn = std::max(widestIn, 0.5F * std::max(upstream.diameter, upstream.outletDiameter));
+        }
+        if (entryRun > 0.0F) {
+            const auto inputs = throughIns(node) + node.cylinders.size();
+            // A pipe's graze, not the wide mouth's.
+            auto mouthRadius = (inputs >= 2U ? slotRadius(node) : 0.0F) + widestIn;
+            mouthRadius += grazeMm(mouthRadius) - grazeMm(widestIn) + gap;
+            auto points = resample({ inlet - entryAxis(node) * entryRun, inlet }, 10.0F);
+            footprint.tubes.push_back({ points, std::vector<float>(points.size(), mouthRadius) });
+        }
+        return footprint;
+    };
+    const auto inEngine = [&](const Footprint& footprint) {
+        for (const auto& tube : footprint.tubes)
+            for (std::size_t i = 0; i < tube.points.size(); ++i)
+                for (const auto& solid : solids)
+                    if (tube.radii[i] - signedDistance(solid, tube.points[i]) > grazeMm(tube.radii[i])) return true;
+        return std::any_of(footprint.bodies.begin(), footprint.bodies.end(),
+                           [&](const EngineSolid& body) { return bodySunk(body, solids); });
+    };
+    std::vector<Footprint> footprints;
+    for (const auto& junction : junctions)
+        footprints.push_back(footprintOf(junction, layouts[junction.path].nodes[junction.node], true));
+    // Clear of the solids, the intake's tubes and every other junction's trunk.
+    const auto clearOf = [&](const Footprint& footprint, std::size_t self) {
+        if (inEngine(footprint)) return false;
+        const auto touches = [&](Vec3 q, float r, float allowance) {
+            const auto hit = [&](const RouteTube& t) {
+                return tubeContact(q, r, t.points, &t.radii).depth > allowance;
+            };
+            if (std::any_of(avoid.begin(), avoid.end(), hit)) return true;
+            for (std::size_t o = 0; o < footprints.size(); ++o) {
+                if (o == self) continue;
+                if (std::any_of(footprints[o].tubes.begin(), footprints[o].tubes.end(), hit)) return true;
+                for (const auto& body : footprints[o].bodies)
+                    if (r - signedDistance(body, q) > allowance) return true;
+            }
+            return false;
+        };
+        for (const auto& tube : footprint.tubes)
+            for (std::size_t i = 0; i < tube.points.size(); ++i)
+                if (touches(tube.points[i], tube.radii[i], grazeMm(tube.radii[i]))) return false;
+        for (const auto& body : footprint.bodies)
+            for (const auto& point : solidSamples(body))
+                if (touches(point, 0.0F, 2.0F)) return false;
+        return true;
+    };
+    // What feeds a junction through routed pipes: where each pipe starts its
+    // way (past its straight lead), the way it leaves, and its length.
+    struct Primary final {
+        Vec3 from;
+        Vec3 direction;
+        float lead {};
+        float entry {};
+        float length {};
+        float radius {};
+    };
+    const auto isMovable = [&](const PathLayout& layout) {
+        return std::find(movable.begin(), movable.end(), layout.path->id) != movable.end();
+    };
+    // Moves `node` (of `self`; `index` is its footprint, or past the last) to
+    // the free place its routed inputs reach with the least of their length
+    // left over, else to the one that asks them for the least extra length
+    // (drawn that much longer and flagged as stretched, never through the
+    // engine). False where no place is free at all: it keeps its own.
+    const auto relocate = [&](const Junction& self, Node& node, const std::vector<Primary>& primaries,
+                              std::size_t index, Footprint& placed) {
+        if (primaries.empty()) return false;
+        float centreZ = 0.0F, lastZ = -std::numeric_limits<float>::max(), longest = 0.0F, widestPort = 0.0F;
+        for (const auto& primary : primaries) {
+            centreZ += primary.from.z;
+            lastZ = std::max(lastZ, primary.from.z);
+            longest = std::max(longest, primary.length);
+            widestPort = std::max(widestPort, primary.radius);
+        }
+        centreZ /= static_cast<float>(primaries.size());
+        // The room: the engine, the intake and the other trunks, out to where
+        // the longest input could reach.
+        Vec3 low { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                   std::numeric_limits<float>::max() };
+        Vec3 high = low * -1.0F;
+        boundsOf(solids, {}, low, high);
+        for (const auto& primary : primaries) boundsOf({}, { { { primary.from }, { 0.0F } } }, low, high);
+        const auto envelope = std::max({ std::abs(low.x), std::abs(high.x), std::abs(low.y), std::abs(high.y) });
+        const auto margin = std::max(150.0F, 0.6F * longest);
+        low = low - Vec3 { margin, margin, margin };
+        high = high + Vec3 { margin, margin, margin };
+        std::vector<RouteTube> others = avoid;
+        auto bodies = solids;
+        for (std::size_t o = 0; o < footprints.size(); ++o) {
+            if (o == index) continue;
+            others.insert(others.end(), footprints[o].tubes.begin(), footprints[o].tubes.end());
+            bodies.insert(bodies.end(), footprints[o].bodies.begin(), footprints[o].bodies.end());
+        }
+        const auto room = widestPort + routing.gapMm + 5.0F;
+        const FreeSpace space(low, high, std::max(20.0F, 2.0F * widestPort), bodies, others, room);
+        const auto escape = std::max(80.0F, 3.0F * room);
+        std::vector<FreeSpace::Field> fields;
+        for (const auto& primary : primaries) fields.push_back(space.reach(primary.from, primary.direction, escape));
+
+        const auto original = node;
+        const auto widest = std::max(node.body, node.diameter);
+        const auto step = std::max(20.0F, 0.5F * widest);
+        const std::array<float, 4> zIns { centreZ, lastZ + node.diameter, lastZ + node.diameter + 0.25F * longest,
+                                          lastZ + node.diameter + 0.5F * longest };
+        float best = std::numeric_limits<float>::max();
+        Node chosen = original;
+        Footprint chosenFootprint;
+        float leastExcess = std::numeric_limits<float>::max();
+        Node stretched = original;
+        Footprint stretchedFootprint;
+        constexpr int angles = 24;
+        for (const auto zIn : zIns) {
+            for (int a = -1; a < angles; ++a) {
+                // a = -1: the lane the rules gave it, only further back.
+                const auto angle = 2.0F * pi * static_cast<float>(a) / static_cast<float>(angles);
+                const Vec3 out { std::cos(angle), std::sin(angle), 0.0F };
+                for (float r = 0.0F; r <= envelope + 2.0F * widest + margin; r += step) {
+                    if (a < 0 && r > 0.0F) break;
+                    auto candidate = original;
+                    candidate.turned = false;
+                    candidate.mouthAxis = zAxis;
+                    candidate.lane = a < 0 ? original.lane : out * r;
+                    if (a >= 0) candidate.spread = { -out.y, out.x, 0.0F };
+                    candidate.zIn = zIn;
+                    candidate.zOut = zIn + candidate.drawLength;
+                    auto footprint = footprintOf(self, candidate, true);
+                    if (!clearOf(footprint, index)) continue;
+                    // The first clear place out along this way: every input
+                    // must reach it with room to bend.
+                    float slack = 0.0F, excess = 0.0F;
+                    bool reached = true;
+                    for (std::size_t k = 0; k < primaries.size(); ++k) {
+                        const auto& primary = primaries[k];
+                        const auto entry = at(candidate.lane, zIn) - zAxis * primary.entry;
+                        const auto need = primary.lead + primary.entry
+                            + space.distance(fields[k], entry, zAxis, escape);
+                        reached = reached && need <= 0.97F * primary.length;
+                        slack += primary.length - need;
+                        excess += std::max(0.0F, need - 0.97F * primary.length);
+                    }
+                    if (reached && slack < best) {
+                        best = slack;
+                        chosen = candidate;
+                        chosenFootprint = footprint;
+                    }
+                    if (!reached && std::isfinite(excess) && excess < leastExcess) {
+                        leastExcess = excess;
+                        stretched = candidate;
+                        stretchedFootprint = std::move(footprint);
+                    }
+                    break;
+                }
+            }
+        }
+        const auto inReach = best < std::numeric_limits<float>::max();
+        if (!inReach && leastExcess == std::numeric_limits<float>::max()) return false;
+        node = inReach ? chosen : stretched;
+        placed = std::move(inReach ? chosenFootprint : stretchedFootprint);
+        return true;
+    };
+    // Paths with a junction whose place is blocked, left where it is.
+    std::vector<std::uint32_t> unsettled;
+    const auto unsettle = [&](const PathLayout& layout) {
+        if (std::find(unsettled.begin(), unsettled.end(), layout.path->id) == unsettled.end())
+            unsettled.push_back(layout.path->id);
+    };
+    for (std::size_t j = 0; j < junctions.size(); ++j) {
+        auto& layout = layouts[junctions[j].path];
+        auto& node = layout.nodes[junctions[j].node];
+        if (!node.cylinders.empty() || node.turboAtInlet || throughIns(node) < 1U || clearOf(footprints[j], j)) continue;
+        if (!isMovable(layout)) {
+            unsettle(layout);
+            continue;
+        }
+        std::vector<Primary> primaries;
+        for (const auto in : node.ins) {
+            const auto& primary = layout.nodes[in];
+            const auto* port = primary.cylinders.empty() || !primary.routed ? nullptr
+                                                                             : portOf(ports, primary.cylinders.front());
+            if (port == nullptr) continue;
+            const auto lead = startLead(primary, true);
+            primaries.push_back({ port->position + port->direction * lead, port->direction, lead, endLead(primary),
+                                  primary.drawLength, 0.5F * std::max(primary.diameter, primary.outletDiameter) });
+        }
+        relocate(junctions[j], node, primaries, j, footprints[j]);
+    }
+    // A junction further down, fed by pipes routed from the collectors (a V's
+    // Y behind the engine, on the crank's axis: in its gearbox), moves the same
+    // way as its path is placed, before what follows it.
+    const auto settle = [&](std::size_t l, std::size_t i) {
+        auto& layout = layouts[l];
+        if (!isMovable(layout) && stuck == nullptr) return;
+        auto& node = layout.nodes[i];
+        if (node.routed || node.stack || node.firstJunction || !node.cylinders.empty() || node.turboAtInlet) return;
+        std::vector<Primary> primaries;
+        for (std::size_t k = 0; k < throughIns(node); ++k) {
+            const auto in = node.ins[k];
+            const auto& upstream = layout.nodes[in];
+            if (!upstream.routed || upstream.ins.empty()) return;
+            Vec3 start, direction;
+            bool fromPort = false;
+            if (!routeStart(layout, in, ports, start, direction, fromPort)) return;
+            const auto lead = startLead(upstream, fromPort);
+            primaries.push_back({ start + direction * lead, direction, lead, endLead(upstream), upstream.drawLength,
+                                  0.5F * std::max(upstream.diameter, upstream.outletDiameter) });
+        }
+        const Junction self { l, i };
+        auto footprint = footprintOf(self, node, true);
+        if (clearOf(footprint, footprints.size())) return;
+        if (!isMovable(layout)) {
+            unsettle(layout);
+            return;
+        }
+        if (relocate(self, node, primaries, footprints.size(), footprint)) footprints.push_back(std::move(footprint));
+    };
+
     std::vector<DuctPiece> pieces;
     // Routed pipes are bent together once everything else is in place.
     struct Pending final {
@@ -1082,7 +1496,8 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
     std::vector<RoutedPipe> routes;
     for (std::size_t l = 0; l < layouts.size(); ++l) {
         auto& layout = layouts[l];
-        placePath(layout, ports, clearance, spec, turbos);
+        const auto settleHere = [&](std::size_t i) { settle(l, i); };
+        placePath(layout, ports, clearance, spec, turbos, settleHere);
         assignSlots(layout, ports);
         auto& nodes = layout.nodes;
         const auto pathId = layout.path->id;
@@ -1230,7 +1645,31 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             obstacles.push_back({ turbo.scroll, turbo.scrollRadii });
             for (const auto& solid : turboSolids(turbo)) blocks.push_back(solid);
         }
-    relaxRoutes(routes, obstacles, blocks, routing);
+    // A path whose junction is blocked and a pipe of which starts out with
+    // its axis more than a diameter deep in the engine (beyond what bending
+    // moves it: a 12-into-1's primaries through the block) is laid out again
+    // with its junctions free to move: nothing more is drawn here. Shallower,
+    // the bending may clear it, and the drawn pipes decide (below).
+    if (stuck != nullptr) {
+        for (std::size_t r = 0; r < routes.size(); ++r) {
+            const auto pathId = layouts[pending[r].layout].path->id;
+            if (std::find(unsettled.begin(), unsettled.end(), pathId) == unsettled.end()
+                || std::find(stuck->begin(), stuck->end(), pathId) != stuck->end())
+                continue;
+            const auto& route = routes[r];
+            const auto deep = std::any_of(route.points.begin(), route.points.end(), [&](Vec3 point) {
+                if (length(point - route.points.front()) < 2.0F * route.radius
+                    || length(point - route.points.back()) < 2.0F * route.radius)
+                    return false;
+                return std::any_of(blocks.begin(), blocks.end(), [&](const EngineSolid& solid) {
+                    return -signedDistance(solid, point) > 2.0F * route.radius;
+                });
+            });
+            if (deep) stuck->push_back(pathId);
+        }
+        if (!stuck->empty()) return pieces;
+    }
+    routeRound(routes, obstacles, blocks, routing);
     for (std::size_t r = 0; r < pending.size(); ++r) {
         auto& item = pending[r];
         shapeComponent(item.piece, layouts[item.layout].nodes[item.node], std::move(routes[r].points));
@@ -1255,6 +1694,54 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
         }
     }
     return pieces;
+}
+
+} // namespace
+
+std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
+                                     const std::vector<RouteTube>& avoid, const std::vector<EngineSolid>& solids,
+                                     std::vector<TurboPlacement>* turbos) {
+    // A path whose junction sits in the way, a pipe of which starts out deep
+    // in the engine, goes straight to the second pass.
+    std::vector<std::uint32_t> blocked;
+    auto pieces = layoutExhaustOnce(config, ports, boreMm, avoid, solids, turbos, {}, &blocked);
+    if (!blocked.empty()) return layoutExhaustOnce(config, ports, boreMm, avoid, solids, turbos, blocked, nullptr);
+    // A path any drawn pipe of which sits in the engine, its gearbox, an
+    // intake box or another path's turbo (beyond a graze, two radii at each
+    // end left out, as RouteCheck judges it), or whose turbo sits in the
+    // engine, is laid out again with its junctions free to move; every other
+    // keeps its layout exactly.
+    const auto block = [&](std::uint32_t pathId) {
+        if (std::find(blocked.begin(), blocked.end(), pathId) == blocked.end()) blocked.push_back(pathId);
+    };
+    std::vector<std::pair<std::uint32_t, EngineSolid>> turboBodies;
+    if (turbos != nullptr)
+        for (const auto& turbo : *turbos) {
+            if (!turbo.placed) continue;
+            for (const auto& body : turboSolids(turbo)) {
+                turboBodies.emplace_back(turbo.pathId, body);
+                if (bodySunk(body, solids)) block(turbo.pathId);
+            }
+        }
+    for (const auto& piece : pieces) {
+        if (piece.radii.size() != piece.centreline.size() || piece.centreline.size() < 2U) continue;
+        if (std::find(blocked.begin(), blocked.end(), piece.pathId) != blocked.end()) continue;
+        const auto& points = piece.centreline;
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            const auto r = piece.radii[i];
+            if (length(points[i] - points.front()) < 2.0F * r || length(points[i] - points.back()) < 2.0F * r) continue;
+            const auto sunk = [&](const EngineSolid& solid) { return r - signedDistance(solid, points[i]) > grazeMm(r); };
+            if (std::any_of(solids.begin(), solids.end(), sunk)
+                || std::any_of(turboBodies.begin(), turboBodies.end(), [&](const auto& body) {
+                       return body.first != piece.pathId && sunk(body.second);
+                   })) {
+                block(piece.pathId);
+                break;
+            }
+        }
+    }
+    if (blocked.empty()) return pieces;
+    return layoutExhaustOnce(config, ports, boreMm, avoid, solids, turbos, blocked, nullptr);
 }
 
 std::vector<EngineSolid> superchargerSolids(const SuperchargerPlacement& supercharger) {
@@ -1458,6 +1945,64 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
     outermost.openAxis = normalise(direction);
 }
 
+/** How deep what appendUpstream would draw from `face` along `direction` (one
+    throttle bore, its airbox and its inlet duct, at their sizes) sits in the
+    solids of `solids` (mm; 0 when clear). */
+[[nodiscard]] float upstreamDepth(const IntakeConfig& geometry, Vec3 face, Vec3 direction,
+                                  const std::vector<EngineSolid>& solids) {
+    const auto throttle = std::max(5.0F, mm(geometry.throttleDiameterMm));
+    // Square across, as RouteCheck judges a body by its bounding box.
+    const auto along = [&](Vec3 start, float radius, float run) {
+        EngineSolid solid;
+        solid.centre = start + direction * (0.5F * run);
+        solid.axes[1] = direction;
+        solid.axes[0] = normalise(cross(direction, std::abs(direction.y) < 0.9F ? Vec3 { 0.0F, 1.0F, 0.0F } : zAxis));
+        solid.axes[2] = cross(solid.axes[0], direction);
+        solid.half = { radius, 0.5F * run, radius };
+        return solid;
+    };
+    // A slide carburettor's tower and float bowl stand out of its bore.
+    std::vector<EngineSolid> drawn { along(face, (geometry.carburettor.enabled ? 1.2F : 0.62F) * throttle,
+                                           1.1F * throttle) };
+    auto inlet = face + direction * (1.1F * throttle);
+    const auto airbox = mm(geometry.airboxVolumeLitres) * litre;
+    if (airbox > 0.0F) {
+        const auto depth = std::max(2.0F * throttle, std::cbrt(airbox));
+        const auto width = std::max(1.6F * throttle, std::sqrt(airbox / depth));
+        const auto height = airbox / (depth * width);
+        // Its widest half, as a drum round the way out.
+        drawn.push_back(along(inlet, 0.5F * std::max(depth, width), height));
+        inlet = inlet + direction * height;
+    }
+    const auto ductLength = mm(geometry.inletDuctLengthMm);
+    if (ductLength > 1.0F) {
+        const auto ductDiameter = geometry.inletDuctDiameterMm > 1.0 ? mm(geometry.inletDuctDiameterMm) : throttle;
+        drawn.push_back(along(inlet, 0.5F * ductDiameter, ductLength));
+    }
+    float deepest = 0.0F;
+    for (const auto& body : drawn)
+        for (const auto& point : solidSamples(body))
+            for (const auto& solid : solids) deepest = std::max(deepest, -signedDistance(solid, point));
+    return deepest;
+}
+
+/** The first of `options` (a face and the way out of it) whose throttle,
+    airbox and inlet duct clear `solids` (RouteCheck's 2 mm); else the one
+    that sits in them least. */
+void chooseUpstream(const IntakeConfig& geometry, const std::vector<std::pair<Vec3, Vec3>>& options,
+                    const std::vector<EngineSolid>& solids, std::vector<Vec3>& faces, Vec3& upstream) {
+    float least = std::numeric_limits<float>::max();
+    for (const auto& [face, direction] : options) {
+        const auto depth = upstreamDepth(geometry, face, direction, solids);
+        if (depth < least) {
+            least = depth;
+            faces = { face };
+            upstream = direction;
+        }
+        if (depth <= 2.0F) return;
+    }
+}
+
 /** A two-stroke's intake, cylinder by cylinder from the crankcase out, then
     the airbox every carburettor shares (layoutIntake). */
 std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const std::vector<PortAnchor>& ports) {
@@ -1642,6 +2187,8 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
     };
     std::vector<Pending> pending;
     std::vector<RoutedPipe> routes;
+    // Balance pipes between the boxes of a path: the runners bend round them.
+    std::vector<RouteTube> balances;
     auto avoid = solids;
     const auto pathCount = std::max<std::size_t>(1U, config.intakePaths.size());
     for (std::size_t p = 0; p < pathCount; ++p) {
@@ -1686,6 +2233,7 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
         std::vector<Vec3> ends(runners.size());
         std::vector<Vec3> arrivals(runners.size());
         std::vector<Vec3> bulges(runners.size());
+        std::vector<DuctPiece> plenums;
         DuctPiece plenum;
         plenum.kind = DuctKind::intakePlenum;
         plenum.pathId = pathId;
@@ -1729,80 +2277,197 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             solid.half = { drum, 0.5F * drumLength, 0.0F };
             avoid.push_back(solid);
             plenum.centreline = { hub - zAxis * (0.5F * drumLength), hub + zAxis * (0.5F * drumLength) };
-            faces.push_back(hub + downAxis * drum);
-            upstream = downAxis;
+            // Below the drum, else wherever the throttle and its airbox
+            // clear the engine and its gearbox.
+            const Vec3 xAxis { 1.0F, 0.0F, 0.0F };
+            chooseUpstream(geometry,
+                           { { hub + downAxis * drum, downAxis }, { hub - zAxis * (0.5F * drumLength), -zAxis },
+                             { hub + xAxis * drum, xAxis }, { hub - xAxis * drum, -xAxis } },
+                           solids, faces, upstream);
             away = -zAxis;
+            plenums.push_back(std::move(plenum));
         } else {
-            // A box whose face holds every runner end, as far out as the
-            // shortest runner allows.
-            auto out = Vec3 { direction.x, direction.y, 0.0F };
-            out = length(out) < 1.0e-3F ? Vec3 { 0.0F, 1.0F, 0.0F } : normalise(out);
-            auto lateral = normalise(cross(out, zAxis));
-            if (lateral.y < 0.0F) lateral = -lateral;
-            // Runner ends close in towards the middle by about half the
-            // distance between the banks; the face stands off as far as the
-            // runner furthest across still allows.
-            constexpr float keepAcross = 0.45F;
-            float widestAcross = 0.0F;
-            for (const auto& runner : runners)
-                widestAcross = std::max(widestAcross, std::abs(dot(runner.port->position - centre, lateral)));
-            const auto residual = (1.0F - keepAcross) * widestAcross;
-            // The straight line spends 0.9 of the runner; one that also has
-            // to come across turns twice on the way (an S), so its offset
-            // counts a little over its length: a flat-6's runners came out
-            // 8 % long once its heads stood off by their real combustion
-            // chamber.
-            const auto sideways = 1.1F * residual;
-            const auto straightReach = std::sqrt(std::max(0.0625F * shortest * shortest,
-                                                          0.81F * shortest * shortest - sideways * sideways));
-            // A short, wide runner cannot spend a tenth of its length in a
-            // bend: the face stands out at least as far as one arc of two
-            // diameters' radius leaves room for, past the straight leads
-            // (audit R03: a CP2's 120 mm by 35 mm runners bent at 0.6 of a
-            // diameter).
-            const auto bendRadius = 3.0F * widest;
-            const auto curved = std::max(0.0F, shortest - 1.8F * widest);
-            const auto halfAngle = std::min(0.5F * pi, curved / (2.0F * bendRadius));
-            const auto chord = std::min(0.97F * shortest, 1.8F * widest + 2.0F * bendRadius * std::sin(halfAngle));
-            const auto reach = std::max(straightReach, std::sqrt(std::max(0.0F, chord * chord - sideways * sideways)));
-            float zMin = std::numeric_limits<float>::max(), zMax = -zMin, latMin = zMin, latMax = -zMin;
-            for (std::size_t i = 0; i < runners.size(); ++i) {
-                const auto offset = runners[i].port->position - centre;
-                const auto across = dot(offset, lateral);
-                ends[i] = centre + out * reach + zAxis * offset.z + lateral * (keepAcross * across);
-                arrivals[i] = out;
-                bulges[i] = std::abs(across) > 0.1F * boreMm ? lateral * (across > 0.0F ? 1.0F : -1.0F) : lateral;
-                zMin = std::min(zMin, ends[i].z);
-                zMax = std::max(zMax, ends[i].z);
-                latMin = std::min(latMin, dot(ends[i] - centre, lateral));
-                latMax = std::max(latMax, dot(ends[i] - centre, lateral));
+            // Runners whose ports open into two opposite valleys (an X's
+            // top and bottom ones) feed a box in each, the volume shared by
+            // their count, joined by a balance pipe; the throttle feeds the
+            // upper one. One box for both ran half the runners through the
+            // block (owner 2026-11-18). The simulator keeps one plenum.
+            std::vector<std::vector<std::size_t>> groups(1);
+            for (std::size_t i = 0; i < runners.size(); ++i) groups.front().push_back(i);
+            const auto across = [&](std::size_t i) {
+                const auto d = runners[i].port->direction;
+                const Vec3 flat { d.x, d.y, 0.0F };
+                return length(flat) > 1.0e-3F ? normalise(flat) : Vec3 {};
+            };
+            {
+                float most = 2.0F;
+                std::size_t seedA = 0, seedB = 0;
+                for (std::size_t i = 0; i < runners.size(); ++i)
+                    for (std::size_t k = i + 1U; k < runners.size(); ++k)
+                        if (dot(across(i), across(k)) < most) {
+                            most = dot(across(i), across(k));
+                            seedA = i;
+                            seedB = k;
+                        }
+                auto meanA = across(seedA), meanB = across(seedB);
+                std::vector<std::size_t> a, b;
+                for (int pass = 0; pass < 6 && most < -0.5F; ++pass) {
+                    a.clear();
+                    b.clear();
+                    Vec3 sumA {}, sumB {};
+                    for (std::size_t i = 0; i < runners.size(); ++i) {
+                        const auto d = across(i);
+                        if (dot(d, meanA) >= dot(d, meanB)) {
+                            a.push_back(i);
+                            sumA += d;
+                        } else {
+                            b.push_back(i);
+                            sumB += d;
+                        }
+                    }
+                    if (a.empty() || b.empty()) break;
+                    meanA = normalise(sumA);
+                    meanB = normalise(sumB);
+                }
+                if (!a.empty() && !b.empty() && dot(meanA, meanB) < -0.5F) {
+                    // The upper valley first: it takes the throttle.
+                    if (meanB.y > meanA.y) std::swap(a, b);
+                    groups = { a, b };
+                }
             }
-            const auto depth = zMax - zMin + 1.4F * widest;
-            auto width = latMax - latMin + 1.4F * widest;
-            width = std::max(width, std::sqrt(volume / depth));
-            const auto height = std::max(0.8F * widest, volume / (depth * width));
-            const auto boxCentre = Vec3 { centre.x, centre.y, 0.5F * (zMin + zMax) } + out * (reach + 0.5F * height)
-                + lateral * (0.5F * (latMin + latMax));
-            addBox(plenum, lateral, out, zAxis, boxCentre, { width, height, depth });
-            EngineSolid solid;
-            solid.centre = boxCentre;
-            solid.axes[0] = lateral;
-            solid.axes[1] = out;
-            solid.axes[2] = zAxis;
-            solid.half = Vec3 { width, height, depth } * 0.5F;
-            avoid.push_back(solid);
-            plenum.centreline = { boxCentre - out * (0.5F * height), boxCentre + out * (0.5F * height) };
-            away = out;
-            const auto throttles = std::max<std::uint32_t>(1U, geometry.throttleCount);
-            if (throttles == 1U) {
-                faces.push_back(boxCentre - zAxis * (0.5F * depth));
-                upstream = -zAxis;
-            } else {
-                const auto spacing = depth / static_cast<float>(throttles);
-                for (std::uint32_t k = 0; k < throttles; ++k)
-                    faces.push_back(boxCentre + out * (0.5F * height)
-                                    + zAxis * ((static_cast<float>(k) - 0.5F * static_cast<float>(throttles - 1U)) * spacing));
-                upstream = out;
+            std::vector<EngineSolid> boxes;
+            for (std::size_t g = 0; g < groups.size(); ++g) {
+                const auto& members = groups[g];
+                DuctPiece box;
+                box.kind = DuctKind::intakePlenum;
+                box.pathId = pathId;
+                box.nearEngine = true;
+                centre = {};
+                direction = {};
+                shortest = std::numeric_limits<float>::max();
+                widest = 0.0F;
+                for (const auto i : members) {
+                    const auto& runner = runners[i];
+                    centre += runner.port->position;
+                    direction += runner.port->direction;
+                    shortest = std::min(shortest, runner.lengthMm);
+                    widest = std::max(widest, std::max(runner.diameter, runner.plenumDiameter));
+                }
+                centre = centre * (1.0F / static_cast<float>(members.size()));
+                const auto boxVolume = volume * static_cast<float>(members.size()) / static_cast<float>(runners.size());
+                // A box whose face holds every runner end, as far out as the
+                // shortest runner allows.
+                auto out = Vec3 { direction.x, direction.y, 0.0F };
+                out = length(out) < 1.0e-3F ? Vec3 { 0.0F, 1.0F, 0.0F } : normalise(out);
+                auto lateral = normalise(cross(out, zAxis));
+                if (lateral.y < 0.0F) lateral = -lateral;
+                // Runner ends close in towards the middle by about half the
+                // distance between the banks; the face stands off as far as the
+                // runner furthest across still allows.
+                constexpr float keepAcross = 0.45F;
+                float widestAcross = 0.0F;
+                for (const auto i : members)
+                    widestAcross = std::max(widestAcross, std::abs(dot(runners[i].port->position - centre, lateral)));
+                const auto residual = (1.0F - keepAcross) * widestAcross;
+                // The straight line spends 0.9 of the runner; one that also has
+                // to come across turns twice on the way (an S), so its offset
+                // counts a little over its length: a flat-6's runners came out
+                // 8 % long once its heads stood off by their real combustion
+                // chamber.
+                const auto sideways = 1.1F * residual;
+                const auto straightReach = std::sqrt(std::max(0.0625F * shortest * shortest,
+                                                              0.81F * shortest * shortest - sideways * sideways));
+                // A short, wide runner cannot spend a tenth of its length in a
+                // bend: the face stands out at least as far as one arc of two
+                // diameters' radius leaves room for, past the straight leads
+                // (audit R03: a CP2's 120 mm by 35 mm runners bent at 0.6 of a
+                // diameter).
+                const auto bendRadius = 3.0F * widest;
+                const auto curved = std::max(0.0F, shortest - 1.8F * widest);
+                const auto halfAngle = std::min(0.5F * pi, curved / (2.0F * bendRadius));
+                const auto chord = std::min(0.97F * shortest, 1.8F * widest + 2.0F * bendRadius * std::sin(halfAngle));
+                const auto reach = std::max(straightReach, std::sqrt(std::max(0.0F, chord * chord - sideways * sideways)));
+                float zMin = std::numeric_limits<float>::max(), zMax = -zMin, latMin = zMin, latMax = -zMin;
+                for (const auto i : members) {
+                    const auto offset = runners[i].port->position - centre;
+                    const auto offsetAcross = dot(offset, lateral);
+                    ends[i] = centre + out * reach + zAxis * offset.z + lateral * (keepAcross * offsetAcross);
+                    arrivals[i] = out;
+                    bulges[i] = std::abs(offsetAcross) > 0.1F * boreMm ? lateral * (offsetAcross > 0.0F ? 1.0F : -1.0F)
+                                                                       : lateral;
+                    zMin = std::min(zMin, ends[i].z);
+                    zMax = std::max(zMax, ends[i].z);
+                    latMin = std::min(latMin, dot(ends[i] - centre, lateral));
+                    latMax = std::max(latMax, dot(ends[i] - centre, lateral));
+                }
+                const auto depth = zMax - zMin + 1.4F * widest;
+                auto width = latMax - latMin + 1.4F * widest;
+                width = std::max(width, std::sqrt(boxVolume / depth));
+                const auto height = std::max(0.8F * widest, boxVolume / (depth * width));
+                const auto boxCentre = Vec3 { centre.x, centre.y, 0.5F * (zMin + zMax) } + out * (reach + 0.5F * height)
+                    + lateral * (0.5F * (latMin + latMax));
+                addBox(box, lateral, out, zAxis, boxCentre, { width, height, depth });
+                EngineSolid solid;
+                solid.centre = boxCentre;
+                solid.axes[0] = lateral;
+                solid.axes[1] = out;
+                solid.axes[2] = zAxis;
+                solid.half = Vec3 { width, height, depth } * 0.5F;
+                avoid.push_back(solid);
+                boxes.push_back(solid);
+                box.centreline = { boxCentre - out * (0.5F * height), boxCentre + out * (0.5F * height) };
+                plenums.push_back(std::move(box));
+                if (g != 0U) continue;
+                away = out;
+                const auto throttles = std::max<std::uint32_t>(1U, geometry.throttleCount);
+                if (throttles == 1U) {
+                    // Ahead of the box, else wherever the throttle and its
+                    // airbox clear the engine and its gearbox.
+                    chooseUpstream(geometry,
+                                   { { boxCentre - zAxis * (0.5F * depth), -zAxis },
+                                     { boxCentre + zAxis * (0.5F * depth), zAxis },
+                                     { boxCentre + out * (0.5F * height), out },
+                                     { boxCentre + lateral * (0.5F * width), lateral },
+                                     { boxCentre - lateral * (0.5F * width), -lateral } },
+                                   solids, faces, upstream);
+                } else {
+                    const auto spacing = depth / static_cast<float>(throttles);
+                    for (std::uint32_t k = 0; k < throttles; ++k)
+                        faces.push_back(boxCentre + out * (0.5F * height)
+                                        + zAxis * ((static_cast<float>(k) - 0.5F * static_cast<float>(throttles - 1U)) * spacing));
+                    upstream = out;
+                }
+            }
+            if (boxes.size() == 2U) {
+                // The balance pipe, round the end the throttle leaves free,
+                // as wide as the widest runner.
+                float widestRunner = 0.0F;
+                for (const auto& runner : runners)
+                    widestRunner = std::max(widestRunner, std::max(runner.diameter, runner.plenumDiameter));
+                const auto radius = 0.5F * widestRunner;
+                const auto leave = upstream.z < -0.5F ? zAxis : -zAxis;
+                const auto a = boxes[0].centre + leave * boxes[0].half.z;
+                const auto b = boxes[1].centre + leave * boxes[1].half.z;
+                Vec3 low { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                           std::numeric_limits<float>::max() };
+                Vec3 high = low * -1.0F;
+                boundsOf(avoid, balances, low, high);
+                const auto margin = 6.0F * widestRunner + 150.0F;
+                low = low - Vec3 { margin, margin, margin };
+                high = high + Vec3 { margin, margin, margin };
+                const FreeSpace space(low, high, std::max(20.0F, widestRunner), avoid, balances, radius + 8.0F);
+                auto way = freeGuess(space, a, leave, widestRunner, b, -leave, widestRunner, std::max(80.0F, 3.0F * (radius + 8.0F)));
+                if (way.size() >= 2U) {
+                    DuctPiece pipe;
+                    pipe.kind = DuctKind::intakePlenum;
+                    pipe.pathId = pathId;
+                    pipe.nearEngine = true;
+                    pipe.centreline = resample(way, 12.0F);
+                    pipe.radii.assign(pipe.centreline.size(), radius);
+                    appendTube(pipe.mesh, pipe.centreline, pipe.radii, segmentsFor(widestRunner));
+                    balances.push_back({ pipe.centreline, pipe.radii });
+                    plenums.push_back(std::move(pipe));
+                }
             }
         }
 
@@ -1827,7 +2492,7 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             pending.push_back({ pieces.size(), runner });
             pieces.push_back(std::move(piece));
         }
-        pieces.push_back(std::move(plenum));
+        for (auto& box : plenums) pieces.push_back(std::move(box));
         const auto wantsSupercharger = superchargerWanted && supercharger != nullptr && !supercharger->placed;
         appendUpstream(pieces, pathId, geometry, faces, upstream, forced, away,
                        wantsSupercharger ? supercharger : nullptr);
@@ -1837,7 +2502,7 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
         }
     }
 
-    relaxRoutes(routes, {}, avoid);
+    routeRound(routes, balances, avoid, RouteSettings {});
     for (std::size_t r = 0; r < pending.size(); ++r) {
         const auto& runner = pending[r].runner;
         auto& piece = pieces[pending[r].piece];

@@ -583,9 +583,38 @@ a collector takes the slot that makes the straight joins shortest in total.
 Intake runners are routed the same way, clear of their plenum. The shapes are
 invented; only their length, diameter and taper are the configuration's.
 
+**Round the engine** (since 2026-11-18). The relaxation only moves a pipe
+locally: a primary laid through the crankcase stayed there (an X12's
+12-into-1, its collector in the gearbox). So the engine's solids include the
+gearbox (`engineSolidCount()`: the engine and its gearbox, known before the
+ducts; a motorcycle's box also clears its two-stroke carburettors and its
+exhaust stubs), and three things follow the relaxation:
+- a pipe still through a solid (beyond a graze, two radii at each end left
+  out) starts again from a way through the free room (`FreeSpace`: a grid of
+  the solids and the fixed pipes, swollen by the pipe's radius and gap, a
+  26-neighbour shortest path) and is bent again with the others held, or with
+  them all where they are in its way; a way longer than authored is drawn
+  longer (stretched), never through the engine;
+- a path whose drawn pipes still sit in the engine, the gearbox, an intake box
+  or another path's turbo, or whose turbo sits in the engine, is laid out a
+  second time with its junctions free to move: each one whose trunk (body,
+  straight run, turbo, the routed inputs' run into its mouth) is not clear
+  moves to the free place its inputs reach with the least length left over,
+  else to the one asking them the least extra length. That includes a junction
+  further down fed by routed pipes (a V's Y on the crank axis behind the
+  engine). Every other path keeps its layout exactly: the catalogue is
+  unchanged but for the Big Twin's rear pipe, which crossed its gearbox by
+  71 mm. A first pass stops short where a pipe's axis is more than a diameter
+  deep in a solid behind a blocked junction (beyond bending: its cost on an
+  X12-2, 2.0 -> 2.9 s for the model, against 4.4 s with both passes whole);
+- an X or a W intake with ports on opposite sides gets two plenum boxes, the
+  authored volume split by their runners and joined by a balance tube drawn
+  between their faces; the simulation still has one plenum. A throttle,
+  airbox or inlet duct goes where it clears the engine.
+
 **Route check.** `checkRoutes` measures what a physical system could not do:
-two ducts through each other, a duct through itself, a duct through the
-engine, a centreline bent tighter than one diameter (circle through the
+two ducts through each other, a duct through itself, a duct, a turbo or an
+intake box through the engine or its gearbox (since 2026-11-18), a centreline bent tighter than one diameter (circle through the
 points half a diameter either side), a pipe drawn more than 3 % longer than
 authored. Joints are not clashes: near an end that plugs into a port, a box
 or another duct, within two radii. Over the 16 catalogue engines, before the
@@ -593,7 +622,11 @@ router: 107 clashes, 51 self-clashes, 0 through the engine, 259 tight bends,
 6 stretched; with it: 7, 4, 0, 48, 7; over the 18 of 2026-11-14: 4, 4, 0,
 46, 6; since 2026-11-17 (a plenum's face as far out as a runner's bend
 allows, a merge balanced between its routed inputs): 4, 4, 0, 21, 6.
-`EngineLab.EngineModel3D` keeps every count from growing. A pipe that must
+`EngineLab.EngineModel3D` keeps every count from growing, and designs 80
+engines (inline, V, flat, X and W from 4 to 16 cylinders, with each of the
+designer's exhaust systems, a turbo on one pipe or the family's) of which none
+may have a pipe, collector or turbo through its engine or gearbox (29 did
+before 2026-11-18). A pipe that must
 span more than its length is drawn longer, and the inspector shows its drawn
 length beside the authored one: the two 140 mm pipes of the LS3's X (3.4
 times), the two 1,070 mm pipes after it (6 %) and the two end primaries of

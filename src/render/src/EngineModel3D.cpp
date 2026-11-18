@@ -138,8 +138,11 @@ EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
         buildCrankshaft();
         buildStructure();
     }
+    // The gearbox is placed first: the ducts are laid out round it.
+    buildGearbox(false);
+    engineSolids_ = solids_.size();
     buildDucts();
-    buildGearbox();
+    buildGearbox(true);
     computeBounds();
 }
 
@@ -899,6 +902,15 @@ void EngineModel3D::buildDucts() {
                 if (valley) {
                     const auto sine = std::sqrt(std::max(0.05F, 1.0F - dot(*valley, axis) * dot(*valley, axis)));
                     reach = std::max(reach, (cylinder.barrelRadius + 0.6F * intakeDiameter) / sine);
+                    // The reed block on the port and the carburettor's lip
+                    // are wider than the port (0.68 and 0.72 of the
+                    // throttle): they clear the barrels too (a V4's clipped
+                    // them by 3 mm).
+                    auto throttle = static_cast<float>(config_.intake.throttleDiameterMm);
+                    for (const auto& path : config_.intakePaths)
+                        if (std::find(path.cylinderIds.begin(), path.cylinderIds.end(), config.id) != path.cylinderIds.end())
+                            throttle = static_cast<float>(path.geometry.throttleDiameterMm);
+                    reach = std::max(reach, (cylinder.barrelRadius + 0.72F * std::max(5.0F, throttle) + 3.0F) / sine);
                 }
                 intakePort = cylinder.crankCentre + intakeOut * reach;
             }
@@ -1074,7 +1086,7 @@ void EngineModel3D::buildSupercharger() {
     for (const auto& solid : superchargerSolids(supercharger_)) solids_.push_back(solid);
 }
 
-void EngineModel3D::buildGearbox() {
+void EngineModel3D::buildGearbox(bool draw) {
     const auto& ratios = config_.transmission.gearRatios;
     if (ratios.size() < 2U || (throws_.empty() && rotors_.empty()) || flywheelRadius_ <= 0.0F) return;
     float b = 0.0F, zMin = 1.0e9F, zMax = -1.0e9F;
@@ -1116,6 +1128,60 @@ void EngineModel3D::buildGearbox() {
         const auto reachMargin = 0.12F * b / pi + 0.12F * b;
         const auto inputReachEstimate = centre / (1.0F + smallestRatio) + reachMargin;
         const auto outputReachEstimate = centre * largestRatio / (1.0F + largestRatio) + reachMargin;
+        // A two-stroke's carburettor stands behind its crankcase or barrel,
+        // over the gearbox on every bike built: its way out is kept clear as
+        // a barrel is (owner 2026-11-18, an RD350's carburettors were in
+        // its case). The same directions as buildDucts gives the ports.
+        struct Reach final {
+            Vec3 start;
+            Vec3 end;
+            float radius {};
+        };
+        std::vector<Reach> ways;
+        auto throttle = static_cast<float>(config_.intake.throttleDiameterMm);
+        for (const auto& path : config_.intakePaths)
+            throttle = std::max(throttle, static_cast<float>(path.geometry.throttleDiameterMm));
+        if (throttle < 5.0F) throttle = 0.5F * b;
+        if (config_.cycle == EngineCycle::twoStroke && !radialLike_) {
+            std::vector<Vec3> bankAxes;
+            for (const auto& c : cylinders_) {
+                const auto axis = normalise(Vec3 { c.axis.x, c.axis.y, 0.0F });
+                if (std::none_of(bankAxes.begin(), bankAxes.end(), [&](Vec3 seen) { return dot(seen, axis) > 0.999F; }))
+                    bankAxes.push_back(axis);
+            }
+            std::optional<Vec3> valley;
+            if (bankAxes.size() == 2U && dot(bankAxes[0], bankAxes[1]) > -0.95F)
+                valley = normalise(bankAxes[0] + bankAxes[1]);
+            for (const auto& c : cylinders_) {
+                Vec3 port, out;
+                if (config_.twoStroke.intake == TwoStrokeIntake::cylinderPort) {
+                    out = valley ? normalise(*valley - c.exhaustSide * 0.5F) : -c.exhaustSide;
+                    port = c.intakeWindowCentre - c.exhaustSide * (c.barrelRadius - 0.5F * c.bore + 0.04F * c.bore);
+                } else {
+                    out = valley ? *valley : normalise(-c.exhaustSide + c.axis * 0.5F);
+                    port = c.crankCentre + out * crankcaseRadius_;
+                }
+                port = Vec3 { port.x, port.y, 0.0F };
+                out = normalise(Vec3 { out.x, out.y, 0.0F });
+                // The reed block and manifold (about 45 mm), the carburettor,
+                // its boot; as wide as its slide tower and float bowl.
+                ways.push_back({ port, port + out * (45.0F + 1.6F * throttle), 1.2F * throttle });
+            }
+        }
+        // Every exhaust port's way out too, as buildDucts draws it, for a
+        // header's diameter and bend: a V4 two-stroke's rear headers left
+        // their ports into the case.
+        for (const auto& c : cylinders_) {
+            const auto twoStroke = config_.cycle == EngineCycle::twoStroke && !radialLike_;
+            const auto out = normalise(c.exhaustSide - c.axis * (twoStroke ? 0.2F : 0.25F));
+            const auto port = twoStroke
+                ? c.exhaustWindowCentre + c.exhaustSide * (c.barrelRadius - 0.5F * c.bore + 0.06F * c.bore) + out * (0.35F * c.bore)
+                : c.deckCentre + c.axis * (0.3F * c.bore) + c.exhaustSide * (0.70F * c.bore) + out * (0.6F * c.bore);
+            const Vec3 flat { out.x, out.y, 0.0F };
+            if (length(flat) < 0.3F) continue;
+            const Vec3 start { port.x, port.y, 0.0F };
+            ways.push_back({ start, start + normalise(flat) * (0.6F * c.bore), 0.3F * c.bore });
+        }
         const auto axesFor = [&](Vec3 direction) {
             const auto input = Vec3 { origin.x, origin.y, 0.0F } + direction * (flywheelRadius_ + 0.45F * b)
                 - yAxis * (0.1F * b);
@@ -1143,6 +1209,16 @@ void EngineModel3D::buildGearbox() {
                     least = std::min(least, std::sqrt(u * u + v * v) - 0.6F * c.bore);
                 }
             }
+            for (const auto& way : ways)
+                for (int k = 0; k <= 16; ++k) {
+                    const auto spot = way.start + (way.end - way.start) * (static_cast<float>(k) / 16.0F);
+                    const auto point = spot - middle;
+                    const auto u = std::max(0.0F, std::abs(dot(point, along)) - halfAlong);
+                    const auto v = std::max(0.0F, std::abs(dot(point, across)) - halfAcross);
+                    least = std::min(least, std::sqrt(u * u + v * v) - way.radius);
+                    // The clutch drum round the input shaft, at the case's end.
+                    least = std::min(least, length(spot - input) - 0.7F * b - way.radius);
+                }
             return least;
         };
         const auto turned = [](Vec3 direction, float radians) {
@@ -1212,6 +1288,9 @@ void EngineModel3D::buildGearbox() {
         const auto outputTeeth = std::max(9, static_cast<int>(std::lround(static_cast<float>(inputTeeth) * ratio)));
         const auto toothModule = 2.0F * centre / static_cast<float>(inputTeeth + outputTeeth);
         const auto z = zStart + spacing * static_cast<float>(k + 1U);
+        inputReach = std::max(inputReach, 0.5F * toothModule * static_cast<float>(inputTeeth) + toothModule);
+        outputReach = std::max(outputReach, 0.5F * toothModule * static_cast<float>(outputTeeth) + toothModule);
+        if (!draw) continue;
         gearbox_.inputTeeth.push_back(inputTeeth);
         gearbox_.outputTeeth.push_back(outputTeeth);
         gearbox_.pairZ.push_back(z);
@@ -1222,8 +1301,27 @@ void EngineModel3D::buildGearbox() {
         // Input tooth 0 at the contact meets a gap of the output gear.
         const auto share = static_cast<float>(inputTeeth) / static_cast<float>(outputTeeth);
         outputGearPhase_.push_back(contact * (1.0F + share) + pi + pi / static_cast<float>(outputTeeth));
-        inputReach = std::max(inputReach, 0.5F * toothModule * static_cast<float>(inputTeeth) + toothModule);
-        outputReach = std::max(outputReach, 0.5F * toothModule * static_cast<float>(outputTeeth) + toothModule);
+    }
+
+    // The case: a box round both gear stacks.
+    const auto side = cross(zAxis, toOutput);
+    const auto margin = 0.12F * b;
+    const auto widest = std::max(inputReach, outputReach) + margin;
+    const auto low = -(inputReach + margin), high = centre + outputReach + margin;
+    const auto middle = gearbox_.inputAxis + toOutput * (0.5F * (low + high)) + zAxis * (zStart + 0.5F * span);
+    if (!draw) {
+        // Placed before the ducts, so that they are laid out round it (owner
+        // 2026-11-18: an X12's collector sat inside the box): the case, and
+        // what turns between it and the crank (a car's clutch in its bell
+        // housing, a motorcycle's clutch pack on the input shaft).
+        solids_.push_back(boxSolid(toOutput, side, zAxis, middle, { high - low, 2.0F * widest, span }));
+        if (motorcycle)
+            solids_.push_back(cylinderSolid(gearbox_.inputAxis + zAxis * (zStart + span + 0.1F * b), zAxis, 0.7F * b,
+                                            0.3F * b));
+        else
+            solids_.push_back(cylinderSolid(gearbox_.inputAxis + zAxis * flywheelEndZ_, zAxis, flywheelRadius_,
+                                            zStart - flywheelEndZ_));
+        return;
     }
 
     // Shafts: the input carries the clutch disc (car) or the clutch pack
@@ -1250,11 +1348,6 @@ void EngineModel3D::buildGearbox() {
     collarZ_.push_back(gearbox_.pairZ[0] + 0.5F * spacing);
 
     // The case: a box round both gear stacks.
-    const auto side = cross(zAxis, toOutput);
-    const auto margin = 0.12F * b;
-    const auto widest = std::max(inputReach, outputReach) + margin;
-    const auto low = -(inputReach + margin), high = centre + outputReach + margin;
-    const auto middle = gearbox_.inputAxis + toOutput * (0.5F * (low + high)) + zAxis * (zStart + 0.5F * span);
     appendBox(casing, Mat4::basis(toOutput, side, zAxis, middle), { high - low, 2.0F * widest, span });
 
     gearboxParts_[0] = addPart(std::move(casing), SceneMaterial::blockShell, layerStructure);

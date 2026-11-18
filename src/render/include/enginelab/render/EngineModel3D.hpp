@@ -170,9 +170,12 @@ public:
     [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
     [[nodiscard]] const std::vector<PortAnchor>& intakePorts() const noexcept { return intakePorts_; }
     [[nodiscard]] const std::vector<PortAnchor>& exhaustPorts() const noexcept { return exhaustPorts_; }
-    /** Block, heads, crankcase, sump, liners, pulley and flywheel, as simple
+    /** Block, heads, crankcase, sump, liners, pulley, flywheel and gearbox, as simple
         solids the ducts must stay out of. */
     [[nodiscard]] const std::vector<EngineSolid>& solids() const noexcept { return solids_; }
+    /** How many of solids(), from the first, are the engine's and its
+        gearbox's: the turbochargers' and the supercharger's follow. */
+    [[nodiscard]] std::size_t engineSolidCount() const noexcept { return engineSolids_; }
     /** The turbochargers as drawn, one per unit an exhaust path feeds. Their
         solids are at the end of solids(). */
     [[nodiscard]] const std::vector<TurboPlacement>& turbos() const noexcept { return turbos_; }
@@ -318,7 +321,8 @@ private:
     void buildDucts();
     void buildTurbo();
     void buildSupercharger();
-    void buildGearbox();
+    /** Without `draw`, only its solids (before the ducts); with it, its parts. */
+    void buildGearbox(bool draw);
     void computeBounds();
 
     EngineConfig config_;
@@ -327,6 +331,7 @@ private:
     std::vector<Cylinder> cylinders_;
     std::vector<Throw> throws_;
     std::vector<EngineSolid> solids_;
+    std::size_t engineSolids_ {};
     std::vector<std::uint16_t> rotatingParts_;
     std::vector<std::size_t> rotatingThrow_;
     std::vector<PortAnchor> intakePorts_;
