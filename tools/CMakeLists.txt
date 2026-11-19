@@ -228,7 +228,7 @@ endif()
 enginelab_set_warnings(EngineLabOfflineAudioExporter)
 
 add_executable(EngineLabSceneExport SceneExport.cpp)
-target_link_libraries(EngineLabSceneExport PRIVATE EngineLab::Render EngineLab::Catalog EngineLab::Foundation)
+target_link_libraries(EngineLabSceneExport PRIVATE EngineLab::Render EngineLab::Catalog EngineLab::Exhaust EngineLab::Foundation)
 target_compile_definitions(EngineLabSceneExport PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabSceneExport)
 

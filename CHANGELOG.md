@@ -20,7 +20,11 @@ file formats, always with an in-memory migration).
   flickers at full speed), each spark plug sparks at the ECU's advance and
   each injector's spray shows while it is open. Every element follows a
   value the simulation already computes; the simulation and the sound are
-  untouched.
+  untouched. Throttle bodies, carburettors (float bowl, slide tower, bell
+  mouth), the exhaust valve's housing and actuator and the wastegate's
+  canister are drawn as the parts they are; a four-stroke radial shows
+  its cam ring, pushrods and rockers; two-strokes show their spark plugs;
+  cam and timing covers keep the shafts hidden in the solid view.
 - **Save the 3-D view as a PNG** (settings menu, *Capture*). The info line
   under the view now also shows how long the renderer takes per frame.
 

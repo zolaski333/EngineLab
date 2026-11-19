@@ -3162,21 +3162,70 @@ SuperchargerPlacement placeSupercharger(const ForcedInductionConfig& forced, std
     return result;
 }
 
+/** A tube's wall from `inner` to `outer` radius along a frame's +Y over
+    `run`, open at both ends (a rounded lip on each) so what it holds shows. */
+void appendWall(Mesh& mesh, const Mat4& frame, float outer, float inner, float run, int segments) {
+    appendCylinder(mesh, frame, outer, outer, run, segments, false, false);
+    appendCylinder(mesh, frame, inner, inner, run, segments, false, false);
+    const auto lip = 0.5F * (outer - inner);
+    for (const auto at : { 0.0F, run })
+        appendTorus(mesh, frame * Mat4::translation({ 0.0F, at, 0.0F }), inner + lip, lip, segments, 6);
+}
+
 /** One throttle bore of `throttle` diameter from `face` along `direction`,
-    1.1 bores long; a slide carburettor's slide tower towards `up` and its
-    float bowl opposite. */
-void appendThrottleBore(Mesh& mesh, Vec3 face, Vec3 direction, float throttle, bool carburettor, Vec3 up) {
-    const auto bodyLength = 1.1F * throttle;
+    1.1 bores long, open at both ends so its plate (or slide) shows. A
+    throttle body: a flanged tube, the spindle's bosses across it and the
+    position sensor on one. A carburettor: the engine spigot, its body, the
+    bell mouth, the float bowl under it with its drain and fuel inlet, the
+    choke plunger; a slide carburettor's slide tower above it, its cap and
+    cable adjuster. `up` is the tower's way, the spindle runs across. */
+void appendThrottleBore(Mesh& mesh, Vec3 face, Vec3 direction, float throttle, bool carburettor, bool slide, Vec3 up) {
+    const auto t = throttle;
+    const auto bodyLength = 1.1F * t;
     const auto frame = Mat4::frameAlongY(face, direction);
-    appendCylinder(mesh, frame, 0.62F * throttle, 0.62F * throttle, bodyLength, 28);
-    appendTorus(mesh, frame * Mat4::translation({ 0.0F, 0.15F * throttle, 0.0F }), 0.66F * throttle,
-                0.06F * throttle, 28, 8);
-    if (!carburettor) return;
-    const auto middle = face + direction * (0.5F * bodyLength);
-    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (0.45F * throttle), up), 0.42F * throttle, 0.42F * throttle,
-                   0.75F * throttle, 20);
-    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (0.45F * throttle), -up), 0.58F * throttle,
-                   0.58F * throttle, 0.70F * throttle, 24);
+    const auto hinge = normalise(cross(direction, up));
+    const auto middle = face + direction * (0.55F * t);
+    const auto across = [&](Vec3 centre, Vec3 size) {
+        appendBox(mesh, Mat4::basis(hinge, up, direction * -1.0F, centre), size);
+    };
+    const auto bosses = [&](float reach, float radius) {
+        for (const auto sign : { 1.0F, -1.0F })
+            appendCylinder(mesh, Mat4::frameAlongY(middle + hinge * (sign * 0.45F * t), hinge * sign), radius, radius,
+                           reach - 0.45F * t, 16);
+    };
+    if (!carburettor) {
+        appendWall(mesh, frame, 0.62F * t, 0.5F * t, bodyLength, 28);
+        for (const auto at : { 0.04F * t, bodyLength - 0.04F * t })
+            appendTorus(mesh, frame * Mat4::translation({ 0.0F, at, 0.0F }), 0.7F * t, 0.05F * t, 28, 6);
+        bosses(0.74F * t, 0.12F * t);
+        across(middle - hinge * 0.8F * t, { 0.12F * t, 0.42F * t, 0.36F * t });
+        return;
+    }
+    // Spigot, body and bell mouth.
+    appendWall(mesh, frame, 0.56F * t, 0.5F * t, 0.22F * t, 24);
+    appendWall(mesh, frame * Mat4::translation({ 0.0F, 0.22F * t, 0.0F }), 0.72F * t, 0.5F * t, 0.62F * t, 28);
+    appendCylinder(mesh, frame * Mat4::translation({ 0.0F, 0.84F * t, 0.0F }), 0.54F * t, 0.68F * t, 0.26F * t, 24,
+                   false, false);
+    appendTorus(mesh, frame * Mat4::translation({ 0.0F, bodyLength, 0.0F }), 0.68F * t, 0.04F * t, 24, 6);
+    // The float bowl on its neck, its drain and the fuel inlet.
+    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (0.6F * t), up * -1.0F), 0.3F * t, 0.3F * t, 0.2F * t, 16);
+    across(middle - up * (1.0F * t), { 0.95F * t, 0.42F * t, 0.8F * t });
+    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (1.2F * t), up * -1.0F), 0.08F * t, 0.08F * t, 0.08F * t, 6);
+    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (0.9F * t) + hinge * (0.47F * t), hinge), 0.06F * t, 0.06F * t,
+                   0.3F * t, 10);
+    // The choke plunger on the body's side.
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (0.2F * t) - hinge * (0.65F * t), hinge * -1.0F), 0.09F * t,
+                   0.09F * t, 0.24F * t, 12);
+    if (!slide) {
+        // A fixed venturi: a butterfly on its spindle instead of a slide.
+        bosses(0.82F * t, 0.11F * t);
+        return;
+    }
+    // The slide's tower, its cap and the cable's adjuster.
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (0.5F * t), up), 0.42F * t, 0.42F * t, 0.95F * t, 24, false, true);
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (1.45F * t), up), 0.46F * t, 0.44F * t, 0.08F * t, 24);
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (1.53F * t), up), 0.07F * t, 0.06F * t, 0.18F * t, 10);
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (1.6F * t), up), 0.1F * t, 0.1F * t, 0.05F * t, 6);
 }
 
 /** Throttle bores, airbox and inlet duct upstream of a plenum, in the order
@@ -3198,7 +3247,8 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
         // bowl under it.
         auto up = -downAxis - direction * dot(-downAxis, direction);
         up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
-        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
+        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled,
+                           geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up);
         bodies.bores.push_back({ face, direction, throttle,
                                  geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up,
                                  geometry.individualThrottles });
@@ -3420,7 +3470,8 @@ std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const s
         appendCylinder(bodies.mesh, Mat4::frameAlongY(manifoldStart, direction), 0.6F * throttle, 0.58F * throttle,
                        manifoldLength, 24);
         const auto face = manifoldStart + direction * manifoldLength;
-        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
+        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled,
+                           geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up);
         bodies.bores.push_back({ face, direction, throttle,
                                  geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up, false });
         bodies.centreline = { port->position, face + direction * (1.1F * throttle) };

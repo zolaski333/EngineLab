@@ -734,10 +734,19 @@ catalogue and `--designed all`).
   `valveLiftMultiplier`. VTEC draws the high lobe between a pair of valves
   and a lock pin that slides in while `vtecHighCylinderMask` holds the
   high cam. The configuration has no pushrod engine: a cam-in-block (the
-  LS3) is drawn with overhead cams too. Radials, two-strokes and rotaries
-  have none.
+  LS3) is drawn with overhead cams too. A cam cover over each bank's cams
+  and a timing cover over the chain are shells (translucent in X-ray,
+  opaque in solid), so the solid view no longer shows bare shafts over
+  the heads. A four-stroke radial has a cam ring at the crankcase's nose,
+  an intake and an exhaust track of (n - 1) / 2 lobes turning against the
+  crank at 1 / (n - 1) of its speed (a lobe meets each tappet at that
+  valve's peak lift), a pushrod in its tube and a rocker in its box per
+  valve; the rockers tip by lift / arm and the pushrods rise with them.
+  Two-strokes and rotaries have none.
 - **Spark and spray, under the strobe only** (nothing flickers by
-  default). The plugs stand on each spark four-stroke's axis; the spark
+  default). The plugs (thread, hex, ribbed white insulator, terminal)
+  stand on each spark engine's axis, a two-stroke's in its thin head; the
+  spark
   shows for the 20 crank degrees after the ECU's advance (with the
   cylinder's ignition offset), and the flame kernel now starts there too
   (it started at a fixed 15 degrees). The spray is a cone from the
@@ -749,13 +758,22 @@ catalogue and `--designed all`).
   slide and needle rise with it. Individual throttles get a plate in each
   runner where the solver puts its restriction face
   (`throttleDistanceFromValveMm`, else 55 % of the runner); their upstream
-  bodies stay open, as the solver holds them.
+  bodies stay open, as the solver holds them. A throttle body is an open
+  flanged tube with its spindle's bosses and position sensor, the plate on
+  its spindle with its screws and cable quadrant; a carburettor has its
+  spigot, body, bell mouth, float bowl, fuel inlet and choke, a slide
+  carburettor its slide tower and cap (a fixed venturi a butterfly).
 - **Exhaust valve.** A butterfly at the inlet of each pipe carrying an
   active valve, turned by `exhaustValveStroke` (shut across the pipe, open
-  along it).
+  along it), in a housing band with its spindle's bosses; an actuator
+  beside the pipe pulls the lever by a rod that follows it.
 - **Turbo valves.** A wastegate flap beside the exducer lifts up to 45
-  degrees with `wastegateOpening`; a blow-off valve's piston rises with
-  its flow, full lift at the flow its area passes choked from 2 bar.
+  degrees with `wastegateOpening`; its spindle comes out past the volute,
+  and a canister level with the compressor pulls its lever by a rod that
+  runs along the shaft outside both housings. A blow-off valve (body, dome,
+  vacuum nipple) has a piston that rises with its flow, full lift at the
+  flow its area passes choked from 2 bar. The rods are posed from their
+  levers each frame; a control's body and rod select as the control.
 - **Nitrous.** A fitted kit draws a plate under the first throttle body,
   a bottle beyond the engine and gearbox towards the rear (sized by its
   capacity, out of the engine framing) and its line; the plate's spray

@@ -559,10 +559,9 @@ void checkTurbo(const EngineModel3D& model) {
     for (std::size_t part = 0; part < still.size(); ++part) {
         const auto& a = still[part].transform;
         const auto& b = turned[part].transform;
-        // Its wastegate flap and blow-off valve belong to it but move with
-        // their own controls.
-        const auto control = std::any_of(model.controlParts().begin(), model.controlParts().end(),
-            [part](const EngineModel3D::ControlPart& item) { return item.part == part; });
+        // Its wastegate flap and blow-off valve, their bodies and the
+        // wastegate's rod belong to it but are drawn with their controls.
+        const auto control = model.controlPiece(static_cast<std::uint16_t>(part));
         if (model.identify(static_cast<std::uint16_t>(part)).role == PartRole::turbo && !control) ++turbines;
         if (a.m == b.m) continue;
         ++moved;
@@ -1482,6 +1481,110 @@ void checkCycleAndControls(const EngineCatalogLoadResult& catalogue) {
         const auto open = localY(posed[flap->part].transform);
         const auto turned = std::acos(std::clamp(dot(shut, open), -1.0F, 1.0F)) * 180.0F / std::numbers::pi_v<float>;
         require(std::abs(turned - 45.0F) < 1.0F, "the wastegate flap lifts 45 degrees wide open");
+        // Its actuator's rod runs outside the drawn housings, open or shut
+        // (it crossed the turbine's, owner report 2026-11-19): along it, no
+        // housing vertex at the same place along the shaft and the same
+        // bearing lies farther out than the rod.
+        const auto& turbo = model.turbos()[static_cast<std::size_t>(flap->turbo)];
+        const auto shaft = turbo.axis;
+        const auto across = normalise(cross(shaft, std::abs(shaft.y) < 0.9F ? Vec3 { 0.0F, 1.0F, 0.0F } : Vec3 { 1.0F, 0.0F, 0.0F }));
+        const auto cylindrical = [&](Vec3 p) {
+            const auto r = p - turbo.turbineCentre;
+            const auto along = dot(r, shaft);
+            const auto radial = r - shaft * along;
+            return std::array<float, 3> { along, length(radial),
+                                          std::atan2(dot(radial, cross(shaft, across)), dot(radial, across)) };
+        };
+        int rods = 0;
+        for (std::uint16_t part = 0; part < model.parts().size(); ++part) {
+            if (!model.controlPiece(part) || part == flap->part || part == flap->body) continue;
+            if (model.identify(part).role != PartRole::turbo || model.parts()[part].mesh.vertices.size() > 64U) continue;
+            ++rods;
+            for (const auto opening : { 0.0, 1.0 }) {
+                input.wastegateOpening = opening;
+                model.pose(input, posed);
+                Vec3 low {}, high {};
+                float lowAlong = 1.0e9F, highAlong = -1.0e9F;
+                for (const auto& vertex : model.parts()[part].mesh.vertices) {
+                    const auto p = posed[part].transform.transformPoint(vertex.position);
+                    if (dot(p, shaft) < lowAlong) { lowAlong = dot(p, shaft); low = p; }
+                    if (dot(p, shaft) > highAlong) { highAlong = dot(p, shaft); high = p; }
+                }
+                float clearance = 1.0e9F;
+                for (int s = 0; s <= 40; ++s) {
+                    const auto rod = cylindrical(low + (high - low) * (static_cast<float>(s) / 40.0F));
+                    for (std::uint16_t housing = 0; housing < model.parts().size(); ++housing) {
+                        if (model.parts()[housing].material != SceneMaterial::turboHousing || model.controlPiece(housing)
+                            || model.identify(housing).turbo != flap->turbo)
+                            continue;
+                        for (const auto& vertex : model.parts()[housing].mesh.vertices) {
+                            const auto h = cylindrical(posed[housing].transform.transformPoint(vertex.position));
+                            if (std::abs(h[0] - rod[0]) > 6.0F
+                                || std::abs(std::remainder(h[2] - rod[2], 2.0F * std::numbers::pi_v<float>)) > 0.17F)
+                                continue;
+                            clearance = std::min(clearance, rod[1] - h[1]);
+                        }
+                    }
+                }
+                std::cout << "EngineModel3D: 2JZ wastegate rod " << clearance << " mm outside its housings\n";
+                require(clearance > 0.0F, "the wastegate's rod runs outside the turbocharger's housings");
+            }
+        }
+        require(rods == 1, "the wastegate's actuator has its rod");
+    }
+    {
+        // A radial's valve train (it drew none, owner report 2026-11-19): a
+        // cam ring at the crankcase's nose whose lobe meets each cylinder's
+        // tappet at that valve's peak lift, a pushrod and a rocker per valve
+        // that move with it.
+        const auto& config = named("Radial");
+        const EngineModel3D model(config);
+        std::vector<std::uint16_t> rings, rockers;
+        for (std::size_t part = 0; part < model.parts().size(); ++part) {
+            const auto identity = model.identify(static_cast<std::uint16_t>(part));
+            if (identity.role != PartRole::camshaft) continue;
+            (identity.cylinder < 0 ? rings : rockers).push_back(static_cast<std::uint16_t>(part));
+        }
+        require(rings.size() == 2U, "a radial has an intake and an exhaust cam track");
+        require(rockers.size() == 4U * model.cylinderCount(), "a radial has a pushrod and a rocker per valve");
+        const auto centre = (model.probe(0, 0.0).bigEnd + model.probe(0, 180.0).bigEnd) * 0.5F;
+        for (const auto ring : rings) {
+            const auto exhaust = model.identify(ring).exhaust;
+            for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+                const auto& cams = model.camshaftsOf(c);
+                const auto peak = exhaust ? 360.0 - cams.exhaustCenterlineDegrees : 360.0 + cams.intakeCenterlineDegrees;
+                ScenePoseInput input;
+                input.crankAngleDegrees = config.cylinders[c].crankOffsetDegrees + peak;
+                model.pose(input, posed);
+                float reach = 0.0F, best = -1.0F;
+                for (const auto& vertex : model.parts()[ring].mesh.vertices) {
+                    const auto p = posed[ring].transform.transformPoint(vertex.position) - centre;
+                    reach = std::max(reach, std::hypot(p.x, p.y));
+                }
+                const auto axis = model.probe(c, 0.0).axis;
+                for (const auto& vertex : model.parts()[ring].mesh.vertices) {
+                    const auto p = posed[ring].transform.transformPoint(vertex.position) - centre;
+                    if (std::hypot(p.x, p.y) < 0.999F * reach) continue;
+                    best = std::max(best, dot(normalise(Vec3 { p.x, p.y, 0.0F }), normalise(Vec3 { axis.x, axis.y, 0.0F })));
+                }
+                require(best > std::cos(5.0F * std::numbers::pi_v<float> / 180.0F),
+                        "a radial's cam lobe meets cylinder " + std::to_string(c + 1U) + "'s tappet at its peak lift");
+            }
+        }
+        ScenePoseInput shut, open;
+        const auto& cams = model.camshaftsOf(0);
+        shut.crankAngleDegrees = config.cylinders.front().crankOffsetDegrees;
+        open.crankAngleDegrees = config.cylinders.front().crankOffsetDegrees + 360.0 + cams.intakeCenterlineDegrees;
+        std::vector<SceneInstance> openPose;
+        model.pose(shut, posed);
+        model.pose(open, openPose);
+        int moved = 0;
+        for (const auto part : rockers)
+            if (model.identify(part).cylinder == 0
+                && length(openPose[part].transform.transformPoint(model.parts()[part].mesh.vertices.front().position)
+                          - posed[part].transform.transformPoint(model.parts()[part].mesh.vertices.front().position)) > 1.0F)
+                ++moved;
+        require(moved >= 2, "a radial's intake pushrod and rocker move as its valve opens");
     }
 }
 
@@ -1570,6 +1673,13 @@ void checkTwoStrokeDrawing(EngineConfig config) {
     config.twoStroke.powerValveClosedExhaustPortOpenDegrees = 0.0;
     const EngineModel3D without(config);
     require(without.powerValvePart(0) == 0xFFFFU, label + "without a power valve no blade is drawn");
+    // Its plugs stand in its heads (they were left out, owner report 2026-11-19).
+    if (config.fuel != FuelType::diesel) {
+        bool plug = false;
+        for (std::size_t part = 0; part < without.parts().size(); ++part)
+            plug = plug || without.identify(static_cast<std::uint16_t>(part)).role == PartRole::sparkPlug;
+        require(plug, label + "a two-stroke's spark plugs are drawn");
+    }
 }
 
 /** An H-pipe is drawn as an H: each side's pipe keeps its lane through its
@@ -2100,9 +2210,8 @@ int main() {
         auto clickable = 0;
         for (std::uint16_t part = 0; part < twin.parts().size(); ++part)
             if (const auto identity = twin.identify(part); identity.role == PartRole::turbo && identity.turbo == 1)
-                // Its wastegate flap identifies as it too, a control part.
-                clickable += std::any_of(twin.controlParts().begin(), twin.controlParts().end(),
-                    [part](const EngineModel3D::ControlPart& item) { return item.part == part; }) ? 0 : 1;
+                // Its wastegate flap, canister and rod identify as it too.
+                clickable += twin.controlPiece(part) ? 0 : 1;
         require(clickable == 4, "the second turbocharger's housings and wheels identify as it");
     }
     // The Aircooled's two 3-into-1 banks joined into one 6-into-1: each

@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-19 — 3-D view: owner's report on part D (valves, carburettors, radial cams, two-stroke plugs, solid view)
+
+- Redrawn: throttle bodies and their plates (spindle, screws, quadrant), carburettors (bowl, slide tower, bell, choke), the exhaust valve's housing and actuator, the wastegate's canister and rod, the blow-off valve; plugs in two-strokes' heads; cam and timing covers (shells) so the solid view hides the shafts; a radial's cam ring, pushrods and rockers.
+- `EngineLabSceneExport`, catalogue (18) and `--designed all` (80) against the build before part D: ducts, solids, issues, ports and every count identical (3/0/0/16/2; 127/20/0/419/224; 1 of 18 and 0 of 80 implausible).
+- Radial-like R5: at each cylinder's peak lift a lobe of each track is within 5 deg of its tappet (test gate). 2JZ wastegate rod: -4.8 mm inside the turbine housing before, 66-67 mm outside after (angle-and-station check against the drawn housing; the gas volute alone did not see the clash).
+- Carburettors and the exhaust valve looked at on K20A/RD350 copies (new exporter flags `--carburettor`, `--exhaust-valve fit`; the bypass fit gives K20A 1 clash, 1 stretch, not this change's). 2JZ's spindle now runs ~12 cm out past the volute to reach the rod.
+- `EngineLab.EngineModel3D`, `AppLayout` pass; new checks fail on the old code (no radial cams, no two-stroke plugs, rod inside). Not seen on screen in the app; full `ctest` not run.
+
 ## 2026-11-19 — 3-D view: cams, sparks, sprays, throttles, valves, nitrous (analysis part D)
 
 - Owner's plan, amended: spray under the strobe only; visible knock, engine on its mounts and steady-mode flow arrows dropped. Drawing only, no new solid: drawn after the layout.

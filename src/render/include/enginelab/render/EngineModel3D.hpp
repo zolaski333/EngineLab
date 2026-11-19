@@ -291,6 +291,10 @@ public:
         enum class Kind : std::uint8_t { throttlePlate, throttleSlide, exhaustValve, wastegate, blowOff, nitrousSpray };
         Kind kind { Kind::throttlePlate };
         std::uint16_t part {};
+        /** What holds it and does not move (an exhaust valve's band and
+            actuator, a runner's throttle body, a wastegate's canister, a
+            blow-off valve's body); 0xFFFF without one. */
+        std::uint16_t body { 0xFFFFU };
         /** Index in ducts() (a throttle body, a runner, an exhaust part); -1
             otherwise. */
         int duct { -1 };
@@ -310,6 +314,14 @@ public:
         bool heldOpen {};
     };
     [[nodiscard]] const std::vector<ControlPart>& controlParts() const noexcept { return controlParts_; }
+    /** Whether `part` is a control's: its moving part, its body or its link. */
+    [[nodiscard]] bool controlPiece(std::uint16_t part) const noexcept {
+        for (const auto& control : controlParts_)
+            if (part == control.part || part == control.body) return true;
+        for (const auto& link : links_)
+            if (part == link.part) return true;
+        return false;
+    }
     /** A throttle plate's angle off shut, radians, at a throttle opening 0-1:
         a few degrees at rest (a plate is set off square so it cannot jam in
         its bore), 90 wide open. */
@@ -455,6 +467,14 @@ private:
     void buildNitrous();
     void poseCycleParts(const ScenePoseInput&, std::vector<SceneInstance>&) const;
     void poseControls(const ScenePoseInput&, std::vector<SceneInstance>&) const;
+    /** A radial's cam ring, tappets, pushrods, rockers and rocker boxes. */
+    void buildRadialValvetrain();
+    /** A spark plug standing on `seat` along `axis`, its hex `hexAbove` mm
+        over the seat (where the head's top is), sized for `boreMm`. */
+    void appendSparkPlug(Mesh& steel, Mesh& ceramic, Vec3 seat, Vec3 axis, float hexAbove, float boreMm) const;
+    /** A rod from a fixed `anchor` to a point that moves with a control part
+        (a lever's end): drawn as a unit rod, scaled between them each frame. */
+    void addLink(std::size_t control, Vec3 anchor, Vec3 leverLocal, float radius, std::uint8_t layers);
     void computeBounds();
 
     EngineConfig config_;
@@ -518,6 +538,39 @@ private:
     std::vector<ControlPart> controlParts_;
     /** The nitrous bottle, its line and its plate. */
     std::uint16_t nitrousPart_ { 0xFFFFU };
+    /** A rocker turned by its valve's lift, and its pushrod, which follows
+        the rocker's pushrod end. */
+    struct Rocker final {
+        std::uint16_t rocker {};
+        std::uint16_t pushrod {};
+        std::size_t cylinder {};
+        bool exhaust {};
+        Vec3 pivot;
+        /** The rocker's turning axis (unit), and the arm from the pivot to the
+            valve's tip, mm: a lift turns it by lift / arm. */
+        Vec3 axis;
+        float arm {};
+        /** The pushrod's top at rest. */
+        Vec3 pushrodTop;
+    };
+    std::vector<Rocker> rockers_;
+    /** A radial's cam ring tracks: each turns against the crank at
+        1 / (2 x lobes) of its speed, a lobe at its first cylinder's
+        follower when that cylinder's valve peaks. */
+    struct CamTrack final {
+        std::uint16_t part {};
+        bool exhaust {};
+        float lobes { 1.0F };
+        double phaseDegrees {};
+    };
+    std::vector<CamTrack> camTracks_;
+    struct Link final {
+        std::uint16_t part {};
+        std::size_t control {};
+        Vec3 anchor;
+        Vec3 leverLocal;
+    };
+    std::vector<Link> links_;
     /** +1 when the crank turns positively about +Z in the world. */
     float crankSense_ { 1.0F };
 };

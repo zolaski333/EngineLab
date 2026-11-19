@@ -4,6 +4,7 @@
 //   EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]
 //                        [--catalog-root <directory>] [--saved <folder>] [--designed all]
 //                        [--two-stroke-intake <crankcase_reed|cylinder_port>]
+//                        [--exhaust-valve fit] [--carburettor <slide|fixed>]
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
@@ -17,6 +18,9 @@
 // designer's engines over its layouts and exhaust systems, with and without a
 // turbo (EngineModel3DTests' envelope check). `--two-stroke-intake`
 // redraws every two-stroke with that intake, so both layouts can be looked at.
+// `--exhaust-valve fit` fits a valved bypass beside each silencer (the
+// Equipment window's fit) and `--carburettor slide|fixed` a carburettor, so
+// their drawing can be looked at on engines that come without them.
 // `--time-pose <n>` also prints each engine's build time and the least of n
 // calls to pose(), the view's CPU cost per drawn sub-frame (wall clock: compare
 // runs interleaved on an idle machine only).
@@ -24,6 +28,7 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
+#include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
 #include <enginelab/render/RouteCheck.hpp>
@@ -257,6 +262,8 @@ int main(int argc, char** argv) {
     bool designed = false;
     std::optional<TwoStrokeIntake> twoStrokeIntake;
     int timePose = 0;
+    bool fitExhaustValve = false;
+    std::string carburettor;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string_view key = argv[i];
         if (key == "--out") outDirectory = argv[i + 1];
@@ -266,6 +273,8 @@ int main(int argc, char** argv) {
         else if (key == "--saved") savedFolder = argv[i + 1];
         else if (key == "--time-pose") timePose = std::max(1, std::stoi(argv[i + 1]));
         else if (key == "--designed") designed = std::string_view(argv[i + 1]) == "all";
+        else if (key == "--exhaust-valve") fitExhaustValve = std::string_view(argv[i + 1]) == "fit";
+        else if (key == "--carburettor") carburettor = argv[i + 1];
         else if (key == "--two-stroke-intake") {
             twoStrokeIntake = parseTwoStrokeIntake(argv[i + 1]);
             if (!twoStrokeIntake) {
@@ -277,7 +286,8 @@ int main(int argc, char** argv) {
     if (outDirectory.empty()) {
         std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]"
                      " [--catalog-root <directory>] [--saved <folder>] [--designed all]"
-                     " [--two-stroke-intake <crankcase_reed|cylinder_port>]\n";
+                     " [--two-stroke-intake <crankcase_reed|cylinder_port>] [--exhaust-valve fit]"
+                     " [--carburettor <slide|fixed>]\n";
         return 2;
     }
     const auto catalogue = loadEngineCatalog(catalogRoot);
@@ -308,6 +318,11 @@ int main(int argc, char** argv) {
     for (std::size_t e = 0; e < configs.size(); ++e) {
         auto config = configs[e];
         if (twoStrokeIntake && config.cycle == EngineCycle::twoStroke) config.twoStroke.intake = *twoStrokeIntake;
+        if (fitExhaustValve) (void)ExhaustNetworkEditor::fitSilencerBypass(config);
+        if (!carburettor.empty()) {
+            config.intake.carburettor.enabled = true;
+            config.intake.carburettor.fixedVenturi = carburettor == "fixed";
+        }
         if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
         const auto file = std::to_string(e + 1U) + ".json";
         auto sceneWritten = false;
