@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-19
+
 ### Added
 
 - **H-pipe and X-pipe in one click.** The exhaust designer has **+ H-PIPE**
