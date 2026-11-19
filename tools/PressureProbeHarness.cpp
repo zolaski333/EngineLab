@@ -348,17 +348,17 @@ int main(int argc, char** argv) {
         // Bins the coupling clock skipped are interpolated from their
         // neighbours; false when too few bins were sampled.
         const auto fillBinsBy = [&](const std::array<double, bins>& total,
-                                    const std::array<double, bins>& flowCount,
+                                    const std::array<double, bins>& counts,
                                     std::array<double, bins>& out) {
             std::size_t filled = 0;
             for (std::size_t b = 0; b < bins; ++b)
-                if (flowCount[b] > 0.0) { out[b] = total[b] / flowCount[b]; ++filled; }
+                if (counts[b] > 0.0) { out[b] = total[b] / counts[b]; ++filled; }
             if (filled <= bins / 4) return std::size_t { 0 };
             for (std::size_t b = 0; b < bins; ++b) {
-                if (flowCount[b] > 0.0) continue;
+                if (counts[b] > 0.0) continue;
                 std::size_t before = b, after = b, back = 0, ahead = 0;
-                do { before = (before + bins - 1) % bins; ++back; } while (flowCount[before] <= 0.0);
-                do { after = (after + 1) % bins; ++ahead; } while (flowCount[after] <= 0.0);
+                do { before = (before + bins - 1) % bins; ++back; } while (counts[before] <= 0.0);
+                do { after = (after + 1) % bins; ++ahead; } while (counts[after] <= 0.0);
                 const auto weight = static_cast<double>(back) / static_cast<double>(back + ahead);
                 out[b] = out[before] + weight * (out[after] - out[before]);
             }
