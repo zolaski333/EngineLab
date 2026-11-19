@@ -30,8 +30,10 @@ enum class SceneMaterial : std::uint8_t {
     turboHousing,
     /** An injector's fuel spray, the nitrous kit's: translucent. */
     spray,
+    /** A spark plug's insulator: white porcelain. */
+    ceramic,
 };
-inline constexpr std::size_t sceneMaterialCount = 12;
+inline constexpr std::size_t sceneMaterialCount = 13;
 
 /** Bits for the view layers (All / Combustion / Mechanical / Gas flow). */
 enum SceneLayer : std::uint8_t {
@@ -512,6 +514,7 @@ private:
     /** The timing chain and the crank's sprocket: camshaft roles. */
     std::vector<std::uint16_t> camDriveParts_;
     std::uint16_t sparkPlugPart_ { 0xFFFFU };
+    std::uint16_t sparkInsulatorPart_ { 0xFFFFU };
     std::vector<ControlPart> controlParts_;
     /** The nitrous bottle, its line and its plate. */
     std::uint16_t nitrousPart_ { 0xFFFFU };

@@ -1595,7 +1595,8 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
         if (part == cam.part) return { PartRole::camshaft, static_cast<int>(cam.cylinder), -1, -1, cam.exhaust };
     if (std::find(camDriveParts_.begin(), camDriveParts_.end(), part) != camDriveParts_.end())
         return { PartRole::camshaft, -1, -1 };
-    if (part == sparkPlugPart_ && part != 0xFFFFU) return { PartRole::sparkPlug, -1, -1 };
+    if ((part == sparkPlugPart_ || part == sparkInsulatorPart_) && part != 0xFFFFU)
+        return { PartRole::sparkPlug, -1, -1 };
     if (part == nitrousPart_ && part != 0xFFFFU) return { PartRole::nitrous, -1, -1 };
     for (const auto& control : controlParts_) {
         if (part != control.part) continue;
@@ -1866,7 +1867,7 @@ void EngineModel3D::buildValvetrain() {
 void EngineModel3D::buildIgnitionAndInjection() {
     if (config_.cycle == EngineCycle::rotary) return;
     const auto diesel = config_.fuel == FuelType::diesel;
-    Mesh plugs;
+    Mesh plugs, insulators;
     for (std::size_t i = 0; i < cylinders_.size(); ++i) {
         auto& c = cylinders_[i];
         const auto b = c.bore;
@@ -1875,11 +1876,27 @@ void EngineModel3D::buildIgnitionAndInjection() {
             // head already carries its stub.
             c.sparkPoint = c.deckCentre - c.axis * (0.03F * b);
             if (config_.cycle == EngineCycle::fourStroke) {
+                // As a real plug, scaled by the bore (a 14 mm thread on an
+                // 86 mm bore): the threaded steel body in the head, its
+                // electrodes in the chamber, a seat and the hex, then the long
+                // white ribbed insulator and the terminal on top.
                 const auto frame = [&](float along) { return cylinderFrame(c.deckCentre + c.axis * along, c.axis); };
-                appendCylinder(plugs, frame(-0.02F * b), 0.05F * b, 0.05F * b, 0.64F * b, 12);
-                appendCylinder(plugs, frame(0.62F * b), 0.1F * b, 0.1F * b, 0.08F * b, 6);
-                appendCylinder(plugs, frame(0.70F * b), 0.045F * b, 0.04F * b, 0.16F * b, 12);
-                appendCylinder(plugs, frame(0.86F * b), 0.02F * b, 0.02F * b, 0.04F * b, 8);
+                appendCylinder(plugs, frame(-0.035F * b), 0.008F * b, 0.008F * b, 0.035F * b, 6);
+                appendBox(plugs, frame(-0.005F * b) * Mat4::translation({ 0.045F * b, 0.0F, 0.0F }),
+                          { 0.014F * b, 0.025F * b, 0.022F * b });
+                appendBox(plugs, frame(-0.045F * b) * Mat4::translation({ 0.026F * b, 0.0F, 0.0F }),
+                          { 0.05F * b, 0.014F * b, 0.022F * b });
+                appendCylinder(plugs, frame(0.0F), 0.075F * b, 0.075F * b, 0.30F * b, 16);
+                for (int ring = 0; ring < 7; ++ring)
+                    appendTorus(plugs, frame((0.03F + 0.04F * static_cast<float>(ring)) * b), 0.075F * b, 0.007F * b, 16, 4);
+                appendCylinder(plugs, frame(0.30F * b), 0.09F * b, 0.09F * b, 0.015F * b, 16);
+                appendCylinder(plugs, frame(0.315F * b), 0.11F * b, 0.11F * b, 0.12F * b, 6);
+                appendCylinder(plugs, frame(0.435F * b), 0.08F * b, 0.07F * b, 0.025F * b, 16);
+                appendCylinder(plugs, frame(0.90F * b), 0.02F * b, 0.02F * b, 0.05F * b, 8);
+                appendCylinder(plugs, frame(0.95F * b), 0.032F * b, 0.032F * b, 0.035F * b, 12);
+                appendCylinder(insulators, frame(0.46F * b), 0.062F * b, 0.05F * b, 0.44F * b, 16);
+                for (int rib = 0; rib < 5; ++rib)
+                    appendTorus(insulators, frame((0.64F + 0.05F * static_cast<float>(rib)) * b), 0.056F * b, 0.01F * b, 16, 6);
             }
             Mesh spark;
             appendSphere(spark, Mat4::identity(), 0.07F * b, 12, 8);
@@ -1901,6 +1918,8 @@ void EngineModel3D::buildIgnitionAndInjection() {
         c.sprayPart = addPart(std::move(spray), SceneMaterial::spray, direct ? layerCombustion : layerIntake);
     }
     if (!plugs.empty()) sparkPlugPart_ = addPart(std::move(plugs), SceneMaterial::steel, layerCombustion);
+    if (!insulators.empty())
+        sparkInsulatorPart_ = addPart(std::move(insulators), SceneMaterial::ceramic, layerCombustion);
 }
 
 void EngineModel3D::buildControls() {

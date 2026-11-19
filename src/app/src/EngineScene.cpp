@@ -285,6 +285,7 @@ constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
     { 0xff7a3d, 0.00F, 1.00F, 0.85F },  // flame
     { 0x8f8a84, 0.60F, 0.45F, 0.30F },  // turbo housing
     { 0xe9dcb4, 0.00F, 0.60F, 0.45F },  // spray
+    { 0xf1eee6, 0.00F, 0.30F, 1.0F },   // ceramic
 } };
 
 [[nodiscard]] Vec3 linearColour(std::uint32_t srgb) noexcept {
