@@ -1231,7 +1231,11 @@ std::string ExhaustNetworkEditor::addCrossover(ExhaustNetworkConfig& network, Ex
     if (kind == ExhaustCrossoverKind::hPipe) {
         const auto splitter = addCopy(network, compact(ExhaustComponentType::splitter, leftBore));
         const auto merge = addCopy(network, compact(ExhaustComponentType::merge, rightBore));
-        const auto balance = addCopy(network, pipeOf(0, 250.0, narrower));
+        // Between two banks' pipes the gap under a car, 250 mm (the
+        // designer's); between the twin pipes of one split collector, which
+        // run side by side, two bores (a 250 mm pipe sagged below the car).
+        const auto banks = std::get<1>(bestScore);
+        const auto balance = addCopy(network, pipeOf(0, banks ? 250.0 : 2.0 * narrower, narrower));
         if (splitter == 0 || merge == 0 || balance == 0) return "This path has no component id left.";
         network.connections.push_back({ leftId, splitter });
         network.connections.push_back({ splitter, leftRear });

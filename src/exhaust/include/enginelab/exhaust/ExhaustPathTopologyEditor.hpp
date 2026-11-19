@@ -143,7 +143,8 @@ public:
      *  the mid pipe from the collectors; each piece at least 100 mm when the
      *  pipe has 200), and the junction goes in the cut: for an H a compact
      *  splitter and merge of the pipes' bores and a 250 mm balance pipe of
-     *  the narrower bore on their side ports; for an X a compact crossover
+     *  the narrower bore on their side ports (two bores long between the
+ *  twin pipes of one split collector); for an X a compact crossover
      *  of the narrower bore (k = 0.30, K = 0.06, the LS3's estimate), the
      *  first pipe through port 0. Empty, or why not; `junctionId` gets the
      *  balance pipe or the X. */

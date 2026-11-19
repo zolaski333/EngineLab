@@ -52,7 +52,8 @@ not touch the running engine until the copy is applied.
    between them, each side its own, then two ahead of the silencers, then the
    longest. Each is cut at 0.35 of its length (each piece at least 100 mm when
    the pipe has 200) and the H (a compact splitter and merge, a 250 mm
-   balance pipe of the narrower bore on their side ports) or the X (a compact
+   balance pipe of the narrower bore on their side ports, two bores long between
+   the twin pipes of one split collector, which run side by side) or the X (a compact
    crossover of the narrower bore, k 0.30, K 0.06) goes in the cut, as the
    New engine window builds them. A dual exhaust drawn as two paths (the
    flat-6, the Merlin, a designed "Dual" V8) first becomes one path, both
