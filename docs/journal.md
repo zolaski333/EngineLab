@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-19 — 3-D view: cams, sparks, sprays, throttles, valves, nitrous (analysis part D)
+
+- Owner's plan, amended: spray under the strobe only; visible knock, engine on its mounts and steady-mode flow arrows dropped. Drawing only, no new solid: drawn after the layout.
+- `EngineLabSceneExport` catalogue (18) and `--designed all` (80) against the build before: ducts, solids, issues and every existing part bit-identical; totals unchanged (3/0/0/16/2, 1 of 18 implausible; 127/20/0/419/224, 0 of 80).
+- View cost (`--time-pose 2000`, least of n, one interleaved pair): pose +0.2-0.8 us per engine (Merlin 8.6 -> 9.4 us, 142 -> 174 parts; 13B 1.5 -> 1.7); build within run-to-run noise (LS3 455/395 ms). GPU cost not measured (headless); the app now shows the renderer's CPU ms per frame.
+- K20A lobes point 11 deg off the deck centre at peak lift, with and without a 30 deg advance (test gate 20). Nitrous bottle (forced on K20A, LS3) 162-181 mm from any duct surface.
+- `EngineLab.EngineModel3D` passes (new checks fail on the old code: no cams, sparks, sprays or controls); two turbo part counts now leave the flap out. Not seen on screen in the app; PNG capture not run.
+- Limit: no pushrod engine in the configuration, so the LS3 is drawn with overhead cams.
+
 ## 2026-11-19 — users: silenced exhausts "blow" over the engine (2JZ); the muffler flow noise
 
 - Cause: `MufflerFlowNoise` (0.10.0). The 2JZ's turbo_downpipe box is a 25 % perforate at L/D 7.3, held to 6: eta_w 77 + 4 x 6 = 101 dB, 20 dB over a plain chamber's plateau (81.5). Its observed jet+flow peak 1.3 Pa (flow off) -> 26.3 Pa.

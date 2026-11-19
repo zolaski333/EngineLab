@@ -7,6 +7,23 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **The 3-D view shows what the engine's controls and cycle are doing.**
+  Camshafts turn at half the crank's speed under their timing chain,
+  advanced by the variable cam timing, with VTEC's lock pin sliding in on
+  the high cam; throttle plates (each runner's on individual throttles) and
+  a slide carburettor's slide follow the throttle; an active exhaust
+  valve's butterfly opens and shuts; a turbocharger's wastegate flap and
+  blow-off valve lift; a fitted nitrous kit is drawn with its bottle, line
+  and plate, spraying while it flows. Under the strobe only (so nothing
+  flickers at full speed), each spark plug sparks at the ECU's advance and
+  each injector's spray shows while it is open. Every element follows a
+  value the simulation already computes; the simulation and the sound are
+  untouched.
+- **Save the 3-D view as a PNG** (settings menu, *Capture*). The info line
+  under the view now also shows how long the renderer takes per frame.
+
 ### Fixed
 
 - **No more pipes through the engine in the 3-D view.** On X, W and other

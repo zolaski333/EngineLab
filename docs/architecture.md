@@ -716,6 +716,55 @@ turns at the drive ratio times the displayed crank angle.
 Engine views frame the engine with its ports, runners, plenum and primaries;
 the *Exhaust* view frames the whole system.
 
+### What the cycle and the controls move
+
+Since 2026-11-19 (analysis part D) the view draws the parts the simulation
+already drives, each from a value it computes; nothing new is simulated.
+They are drawn after the layout, with no solid of their own, so the ducts,
+the routes and the route check are bit-identical (`EngineLabSceneExport`,
+catalogue and `--designed all`).
+
+- **Cams and their drive.** A poppet-valve four-stroke has an intake and
+  an exhaust shaft per bank over its valves, a lobe over each (a tangent
+  cam sized by the duration and lift) and a sprocket with a timing mark,
+  driven from a crank sprocket by one chain in front of the first cylinder.
+  They turn at half the crank's speed; each bank's turns by its first
+  cylinder's variable timing (`intakeValveAdvanceDegrees`,
+  `exhaustValveAdvanceDegrees`), and the valves follow the same advance and
+  `valveLiftMultiplier`. VTEC draws the high lobe between a pair of valves
+  and a lock pin that slides in while `vtecHighCylinderMask` holds the
+  high cam. The configuration has no pushrod engine: a cam-in-block (the
+  LS3) is drawn with overhead cams too. Radials, two-strokes and rotaries
+  have none.
+- **Spark and spray, under the strobe only** (nothing flickers by
+  default). The plugs stand on each spark four-stroke's axis; the spark
+  shows for the 20 crank degrees after the ECU's advance (with the
+  cylinder's ignition offset), and the flame kernel now starts there too
+  (it started at a fixed 15 degrees). The spray is a cone from the
+  injector tip, to the valve (port) or into the chamber (direct), from the
+  window's start for `injectorDutyCycle` of the cycle (a diesel's from its
+  commanded start); its reach follows the share of the window it is open.
+- **Throttle.** A plate in each drawn throttle bore, a few degrees off shut
+  at rest, edge-on wide open, following `throttle`; a slide carburettor's
+  slide and needle rise with it. Individual throttles get a plate in each
+  runner where the solver puts its restriction face
+  (`throttleDistanceFromValveMm`, else 55 % of the runner); their upstream
+  bodies stay open, as the solver holds them.
+- **Exhaust valve.** A butterfly at the inlet of each pipe carrying an
+  active valve, turned by `exhaustValveStroke` (shut across the pipe, open
+  along it).
+- **Turbo valves.** A wastegate flap beside the exducer lifts up to 45
+  degrees with `wastegateOpening`; a blow-off valve's piston rises with
+  its flow, full lift at the flow its area passes choked from 2 bar.
+- **Nitrous.** A fitted kit draws a plate under the first throttle body,
+  a bottle beyond the engine and gearbox towards the rear (sized by its
+  capacity, out of the engine framing) and its line; the plate's spray
+  shows while `nitrousMassFlowKgPerSecond` flows.
+
+*Save the view as a PNG* (settings menu, *Capture*) reads the next frame
+back. The info line shows the renderer's CPU time per frame beside the
+frame rate; the GPU's own time is not measured.
+
 ### Gas field on the ducts
 
 The exhaust and the intake runners and plenums are coloured by the gas
