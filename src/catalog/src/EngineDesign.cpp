@@ -1,4 +1,5 @@
 #include <enginelab/catalog/EngineDesign.hpp>
+#include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
 #include <enginelab/foundation/ForcedInductionFlow.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
@@ -1552,10 +1553,15 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             plan.tailpipeLengthMm = derive("exhaust_tailpipe_length_mm", "Tailpipe length", "mm", 0.0,
                 "none: the silencer's outlet is the tip");
 
-            if (system == ExhaustSystem::dualHPipe || system == ExhaustSystem::dualXPipe) {
-                if (bankCount < 2)
-                    throw std::invalid_argument("An H- or an X-pipe joins two banks' pipes: this engine has one "
-                                                "bank (choose a dual system to split its collector)");
+            if ((system == ExhaustSystem::dualHPipe || system == ExhaustSystem::dualXPipe) && bankCount == 1) {
+                // One bank: its collector split into two pipes, as a dual
+                // one-bank system, and the H or the X between those, as the
+                // exhaust designer's one-click H and X (the turbine, if any,
+                // stays on the one collector).
+                plan.crossoverPositionMm = derive("exhaust_split_position_mm", "Split from the collector", "mm",
+                    0.35 * exhaust.midpipeLengthMm, "a third of the mid pipe, then two pipes of 0.85 x its bore, "
+                    "joined a third of the way along them");
+            } else if (system == ExhaustSystem::dualHPipe || system == ExhaustSystem::dualXPipe) {
                 if (spec.induction == Induction::turbocharged)
                     throw std::invalid_argument("An H- or an X-pipe would join the banks ahead of the turbines, "
                                                 "which the simulator places on each collector: choose single or "
@@ -1616,11 +1622,20 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             if (pathCount > 1)
                 pathConfig.acousticPositionM.x = 0.9 * (static_cast<double>(path) / static_cast<double>(pathCount - 1) - 0.5);
             if (designedNetwork) {
-                const auto join = system == ExhaustSystem::dualHPipe ? PathJoin::hPipe
+                const auto crossed = system == ExhaustSystem::dualHPipe || system == ExhaustSystem::dualXPipe;
+                const auto oneBank = pathBanks.size() == 1U;
+                const auto join = crossed && oneBank ? PathJoin::split
+                    : system == ExhaustSystem::dualHPipe ? PathJoin::hPipe
                     : system == ExhaustSystem::dualXPipe ? PathJoin::xPipe
                     : system == ExhaustSystem::dual && pathCount == 1 ? PathJoin::split : PathJoin::single;
                 pathConfig.network = designedExhaustNetwork(plan, join, pathBanks, pathConfig.acousticPositionM,
                     rotary ? 3 : 1);
+                if (crossed && oneBank)
+                    if (const auto error = ExhaustNetworkEditor::addCrossover(*pathConfig.network,
+                            system == ExhaustSystem::dualHPipe ? ExhaustCrossoverKind::hPipe
+                                                               : ExhaustCrossoverKind::xPipe);
+                        !error.empty())
+                        throw std::invalid_argument(error);
             }
             config.exhaustPaths.push_back(std::move(pathConfig));
         }
@@ -1634,8 +1649,11 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 system == ExhaustSystem::single ? "one pipe and one silencer"
                     : system == ExhaustSystem::dual ? (bankCount >= 2 ? "one pipe and silencer per side"
                                                                       : "the collector split into two pipes")
-                    : system == ExhaustSystem::dualHPipe ? "a pipe per side, joined by a balance pipe (H)"
-                    : system == ExhaustSystem::dualXPipe ? "a pipe per side, crossing in an X"
+                    : system == ExhaustSystem::dualHPipe ? (bankCount >= 2
+                        ? "a pipe per side, joined by a balance pipe (H)"
+                        : "the collector split into two pipes, joined by a balance pipe (H)")
+                    : system == ExhaustSystem::dualXPipe ? (bankCount >= 2 ? "a pipe per side, crossing in an X"
+                        : "the collector split into two pipes, crossing in an X")
                     : paths == 1 ? "the family's: one pipe" : "the family's: one pipe per bank", false });
 
         // Banks, for the cams and the exhaust each one feeds.

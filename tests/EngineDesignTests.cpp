@@ -8,6 +8,7 @@
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
@@ -613,6 +614,25 @@ void exhaustIsDesigned() {
             && componentOf(*h.config, 450)->type == ExhaustComponentType::splitter
             && componentOf(*h.config, 451)->type == ExhaustComponentType::merge,
         "an H-pipe: a balance pipe between a splitter on one pipe and a merge on the other");
+    // The exhaust designer's one-click H on the dual V8 builds the
+    // designer's own: the same parts, sizes and side ports, ids aside.
+    const auto partsOf = [](const EngineConfig& config) {
+        std::vector<std::tuple<int, double, double, double, double, double>> list;
+        std::size_t side = 0;
+        for (const auto& path : config.exhaustPaths) {
+            for (const auto& part : path.network->components)
+                list.emplace_back(static_cast<int>(part.type), part.lengthMm, part.diameterMm, part.volumeLitres,
+                                  part.restriction, part.crossoverCoupling);
+            for (const auto& edge : path.network->connections)
+                side += edge.fromPort == exhaustSideBranchPort || edge.toPort == exhaustSideBranchPort ? 1U : 0U;
+        }
+        std::sort(list.begin(), list.end());
+        return std::pair { list, side };
+    };
+    auto clicked = *dual.config;
+    const auto clickedH = ExhaustPathTopologyEditor::addCrossover(clicked, 1, ExhaustCrossoverKind::hPipe);
+    require(clickedH && partsOf(clicked) == partsOf(*h.config),
+        "the one-click H on a dual V8 is the designer's own: " + clickedH.error);
 
     v8.exhaustSystem = ExhaustSystem::dualXPipe;
     v8.overrides["exhaust_x_pipe_coupling"] = 0.5;
@@ -629,10 +649,31 @@ void exhaustIsDesigned() {
     const auto split = designed(four);
     require(outletsOf(*split.config) == 2 && componentOf(*split.config, 450)->type == ExhaustComponentType::splitter,
         "an inline engine's dual system splits its collector");
+    // One bank: the collector split, then the H or the X between the two
+    // pipes (it was refused, "this engine has one bank", owner 2026-11-19).
+    const auto sideBranches = [](const EngineConfig& config) {
+        const auto& connections = config.exhaustPaths.front().network->connections;
+        return std::count_if(connections.begin(), connections.end(), [](const auto& edge) {
+            return edge.fromPort == exhaustSideBranchPort || edge.toPort == exhaustSideBranchPort;
+        });
+    };
+    const auto typed = [](const EngineConfig& config, ExhaustComponentType type) {
+        const auto& components = config.exhaustPaths.front().network->components;
+        return std::count_if(components.begin(), components.end(),
+            [type](const ExhaustComponentConfig& part) { return part.type == type; });
+    };
     four.exhaustSystem = ExhaustSystem::dualHPipe;
-    const auto refused = designEngine(four, parts());
-    require(!refused.config && refused.error.find("one bank") != std::string::npos,
-        "an H-pipe on one bank is refused, saying why");
+    const auto oneBankH = designEngine(four, parts());
+    require(oneBankH.config && outletsOf(*oneBankH.config) == 2 && sideBranches(*oneBankH.config) == 2
+            && typed(*oneBankH.config, ExhaustComponentType::splitter) == 2,
+        "an H-pipe on one bank: its collector split into two pipes joined by a balance pipe: " + oneBankH.error);
+    four.exhaustSystem = ExhaustSystem::dualXPipe;
+    four.induction = Induction::turbocharged;
+    const auto oneBankX = designEngine(four, parts());
+    require(oneBankX.config && outletsOf(*oneBankX.config) == 2
+            && typed(*oneBankX.config, ExhaustComponentType::crossover) == 1,
+        "an X-pipe on one turbocharged bank, its turbine on the one collector: " + oneBankX.error);
+    four.induction = Induction::natural;
     auto turbo = vee(8, 90.0, EngineUse::sportCar, 4.4);
     turbo.induction = Induction::turbocharged;
     turbo.exhaustSystem = ExhaustSystem::dualXPipe;
@@ -1235,12 +1276,15 @@ void rotaryIsDesigned() {
              { [](EngineSpec& refused) { refused.fuel = FuelType::diesel; }, "a diesel rotary" },
              { [](EngineSpec& refused) { refused.boreMm = 80.0; refused.strokeMm = 60.0; }, "a bore and a stroke" },
              { [](EngineSpec& refused) { refused.layout = EngineLayout::vLayout; }, "a V of rotors" },
-             { [](EngineSpec& refused) { refused.cylinderCount = 11; }, "11 rotors (33 faces)" },
-             { [](EngineSpec& refused) { refused.exhaustSystem = ExhaustSystem::dualHPipe; }, "an H-pipe on one bank" } }) {
+             { [](EngineSpec& refused) { refused.cylinderCount = 11; }, "11 rotors (33 faces)" } }) {
         auto refused = spec;
         change(refused);
         require(!designEngine(refused, parts()).config, std::string("refused: ") + why);
     }
+    auto crossed = spec;
+    crossed.exhaustSystem = ExhaustSystem::dualHPipe;
+    const auto rotaryH = designEngine(crossed, parts());
+    require(rotaryH.config.has_value(), "a twin-rotor takes an H-pipe after its split collector: " + rotaryH.error);
 }
 
 int main() {
