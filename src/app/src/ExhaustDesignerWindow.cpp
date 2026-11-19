@@ -635,6 +635,11 @@ public:
         auto graphArea = bounds.removeFromTop(std::clamp(bounds.getHeight() * 46 / 100, 260, 390));
         graphGroup_.setBounds(graphArea);
         graphCanvas_.setBounds(graphArea.reduced(10, 24));
+        // On the flow view's title line, at its right: what it draws on.
+        auto crossoverTools = juce::Rectangle<int>(graphArea.getRight() - 10 - 2 * 128 - 6, graphArea.getY(), 2 * 128 + 6, 22);
+        xPipeButton_.setBounds(crossoverTools.removeFromRight(128));
+        crossoverTools.removeFromRight(6);
+        hPipeButton_.setBounds(crossoverTools);
         bounds.removeFromTop(8);
 
         auto componentArea = bounds.removeFromLeft(std::clamp(bounds.getWidth() * 23 / 100, 240, 330));
@@ -753,6 +758,18 @@ private:
         legacyButton_.setButtonText("GENERATE FROM LEGACY");
         legacyButton_.setTooltip("Replaces the selected path's graph with a simple, valid network.");
         legacyButton_.onClick = [this] { generateLegacyNetwork(); };
+        hPipeButton_.setButtonText("+ H-PIPE");
+        hPipeButton_.setTooltip("Joins the two pipes (the banks') with a balance pipe across, in one click: "
+                                "a third of the way from the collectors, 250 mm, the pipes' bore. A dual exhaust "
+                                "drawn as two paths becomes one path first, both exhausts kept. Undo takes it off.");
+        hPipeButton_.setComponentID("exhaust-add-h-pipe");
+        hPipeButton_.onClick = [this] { addCrossover(ExhaustCrossoverKind::hPipe); };
+        xPipeButton_.setButtonText("+ X-PIPE");
+        xPipeButton_.setTooltip("Crosses the two pipes (the banks') in an X, in one click: a third of the way "
+                                "from the collectors, 30 % of each pipe's pulse into the other. A dual exhaust "
+                                "drawn as two paths becomes one path first, both exhausts kept. Undo takes it off.");
+        xPipeButton_.setComponentID("exhaust-add-x-pipe");
+        xPipeButton_.onClick = [this] { addCrossover(ExhaustCrossoverKind::xPipe); };
         applyButton_.setButtonText("VALIDATE AND APPLY");
         applyButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff477d68));
         applyButton_.onClick = [this] { apply(); };
@@ -879,6 +896,8 @@ private:
         addAndMakeVisible(newPathButton_);
         addAndMakeVisible(deletePathButton_);
         addAndMakeVisible(legacyButton_);
+        addAndMakeVisible(hPipeButton_);
+        addAndMakeVisible(xPipeButton_);
         addAndMakeVisible(applyButton_);
         addAndMakeVisible(pathCylinderSelector_);
         addAndMakeVisible(destinationPathSelector_);
@@ -1142,6 +1161,32 @@ private:
             setStatus("Path deleted: both collectors meet in a Y; the pipe after it gave the legs their length.", false);
         else
             setStatus("Path deleted: every cylinder has its own primary into one collector.", false);
+    }
+
+    /** An H-pipe or an X-pipe between the banks' pipes, in one step. */
+    void addCrossover(ExhaustCrossoverKind kind) {
+        if (!commitSelectedComponentEdits()) return;
+        const auto* path = selectedPath();
+        if (path == nullptr) return;
+        auto before = snapshot();
+        const auto result = ExhaustPathTopologyEditor::addCrossover(working_, path->id, kind,
+                                                                    selectedDestinationPathId());
+        if (!result) {
+            setStatus(utf8(result.error), true);
+            return;
+        }
+        pushUndo(std::move(before));
+        selectEditedPath(result.selectedPathId);
+        selectComponentId(result.componentId);
+        const auto joined = result.joinedPathId != 0U
+            ? " Path #" + juce::String(result.joinedPathId) + " joined this one, both exhausts kept." : juce::String();
+        setStatus((kind == ExhaustCrossoverKind::hPipe
+                      ? "H-pipe fitted: balance pipe #" + juce::String(result.componentId)
+                            + " across the two pipes; set its length and bore here."
+                      : "X-pipe fitted: #" + juce::String(result.componentId)
+                            + " crosses the two pipes; set its cross-coupling k here.")
+                      + joined + " Validate and apply to hear it.",
+                  false);
     }
 
     /** The working copy before an edit, for undo. */
@@ -2134,6 +2179,8 @@ private:
     juce::TextButton newPathButton_;
     juce::TextButton deletePathButton_;
     juce::TextButton legacyButton_;
+    juce::TextButton hPipeButton_;
+    juce::TextButton xPipeButton_;
     juce::TextButton applyButton_;
     juce::ComboBox pathCylinderSelector_;
     juce::ComboBox destinationPathSelector_;

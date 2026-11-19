@@ -2,6 +2,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -442,6 +443,158 @@ void removingAPathKeepsEachTurbine() {
         "each remaining path keeps the turbine it drove");
 }
 
+[[nodiscard]] const ExhaustComponentConfig* componentById(const ExhaustNetworkConfig& network, std::uint32_t id) {
+    const auto found = std::find_if(network.components.begin(), network.components.end(),
+        [id](const ExhaustComponentConfig& item) { return item.id == id; });
+    return found != network.components.end() ? &*found : nullptr;
+}
+
+/** The pipes past the collectors other than `except`, by length. */
+[[nodiscard]] std::vector<double> midPipeLengths(const ExhaustNetworkConfig& network, std::uint32_t except) {
+    std::vector<double> lengths;
+    for (const auto& part : network.components) {
+        if (part.type != ExhaustComponentType::pipe || part.id == except) continue;
+        if (std::any_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+                [&part](const auto& mapping) { return mapping.componentId == part.id; }))
+            continue;
+        lengths.push_back(part.lengthMm);
+    }
+    std::sort(lengths.begin(), lengths.end());
+    return lengths;
+}
+
+/** One click: an H-pipe between a dual exhaust drawn as two paths, graph or
+ *  scalar. The two paths become one, each exhaust whole; each mid pipe is
+ *  cut a third of the way and a 250 mm balance pipe of its bore joins the
+ *  cuts on a splitter's and a merge's side ports, as the designer's H. By
+ *  hand it took three parts, two deletions, six drags and edits, and no drag
+ *  could make a side branch at all (owner 2026-11-19). */
+void oneClickHPipe() {
+    for (const auto scalar : { false, true }) {
+        auto config = dualFourIntoOneV8();
+        if (scalar)
+            for (auto& path : config.exhaustPaths) path.network.reset();
+        const auto label = std::string(scalar ? "scalar" : "graph") + " dual V8: ";
+        const auto result = ExhaustPathTopologyEditor::addCrossover(config, 1, ExhaustCrossoverKind::hPipe);
+        require(static_cast<bool>(result), label + "the H was refused: " + result.error);
+        requireUniqueCompleteOwnership(config);
+        require(config.exhaustPaths.size() == 1U && config.exhaustPaths.front().cylinderIds.size() == 8U
+                && result.selectedPathId == 1U && result.joinedPathId == 2U,
+            label + "the two paths are not one carrying all eight cylinders");
+        const auto& network = *config.exhaustPaths.front().network;
+        require(countType(network, ExhaustComponentType::outlet) == 2U
+                && countType(network, ExhaustComponentType::splitter) == 1U,
+            label + "both exhausts are not kept whole beside the H's splitter");
+        const auto* balance = componentById(network, result.componentId);
+        require(balance != nullptr && balance->type == ExhaustComponentType::pipe
+                && std::abs(balance->lengthMm - 250.0) < 1.0e-9,
+            label + "no 250 mm balance pipe");
+        std::size_t side = 0;
+        for (const auto& edge : network.connections) {
+            if (edge.fromPort != exhaustSideBranchPort && edge.toPort != exhaustSideBranchPort) continue;
+            ++side;
+            const auto* junction = componentById(network,
+                edge.fromPort == exhaustSideBranchPort ? edge.fromComponentId : edge.toComponentId);
+            require((edge.fromComponentId == balance->id || edge.toComponentId == balance->id) && junction != nullptr
+                    && junction->volumeLitres == 0.0 && junction->lengthMm == 0.0
+                    && (junction->type == ExhaustComponentType::splitter
+                        || junction->type == ExhaustComponentType::merge),
+                label + "the balance pipe does not meet a compact junction on its side port");
+        }
+        require(side == 2U, label + "the balance pipe is not a side branch at each end");
+        if (!scalar) {
+            // Each side's way from its collector to its silencer is as long as before.
+            const auto lengths = midPipeLengths(network, balance->id);
+            require(lengths.size() == 4U && std::abs(lengths[0] - 0.35 * dualMidLengthMm) < 1.0e-9
+                    && std::abs(lengths[1] - 0.35 * dualMidLengthMm) < 1.0e-9
+                    && std::abs(lengths[2] - 0.65 * dualMidLengthMm) < 1.0e-9
+                    && std::abs(lengths[3] - 0.65 * dualMidLengthMm) < 1.0e-9
+                    && std::abs(balance->diameterMm - 54.0) < 1.0e-9,
+                label + "the mid pipes are not cut a third of the way, or the balance pipe lost their bore");
+        }
+
+        // No limit: a second one goes in beside it.
+        const auto again = ExhaustPathTopologyEditor::addCrossover(config, 1, ExhaustCrossoverKind::hPipe);
+        require(static_cast<bool>(again) && again.joinedPathId == 0U
+                && countType(*config.exhaustPaths.front().network, ExhaustComponentType::splitter) == 2U,
+            label + "a second H-pipe in the same exhaust was refused: " + again.error);
+    }
+}
+
+/** One click: an X-pipe, the first path's pipe through port 0 each way. */
+void oneClickXPipe() {
+    auto config = dualFourIntoOneV8();
+    const auto result = ExhaustPathTopologyEditor::addCrossover(config, 2, ExhaustCrossoverKind::xPipe);
+    require(static_cast<bool>(result), "the X was refused: " + result.error);
+    requireUniqueCompleteOwnership(config);
+    require(config.exhaustPaths.size() == 1U && result.selectedPathId == 2U, "the X's two paths are not one");
+    const auto& network = *config.exhaustPaths.front().network;
+    const auto* x = componentById(network, result.componentId);
+    require(x != nullptr && x->type == ExhaustComponentType::crossover && x->lengthMm == 0.0
+            && std::abs(x->crossoverCoupling - 0.30) < 1.0e-9 && std::abs(x->restriction - 0.06) < 1.0e-9
+            && std::abs(x->diameterMm - 54.0) < 1.0e-9,
+        "no compact X of the pipes' bore, k 0.30 and K 0.06");
+    std::array<int, 4> ports {};
+    for (const auto& edge : network.connections) {
+        if (edge.toComponentId == x->id && edge.toPort <= 1U) ++ports[edge.toPort];
+        if (edge.fromComponentId == x->id && edge.fromPort <= 1U) ++ports[2U + edge.fromPort];
+    }
+    require(ports == std::array<int, 4> { 1, 1, 1, 1 }, "each of the X's four ports does not carry one pipe");
+    require(midPipeLengths(network, 0).size() == 4U, "each pipe is not cut in two around the X");
+}
+
+/** What has no two pipes to join says so and changes nothing; two paths on
+ *  their own turbines are not joined ahead of them; a one-bank exhaust split
+ *  into two tailpipes takes one inside its path. */
+void crossoverRefusalsSayWhy() {
+    auto single = makeDefaultInlineFour();
+    installGeneratedNetwork(single.exhaustPaths.front());
+    const auto parts = single.exhaustPaths.front().network->components.size();
+    const auto refused = ExhaustPathTopologyEditor::addCrossover(single, single.exhaustPaths.front().id,
+                                                                 ExhaustCrossoverKind::hPipe);
+    require(!refused && refused.error.find("one pipe") != std::string::npos
+            && single.exhaustPaths.front().network->components.size() == parts,
+        "an H on a single pipe is refused, saying why, and nothing changes: " + refused.error);
+
+    auto turbo = dualFourIntoOneV8();
+    turbo.forcedInduction.enabled = true;
+    turbo.forcedInduction.type = ForcedInductionType::turbocharger;
+    turbo.forcedInduction.turbochargerCount = 2U;
+    if (const auto error = validateEngineConfig(turbo)) require(false, "the twin-turbo V8 fixture is valid: " + *error);
+    const auto blocked = ExhaustPathTopologyEditor::addCrossover(turbo, 1, ExhaustCrossoverKind::xPipe);
+    require(!blocked && blocked.error.find("turbine") != std::string::npos && turbo.exhaustPaths.size() == 2U,
+        "an X joining two turbocharged paths is refused, saying why: " + blocked.error);
+
+    auto split = makeDefaultInlineFour();
+    installGeneratedNetwork(split.exhaustPaths.front());
+    auto& network = *split.exhaustPaths.front().network;
+    const auto idOf = [&network](ExhaustComponentType type) {
+        return std::find_if(network.components.begin(), network.components.end(),
+            [type](const ExhaustComponentConfig& part) { return part.type == type; })->id;
+    };
+    const auto merge = idOf(ExhaustComponentType::merge);
+    const auto muffler = idOf(ExhaustComponentType::muffler);
+    std::erase_if(network.connections, [muffler](const ExhaustComponentConnectionConfig& edge) {
+        return edge.toComponentId == muffler;
+    });
+    network.components.push_back(component(90, ExhaustComponentType::splitter, 0.0, 50.0));
+    network.components.push_back(component(91, ExhaustComponentType::pipe, 900.0, 45.0));
+    network.components.push_back(component(92, ExhaustComponentType::pipe, 900.0, 45.0));
+    network.components.push_back(component(93, ExhaustComponentType::outlet, 0.0, 45.0));
+    network.connections.push_back({ merge, 90 });
+    network.connections.push_back({ 90, 91 });
+    network.connections.push_back({ 90, 92 });
+    network.connections.push_back({ 91, muffler });
+    network.connections.push_back({ 92, 93 });
+    if (const auto error = validateEngineConfig(split)) require(false, "the split fixture is valid: " + *error);
+    const auto inside = ExhaustPathTopologyEditor::addCrossover(split, split.exhaustPaths.front().id,
+                                                                ExhaustCrossoverKind::hPipe);
+    require(static_cast<bool>(inside) && inside.joinedPathId == 0U
+            && std::abs(componentById(*split.exhaustPaths.front().network, inside.componentId)->diameterMm - 45.0)
+                < 1.0e-9,
+        "a split one-bank exhaust takes an H between its two pipes: " + inside.error);
+}
+
 void invalidWorkIsNotMutated() {
     auto config = makeDefaultInlineFour();
     installGeneratedNetwork(config.exhaustPaths.front());
@@ -470,6 +623,9 @@ int main() {
         cylindersThatNeverMeetFallBack();
         cylinderFeedsAnyPart();
         removingAPathKeepsEachTurbine();
+        oneClickHPipe();
+        oneClickXPipe();
+        crossoverRefusalsSayWhy();
         std::cout << "EngineLab exhaust path topology editor tests passed\n";
         return 0;
     } catch (const std::exception& error) {

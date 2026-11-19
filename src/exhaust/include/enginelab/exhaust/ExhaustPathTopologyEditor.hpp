@@ -14,6 +14,10 @@ struct ExhaustPathEditResult final {
     std::string error;
     /** What the edit did, when it is not what was asked (a fallback). */
     std::string note;
+    /** addCrossover: the H's balance pipe or the X, and the path that was
+     *  joined into the selected one (0 when none was). */
+    std::uint32_t componentId { 0 };
+    std::uint32_t joinedPathId { 0 };
 
     [[nodiscard]] explicit operator bool() const noexcept { return error.empty(); }
 };
@@ -27,6 +31,16 @@ enum class ExhaustPathJoin : std::uint8_t {
     /** One clean N-into-1: every cylinder gets a primary like the
      *  destination's, all into the destination's collector. */
     rebuild,
+};
+
+/** How two pipes of an exhaust are joined by `addCrossover`. */
+enum class ExhaustCrossoverKind : std::uint8_t {
+    /** A balance pipe across (an H-pipe): a splitter on one pipe, a merge on
+     *  the other, the balance pipe on each as a side branch, as the
+     *  designer's (designedExhaustNetwork). */
+    hPipe,
+    /** The two pipes crossing in a compact X (a crossover component). */
+    xPipe,
 };
 
 /**
@@ -54,6 +68,18 @@ public:
     [[nodiscard]] static ExhaustPathEditResult removePath(
         EngineConfig& config, std::uint32_t pathId, std::uint32_t destinationPathId,
         ExhaustPathJoin join = ExhaustPathJoin::rebuild);
+
+    /** An H-pipe or an X-pipe in one step (ExhaustNetworkEditor::addCrossover)
+     *  between two pipes of `pathId` that run to different tailpipes. When
+     *  the path has no such pair (one pipe per path, as a dual exhaust drawn
+     *  as two paths), `partnerPathId` -- or the engine's other path when it
+     *  has exactly two -- joins it first: both graphs kept whole in one
+     *  path, the H or X then between their pipes. A scalar path becomes the
+     *  graph it was drawn from. `selectedPathId` is the path that carries
+     *  it, `note` what was built. */
+    [[nodiscard]] static ExhaustPathEditResult addCrossover(
+        EngineConfig& config, std::uint32_t pathId, ExhaustCrossoverKind kind,
+        std::optional<std::uint32_t> partnerPathId = std::nullopt);
 };
 
 /** Local edits of one path's custom graph, shared by the designer and tests.
@@ -107,6 +133,22 @@ public:
      *  without a silencer, or whose silencer cannot take one, is left as it
      *  is. Empty when at least one valve was fitted, or why none was. */
     [[nodiscard]] static std::string fitSilencerBypass(EngineConfig& config);
+
+    /** An H-pipe or an X-pipe, in one step, between the two pipes of the
+     *  graph best placed for one: two pipes running to different tailpipes,
+     *  each fed by one part and feeding one (no primary, no valved pipe),
+     *  preferring two that carry every cylinder between them, each side its
+     *  own (the banks'), then two ahead of the silencers, then the longest.
+     *  Each is cut at 0.35 of its length (the designer's place, a third of
+     *  the mid pipe from the collectors; each piece at least 100 mm when the
+     *  pipe has 200), and the junction goes in the cut: for an H a compact
+     *  splitter and merge of the pipes' bores and a 250 mm balance pipe of
+     *  the narrower bore on their side ports; for an X a compact crossover
+     *  of the narrower bore (k = 0.30, K = 0.06, the LS3's estimate), the
+     *  first pipe through port 0. Empty, or why not; `junctionId` gets the
+     *  balance pipe or the X. */
+    [[nodiscard]] static std::string addCrossover(ExhaustNetworkConfig& network, ExhaustCrossoverKind kind,
+                                                  std::uint32_t* junctionId = nullptr);
 };
 
 } // namespace enginelab
