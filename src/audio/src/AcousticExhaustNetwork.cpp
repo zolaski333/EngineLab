@@ -229,6 +229,7 @@ struct AcousticExhaustNetwork::Impl final {
     std::array<Medium, maximumPaths> mediaTarget {};
     std::array<StereoPressure, maximumPaths> lastJetNoise {};
     bool jetNoiseEnabled { true };
+    bool mufflerFlowNoiseEnabled { false };
     double farFieldDensityKgPerM3 { 0.0 };
     bool outletPressureRelease { false };
     bool outletConvectiveLoss { false };
@@ -1521,6 +1522,7 @@ void AcousticExhaustNetwork::beginBlock(
     // in the ambient air: p^2 = W rho0 c0 / (4 pi).
     for (auto& outlet : impl_->outlets) outlet.flowNoisePowerW = 0.0;
     for (const auto& source : impl_->mufflerSources) {
+        if (!impl_->mufflerFlowNoiseEnabled) break;
         auto massFlow = 0.0;
         for (const auto index : source.outlets)
             massFlow += impl_->outlets[index].assignedMassFlowKgPerSecond;
@@ -2021,6 +2023,14 @@ void AcousticExhaustNetwork::setOutletSolverVolumeFlow(
             break;
         }
     }
+}
+
+void AcousticExhaustNetwork::setMufflerFlowNoiseEnabled(bool enabled) noexcept {
+    if (impl_) impl_->mufflerFlowNoiseEnabled = enabled;
+}
+
+bool AcousticExhaustNetwork::mufflerFlowNoiseEnabled() const noexcept {
+    return impl_ && impl_->mufflerFlowNoiseEnabled;
 }
 
 bool AcousticExhaustNetwork::outletJetNoiseEnabled() const noexcept {

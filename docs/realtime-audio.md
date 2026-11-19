@@ -289,7 +289,10 @@ sample**. It also checks the buffer bounds and the silence of inactive buses.
 the flow, density, speed of sound and diameter already solved. Its power
 follows the subsonic `U^8` law in the ambient air (`rho0`, `c0`) and its
 spectral centre `St = 0.2`. A silencer's flow noise (`MufflerFlowNoise`,
-Green and Smith's `u^4.5` law, pink) leaves by the same outlet and observer. The audio
+Green and Smith's `u^4.5` law, pink) can leave by the same outlet and observer,
+but is off by default since 2026-11-19: on silenced engines it buried the note
+under 10-35 dB of hiss at 4-8 kHz (`setMufflerFlowNoiseEnabled`, harness
+`--muffler-flow-noise`). The audio
 modulation comes from the volume flow of the radiation load; it is never fed
 back into the gas network.
 

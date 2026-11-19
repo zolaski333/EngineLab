@@ -1372,3 +1372,11 @@ Kunz and Garcia (SAE 950546) measured the same efficiencies with hot exhaust.
 Not known: how much a packed can's lining absorbs of its own flow noise (the
 efficiencies are for unpacked elements). `setOutletJetNoiseEnabled(false)`
 cuts both sources for sound and CPU comparisons.
+
+**Off by default since 2026-11-19** (`setMufflerFlowNoiseEnabled`,
+`EngineLabAudioRenderHarness --muffler-flow-noise`). Users heard silenced
+engines "blow" over their note; measured, it added 8-37 dB at 8 kHz and up to
+40 dB at 63 Hz on 14 of the 18 catalogue engines while the overall level moved
+0-0.4 dB (the 2JZ's 25 % perforate at L/D 6 reads eta_w 101 dB). Unverified
+before it returns: the `4 L/D` slope of Fig. 6.45 and the flat spectrum to
+11.3 kHz (Obata and Hirata, 1978, report a Strouhal peak).

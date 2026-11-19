@@ -637,7 +637,8 @@ void mufflerFlowNoiseRegression() {
     std::array<std::uint32_t, 4> cylinderIds {};
     for (std::size_t index = 0; index < cylinderIds.size(); ++index)
         cylinderIds[index] = config.cylinders[index].id;
-    const auto outletEnergy = [&](float pathFlow, bool silencer) {
+    const auto outletEnergy = [&](float pathFlow, bool silencer,
+                                  bool flowNoise = true) {
         auto variant = config;
         variant.exhaust.mufflerChamberDiameterMm = silencer ? 120.0 : 0.0;
         variant.exhaust.mufflerChamberLengthMm = silencer ? 300.0 : 0.0;
@@ -646,6 +647,9 @@ void mufflerFlowNoiseRegression() {
             graph, cylinderIds);
         require(acoustics->valid() && acoustics->prepare(sampleRate),
             "the flow-noise network fixture must compile and prepare");
+        require(!acoustics->mufflerFlowNoiseEnabled(),
+            "silencer flow noise must be off by default (journal 2026-11-19)");
+        acoustics->setMufflerFlowNoiseEnabled(flowNoise);
         const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
             { 0.6F, 480.0F } }};
         const std::array<float, 1> flow {{ pathFlow }};
@@ -670,6 +674,9 @@ void mufflerFlowNoiseRegression() {
     // outweighs the bare tailpipe's slow jet (U^8) many times over.
     require(silencedHigh > 10.0 * bareHigh,
         "a silencer's flow noise must dominate a slow jet at the outlet");
+    // Off, the silenced outlet radiates the jet alone: far below the source.
+    require(outletEnergy(0.10F, true, false) < 0.1 * silencedHigh,
+        "a silencer with its flow noise off must not shed it");
     const auto ratio = silencedHigh / silencedLow;
     require(ratio > std::pow(2.0, 4.5) * 0.8 && ratio < std::pow(2.0, 4.5) * 1.6,
         "the radiated silencer flow noise must grow as u^4.5");

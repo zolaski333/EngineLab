@@ -266,6 +266,13 @@ public:
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletJetNoiseEnabled(enabled);
     }
+    /** Silencer flow noise (AcousticExhaustNetwork::setMufflerFlowNoiseEnabled),
+     * off by default. */
+    void setMufflerFlowNoiseEnabled(bool enabled) noexcept {
+        mufflerFlowNoiseEnabled_ = enabled;
+        if (acousticExhaustNetwork_)
+            acousticExhaustNetwork_->setMufflerFlowNoiseEnabled(enabled);
+    }
     /** Density of the air the exhaust outlets radiate into. Negative (the
      * default, production): ambient air, from the live ambient pressure and
      * temperature, refreshed every block. Zero: the duct medium, the model
@@ -679,6 +686,7 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
+    bool mufflerFlowNoiseEnabled_ { false };
     double outletFarFieldDensityOverrideKgPerM3_ { -1.0 };
     /** The far-field density the outlets use this block (see above). */
     [[nodiscard]] double resolvedOutletFarFieldDensityKgPerM3() const noexcept {

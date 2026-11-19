@@ -61,6 +61,8 @@ bool writeDiagnosticStems = false;
 // Same-binary A/B only. Production keeps the physically driven outlet source
 // enabled; the switch proves exactly what that one layer contributes.
 bool enableExhaustJetNoise = true;
+// Silencer flow noise (MufflerFlowNoise): off in production since 2026-11-19.
+bool enableMufflerFlowNoise = false;
 // Same-binary null for the V/flat structural coordinate correction. Production
 // follows each bank's explicit cylinder_ids ordering.
 bool enableStructuralBankTopologyParticipation = true;
@@ -567,6 +569,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         &audioConfiguration->exhaustAcousticSamples());
     auto& renderer = *rendererPtr;
     renderer.setOutletJetNoiseEnabled(enableExhaustJetNoise);
+    renderer.setMufflerFlowNoiseEnabled(enableMufflerFlowNoise);
     renderer.setStructuralBankTopologyParticipationEnabled(
         enableStructuralBankTopologyParticipation);
     renderer.setForcedInductionBroadbandPowerNormalisationEnabled(
@@ -1775,6 +1778,7 @@ int main(int argc, char** argv) {
             renderSimulatorOptions.intakeCharacteristicValve = false;
             renderSimulatorOptions.intakeCouplingIntervalSeconds = 0.0;
         }
+        else if (a == "--muffler-flow-noise") enableMufflerFlowNoise = true;
         else if (a == "--mute-combustion") muteCombustionLayer = true;
         else if (a == "--mute-mechanical") muteMechanicalLayer = true;
         else if (a == "--mute-intake") muteIntakeLayer = true;

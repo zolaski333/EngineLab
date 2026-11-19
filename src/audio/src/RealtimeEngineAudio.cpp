@@ -93,6 +93,7 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
             std::span<const std::uint32_t>(cylinderIds.data(), count));
         if (compiled->valid()) {
             compiled->setOutletSolverLowBand(outletSolverLowBandHz_);
+            compiled->setMufflerFlowNoiseEnabled(mufflerFlowNoiseEnabled_);
             acousticExhaustNetwork_ = std::move(compiled);
         }
         authoredMicrophones_ = {
@@ -176,6 +177,7 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
         || !handoff->network->prepare(sampleRate, maximumAcousticDelayScale, observerDistanceM))
         return false;
     handoff->network->setOutletJetNoiseEnabled(outletJetNoiseEnabled_);
+    handoff->network->setMufflerFlowNoiseEnabled(mufflerFlowNoiseEnabled_);
     handoff->network->setOutletFarFieldDensity(resolvedOutletFarFieldDensityKgPerM3());
     handoff->network->setOutletPressureRelease(outletPressureRelease_);
     handoff->network->setOutletConvectiveLoss(outletConvectiveLoss_);

@@ -32,6 +32,12 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- **Silenced exhausts no longer hiss over the engine.** The silencer flow
+  noise added in 0.10.0 buried the note of engines with a silencer (the 2JZ
+  most clearly) under a broadband rush: 8-37 dB more at 8 kHz and up to
+  40 dB at 63 Hz, while the overall level hardly moved. It is now off by
+  default; engines without a silencer are unchanged, bit for bit. The
+  tailpipe jet's own noise stays as in 0.10.0.
 - **A fuller exhaust low end.** Below 200 Hz the sound at each tailpipe now
   follows the gas simulation's own flow out of the pipe, which the acoustic
   network under-rendered on hard-working engines (a two-stroke expansion

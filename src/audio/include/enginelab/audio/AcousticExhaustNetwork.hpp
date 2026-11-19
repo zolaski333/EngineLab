@@ -114,6 +114,12 @@ public:
     [[nodiscard]] std::size_t exhaustValveCount() const noexcept;
     /** Diagnostic A/B switch. Production leaves the source enabled. */
     void setOutletJetNoiseEnabled(bool enabled) noexcept;
+    /** Each silencer's broadband flow noise (MufflerFlowNoise), radiated by
+     * the outlets it feeds. Off by default: as built it masked the engine
+     * under 10-35 dB of hiss at 4-8 kHz on silenced engines (journal
+     * 2026-11-19). It also needs setOutletJetNoiseEnabled. */
+    void setMufflerFlowNoiseEnabled(bool enabled) noexcept;
+    [[nodiscard]] bool mufflerFlowNoiseEnabled() const noexcept;
     /** Diagnostic: density of the air each outlet radiates into. Zero (the
      * default) keeps the duct medium (UnflangedPipeRadiation::setFarFieldDensity). */
     void setOutletFarFieldDensity(double densityKgPerM3) noexcept;

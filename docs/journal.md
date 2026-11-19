@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-19 — users: silenced exhausts "blow" over the engine (2JZ); the muffler flow noise
+
+- Cause: `MufflerFlowNoise` (0.10.0). The 2JZ's turbo_downpipe box is a 25 % perforate at L/D 7.3, held to 6: eta_w 77 + 4 x 6 = 101 dB, 20 dB over a plain chamber's plateau (81.5). Its observed jet+flow peak 1.3 Pa (flow off) -> 26.3 Pa.
+- AudioRenderHarness `--catalogue-filter 2JZ`, flow noise x1 against x0 (temporary env gain, removed; jet unchanged): rms +0.2-0.6 dB, 250 Hz-1 kHz within 1 dB, but 4 kHz +4-15 dB, 8 kHz +16-35 dB, 63-125 Hz +13-37 dB under the I6's firing (185-300 Hz) once loaded. x0.1: 8 kHz +14-16, 63 Hz +20; x0.01: 8 kHz +5-7, 63 Hz +11.
+- Not the packing: Delany-Bazley over the box's 0.47 m, sources spread along it, takes 3.0-3.4 dB above 1 kHz (600-800 K), so a lining term would not answer it.
+- Whole catalogue, x1 against x0: bit-identical without a silencer (Aircooled, Merlin, Radial, RD350); CP3/CP4 within 0.4 dB in every octave; 8 kHz (worst 1 s window) 2JZ +25.6, I5 +22.7, EJ25 +19.7, Big Twin +37.5, CP2 +26.3, Full System/Lab +28.1, 13B +21.2, TDI +16.5, LS3 +12.5, K20A +8.1; 63 Hz up to +39.6 (EJ25).
+- Unverified in the source: the 4 dB per L/D slope (Fig. 6.45 not re-read) and the flat octave spectrum to 11.3 kHz (Obata and Hirata 1978 report a Strouhal peak). Clips in `essai-soufflerie/` (current, -10, -20 dB, off).
+- Owner chose "off" after listening: `setMufflerFlowNoiseEnabled`, default false (harness `--muffler-flow-noise`); default renders bit-identical to the x0 measurement (2JZ, EJ25), the flag to 0.10.0 (2JZ).
+
 ## 2026-11-18 — 3-D exhaust in the vehicle's corridor (owner: V8 HPIPE, X16 "catastrophic")
 
 - New gauge `checkPlausibility` (vehicle frame; beside/below/above/ahead/behind, coiled, astray, mirror asymmetry). Before: catalogue 17 of 18 implausible (beside up to 1,405 mm, below 471, 10 outlets astray), owner engines 54 of 57 (beside 1,830, above 605, asymmetry 899).
