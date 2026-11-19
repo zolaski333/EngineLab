@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-19 — 3-D view: carburettors in a crowded valley, slide and needle, wastegate arm (owner)
+
+- Owner: a V4-2S's carburettors "laid out anyhow"; a slide that does not shut the bore; a needle that rises with the slide; a turbo "rod, then a second at right angles". The needle does rise with its slide on every slide carburettor (it meters the jet's annulus): kept, now long enough to stay in a drawn fixed needle jet (tip 0.05 bore under the floor at full lift); slide 1.04 bore radii wide, lift 0.95 bore.
+- `SceneExport` over the owner's 59 saved engines, plain and `--carburettor fit`: carburettors inside another carburettor's box 5 engines -> 0 (V4-2S x3 at 91 %, V4-4S, the radial I3 with three drums in one place); none deeper than 2 mm in an engine solid. Route totals unchanged except saved bends 160 -> 158.
+- Catalogue (18) and `--designed all` (80), plain and `--carburettor fit`: ducts and issues unchanged except the carburetted RD350 (and the saved 250Mono2S), whose carburettors stand further out of the gearbox the deeper bowl reached 2.3 mm into; turbo parts changed only by the wastegate.
+- 2JZ wastegate rod 14 / 9 mm outside its housings shut / open (gate > 0; an arm square to the flap fell 4.6 mm inside at 45 deg). The stub is ~2 cm, not ~12.
+- New test: a designed V4 two-stroke with shared pins, 0 mm overlap (36.7 mm with the row layout disabled); slide and needle gates fail on the old geometry by construction (0.72 bore radii, needle tip 0.3 bore above the floor). `EngineLab.EngineModel3D` passes. Hayabusa with carburettors: bells inside its airbox, spigots 19 mm in its plenum box, left as is. Not seen on screen in the app.
+
 ## 2026-11-19 — 3-D view: owner's report on part D (valves, carburettors, radial cams, two-stroke plugs, solid view)
 
 - Redrawn: throttle bodies and their plates (spindle, screws, quadrant), carburettors (bowl, slide tower, bell, choke), the exhaust valve's housing and actuator, the wastegate's canister and rod, the blow-off valve; plugs in two-strokes' heads; cam and timing covers (shells) so the solid view hides the shafts; a radial's cam ring, pushrods and rockers.

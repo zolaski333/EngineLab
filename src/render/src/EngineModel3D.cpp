@@ -2159,16 +2159,20 @@ void EngineModel3D::buildControls() {
             control.duct = static_cast<int>(d);
             Mesh mesh;
             if (bore.slide) {
-                // The slide shut on the bore's floor, its cutaway facing the
-                // air, its needle down into the jet; it rises into its tower.
+                // The slide shut on the bore's floor, wider than the bore so
+                // it closes all of it; its needle, clipped in it, down into
+                // the fixed needle jet. It rises into its tower, the needle
+                // with it, as on every slide carburettor: the needle is long
+                // enough to stay in its jet at full lift (it meters the jet's
+                // annulus there).
                 const auto base = middle - up * (0.5F * t);
-                appendCylinder(mesh, Mat4::frameAlongY(base, up), 0.36F * t, 0.36F * t, 1.0F * t, 24);
-                appendCylinder(mesh, Mat4::frameAlongY(base, up * -1.0F), 0.035F * t, 0.01F * t, 0.6F * t, 8);
+                appendCylinder(mesh, Mat4::frameAlongY(base, up), 0.52F * t, 0.52F * t, 1.0F * t, 24);
+                appendCylinder(mesh, Mat4::frameAlongY(base, up * -1.0F), 0.035F * t, 0.012F * t, 1.0F * t, 8);
                 appendCylinder(mesh, Mat4::frameAlongY(base + up * (0.92F * t), up), 0.05F * t, 0.05F * t, 0.1F * t, 8);
                 control.kind = ControlPart::Kind::throttleSlide;
                 control.centre = base;
                 control.normal = up;
-                control.size = 0.9F * t;
+                control.size = 0.95F * t;
             } else {
                 (void)appendButterfly(mesh, 0.48F * t, 0.84F * t, true, 0.0F);
                 control.kind = ControlPart::Kind::throttlePlate;
@@ -2279,9 +2283,11 @@ void EngineModel3D::buildControls() {
         addLink(controlParts_.size() - 1U, anchor, end, 0.05F * outer, layerExhaust);
     }
 
-    // Each turbocharger's wastegate: the flap in the turbine's outlet beside
-    // the exducer, its spindle out of the housing to a lever, pulled by the
-    // actuator's rod from its canister beside the compressor.
+    // Each turbocharger's wastegate, as on a real internal one: the flap on
+    // the turbine's outlet face beside the exducer, its spindle a short stub
+    // out through a boss in the outlet's wall, the arm on it reaching out
+    // past the volute, pulled along the shaft by the actuator's rod from its
+    // canister beside the compressor.
     const auto& forced = config_.forcedInduction;
     for (std::size_t index = 0; index < turbos_.size(); ++index) {
         const auto& turbo = turbos_[index];
@@ -2291,32 +2297,52 @@ void EngineModel3D::buildControls() {
             const auto away = normalise(turbo.radial * -1.0F - axis * dot(turbo.radial * -1.0F, axis));
             const auto flap = 0.28F * shell;
             const auto hinge = normalise(cross(axis, away));
-            const auto port = turbo.turbineCentre + axis * (0.5F * turbo.turbineWidth + 1.5F) + away * (0.52F * shell);
+            // Just past the volute's tube on that side (Turbo3D's scroll is
+            // narrower than the turbine there).
+            const auto port = turbo.turbineCentre + axis * (0.5F * turbo.turbineWidth + 3.0F) + away * (0.52F * shell);
             const auto pivot = port + away * flap;
-            const auto lever = std::max(12.0F, 1.1F * flap);
-            // The spindle comes out of the housing far enough that its
-            // lever, and the rod from it, run outside the volute.
-            float volute = shell;
-            for (std::size_t k = 0; k < turbo.scroll.size() && k < turbo.scrollRadii.size(); ++k) {
-                const auto offset = turbo.scroll[k] - turbo.turbineCentre;
-                volute = std::max(volute, length(offset - axis * dot(offset, axis)) + turbo.scrollRadii[k]);
-            }
+            // The stub clears the outlet's wall, then the arm runs out along
+            // the flap's way (perpendicular to the spindle, so the rod pulls
+            // it along the shaft) until its end, and the rod from it, clear
+            // the volute and the wheel's shroud.
             const auto across = dot(pivot - turbo.turbineCentre, away);
-            const auto outside = volute + 0.15F * flap + 4.0F;
-            const auto reach = std::max(1.2F * shell, std::sqrt(std::max(0.0F, outside * outside - across * across)));
+            const auto wall = std::max(turbo.outletRadius, shell) + 3.0F;
+            const auto stub = std::max(0.6F * flap, std::sqrt(std::max(0.0F, wall * wall - across * across)) + 0.3F * flap);
+            const auto flat = [&](Vec3 point) {
+                const auto offset = point - turbo.turbineCentre;
+                return offset - axis * dot(offset, axis);
+            };
+            const auto clearance = [&](Vec3 point) {
+                auto least = length(flat(point)) - shell;
+                for (std::size_t k = 0; k < turbo.scroll.size() && k < turbo.scrollRadii.size(); ++k)
+                    least = std::min(least, length(flat(point) - flat(turbo.scroll[k])) - turbo.scrollRadii[k]);
+                return least;
+            };
+            const auto spindleEnd = pivot + hinge * stub;
+            // Set, as a real arm is, square to the rod at half its travel
+            // (the flap swings 45 degrees): leaning half that downstream when
+            // shut, as far upstream when open, so its end comes no nearer
+            // the shaft than cos 22.5 degrees of its length.
+            constexpr float lean = 0.125F * pi;
+            auto lever = 1.1F * flap;
+            while (lever < 8.0F * shell && clearance(spindleEnd + away * (lever * std::cos(lean))) < 0.15F * flap + 4.0F)
+                lever += 1.0F;
+            const Vec3 arm { 0.0F, std::sin(lean), std::cos(lean) };
             Mesh mesh;
             appendCylinder(mesh, Mat4::translation({ 0.0F, -0.05F * flap, 0.0F }), flap, flap, 0.1F * flap, 24);
             appendBox(mesh, Mat4::translation({ 0.0F, 0.1F * flap, 0.5F * flap }), { 0.3F * flap, 0.12F * flap, flap });
             appendCylinder(mesh, Mat4::frameAlongY({ -0.4F * flap, 0.0F, flap }, xAxis), 0.12F * flap, 0.12F * flap,
-                           reach + 0.4F * flap, 10);
+                           stub + 0.4F * flap, 10);
             std::vector<Vec2> outline;
             for (int k = 0; k < 16; ++k) {
                 const auto a = 2.0F * pi * static_cast<float>(k) / 16.0F;
                 outline.push_back({ 0.25F * flap * std::cos(a), 0.25F * flap * std::sin(a) });
                 outline.push_back({ lever + 0.15F * flap * std::cos(a), 0.15F * flap * std::sin(a) });
             }
-            // The lever along +Y (the flap's normal) at the spindle's end.
-            appendConvexExtrusion(mesh, Mat4::basis(yAxis, zAxis, xAxis, { reach, 0.0F, flap }), outline, 0.12F * flap);
+            // The arm out along local +Z (the flap's way out), leaning
+            // downstream (+Y), at the stub's end.
+            appendConvexExtrusion(mesh, Mat4::basis(arm, cross(xAxis, arm), xAxis, { stub - 0.12F * flap, 0.0F, flap }),
+                                  outline, 0.12F * flap);
             ControlPart control;
             control.kind = ControlPart::Kind::wastegate;
             control.turbo = static_cast<int>(index);
@@ -2326,26 +2352,30 @@ void EngineModel3D::buildControls() {
             control.size = flap;
             control.part = addPart(std::move(mesh), SceneMaterial::steel, layerExhaust);
             controlParts_.push_back(control);
+            // The boss the spindle turns in, on the outlet's wall: fixed.
+            Mesh boss;
+            appendCylinder(boss, Mat4::frameAlongY(pivot + hinge * (stub - 0.75F * flap), hinge), 0.3F * flap, 0.3F * flap,
+                           0.55F * flap, 16);
             // The canister level with the compressor, clear of its housing
-            // and in line with the lever, so its rod runs along the shaft
+            // and in line with the arm's end, so its rod runs along the shaft
             // outside both volutes.
-            const auto rest = pivot + hinge * reach + axis * lever;
+            const auto rest = spindleEnd + (away * arm.z + axis * arm.y) * lever;
             const auto toward = normalise(turbo.compressorCentre - turbo.turbineCentre);
             const auto canister = std::clamp(0.45F * turbo.compressorWheelRadius, 15.0F, 45.0F);
             auto spot = rest + toward * dot(turbo.compressorCentre - rest, toward);
             const auto outward = spot - turbo.compressorCentre;
-            const auto clear = std::max(turbo.compressorOuterRadius + canister + 6.0F, outside);
+            const auto clear = turbo.compressorOuterRadius + canister + 6.0F;
             if (length(outward) < clear)
                 spot = turbo.compressorCentre + (length(outward) > 1.0e-3F ? normalise(outward) : away) * clear;
-            Mesh body;
+            Mesh body = std::move(boss);
             appendCylinder(body, Mat4::frameAlongY(spot - toward * (0.6F * canister), toward), canister, canister,
                            1.2F * canister, 24);
             appendTorus(body, Mat4::frameAlongY(spot, toward), canister, 0.1F * canister, 24, 6);
             appendCylinder(body, Mat4::frameAlongY(spot + toward * (0.6F * canister), toward), 0.12F * canister,
                            0.12F * canister, 0.5F * canister, 8);
             controlParts_.back().body = addPart(std::move(body), SceneMaterial::forged, layerExhaust);
-            addLink(controlParts_.size() - 1U, spot - toward * (0.6F * canister), { reach, lever, flap },
-                    std::max(1.5F, 0.08F * flap), layerExhaust);
+            addLink(controlParts_.size() - 1U, spot - toward * (0.6F * canister),
+                    Vec3 { stub, 0.0F, flap } + arm * lever, std::max(1.5F, 0.08F * flap), layerExhaust);
         }
         if (forced.blowOffValveFlowAreaMm2 > 0.0) {
             // Where Turbo3D draws the compressor's outlet, the valve on top

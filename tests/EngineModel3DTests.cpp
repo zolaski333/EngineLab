@@ -1942,6 +1942,83 @@ void checkEngineEnvelope() {
  * every primary set to 1.5 and 4 m: each primary's chord is at least 0.6 of
  * its length.
  */
+/** A two-stroke V4 whose banks share their pins (its cylinders a rod width
+    apart along the crank) stands its four carburettors side by side in the
+    valley, none in another (owner 2026-11-19: a V4 two-stroke's were "laid
+    out anyhow"). Each slide closes its whole bore, and its needle, rising
+    with it, is still in its jet at full lift (owner 2026-11-19: the slide
+    left the bore open). */
+void checkValleyCarburettors() {
+    EngineSpec spec;
+    spec.name = "Designed V4 two-stroke";
+    spec.cycle = EngineCycle::twoStroke;
+    spec.use = EngineUse::sportMotorcycle;
+    spec.layout = EngineLayout::vLayout;
+    spec.cylinderCount = 4U;
+    spec.bankAngleDegrees = 90.0;
+    spec.boreMm = 54.0;
+    spec.strokeMm = 54.5;
+    spec.crankPins = CrankPins::shared;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "a V4 two-stroke designs: " + designed.error);
+    const auto fitted = withFuelSystem(*designed.config, FuelSystem::carburettor, ENGINELAB_CATALOG_ROOT);
+    require(fitted.config.has_value(), "a V4 two-stroke takes carburettors: " + fitted.error);
+    auto config = *fitted.config;
+    config.intake.carburettor.fixedVenturi = false;
+    for (auto& path : config.intakePaths) path.geometry.carburettor.fixedVenturi = false;
+    const EngineModel3D model(config);
+    std::vector<SceneInstance> posed;
+    ScenePoseInput input;
+    model.pose(input, posed);
+
+    std::vector<std::array<Vec3, 2>> boxes;
+    for (const auto& duct : model.ducts()) {
+        if (duct.kind != DuctKind::intakeThrottle) continue;
+        constexpr auto big = std::numeric_limits<float>::max();
+        Vec3 low { big, big, big }, high { -big, -big, -big };
+        for (const auto& vertex : model.parts()[duct.part].mesh.vertices) {
+            const auto p = posed[duct.part].transform.transformPoint(vertex.position);
+            low = { std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z) };
+            high = { std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z) };
+        }
+        boxes.push_back({ low, high });
+    }
+    float worst = 0.0F;
+    for (std::size_t a = 0; a < boxes.size(); ++a)
+        for (std::size_t b = a + 1U; b < boxes.size(); ++b) {
+            const auto x = std::min(boxes[a][1].x, boxes[b][1].x) - std::max(boxes[a][0].x, boxes[b][0].x);
+            const auto y = std::min(boxes[a][1].y, boxes[b][1].y) - std::max(boxes[a][0].y, boxes[b][0].y);
+            const auto z = std::min(boxes[a][1].z, boxes[b][1].z) - std::max(boxes[a][0].z, boxes[b][0].z);
+            worst = std::max(worst, std::min({ x, y, z }));
+        }
+    std::cout << "EngineModel3D: V4 two-stroke, " << boxes.size() << " carburettors, deepest overlap " << worst << " mm\n";
+    require(boxes.size() == 4U, "a V4 two-stroke has a carburettor for each crankcase");
+    require(worst < 1.0F, "a crowded valley's carburettors stand side by side, none in another");
+
+    const auto bore = static_cast<float>(config.intakePaths.front().geometry.throttleDiameterMm);
+    int slides = 0;
+    for (const auto& control : model.controlParts()) {
+        if (control.kind != EngineModel3D::ControlPart::Kind::throttleSlide) continue;
+        ++slides;
+        float widest = 0.0F, lowest = 0.0F;
+        for (const auto& vertex : model.parts()[control.part].mesh.vertices) {
+            const auto offset = vertex.position - control.centre;
+            const auto along = dot(offset, control.normal);
+            widest = std::max(widest, length(offset - control.normal * along));
+            lowest = std::min(lowest, along);
+        }
+        input.throttle = 1.0;
+        model.pose(input, posed);
+        const auto lift = dot(posed[control.part].transform.transformPoint(control.centre) - control.centre, control.normal);
+        std::cout << "EngineModel3D: slide " << widest / (0.5F * bore) << " of the bore's radius, lift " << lift / bore
+                  << " bores, needle tip " << (lowest + lift) / bore << " bores from the floor at full lift\n";
+        require(widest >= 0.5F * bore, "a carburettor's slide closes its whole bore");
+        require(lift >= 0.9F * bore, "a slide lifts clear of most of its bore at full throttle");
+        require(lowest + lift < 0.0F, "a slide's needle stays in its jet at full lift");
+    }
+    require(slides == 4, "each carburettor carries its slide");
+}
+
 void checkCollectorFollowsPrimaries() {
     struct Case final {
         const char* name;
@@ -1999,6 +2076,7 @@ void checkCollectorFollowsPrimaries() {
 }
 
 int main() {
+    checkValleyCarburettors();
     checkCollectorFollowsPrimaries();
     checkEngineBrakeValves();
     checkHPipeDrawing();

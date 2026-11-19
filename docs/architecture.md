@@ -762,15 +762,28 @@ catalogue and `--designed all`).
   flanged tube with its spindle's bosses and position sensor, the plate on
   its spindle with its screws and cable quadrant; a carburettor has its
   spigot, body, bell mouth, float bowl, fuel inlet and choke, a slide
-  carburettor its slide tower and cap (a fixed venturi a butterfly).
+  carburettor its slide tower and cap (a fixed venturi a butterfly). The
+  slide is wider than the bore (it shuts all of it) and lifts 0.95 of a
+  bore; its needle, clipped in it, rises with it, as on every slide
+  carburettor, and is long enough to stay in the fixed needle jet at full
+  lift, the float bowl's floor 1.55 bores under the bore's axis. A
+  two-stroke's carburettors that would stand in one another (a V whose
+  banks share their pins puts two cylinders a rod width apart in its
+  valley) are set in a row along the crank instead, slides rising across
+  it, spread as little as clears them and moved out of the valley until
+  they clear the barrels; one whose float bowl reaches into the engine
+  stands further out. A radial's intake paths each have their drum, one
+  ahead of the other.
 - **Exhaust valve.** A butterfly at the inlet of each pipe carrying an
   active valve, turned by `exhaustValveStroke` (shut across the pipe, open
   along it), in a housing band with its spindle's bosses; an actuator
   beside the pipe pulls the lever by a rod that follows it.
-- **Turbo valves.** A wastegate flap beside the exducer lifts up to 45
-  degrees with `wastegateOpening`; its spindle comes out past the volute,
-  and a canister level with the compressor pulls its lever by a rod that
-  runs along the shaft outside both housings. A blow-off valve (body, dome,
+- **Turbo valves.** A wastegate flap on the outlet face beside the
+  exducer lifts up to 45 degrees with `wastegateOpening`, as on a real
+  internal wastegate: its spindle is a short stub out through a boss in
+  the outlet's wall, its arm reaches out past the volute (square to the rod
+  at half its travel), and a canister level with the compressor pulls it by
+  a rod that runs along the shaft outside both housings. A blow-off valve (body, dome,
   vacuum nipple) has a piston that rises with its flow, full lift at the
   flow its area passes choked from 2 bar. The rods are posed from their
   levers each frame; a control's body and rod select as the control.

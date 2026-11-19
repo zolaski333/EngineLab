@@ -4,7 +4,7 @@
 //   EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]
 //                        [--catalog-root <directory>] [--saved <folder>] [--designed all]
 //                        [--two-stroke-intake <crankcase_reed|cylinder_port>]
-//                        [--exhaust-valve fit] [--carburettor <slide|fixed>]
+//                        [--exhaust-valve fit] [--carburettor <fit|slide|fixed>]
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
@@ -19,7 +19,8 @@
 // turbo (EngineModel3DTests' envelope check). `--two-stroke-intake`
 // redraws every two-stroke with that intake, so both layouts can be looked at.
 // `--exhaust-valve fit` fits a valved bypass beside each silencer (the
-// Equipment window's fit) and `--carburettor slide|fixed` a carburettor, so
+// Equipment window's fit) and `--carburettor fit|slide|fixed` the app's carburettor
+// (as its fuel system choice fits one; slide or fixed forces the type), so
 // their drawing can be looked at on engines that come without them.
 // `--time-pose <n>` also prints each engine's build time and the least of n
 // calls to pose(), the view's CPU cost per drawn sub-frame (wall clock: compare
@@ -287,7 +288,7 @@ int main(int argc, char** argv) {
         std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]"
                      " [--catalog-root <directory>] [--saved <folder>] [--designed all]"
                      " [--two-stroke-intake <crankcase_reed|cylinder_port>] [--exhaust-valve fit]"
-                     " [--carburettor <slide|fixed>]\n";
+                     " [--carburettor <fit|slide|fixed>]\n";
         return 2;
     }
     const auto catalogue = loadEngineCatalog(catalogRoot);
@@ -319,9 +320,19 @@ int main(int argc, char** argv) {
         auto config = configs[e];
         if (twoStrokeIntake && config.cycle == EngineCycle::twoStroke) config.twoStroke.intake = *twoStrokeIntake;
         if (fitExhaustValve) (void)ExhaustNetworkEditor::fitSilencerBypass(config);
-        if (!carburettor.empty()) {
-            config.intake.carburettor.enabled = true;
-            config.intake.carburettor.fixedVenturi = carburettor == "fixed";
+        if (!carburettor.empty() && config.fuel != FuelType::diesel) {
+            // As the app's fuel system choice fits one, then of the asked type.
+            auto refit = withFuelSystem(config, FuelSystem::carburettor, catalogRoot);
+            if (!refit.config) {
+                std::cerr << config.name << ": no carburettor: " << refit.error << '\n';
+                continue;
+            }
+            config = std::move(*refit.config);
+            if (carburettor != "fit") {
+                const auto fixed = carburettor == "fixed";
+                config.intake.carburettor.fixedVenturi = fixed;
+                for (auto& path : config.intakePaths) path.geometry.carburettor.fixedVenturi = fixed;
+            }
         }
         if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
         const auto file = std::to_string(e + 1U) + ".json";

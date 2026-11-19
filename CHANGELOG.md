@@ -24,12 +24,20 @@ file formats, always with an in-memory migration).
   mouth), the exhaust valve's housing and actuator and the wastegate's
   canister are drawn as the parts they are; a four-stroke radial shows
   its cam ring, pushrods and rockers; two-strokes show their spark plugs;
-  cam and timing covers keep the shafts hidden in the solid view.
+  cam and timing covers keep the shafts hidden in the solid view. A
+  carburettor's slide shuts its whole bore and its needle stays in its jet
+  over the whole lift; the wastegate's actuator is a short arm on the
+  turbine's outlet and a rod along the shaft.
 - **Save the 3-D view as a PNG** (settings menu, *Capture*). The info line
   under the view now also shows how long the renderer takes per frame.
 
 ### Fixed
 
+- **Carburettors no longer drawn inside one another in the 3-D view.** A
+  V two-stroke whose cylinders stand side by side along the crank (a V4
+  with shared pins) put its carburettors in one another in the valley; they
+  now stand in a row along the crank. A radial with several intake paths
+  drew all their plenum drums and throttles in one place.
 - **No more pipes through the engine in the 3-D view.** On X, W and other
   large layouts the exhaust primaries could run through the block and the
   collector sit inside the gearbox (an X12's 12-into-1). Pipes now go round
