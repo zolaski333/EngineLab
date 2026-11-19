@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-19 — owner: setting up an H-pipe or an X-pipe in the Exhaust designer is "horrible"
+
+- Frictions found: the designer's connections never set port 2, so a hand-drawn H was a Y-split into a Y-merge (the jet pump of 2026-10-30, drawn as a downstream branch); a dual exhaust as two paths (flat-6, Merlin, designed "Dual" V8) could not take one at all ("- PATH" keeps one pipe); by hand 3 parts, 2 deletions, 6 drags, edits (a 1.5 L collector, 58/80 mm defaults); New engine refused one bank.
+- Kept: `addCrossover` (+ H-PIPE / + X-PIPE), the designer's H/X in the best pair of pipes to different tailpipes, cut at 0.35 L; two paths joined first, both graphs whole. New engine: one bank = split, then the same call.
+- `EngineLab.EngineDesign`: the one-click H on the designed dual V8 equals the designer's H part for part (type, length, bore, volume, K, k, 2 side ports). `EngineLab.ExhaustPathTopologyEditor`: H/X on graph and scalar dual V8, a second H, refusals (one pipe; two turbo paths). It caught the junctions' 300 mm config default (each side +600 mm).
+- Still refused: two turbocharged paths (a turbine per path collector; one graph with two collectors has none).
+- Physics, gas, audio code untouched; catalogue engines and every design that built before build as before (no harness run: no input of theirs reaches the changed code). One-click H on the scalar flat-6 not checked in 3-D; not seen in the app on screen.
+
 ## 2026-11-19 — users: silenced exhausts "blow" over the engine (2JZ); the muffler flow noise
 
 - Cause: `MufflerFlowNoise` (0.10.0). The 2JZ's turbo_downpipe box is a 25 % perforate at L/D 7.3, held to 6: eta_w 77 + 4 x 6 = 101 dB, 20 dB over a plain chamber's plateau (81.5). Its observed jet+flow peak 1.3 Pa (flow off) -> 26.3 Pa.

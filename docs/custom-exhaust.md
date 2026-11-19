@@ -45,6 +45,24 @@ not touch the running engine until the copy is applied.
    and its length when both types have one) or to **Delete** it. The same
    menu fits an active valve: **Bypass it with an active valve**, **Active
    valve at its inlet** (a pipe) and **Valve actuator settings...** (below).
+   **+ H-PIPE** and **+ X-PIPE**, on the flow view's title line, join the
+   banks' pipes in one click (`ExhaustNetworkEditor::addCrossover`): the two
+   pipes running to different tailpipes, each fed by one part and feeding one
+   (no primary, no valved pipe), preferring two that carry every cylinder
+   between them, each side its own, then two ahead of the silencers, then the
+   longest. Each is cut at 0.35 of its length (each piece at least 100 mm when
+   the pipe has 200) and the H (a compact splitter and merge, a 250 mm
+   balance pipe of the narrower bore on their side ports) or the X (a compact
+   crossover of the narrower bore, k 0.30, K 0.06) goes in the cut, as the
+   New engine window builds them. A dual exhaust drawn as two paths (the
+   flat-6, the Merlin, a designed "Dual" V8) first becomes one path, both
+   graphs whole (scalar paths become the graph they were drawn from); with
+   more than two paths, the other one is the one chosen in **Destination
+   path**. A second click adds a second one. Refused, saying why: an exhaust
+   with one pipe after its collector, and two paths each on its own turbine
+   (the simulator bolts a turbine to each path's collector, and one graph
+   with two collectors has none). The new balance pipe or X is selected, its
+   sizes editable; **UNDO** takes it off.
 4. Connect the parts in flow order. A cylinder is a source like any part: it
    can feed any part but an X-pipe, picked in **From** (the cylinders follow
    the components) or dragged on the canvas. Drag from a node or a cylinder
@@ -339,7 +357,10 @@ higher (a designed 6.2 V8 at 3,185 rpm drives it 13.9 kPa either way over
 the cycle). Without the side branch it was a jet pump, the splitter ramming
 its side's flow into it and the merge drawing it out, 0-24 kPa one way at
 every crank angle. Port `2` joins a merge or a splitter to a duct, never to
-another junction. The designer builds it (`exhaust_system: h_pipe`).
+another junction. The designer builds it (`exhaust_system: h_pipe`); on one
+bank it splits the collector into two pipes first, as `dual`, then joins
+them as the exhaust designer's **+ H-PIPE** (likewise `x_pipe`). Drawn by
+hand, the designer's connections never make a port `2`: use **+ H-PIPE**.
 
 ### Terminal resonator
 

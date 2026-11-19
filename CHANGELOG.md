@@ -7,6 +7,19 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **H-pipe and X-pipe in one click.** The exhaust designer has **+ H-PIPE**
+  and **+ X-PIPE** on its flow view: one click joins the banks' two pipes a
+  third of the way from the collectors, with a 250 mm balance pipe or a
+  compact X of the pipes' bore, built exactly as the New engine window's.
+  A dual exhaust drawn as two paths (the flat-6, the Merlin, a designed
+  "Dual" V8) becomes one path first, both exhausts kept. Before, an H had to
+  be drawn part by part and could not be drawn correctly at all (the
+  connections never made the balance pipe a side branch), and two paths
+  could not be joined without losing one exhaust. The new part is selected
+  to edit its sizes; Undo takes it off. Engines without one are unchanged.
+
 ### Fixed
 
 - **No more pipes through the engine in the 3-D view.** On X, W and other
@@ -31,6 +44,12 @@ file formats, always with an in-memory migration).
   included, only the drawing changes.
 
 ### Changed
+
+- **The New engine window builds an H-pipe or an X-pipe on a one-bank
+  engine** (an inline, a single rotor bank, turbocharged or not): its
+  collector is split into two pipes, then joined. It was refused ("this
+  engine has one bank"). Two banks on a turbocharged engine are still
+  refused, as before: the simulator bolts a turbine to each collector.
 
 - **Silenced exhausts no longer hiss over the engine.** The silencer flow
   noise added in 0.10.0 buried the note of engines with a silencer (the 2JZ
