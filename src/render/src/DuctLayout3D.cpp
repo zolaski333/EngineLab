@@ -3199,6 +3199,9 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
         auto up = -downAxis - direction * dot(-downAxis, direction);
         up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
         appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
+        bodies.bores.push_back({ face, direction, throttle,
+                                 geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up,
+                                 geometry.individualThrottles });
         mouths.push_back(face + direction * bodyLength);
         mouthCentre += mouths.back();
     }
@@ -3418,6 +3421,8 @@ std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const s
                        manifoldLength, 24);
         const auto face = manifoldStart + direction * manifoldLength;
         appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
+        bodies.bores.push_back({ face, direction, throttle,
+                                 geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up, false });
         bodies.centreline = { port->position, face + direction * (1.1F * throttle) };
         pieces.push_back(std::move(bodies));
         mouths.push_back({ face + direction * (1.1F * throttle), direction, throttle, path.id });

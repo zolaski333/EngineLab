@@ -2,9 +2,11 @@
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <limits>
 #include <utility>
@@ -88,14 +90,57 @@ void appendShaft(Mesh& mesh, Vec3 centreXY, float zStart, float length, float ra
                    radius, radius, length, segments);
 }
 
-/** Visible flame strength over the cycle: a short kernel before TDC, then a
-    fast rise and an exponential burn-out through the first 75 degrees. */
-[[nodiscard]] float burnEnvelope(double phaseDegrees, double cycleDegrees) noexcept {
-    const auto p = static_cast<float>(phaseDegrees);
-    const auto sparkRamp = static_cast<float>(cycleDegrees) - 15.0F;
-    if (p < 75.0F) return std::exp(-p / 24.0F) * std::min(1.0F, p / 5.0F + 0.25F);
-    if (p > sparkRamp) return (p - sparkRamp) / 15.0F * 0.25F;
-    return 0.0F;
+/** Visible flame strength over the cycle: a kernel from the spark,
+    `sparkFromTdcDegrees` (negative before firing TDC), growing to a quarter
+    by TDC, then a fast rise and an exponential burn-out through 75 degrees.
+    A spark after TDC (a retarded map) starts the rise there. */
+[[nodiscard]] float burnEnvelope(double phaseDegrees, double cycleDegrees, double sparkFromTdcDegrees) noexcept {
+    auto p = static_cast<float>(phaseDegrees);
+    if (p > 0.5F * static_cast<float>(cycleDegrees)) p -= static_cast<float>(cycleDegrees);
+    const auto spark = std::clamp(static_cast<float>(sparkFromTdcDegrees), -0.25F * static_cast<float>(cycleDegrees), 60.0F);
+    if (p < spark) return 0.0F;
+    if (p < 0.0F) return 0.25F * (p - spark) / std::max(1.0e-3F, -spark);
+    const auto q = p - std::max(0.0F, spark);
+    if (q >= 75.0F) return 0.0F;
+    return std::exp(-q / 24.0F) * std::min(1.0F, q / 5.0F + 0.25F);
+}
+
+/** Whether `phase` lies in the window from `start` to `end`, wrapping. */
+[[nodiscard]] bool insideWindow(double phase, double start, double end, double cycle) noexcept {
+    const auto span = std::fmod(std::fmod(end - start, cycle) + cycle, cycle);
+    return std::fmod(std::fmod(phase - start, cycle) + cycle, cycle) <= span;
+}
+
+/** A frame whose +Y is `axis`, its other two axes perpendicular. */
+[[nodiscard]] std::array<Vec3, 3> axesAlong(Vec3 axis) noexcept {
+    const auto frame = Mat4::frameAlongY({}, axis);
+    return { Vec3 { frame.at(0, 0), frame.at(1, 0), frame.at(2, 0) }, axis,
+             Vec3 { frame.at(0, 2), frame.at(1, 2), frame.at(2, 2) } };
+}
+
+/** A unit vector perpendicular to `axis`, the world's `preferred` where it can. */
+[[nodiscard]] Vec3 perpendicularTo(Vec3 axis, Vec3 preferred) noexcept {
+    auto across = cross(axis, preferred);
+    if (length(across) < 1.0e-3F) across = cross(axis, Vec3 { 1.0F, 0.0F, 0.0F });
+    if (length(across) < 1.0e-3F) across = cross(axis, Vec3 { 0.0F, 0.0F, 1.0F });
+    return normalise(across);
+}
+
+/** 2-D convex hull, counter-clockwise (Andrew's monotone chain). */
+[[nodiscard]] std::vector<Vec2> hull2(std::vector<Vec2> points) {
+    std::sort(points.begin(), points.end(), [](Vec2 a, Vec2 b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+    const auto turn = [](Vec2 o, Vec2 a, Vec2 b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+    std::vector<Vec2> hull;
+    for (int pass = 0; pass < 2; ++pass) {
+        const auto start = hull.size();
+        for (std::size_t k = 0; k < points.size(); ++k) {
+            const auto p = pass == 0 ? points[k] : points[points.size() - 1U - k];
+            while (hull.size() >= start + 2U && turn(hull[hull.size() - 2U], hull.back(), p) <= 0.0F) hull.pop_back();
+            hull.push_back(p);
+        }
+        hull.pop_back();
+    }
+    return hull;
 }
 
 [[nodiscard]] std::vector<float> zOffsets(std::uint32_t count, float bore) {
@@ -150,6 +195,14 @@ EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
     }
     buildDucts();
     buildGearbox(true);
+    if (!throws_.empty())
+        crankSense_ = std::remainder(throwRotation(throws_.front(), 10.0) - throwRotation(throws_.front(), 0.0), 2.0F * pi)
+                >= 0.0F ? 1.0F : -1.0F;
+    buildValvetrain();
+    buildIgnitionAndInjection();
+    buildControls();
+    buildNitrous();
+    farParts_.resize(parts_.size(), false);
     computeBounds();
 }
 
@@ -310,7 +363,9 @@ void EngineModel3D::poseRotary(const ScenePoseInput& input, std::vector<SceneIns
         const Vec3 at { centre.x + 0.62F * radius * std::cos(middle), centre.y + 0.62F * radius * std::sin(middle),
                         rotor.z };
         const auto phase = cyclePhaseDegrees(i, input.crankAngleDegrees);
-        const auto burn = burnEnvelope(phase, cycleDegreesOf(config_.cycle)) * std::clamp(input.combustion[i], 0.0F, 1.0F);
+        const auto burn = burnEnvelope(phase, cycleDegreesOf(config_.cycle),
+                                       -input.ignitionAdvanceDegrees + config_.cylinders[i].ignitionOffsetDegrees)
+            * std::clamp(input.combustion[i], 0.0F, 1.0F);
         const auto scale = 0.6F + 0.5F * burn;
         const Vec3 along { -std::sin(middle), std::cos(middle), 0.0F };
         const Vec3 outward { std::cos(middle), std::sin(middle), 0.0F };
@@ -1003,7 +1058,8 @@ void EngineModel3D::buildDucts() {
             farParts_[part] = !piece.nearEngine;
             ducts_.push_back({ piece.kind, piece.pathId, piece.elementId, piece.componentType, part,
                                std::move(piece.centreline), piece.authoredLengthMm, std::move(piece.radii),
-                               piece.opensToAtmosphere, piece.openEnd, piece.openAxis, piece.foldedMm });
+                               piece.opensToAtmosphere, piece.openEnd, piece.openAxis, piece.foldedMm,
+                               std::move(piece.bores) });
             if (piece.kind == DuctKind::intakeRunner)
                 for (std::size_t i = 0; i < cylinders_.size(); ++i)
                     if (config_.cylinders[i].id == piece.elementId) cylinders_[i].runnerPart = part;
@@ -1427,11 +1483,16 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
         const auto high = i < 32U && ((input.vtecHighCylinderMask >> i) & 1U) != 0U;
         // A two-stroke's ports are in the cylinder wall: its valves stay shut.
         const auto valves = config_.cycle != EngineCycle::twoStroke;
-        const auto intakeLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 + cams.intakeCenterlineDegrees,
+        // The variable cam timing advances the lobes and scales their lift,
+        // as the simulator's valve train does (ValveTrainModel).
+        const auto liftScale = std::max(0.0, static_cast<double>(input.valveLiftMultiplier[i]));
+        const auto intakeLift = !valves ? 0.0 : liftScale * profiledValveLiftMm(phase,
+            360.0 + cams.intakeCenterlineDegrees - input.intakeCamAdvanceDegrees[i],
             high ? cams.highIntakeDurationDegrees : cams.intakeDurationDegrees,
             high ? cams.highIntakeLiftMm : cams.intakeLiftMm,
             high && !cams.highIntakeLiftProfile.empty() ? cams.highIntakeLiftProfile : cams.intakeLiftProfile);
-        const auto camExhaustLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 - cams.exhaustCenterlineDegrees,
+        const auto camExhaustLift = !valves ? 0.0 : liftScale * profiledValveLiftMm(phase,
+            360.0 - cams.exhaustCenterlineDegrees - input.exhaustCamAdvanceDegrees[i],
             high ? cams.highExhaustDurationDegrees : cams.exhaustDurationDegrees,
             high ? cams.highExhaustLiftMm : cams.exhaustLiftMm,
             high && !cams.highExhaustLiftProfile.empty() ? cams.highExhaustLiftProfile : cams.exhaustLiftProfile);
@@ -1444,7 +1505,9 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
         out[cylinder.intakeValvePart].transform = Mat4::translation(cylinder.intakeValveAxis * -static_cast<float>(intakeLift));
         out[cylinder.exhaustValvePart].transform = Mat4::translation(cylinder.exhaustValveAxis * -static_cast<float>(exhaustLift));
 
-        const auto burn = burnEnvelope(phase, cycleDegreesOf(config_.cycle)) * std::clamp(input.combustion[i], 0.0F, 1.0F);
+        const auto burn = burnEnvelope(phase, cycleDegreesOf(config_.cycle),
+                                       -input.ignitionAdvanceDegrees + config_.cylinders[i].ignitionOffsetDegrees)
+            * std::clamp(input.combustion[i], 0.0F, 1.0F);
         const auto scale = 0.6F + 0.5F * burn;
         const auto x = normalise(cross(cylinder.axis, zAxis));
         out[cylinder.flamePart].transform = Mat4::basis(x * scale, cylinder.axis * (scale * 0.45F), zAxis * scale,
@@ -1466,6 +1529,8 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
                 * -static_cast<float>(1.0 - std::clamp(input.powerValveOpening, 0.0, 1.0)));
     }
     for (const auto part : outletFlameParts_) out[part].intensity = std::clamp(input.afterfire, 0.0F, 1.0F);
+    poseCycleParts(input, out);
+    poseControls(input, out);
     for (std::size_t index = 0; index < turbos_.size(); ++index) {
         // Both wheels turn with the shaft, about its axis; each unit a little
         // out of phase with the next, so a pair does not look geared together.
@@ -1526,6 +1591,23 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
 PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
     for (std::size_t r = 0; r < rotors_.size(); ++r)
         if (part == rotors_[r].part) return { PartRole::piston, static_cast<int>(3U * r), -1 };
+    for (const auto& cam : camshafts_)
+        if (part == cam.part) return { PartRole::camshaft, static_cast<int>(cam.cylinder), -1, -1, cam.exhaust };
+    if (std::find(camDriveParts_.begin(), camDriveParts_.end(), part) != camDriveParts_.end())
+        return { PartRole::camshaft, -1, -1 };
+    if (part == sparkPlugPart_ && part != 0xFFFFU) return { PartRole::sparkPlug, -1, -1 };
+    if (part == nitrousPart_ && part != 0xFFFFU) return { PartRole::nitrous, -1, -1 };
+    for (const auto& control : controlParts_) {
+        if (part != control.part) continue;
+        switch (control.kind) {
+        case ControlPart::Kind::throttlePlate:
+        case ControlPart::Kind::throttleSlide: return { PartRole::throttlePlate, -1, control.duct };
+        case ControlPart::Kind::exhaustValve: return { PartRole::duct, -1, control.duct };
+        case ControlPart::Kind::wastegate:
+        case ControlPart::Kind::blowOff: return { PartRole::turbo, -1, -1, control.turbo };
+        case ControlPart::Kind::nitrousSpray: return { PartRole::nitrous, -1, -1 };
+        }
+    }
     for (std::size_t i = 0; i < cylinders_.size(); ++i) {
         const auto& c = cylinders_[i];
         const auto cylinder = static_cast<int>(i);
@@ -1537,6 +1619,9 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
         if (part == c.linerPart) return { PartRole::liner, cylinder, -1 };
         if (part == c.injectorPart) return { PartRole::injector, cylinder, -1 };
         if (part == c.powerValvePart) return { PartRole::powerValve, cylinder, -1 };
+        if (part == c.sprayPart) return { PartRole::injector, cylinder, -1 };
+        if (part == c.sparkPart) return { PartRole::sparkPlug, cylinder, -1 };
+        if (part == c.vtecPinPart) return { PartRole::camshaft, cylinder, -1 };
     }
     for (std::size_t d = 0; d < ducts_.size(); ++d)
         if (ducts_[d].part == part) {
@@ -1616,6 +1701,559 @@ std::optional<PartHit> pickPart(const EngineModel3D& model, const std::vector<Sc
         for (const auto& [part, span] : ducts)
             if (part == best->part && solid->distance > span.near && solid->distance < span.far) return solid;
     return best;
+}
+
+float EngineModel3D::camshaftRadians(double crankAngleDegrees, double advanceDegrees) const noexcept {
+    // The cam turns once every two crank turns: wrapped over 720 degrees of
+    // crank, its angle wraps over 360.
+    const auto crank = std::fmod(crankAngleDegrees + advanceDegrees, 720.0);
+    return crankSense_ * static_cast<float>(0.5 * crank * (std::numbers::pi / 180.0));
+}
+
+float EngineModel3D::throttlePlateRadians(double throttle) noexcept {
+    // Set 7 degrees off square at rest, as production bodies are.
+    constexpr auto rest = 7.0F * pi / 180.0F;
+    return rest + static_cast<float>(std::clamp(throttle, 0.0, 1.0)) * (0.5F * pi - rest);
+}
+
+void EngineModel3D::buildValvetrain() {
+    // A poppet-valve four-stroke's overhead cams: one intake and one exhaust
+    // shaft per bank, a lobe over each valve, turning at half the crank's
+    // speed, driven from the crank's nose by one chain. A radial's pushrods
+    // and a two-stroke's or a rotary's ports have none.
+    if (config_.cycle != EngineCycle::fourStroke || radialLike_ || cylinders_.empty() || throws_.empty()) return;
+    std::vector<std::vector<std::size_t>> groups;
+    for (std::size_t i = 0; i < cylinders_.size(); ++i) {
+        const auto* bank = bankFor(config_, config_.cylinders[i]);
+        const auto key = bank == nullptr ? 0U : static_cast<std::size_t>(bank - config_.banks.data());
+        if (groups.size() <= key) groups.resize(key + 1U);
+        groups[key].push_back(i);
+    }
+    float zFront = 1.0e9F, bore = 0.0F;
+    for (const auto& c : cylinders_) {
+        zFront = std::min(zFront, c.z);
+        bore = std::max(bore, c.bore);
+    }
+    // The chain runs in front of the first liner, inside the block's front,
+    // on the crank's front main journal just behind the nose pulley.
+    const auto driveZ = zFront - 0.5F * std::max(pitch_, 1.2F * bore) + 0.04F * bore;
+    const auto vtec = vtecCamsFitted(config_);
+    const auto origin = throws_.front().origin;
+    std::vector<std::pair<Vec2, float>> wheels { { { origin.x, origin.y }, 0.30F * bore } };
+    for (const auto& group : groups) {
+        if (group.empty()) continue;
+        const auto& first = cylinders_[group.front()];
+        float b = 0.0F, zMax = -1.0e9F;
+        for (const auto index : group) {
+            b = std::max(b, cylinders_[index].bore);
+            zMax = std::max(zMax, cylinders_[index].z);
+        }
+        const auto r0 = 0.16F * b;
+        std::array<Vec3, 2> centres {};
+        std::array<Mesh, 2> meshes {};
+        for (const auto exhaust : { false, true }) {
+            const auto sideSign = exhaust ? 1.0F : -1.0F;
+            const auto valveAxis = exhaust ? first.exhaustValveAxis : first.intakeValveAxis;
+            // Over the valve's stem tip (0.76 bore along its axis from the seat)
+            // by the base circle: a bucket follower under each lobe.
+            const auto seat = first.deckCentre + first.exhaustSide * (sideSign * 0.22F * b) + first.axis * 0.6F;
+            auto centre = seat + valveAxis * (0.76F * b + r0 + 0.005F * b);
+            centre.z = 0.0F;
+            centres[exhaust ? 1U : 0U] = centre;
+            auto& mesh = meshes[exhaust ? 1U : 0U];
+            appendShaft(mesh, centre, driveZ - 0.03F * b, zMax + 0.40F * std::max(pitch_, 1.2F * bore) - driveZ + 0.03F * b, 0.07F * b, 16);
+            const auto down = normalise(Vec3 { -valveAxis.x, -valveAxis.y, 0.0F });
+            // A lobe of `liftMm` over its base circle, its flanks tangent to a
+            // nose circle sized so that the lift lasts its duration (a cam
+            // turns through a quarter of the crank's duration either side of
+            // the nose), drawn where it points with the crank at 0.
+            const auto lobe = [&](std::size_t cylinder, float z, double peakPhase, double duration, double liftMm,
+                                  float width) {
+                const auto turn = static_cast<float>(crankSense_ * 0.5
+                    * (-cylinders_[cylinder].crankOffsetDegrees - peakPhase) * (std::numbers::pi / 180.0));
+                const Vec3 nose { down.x * std::cos(turn) - down.y * std::sin(turn),
+                                  down.x * std::sin(turn) + down.y * std::cos(turn), 0.0F };
+                const auto lift = std::max(0.5F, static_cast<float>(liftMm));
+                const auto half = std::clamp(static_cast<float>(duration) * 0.25F, 20.0F, 85.0F) * pi / 180.0F;
+                const auto c = std::cos(half);
+                const auto rn = std::clamp(r0 - c * lift / std::max(1.0e-3F, 1.0F - c), 0.15F * r0, r0);
+                const auto reach = r0 + lift - rn;
+                std::vector<Vec2> outline;
+                for (int k = 0; k < 28; ++k) {
+                    const auto a = 2.0F * pi * static_cast<float>(k) / 28.0F;
+                    outline.push_back({ centre.x + r0 * std::cos(a), centre.y + r0 * std::sin(a) });
+                    outline.push_back({ centre.x + nose.x * reach + rn * std::cos(a),
+                                        centre.y + nose.y * reach + rn * std::sin(a) });
+                }
+                appendConvexExtrusion(mesh, Mat4::translation({ 0.0F, 0.0F, z }), outline, width);
+            };
+            for (const auto index : group) {
+                const auto& c = cylinders_[index];
+                if (c.cams == nullptr) continue;
+                const auto& cams = *c.cams;
+                const auto& cylinderConfig = config_.cylinders[index];
+                const auto count = std::clamp<std::uint32_t>(
+                    exhaust ? cylinderConfig.exhaustValveCount : cylinderConfig.intakeValveCount, 1U, 3U);
+                const auto peak = exhaust ? 360.0 - cams.exhaustCenterlineDegrees : 360.0 + cams.intakeCenterlineDegrees;
+                const auto lateral = normalise(cross(c.axis, c.exhaustSide));
+                for (const auto offset : zOffsets(count, c.bore))
+                    lobe(index, c.z + lateral.z * offset, peak,
+                         exhaust ? cams.exhaustDurationDegrees : cams.intakeDurationDegrees,
+                         exhaust ? cams.exhaustLiftMm : cams.intakeLiftMm, 0.11F * c.bore);
+                // VTEC: the high lobe between a pair of valves, its middle
+                // follower locked to theirs by a pin when it engages.
+                if (vtec && count == 2U)
+                    lobe(index, c.z, peak, exhaust ? cams.highExhaustDurationDegrees : cams.highIntakeDurationDegrees,
+                         exhaust ? cams.highExhaustLiftMm : cams.highIntakeLiftMm, 0.13F * c.bore);
+            }
+        }
+        // The sprockets: as large as the two shafts leave room for, a
+        // timing mark on each so their half speed reads.
+        const auto sprocket = std::min(0.34F * b, 0.48F * length(centres[1] - centres[0]));
+        for (std::size_t k = 0; k < 2U; ++k) {
+            appendShaft(meshes[k], centres[k], driveZ - 0.03F * b, 0.06F * b, sprocket, 36);
+            appendBox(meshes[k], Mat4::translation({ centres[k].x, centres[k].y + 0.75F * sprocket, driveZ - 0.035F * b }),
+                      { 0.05F * b, 0.4F * sprocket, 0.02F * b });
+            const auto part = addPart(std::move(meshes[k]), SceneMaterial::steel, layerValves);
+            camshafts_.push_back({ part, centres[k], k == 1U, group.front() });
+            wheels.push_back({ { centres[k].x, centres[k].y }, sprocket });
+        }
+        // VTEC's lock pins, in line with the crank under the middle follower:
+        // they slide across into the valves' followers when it engages.
+        if (vtec)
+            for (const auto index : group) {
+                auto& c = cylinders_[index];
+                if (config_.cylinders[index].intakeValveCount != 2U && config_.cylinders[index].exhaustValveCount != 2U)
+                    continue;
+                Mesh pins;
+                for (const auto exhaust : { false, true }) {
+                    const auto valveAxis = exhaust ? c.exhaustValveAxis : c.intakeValveAxis;
+                    const auto tip = c.deckCentre + c.exhaustSide * ((exhaust ? 1.0F : -1.0F) * 0.22F * c.bore)
+                        + c.axis * 0.6F + valveAxis * (0.72F * c.bore);
+                    appendShaft(pins, { tip.x, tip.y, 0.0F }, c.z - 0.09F * c.bore, 0.18F * c.bore, 0.035F * c.bore, 12);
+                }
+                c.vtecPinPart = addPart(std::move(pins), SceneMaterial::intakeValve, layerValves);
+                c.vtecPinSlide = zAxis * (0.12F * c.bore);
+            }
+    }
+    // The crank's sprocket turns with the crank (its first throw's frame).
+    Mesh crankSprocket;
+    appendShaft(crankSprocket, {}, driveZ - 0.03F * bore, 0.06F * bore, 0.30F * bore, 32);
+    appendBox(crankSprocket, Mat4::translation({ 0.0F, 0.22F * bore, driveZ - 0.035F * bore }),
+              { 0.05F * bore, 0.12F * bore, 0.02F * bore });
+    const auto crankPart = addPart(std::move(crankSprocket), SceneMaterial::steel, layerValves);
+    rotatingParts_.push_back(crankPart);
+    rotatingThrow_.push_back(0U);
+    camDriveParts_.push_back(crankPart);
+    // The chain: round every sprocket, the hull of their rims.
+    std::vector<Vec2> rim;
+    for (const auto& [wheel, radius] : wheels)
+        for (int k = 0; k < 36; ++k) {
+            const auto a = 2.0F * pi * static_cast<float>(k) / 36.0F;
+            rim.push_back({ wheel.x + (radius + 0.02F * bore) * std::cos(a), wheel.y + (radius + 0.02F * bore) * std::sin(a) });
+        }
+    const auto loop = hull2(std::move(rim));
+    if (loop.size() >= 3U) {
+        std::vector<Vec3> chain;
+        for (const auto point : loop) chain.push_back({ point.x, point.y, driveZ });
+        chain.push_back(chain.front());
+        Mesh mesh;
+        appendTube(mesh, chain, { 0.022F * bore }, 8);
+        camDriveParts_.push_back(addPart(std::move(mesh), SceneMaterial::forged, layerValves));
+    }
+}
+
+void EngineModel3D::buildIgnitionAndInjection() {
+    if (config_.cycle == EngineCycle::rotary) return;
+    const auto diesel = config_.fuel == FuelType::diesel;
+    Mesh plugs;
+    for (std::size_t i = 0; i < cylinders_.size(); ++i) {
+        auto& c = cylinders_[i];
+        const auto b = c.bore;
+        if (!diesel) {
+            // The plug on the cylinder's axis between the valves: a two-stroke's
+            // head already carries its stub.
+            c.sparkPoint = c.deckCentre - c.axis * (0.03F * b);
+            if (config_.cycle == EngineCycle::fourStroke) {
+                const auto frame = [&](float along) { return cylinderFrame(c.deckCentre + c.axis * along, c.axis); };
+                appendCylinder(plugs, frame(-0.02F * b), 0.05F * b, 0.05F * b, 0.64F * b, 12);
+                appendCylinder(plugs, frame(0.62F * b), 0.1F * b, 0.1F * b, 0.08F * b, 6);
+                appendCylinder(plugs, frame(0.70F * b), 0.045F * b, 0.04F * b, 0.16F * b, 12);
+                appendCylinder(plugs, frame(0.86F * b), 0.02F * b, 0.02F * b, 0.04F * b, 8);
+            }
+            Mesh spark;
+            appendSphere(spark, Mat4::identity(), 0.07F * b, 12, 8);
+            c.sparkPart = addPart(std::move(spark), SceneMaterial::flame, layerCombustion);
+        }
+        if (c.injectorPart == 0xFFFFU) continue;
+        // The spray: from the nozzle to the back of the intake valve (port),
+        // into the chamber (direct), at the reeds (a ported two-stroke).
+        const auto direct = config_.injection.mode == InjectionMode::direct;
+        const auto anchor = std::find_if(intakePorts_.begin(), intakePorts_.end(),
+            [&](const PortAnchor& port) { return port.cylinderId == config_.cylinders[i].id; });
+        auto reach = 0.55F * b;
+        if (!direct && anchor != intakePorts_.end())
+            reach = 0.9F * length((anchor->transferDuct.empty() ? anchor->inner : anchor->position) - c.injectorTip);
+        c.sprayReach = std::max(0.2F * b, reach);
+        Mesh spray;
+        appendCylinder(spray, Mat4::identity(), 0.012F * b, (direct ? 0.5F : 0.18F) * c.sprayReach, c.sprayReach, 16,
+                       false, true);
+        c.sprayPart = addPart(std::move(spray), SceneMaterial::spray, direct ? layerCombustion : layerIntake);
+    }
+    if (!plugs.empty()) sparkPlugPart_ = addPart(std::move(plugs), SceneMaterial::steel, layerCombustion);
+}
+
+void EngineModel3D::buildControls() {
+    // Throttle plates and slides, where the layout drew the bores.
+    for (std::size_t d = 0; d < ducts_.size(); ++d) {
+        for (const auto& bore : ducts_[d].bores) {
+            const auto t = bore.diameterMm;
+            const auto direction = normalise(bore.direction);
+            const auto up = normalise(bore.up - direction * dot(bore.up, direction));
+            const auto middle = bore.face + direction * (0.55F * t);
+            ControlPart control;
+            control.duct = static_cast<int>(d);
+            Mesh mesh;
+            if (bore.slide) {
+                // The slide shut on the bore's floor, its needle down into the
+                // jet; it rises into its tower.
+                const auto base = middle - up * (0.5F * t);
+                appendCylinder(mesh, Mat4::frameAlongY(base, up), 0.36F * t, 0.36F * t, 0.95F * t, 20);
+                appendCylinder(mesh, Mat4::frameAlongY(base, -up), 0.03F * t, 0.012F * t, 0.55F * t, 8);
+                control.kind = ControlPart::Kind::throttleSlide;
+                control.centre = base;
+                control.normal = up;
+                control.size = 0.92F * t;
+            } else {
+                appendCylinder(mesh, Mat4::translation({ 0.0F, -0.0125F * t, 0.0F }), 0.48F * t, 0.48F * t, 0.025F * t, 28);
+                appendCylinder(mesh, Mat4::frameAlongY({ -0.6F * t, 0.0F, 0.0F }, xAxis), 0.03F * t, 0.03F * t, 1.2F * t, 8);
+                control.kind = ControlPart::Kind::throttlePlate;
+                control.centre = middle;
+                control.normal = direction;
+                control.hinge = normalise(cross(direction, up));
+                control.size = 0.48F * t;
+                control.heldOpen = bore.heldOpen;
+            }
+            control.part = addPart(std::move(mesh), SceneMaterial::steel, layerIntake);
+            controlParts_.push_back(control);
+        }
+        // Individual throttles: a plate in each runner, where the simulator
+        // puts its restriction face (from the valve, or 55 % of the runner).
+        const auto& duct = ducts_[d];
+        if (duct.kind != DuctKind::intakeRunner || duct.centreline.size() < 2U || duct.radii.size() != duct.centreline.size())
+            continue;
+        const auto path = std::find_if(config_.intakePaths.begin(), config_.intakePaths.end(),
+            [&](const IntakePathConfig& item) { return item.id == duct.pathId; });
+        if (path == config_.intakePaths.end() || !path->geometry.individualThrottles) continue;
+        // A runner's centreline starts at its port.
+        const auto& line = duct.centreline;
+        const auto total = polylineLength(line);
+        auto fromValve = path->geometry.throttleDistanceFromValveMm > 0.0
+            ? std::min(total, static_cast<float>(path->geometry.throttleDistanceFromValveMm)) : 0.55F * total;
+        std::size_t k = 1U;
+        while (k + 1U < line.size() && length(line[k] - line[k - 1U]) < fromValve) {
+            fromValve -= length(line[k] - line[k - 1U]);
+            ++k;
+        }
+        const auto span = std::max(1.0e-3F, length(line[k] - line[k - 1U]));
+        const auto share = std::clamp(fromValve / span, 0.0F, 1.0F);
+        // The plate's normal points the way the air flows, towards the port.
+        const auto direction = normalise(line[k - 1U] - line[k]);
+        const auto centre = line[k - 1U] + (line[k] - line[k - 1U]) * share;
+        const auto radius = 0.85F * (duct.radii[k - 1U] + share * (duct.radii[k] - duct.radii[k - 1U]));
+        Mesh mesh;
+        appendCylinder(mesh, Mat4::translation({ 0.0F, -0.025F * radius, 0.0F }), radius, radius, 0.05F * radius, 24);
+        appendCylinder(mesh, Mat4::frameAlongY({ -1.25F * radius, 0.0F, 0.0F }, xAxis), 0.06F * radius, 0.06F * radius,
+                       2.5F * radius, 8);
+        ControlPart control;
+        control.kind = ControlPart::Kind::throttlePlate;
+        control.duct = static_cast<int>(d);
+        control.centre = centre;
+        control.normal = direction;
+        control.hinge = perpendicularTo(direction, yAxis);
+        control.size = radius;
+        control.part = addPart(std::move(mesh), SceneMaterial::steel, layerIntake);
+        controlParts_.push_back(control);
+    }
+
+    // The active exhaust valves: a butterfly in the inlet face of each part
+    // that carries one (ExhaustComponentConfig::inletValve).
+    for (std::size_t d = 0; d < ducts_.size(); ++d) {
+        const auto& duct = ducts_[d];
+        if (duct.kind != DuctKind::exhaustComponent || duct.centreline.size() < 2U || duct.radii.empty()) continue;
+        const auto path = std::find_if(config_.exhaustPaths.begin(), config_.exhaustPaths.end(),
+            [&](const ExhaustPathConfig& item) { return item.id == duct.pathId; });
+        if (path == config_.exhaustPaths.end() || !path->network) continue;
+        const auto& components = path->network->components;
+        const auto component = std::find_if(components.begin(), components.end(),
+            [&](const ExhaustComponentConfig& item) { return item.id == duct.elementId; });
+        if (component == components.end() || !component->inletValve) continue;
+        const auto direction = normalise(duct.centreline[1] - duct.centreline[0]);
+        const auto radius = 0.85F * duct.radii.front();
+        Mesh mesh;
+        appendCylinder(mesh, Mat4::translation({ 0.0F, -0.03F * radius, 0.0F }), radius, radius, 0.06F * radius, 24);
+        appendCylinder(mesh, Mat4::frameAlongY({ -1.3F * radius, 0.0F, 0.0F }, xAxis), 0.07F * radius, 0.07F * radius,
+                       2.6F * radius, 8);
+        ControlPart control;
+        control.kind = ControlPart::Kind::exhaustValve;
+        control.duct = static_cast<int>(d);
+        control.centre = duct.centreline.front() + direction * (1.2F * radius);
+        control.normal = direction;
+        control.hinge = perpendicularTo(direction, yAxis);
+        control.size = radius;
+        control.part = addPart(std::move(mesh), SceneMaterial::steel, layerExhaust);
+        controlParts_.push_back(control);
+    }
+
+    // Each turbocharger's wastegate flap, in the turbine's outlet beside the
+    // exducer, and its blow-off valve on the compressor's outlet.
+    const auto& forced = config_.forcedInduction;
+    for (std::size_t index = 0; index < turbos_.size(); ++index) {
+        const auto& turbo = turbos_[index];
+        const auto axis = turbo.axis;
+        if (forced.wastegateFlowAreaMm2 > 0.0) {
+            const auto shell = turbo.turbineWheelRadius + 5.0F;
+            const auto away = normalise(turbo.radial * -1.0F - axis * dot(turbo.radial * -1.0F, axis));
+            const auto flap = 0.28F * shell;
+            const auto port = turbo.turbineCentre + axis * (0.5F * turbo.turbineWidth + 1.5F) + away * (0.52F * shell);
+            Mesh mesh;
+            appendCylinder(mesh, Mat4::translation({ 0.0F, -0.04F * flap, 0.0F }), flap, flap, 0.08F * flap, 20);
+            appendCylinder(mesh, Mat4::frameAlongY({ -0.5F * flap, 0.0F, flap }, xAxis), 0.1F * flap, 0.1F * flap, flap, 8);
+            appendBox(mesh, Mat4::translation({ 0.0F, 0.12F * flap, 0.55F * flap }), { 0.25F * flap, 0.12F * flap, 0.9F * flap });
+            ControlPart control;
+            control.kind = ControlPart::Kind::wastegate;
+            control.turbo = static_cast<int>(index);
+            control.centre = port + away * flap;
+            control.normal = axis;
+            control.hinge = normalise(cross(axis, away));
+            control.size = flap;
+            control.part = addPart(std::move(mesh), SceneMaterial::steel, layerExhaust);
+            controlParts_.push_back(control);
+        }
+        if (forced.blowOffValveFlowAreaMm2 > 0.0) {
+            // Where Turbo3D draws the compressor's outlet, the valve's body on
+            // top of it near its end, its piston inside.
+            const auto ring = 1.45F * turbo.compressorWheelRadius;
+            const auto tube = turbo.compressorOuterRadius - ring;
+            auto up = yAxis - axis * dot(yAxis, axis);
+            up = length(up) > 0.3F ? normalise(up) : turbo.radial;
+            const auto tangent = normalise(cross(axis, up));
+            const auto start = turbo.compressorCentre + up * ring - tangent * tube;
+            const auto mount = start + tangent * (0.7F * (1.4F * turbo.compressorWheelRadius + tube)) + up * (0.8F * tube);
+            Mesh body;
+            appendCylinder(body, Mat4::frameAlongY(mount, up), 0.42F * tube, 0.42F * tube, 1.0F * tube, 20);
+            (void)addPart(std::move(body), SceneMaterial::turboHousing, layerIntake);
+            Mesh piston;
+            appendCylinder(piston, Mat4::translation({ 0.0F, -0.06F * tube, 0.0F }), 0.38F * tube, 0.38F * tube, 0.12F * tube, 20);
+            appendCylinder(piston, Mat4::identity(), 0.08F * tube, 0.08F * tube, 0.6F * tube, 8);
+            ControlPart control;
+            control.kind = ControlPart::Kind::blowOff;
+            control.turbo = static_cast<int>(index);
+            control.centre = mount + up * (0.12F * tube);
+            control.normal = up;
+            control.size = 0.45F * tube;
+            control.part = addPart(std::move(piston), SceneMaterial::steel, layerIntake);
+            controlParts_.push_back(control);
+        }
+    }
+}
+
+void EngineModel3D::buildNitrous() {
+    const auto& kit = config_.nitrous;
+    if (!kit.fitted) return;
+    float bore = 0.0F;
+    for (const auto& c : cylinders_) bore = std::max(bore, c.bore);
+    Mesh mesh;
+    // The plate under the first throttle body, its nozzle spraying into the
+    // plenum (a single-nozzle plate kit).
+    std::optional<Vec3> nozzle;
+    Vec3 downstream { 0.0F, -1.0F, 0.0F };
+    float throttle = 0.5F * bore;
+    for (const auto& duct : ducts_) {
+        if (duct.bores.empty()) continue;
+        const auto& bore0 = duct.bores.front();
+        throttle = bore0.diameterMm;
+        const auto direction = normalise(bore0.direction);
+        const auto up = normalise(bore0.up - direction * dot(bore0.up, direction));
+        const auto across = normalise(cross(direction, up));
+        const auto centre = bore0.face - direction * (0.05F * throttle);
+        appendBox(mesh, Mat4::basis(across, direction, up, centre), { 1.4F * throttle, 0.08F * throttle, 1.4F * throttle });
+        nozzle = centre;
+        downstream = direction * -1.0F;
+        break;
+    }
+    // The bottle, beyond the engine and its gearbox towards the vehicle's
+    // rear, lying across it above the crank: a 10 lb bottle is 178 mm by
+    // 520 mm, scaled by its capacity.
+    Vec3 low { 1.0e9F, 1.0e9F, 1.0e9F }, high { -1.0e9F, -1.0e9F, -1.0e9F };
+    for (std::size_t k = 0; k < engineSolids_ && k < solids_.size(); ++k) {
+        const auto& solid = solids_[k];
+        const auto spread = [](Vec3 axis) { return Vec3 { std::abs(axis.x), std::abs(axis.y), std::abs(axis.z) }; };
+        const auto reach = solid.shape == EngineSolid::Shape::cylinder
+            ? Vec3 { solid.half.x, solid.half.x, solid.half.x } + spread(solid.axes[1]) * solid.half.y
+            : spread(solid.axes[0]) * solid.half.x + spread(solid.axes[1]) * solid.half.y
+                + spread(solid.axes[2]) * solid.half.z;
+        low = { std::min(low.x, solid.centre.x - reach.x), std::min(low.y, solid.centre.y - reach.y),
+                std::min(low.z, solid.centre.z - reach.z) };
+        high = { std::max(high.x, solid.centre.x + reach.x), std::max(high.y, solid.centre.y + reach.y),
+                 std::max(high.z, solid.centre.z + reach.z) };
+    }
+    const auto scale = std::cbrt(std::max(0.2, kit.bottleCapacityKg) / 4.54);
+    const auto radius = static_cast<float>(89.0 * scale);
+    const auto bottleLength = static_cast<float>(520.0 * scale);
+    const auto centre = (low + high) * 0.5F;
+    const auto beyond = std::abs(rear_.z) > 0.5F ? (rear_.z > 0.0F ? high.z : low.z) : (rear_.x > 0.0F ? high.x : low.x);
+    const auto lying = normalise(cross(rear_, yAxis));
+    auto at = centre + yAxis * (0.25F * (high.y - low.y));
+    if (std::abs(rear_.z) > 0.5F) at.z = beyond + rear_.z * (radius + 60.0F);
+    else at.x = beyond + rear_.x * (radius + 60.0F);
+    const auto bottom = at - lying * (0.5F * bottleLength);
+    appendCylinder(mesh, Mat4::frameAlongY(bottom, lying), radius, radius, 0.86F * bottleLength, 32);
+    appendSphere(mesh, Mat4::translation(bottom + lying * (0.86F * bottleLength)), radius, 24, 12);
+    const auto valve = bottom + lying * (0.86F * bottleLength + radius);
+    appendCylinder(mesh, Mat4::frameAlongY(valve - lying * 4.0F, lying), 14.0F, 12.0F, 0.1F * bottleLength, 12);
+    // The line from the valve up and across to the plate.
+    if (nozzle) {
+        const auto out = valve + lying * (0.1F * bottleLength);
+        const auto lift = std::max(out.y, nozzle->y) + 0.3F * bore;
+        appendTube(mesh, catmullRom({ out, Vec3 { out.x, lift, out.z }, Vec3 { nozzle->x, lift, nozzle->z }, *nozzle }, 8),
+                   { 3.0F }, 8);
+    }
+    nitrousPart_ = addPart(std::move(mesh), SceneMaterial::intakeValve, layerIntake);
+    // The bottle sits away from the engine: out of the engine's framing.
+    farParts_.resize(parts_.size(), false);
+    farParts_[nitrousPart_] = true;
+    if (!nozzle) return;
+    Mesh spray;
+    const auto reach = 1.2F * throttle;
+    appendCylinder(spray, Mat4::identity(), 0.04F * throttle, 0.45F * throttle, reach, 16, false, true);
+    ControlPart control;
+    control.kind = ControlPart::Kind::nitrousSpray;
+    control.centre = *nozzle;
+    control.normal = downstream;
+    control.size = reach;
+    control.part = addPart(std::move(spray), SceneMaterial::spray, layerIntake);
+    controlParts_.push_back(control);
+}
+
+void EngineModel3D::poseCycleParts(const ScenePoseInput& input, std::vector<SceneInstance>& out) const {
+    const auto angle = input.crankAngleDegrees;
+    // The cams turn at half the crank's speed, each bank's at its own
+    // variable timing (its first cylinder's).
+    for (const auto& cam : camshafts_) {
+        const auto cylinder = std::min<std::size_t>(cam.cylinder, 31U);
+        const auto advance = cam.exhaust ? input.exhaustCamAdvanceDegrees[cylinder] : input.intakeCamAdvanceDegrees[cylinder];
+        out[cam.part].transform = Mat4::translation(cam.centre) * Mat4::rotationZ(camshaftRadians(angle, advance))
+            * Mat4::translation(cam.centre * -1.0F);
+    }
+    const auto cycle = cycleDegreesOf(config_.cycle);
+    const auto diesel = config_.fuel == FuelType::diesel;
+    const auto hidden = [](SceneInstance& instance) {
+        instance.transform = Mat4::basis({}, {}, {}, instance.transform.transformPoint({}));
+        instance.intensity = 0.0F;
+    };
+    for (std::size_t i = 0; i < cylinders_.size() && i < 32U; ++i) {
+        const auto& c = cylinders_[i];
+        if (c.vtecPinPart < out.size()) {
+            const auto locked = ((input.vtecHighCylinderMask >> i) & 1U) != 0U;
+            out[c.vtecPinPart].transform = Mat4::translation(locked ? c.vtecPinSlide : Vec3 {});
+        }
+        const auto phase = cyclePhaseDegrees(i, angle);
+        const auto sparkFromTdc = -input.ignitionAdvanceDegrees + config_.cylinders[i].ignitionOffsetDegrees;
+        if (c.sparkPart < out.size()) {
+            // Strobed only: a flash at the plug for the 20 degrees after the
+            // commanded spark (a spark lasts about a millisecond).
+            auto& spark = out[c.sparkPart];
+            spark.transform = Mat4::translation(c.sparkPoint);
+            const auto since = std::fmod(std::fmod(phase - sparkFromTdc, cycle) + cycle, cycle);
+            spark.intensity = input.cycleDetail && input.sparkEnabled && since < 20.0
+                ? static_cast<float>(1.0 - since / 20.0) : 0.0F;
+        }
+        if (c.sprayPart < out.size()) {
+            // Strobed only: the spray while the injector is open, from the
+            // window's start for its duty (a diesel's from the commanded
+            // start of injection, inside the window), its reach following the
+            // share of the window it is open.
+            auto& spray = out[c.sprayPart];
+            const auto& injection = config_.injection;
+            const auto window = std::fmod(std::fmod(injection.endAngleDegrees - injection.startAngleDegrees, cycle) + cycle,
+                                          cycle);
+            auto start = injection.startAngleDegrees;
+            if (diesel) {
+                const auto commanded = std::fmod(sparkFromTdc + cycle, cycle);
+                if (insideWindow(commanded, injection.startAngleDegrees, injection.endAngleDegrees, cycle)) start = commanded;
+            }
+            const auto open = std::clamp(static_cast<double>(input.injectorDuty[i]), 0.0, 1.0) * cycle;
+            const auto since = std::fmod(std::fmod(phase - start, cycle) + cycle, cycle);
+            if (input.cycleDetail && open > 0.0 && since < open) {
+                const auto reach = static_cast<float>(std::clamp(0.35 + 0.65 * open / std::max(1.0, window), 0.35, 1.0));
+                const auto axes = axesAlong(c.injectorAim);
+                spray.transform = Mat4::basis(axes[0], axes[1] * reach, axes[2], c.injectorTip);
+                spray.intensity = 0.15F;
+            } else {
+                spray.transform = Mat4::translation(c.injectorTip);
+                hidden(spray);
+            }
+        }
+    }
+}
+
+void EngineModel3D::poseControls(const ScenePoseInput& input, std::vector<SceneInstance>& out) const {
+    const auto& forced = config_.forcedInduction;
+    // What the blow-off valves pass choked at 2 bar and 330 K through their
+    // whole area: the flow that lifts the piston all the way.
+    const auto blowOffFull = 0.0404 * 200'000.0 / std::sqrt(330.0) * forced.blowOffValveFlowAreaMm2 * 1.0e-6
+        * forced.blowOffValveDischargeCoefficient;
+    const auto nitrousRated = config_.nitrous.shotKw * nitrousMassFlowPerShotKw;
+    for (const auto& control : controlParts_) {
+        auto& instance = out[control.part];
+        // A plate or a flap turned by `radians` about its spindle or hinge.
+        const auto plate = [&](float radians) {
+            const auto across = cross(control.hinge, control.normal);
+            const auto n = control.normal * std::cos(radians) + across * std::sin(radians);
+            instance.transform = Mat4::basis(control.hinge, n, cross(control.hinge, n), control.centre);
+        };
+        switch (control.kind) {
+        case ControlPart::Kind::throttlePlate:
+            plate(control.heldOpen ? 0.5F * pi : throttlePlateRadians(input.throttle));
+            break;
+        case ControlPart::Kind::throttleSlide:
+            instance.transform = Mat4::translation(control.normal
+                * (control.size * static_cast<float>(std::clamp(input.throttle, 0.0, 1.0))));
+            break;
+        case ControlPart::Kind::exhaustValve:
+            plate(0.5F * pi * static_cast<float>(std::clamp(input.exhaustValveStroke, 0.0, 1.0)));
+            break;
+        case ControlPart::Kind::wastegate: {
+            // Hinged at its outer edge, lifting downstream up to 45 degrees.
+            const auto psi = 0.25F * pi * static_cast<float>(std::clamp(input.wastegateOpening, 0.0, 1.0));
+            const auto away = cross(control.hinge, control.normal);
+            const auto n = control.normal * std::cos(psi) + away * std::sin(psi);
+            const auto z = away * std::cos(psi) - control.normal * std::sin(psi);
+            instance.transform = Mat4::basis(control.hinge, n, z, control.centre - z * control.size);
+            break;
+        }
+        case ControlPart::Kind::blowOff: {
+            const auto lift = blowOffFull > 0.0 ? std::clamp(input.blowOffMassFlowKgPerSecond / blowOffFull, 0.0, 1.0) : 0.0;
+            const auto axes = axesAlong(control.normal);
+            instance.transform = Mat4::basis(axes[0], axes[1], axes[2],
+                                             control.centre + control.normal * (control.size * static_cast<float>(lift)));
+            break;
+        }
+        case ControlPart::Kind::nitrousSpray: {
+            const auto axes = axesAlong(control.normal);
+            if (input.nitrousMassFlowKgPerSecond > 0.0) {
+                instance.transform = Mat4::basis(axes[0], axes[1], axes[2], control.centre);
+                instance.intensity = static_cast<float>(0.1 + 0.3 * std::clamp(input.nitrousMassFlowKgPerSecond
+                    / std::max(1.0e-9, nitrousRated), 0.0, 1.0));
+            } else {
+                instance.transform = Mat4::basis({}, {}, {}, control.centre);
+                instance.intensity = 0.0F;
+            }
+            break;
+        }
+        }
+    }
 }
 
 void EngineModel3D::computeBounds() {

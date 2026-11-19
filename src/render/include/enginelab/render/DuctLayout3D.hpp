@@ -43,6 +43,23 @@ enum class DuctKind : std::uint8_t {
     intakeInletDuct,
 };
 
+/** One throttle bore as drawn: the plate (or a slide carburettor's slide)
+    the view turns or lifts with the throttle. */
+struct ThrottleBore final {
+    /** The bore's downstream face, and the unit direction it runs from there
+        towards the air (upstream). */
+    Vec3 face;
+    Vec3 direction { 0.0F, 1.0F, 0.0F };
+    float diameterMm {};
+    /** A slide carburettor (not a fixed venturi): a slide and its needle in
+        place of a plate, rising towards `up`. */
+    bool slide {};
+    Vec3 up { 0.0F, 1.0F, 0.0F };
+    /** The simulator holds these bores fully open: individual throttles
+        upstream of the runners' own plates. */
+    bool heldOpen {};
+};
+
 struct DuctPiece final {
     DuctKind kind { DuctKind::exhaustComponent };
     /** Exhaust or intake path id. */
@@ -73,6 +90,8 @@ struct DuctPiece final {
         gearbox, a tailpipe far past the engine) is drawn as a broken view,
         the cut marked by two bands. The simulator keeps the whole length. */
     float foldedMm {};
+    /** For throttle bodies: each bore, its plate or slide. */
+    std::vector<ThrottleBore> bores {};
 };
 
 /**

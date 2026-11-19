@@ -17,6 +17,9 @@
 // designer's engines over its layouts and exhaust systems, with and without a
 // turbo (EngineModel3DTests' envelope check). `--two-stroke-intake`
 // redraws every two-stroke with that intake, so both layouts can be looked at.
+// `--time-pose <n>` also prints each engine's build time and the least of n
+// calls to pose(), the view's CPU cost per drawn sub-frame (wall clock: compare
+// runs interleaved on an idle machine only).
 
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/catalog/EngineDesign.hpp>
@@ -25,7 +28,9 @@
 #include <enginelab/render/EngineModel3D.hpp>
 #include <enginelab/render/RouteCheck.hpp>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -251,6 +256,7 @@ int main(int argc, char** argv) {
     std::filesystem::path savedFolder;
     bool designed = false;
     std::optional<TwoStrokeIntake> twoStrokeIntake;
+    int timePose = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string_view key = argv[i];
         if (key == "--out") outDirectory = argv[i + 1];
@@ -258,6 +264,7 @@ int main(int argc, char** argv) {
         else if (key == "--crank") crank = std::stod(argv[i + 1]);
         else if (key == "--catalog-root") catalogRoot = argv[i + 1];
         else if (key == "--saved") savedFolder = argv[i + 1];
+        else if (key == "--time-pose") timePose = std::max(1, std::stoi(argv[i + 1]));
         else if (key == "--designed") designed = std::string_view(argv[i + 1]) == "all";
         else if (key == "--two-stroke-intake") {
             twoStrokeIntake = parseTwoStrokeIntake(argv[i + 1]);
@@ -318,6 +325,26 @@ int main(int argc, char** argv) {
                       report.count(RouteIssueKind::selfClash), report.count(RouteIssueKind::engineClash),
                       report.count(RouteIssueKind::tightBend), report.count(RouteIssueKind::stretched));
         std::cout << line;
+        if (timePose > 0) {
+            using clock = std::chrono::steady_clock;
+            const auto built = clock::now();
+            const EngineModel3D model(config);
+            const auto buildMs = std::chrono::duration<double, std::milli>(clock::now() - built).count();
+            std::vector<SceneInstance> instances;
+            ScenePoseInput input;
+            input.combustion.fill(1.0F);
+            input.cycleDetail = true;
+            double least = 1.0e30;
+            for (int k = 0; k < timePose; ++k) {
+                input.crankAngleDegrees = 7.3 * k;
+                const auto start = clock::now();
+                model.pose(input, instances);
+                least = std::min(least, std::chrono::duration<double, std::micro>(clock::now() - start).count());
+            }
+            std::snprintf(line, sizeof(line), "         view cost: build %7.1f ms  pose %7.1f us  parts %4zu\n", buildMs,
+                          least, model.parts().size());
+            std::cout << line;
+        }
         for (std::size_t k = 0; k < totals.size(); ++k) totals[k] += report.count(static_cast<RouteIssueKind>(k));
         const auto& p = plausibility;
         char asymmetry[32] = "-";

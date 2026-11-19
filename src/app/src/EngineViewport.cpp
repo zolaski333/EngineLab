@@ -2712,6 +2712,30 @@ void EngineViewport::updateInspector() {
         }
         break;
     }
+    case render::PartRole::camshaft:
+        title = identity.cylinder < 0 ? "Timing drive" : identity.exhaust ? "Exhaust camshaft" : "Intake camshaft";
+        subtitle = "Turns at half the crank's speed";
+        if (live != nullptr) {
+            add("Intake cam advance", juce::String(live->intakeValveAdvanceDegrees, 1) + utf8("° crank"));
+            add("Exhaust cam advance", juce::String(live->exhaustValveAdvanceDegrees, 1) + utf8("° crank"));
+        }
+        if (vtecCamsFitted(config)) add("VTEC high cam", state.vtecHighCylinderMask != 0U ? "engaged" : "off");
+        break;
+    case render::PartRole::sparkPlug:
+        title = "Spark plugs";
+        subtitle = "The spark shows under the strobe";
+        add("Spark advance", juce::String(state.ignitionAdvanceDegrees, 1) + utf8("° before TDC"));
+        add("Spark", state.ecuSparkEnabled ? "on" : "cut");
+        break;
+    case render::PartRole::throttlePlate:
+        title = "Throttle";
+        add("Opening", juce::String(juce::roundToInt(100.0 * state.throttle)) + " %");
+        break;
+    case render::PartRole::nitrous:
+        title = "Nitrous kit";
+        add("Shot", model_.units.text(units::Quantity::power, config.nitrous.shotKw, 0));
+        add("Spraying", state.nitrousSpraying ? "yes" : "no");
+        break;
     case render::PartRole::duct: {
         const auto& duct = scene_->ducts()[static_cast<std::size_t>(identity.duct)];
         switch (duct.kind) {
@@ -2977,6 +3001,24 @@ std::optional<std::array<AcousticPoint3M, 2>> EngineViewport::cameraMicrophones(
     return listenerFrame_.microphones(eye, right, microphoneSpacingM_);
 }
 
+void EngineViewport::saveCapture(juce::Image image) {
+    const auto folder = juce::File::getSpecialLocation(juce::File::userPicturesDirectory);
+    const auto name = juce::String(model_.config.name).retainCharacters(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. ").trim();
+    captureChooser_ = std::make_unique<juce::FileChooser>(utf8("Save the 3-D view"),
+        folder.getChildFile((name.isEmpty() ? juce::String("engine") : name) + ".png"), "*.png");
+    captureChooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+            | juce::FileBrowserComponent::warnAboutOverwriting,
+        [image = std::move(image)](const juce::FileChooser& chooser) {
+            auto file = chooser.getResult();
+            if (file == juce::File {}) return;
+            if (!file.hasFileExtension("png")) file = file.withFileExtension("png");
+            juce::PNGImageFormat png;
+            (void)file.deleteFile();
+            if (juce::FileOutputStream stream(file); stream.openedOk()) (void)png.writeImageToStream(image, stream);
+        });
+}
+
 void EngineViewport::showSettingsMenu() {
     const auto gpuAvailable = !glFailed_;
     const auto use3d = settings_.renderer3d && gpuAvailable;
@@ -3006,6 +3048,8 @@ void EngineViewport::showSettingsMenu() {
     menu.addItem(50, utf8("Microphone on the camera"), use3d && !tracksideMicrophone_, settings_.cameraMicrophone);
     menu.addItem(51, utf8("Trackside microphone: the car loops past it at its speed (a run: top bar, Pass-by)"), true,
                  tracksideMicrophone_);
+    menu.addSectionHeader(utf8("Capture"));
+    menu.addItem(60, utf8("Save the view as a PNG\xe2\x80\xa6"), use3d && context_.getTargetComponent() != nullptr);
     menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&settingsButton_),
         [safe = juce::Component::SafePointer<EngineViewport>(this)](int result) {
             if (safe == nullptr || result == 0) return;
@@ -3022,6 +3066,9 @@ void EngineViewport::showSettingsMenu() {
                 settings.motionBlur = !settings.motionBlur;
             } else if (result == 22) {
                 settings.antiAliasing = !settings.antiAliasing;
+            } else if (result == 60) {
+                safe->captureRequested_.store(true);
+                safe->context_.triggerRepaint();
             } else if (result == 51) {
                 // Not a saved setting: it starts off every time.
                 safe->tracksideMicrophone_ = !safe->tracksideMicrophone_;
@@ -3080,6 +3127,12 @@ void EngineViewport::refresh() {
         shared_.pose.vtecHighCylinderMask = state.vtecHighCylinderMask;
         shared_.pose.powerValveOpening = state.powerValveOpening;
         shared_.pose.engineBrakeCylinders = state.engineBrakeCylinders;
+        shared_.pose.ignitionAdvanceDegrees = state.ignitionAdvanceDegrees;
+        shared_.pose.sparkEnabled = state.ecuSparkEnabled && model_.config.fuel != FuelType::diesel && state.rpm > 60.0;
+        shared_.pose.wastegateOpening = state.wastegateOpening;
+        shared_.pose.blowOffMassFlowKgPerSecond = state.blowOffMassFlowKgPerSecond;
+        shared_.pose.exhaustValveStroke = state.exhaustValveStroke;
+        shared_.pose.nitrousMassFlowKgPerSecond = state.nitrousMassFlowKgPerSecond;
         shared_.turboShaftRpm = state.forcedInductionShaftSpeedRpm;
         // In gear the input shaft runs at the clutch's driven side; in
         // neutral the engaged clutch spins it with the crank.
@@ -3092,6 +3145,11 @@ void EngineViewport::refresh() {
             const auto efficiency = std::clamp(cylinder.combustionEfficiency, 0.0, 1.0);
             shared_.pose.combustion[i] = firing && !cylinder.misfiring && efficiency > 0.05
                 ? static_cast<float>(0.55 + 0.45 * efficiency) : 0.0F;
+            shared_.pose.injectorDuty[i] = state.ecuFuelEnabled && !state.ecuDecelerationFuelCutActive
+                ? static_cast<float>(cylinder.injectorDutyCycle) : 0.0F;
+            shared_.pose.intakeCamAdvanceDegrees[i] = static_cast<float>(cylinder.intakeValveAdvanceDegrees);
+            shared_.pose.exhaustCamAdvanceDegrees[i] = static_cast<float>(cylinder.exhaustValveAdvanceDegrees);
+            shared_.pose.valveLiftMultiplier[i] = static_cast<float>(cylinder.valveLiftMultiplier);
         }
     } else {
         cutaway_.repaint();
@@ -3123,8 +3181,9 @@ void EngineViewport::refresh() {
         lastFpsWall_ = now;
         juce::String text;
         if (context_.getTargetComponent() != nullptr) {
-            text = juce::String(juce::roundToInt(measuredFps_))
-                + utf8(" fps  \xc2\xb7  drag to orbit, right-drag to pan, wheel to zoom, double-click to reset");
+            text = juce::String(juce::roundToInt(measuredFps_)) + utf8(" fps, view ")
+                + juce::String(renderCpuMs_.load(), 1) + utf8(" ms CPU")
+                + utf8("  \xc2\xb7  drag to orbit, right-drag to pan, wheel to zoom, double-click to reset");
         } else if (glFailed_) {
             const std::lock_guard lock(sharedMutex_);
             text = utf8("3-D view unavailable (") + glError_.upToFirstOccurrenceOf("\n", false, false)
@@ -3276,6 +3335,10 @@ void EngineViewport::renderOpenGL() {
     frame_.antiAliasing = shared.antiAliasing;
     frame_.pose = shared.pose;
     frame_.pose.afterfire = gasFieldView_.afterfire();
+    // What lasts a fraction of a cycle (the sparks, the sprays) is drawn only
+    // under the strobe: at full speed it would flicker (nothing flickers by
+    // default).
+    frame_.pose.cycleDetail = shared.playbackFactor < 0.999;
     // The turbo shaft and the gearbox turn at their simulated speeds, slowed
     // down with the crank: the simulation's own rate (zero when paused) times
     // the strobe's factor, as `CrankClock::displayDegreesPerSecond` (audit APP-08).
@@ -3301,7 +3364,29 @@ void EngineViewport::renderOpenGL() {
     frame_.turboShaftSweepDegrees = shared.motionBlur ? shaftDegreesPerSecond * 0.5 * frameInterval_ : 0.0;
     frame_.gearboxInputSweepDegrees = shared.motionBlur ? gearboxDegreesPerSecond * 0.5 * frameInterval_ : 0.0;
 
+    const auto renderStart = std::chrono::steady_clock::now();
     renderer_->render(frame_, width, height);
+    const auto renderMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - renderStart).count();
+    renderCpuMs_.store(0.9 * renderCpuMs_.load() + 0.1 * renderMs);
+    if (captureRequested_.exchange(false)) {
+        // The frame as drawn into the context's framebuffer, bottom row first.
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        juce::Image image(juce::Image::RGB, width, height, false);
+        {
+            const juce::Image::BitmapData data(image, juce::Image::BitmapData::writeOnly);
+            for (int y = 0; y < height; ++y)
+                for (int x = 0; x < width; ++x) {
+                    const auto* p = pixels.data() + (static_cast<std::size_t>(height - 1 - y) * static_cast<std::size_t>(width)
+                                                     + static_cast<std::size_t>(x)) * 4U;
+                    data.setPixelColour(x, y, juce::Colour(p[0], p[1], p[2]));
+                }
+        }
+        juce::MessageManager::callAsync([safe = safeThis_, image]() mutable {
+            if (safe != nullptr) safe->saveCapture(std::move(image));
+        });
+    }
     displayedAngle_.store(angle);
     framesRendered_.fetch_add(1);
 }
