@@ -7,6 +7,13 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-11-19
+
+The first published release of 0.11: the v0.11.0 tag did not compile on
+Linux (a GCC shadow warning in the pressure probe harness, an error there)
+and was never released, so 0.11.1 carries everything listed under 0.11.0
+below; nothing else changed.
+
 ## [0.11.0] — 2026-11-19
 
 ### Added
