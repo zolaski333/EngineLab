@@ -1019,7 +1019,7 @@ void theWallFilmKeepsEveryMoleItTakes() {
 
 /** From two cylinders up, with a crankcase each, a two-stroke's cylinder pass
  *  and publish run on the worker pool; a run must not move by one bit with
- *  it. Cranked, idled (its misfires draw the engine's one PRNG sequence) and
+ *  it (from eight up, the four-strokes' pass). Cranked, idled (its misfires draw the PRNG) and
  *  opened wide, against the same engine with no pool (journal 2026-11-20). */
 void theWorkersLeaveARunBitIdentical() {
     EngineSpec spec;
@@ -1040,7 +1040,12 @@ void theWorkersLeaveARunBitIdentical() {
     bigBang.cylinders[1].crankOffsetDegrees = bigBang.cylinders[0].crankOffsetDegrees;
     normaliseEngineConfig(bigBang);
     require(!validateEngineConfig(bigBang), "a twin firing both cylinders together is valid");
-    for (const auto& config : { catalogueTwoStroke(), bigBang, *designed.config }) {
+    // From eight cylinders up the pass is the four-strokes' (a PRNG each).
+    spec.name = "Designed V8 two-stroke";
+    spec.cylinderCount = 8U;
+    const auto designedEight = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designedEight.config.has_value(), "a V8 two-stroke designs: " + designedEight.error);
+    for (const auto& config : { catalogueTwoStroke(), bigBang, *designed.config, *designedEight.config }) {
         EngineSimulatorOptions serialOptions;
         serialOptions.intakeWorkerCount = 0;
         EngineSimulatorOptions pooledOptions;
