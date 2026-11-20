@@ -37,9 +37,12 @@ unknown publisher: choose **More info → Run anyway**. Every release archive is
 built by GitHub Actions from the tagged commit and comes with a SHA-256
 checksum.
 
-**Linux x64:** no archive is published yet, so build from source (below).
-Every push compiles and tests the Linux build, but Windows stays the reference
-platform: [docs/platforms.md](docs/platforms.md) lists what differs, and why a
+**Linux x64:** grab `EngineLab-<version>-Linux.tar.gz` from the same
+release, extract it (`tar xzf`) and run `./EngineLab` from the extracted
+folder. It is built on Ubuntu 24.04 and needs the distribution's ALSA, X11,
+OpenGL, FreeType and Fontconfig libraries (`README.txt` in the archive lists
+the packages); or build from source (below). Every push compiles and tests
+the Linux build, but Windows stays the reference platform: [docs/platforms.md](docs/platforms.md) lists what differs, and why a
 figure measured on one platform is not comparable with the other.
 
 Then:
@@ -90,9 +93,10 @@ factor is shown in the diagnostics.
   the block's limit, over-revving damage, coolant and oil temperatures with a
   thermostat and fan, the altitude and temperature of the air.
 - **Vehicle dynamics**: manual, sequential (quickshifter, auto-blipper),
-  dual-clutch, automatic and CVT gearboxes, a stick/slip clutch, and
+  dual-clutch (with its fart on a loaded upshift), automated manual,
+  automatic and CVT gearboxes of 1 to 16 gears, a stick/slip clutch, and
   longitudinal load transfer driven by wheelbase, centre-of-gravity height and
-  driven axle.
+  driven axle. A truck can carry an engine brake.
 
 ### Audio
 
@@ -114,6 +118,29 @@ factor is shown in the diagnostics.
   gearbox for any engine.
 - A **datalogger** records the main channels and the active limits to CSV.
 - Display **units** chosen per quantity or from a preset (metric, US, UK).
+- A **Vehicle** window (mass, drag, tyres, grip, wheelbase, brakes, driven
+  axles) and a **Fuel** window (the fuel, its octane, stoichiometric ratio and
+  heating value), both taken by the running engine.
+- A **pass-by run**: a scripted driver takes the car past a trackside
+  microphone (delay, Doppler, air absorption, ground reflection, real level),
+  and **Record WAV** saves it as heard.
+
+### Equipment
+
+Every optional part is fitted in one click from the **Equipment** window, its
+settings on one page and a line saying what it is doing or waiting for. All
+are off by default; an engine without them sounds and runs as before.
+
+- **Nitrous**, wet or dry, with its bottle, heater, speed window and push
+  button: real oxygen in the charge, so knock and cylinder pressure still
+  apply.
+- **Anti-lag** on a turbocharged petrol engine, *Rally* or *Launch*: the cut
+  charges burn before the turbine to keep the boost up.
+- **An active exhaust valve**: a bypass around the silencer with its own
+  tailpipe, automatic, shut or open.
+- **VTEC** cams, fitted and switched on any four-stroke or rotary while it
+  runs.
+- **Launch control.**
 
 ### Tooling
 
@@ -136,7 +163,9 @@ factor is shown in the diagnostics.
   13B — all in readable, editable YAML.
 - **Exhaust designer**, a validated graph editor for exhaust systems: it rejects
   cycles, incomplete branches and inconsistent cardinalities, and reports the
-  solver cost of an unusual geometry before applying it.
+  solver cost of an unusual geometry before applying it. Parts are connected
+  by dragging one onto another, with undo and redo; **+ H-PIPE** and
+  **+ X-PIPE** join the banks' two pipes in one click.
 - **Live editing**: click a part in the 3-D view to change it while the engine
   runs — exhaust sizes, bore, stroke and rods, cams, flywheel, injectors,
   turbo, gearbox, the air. An **A/B** button keeps two versions of the engine
@@ -153,13 +182,19 @@ factor is shown in the diagnostics.
   The design is run for a few seconds first, to check that this computer keeps
   it in real time.
 - **ECU tuner**: AFR, spark and boost tables, edited cell by cell or in blocks
-  with undo, plus the rev limit, launch control and knock retard, applied live
+  with undo, plus the rev limit, launch control, knock retard, VTEC,
+  anti-lag and an overboost cut, applied live
   through a transactional snapshot — the engine keeps running and keeps its
   thermal state.
 - **`.els` DSL**, declarative and unit-typed, hot-reloaded on save; an invalid
   save keeps the last valid configuration running and shows the diagnostics.
 - **Audio workshop**: mute/solo, JSON scenarios, and WAV export at 48/96/192 kHz in
   24-bit PCM or 32-bit float, with optional stems.
+- **A loop pack for games** (Audio workshop): seamless engine and exhaust
+  loops from idle to the redline, on and off throttle, laid out for BeamNG's
+  sound configuration.
+- **One engine file** (JSON or YAML) carries its ECU maps; drop an engine
+  file, an `.els` script or ECU maps on the window to open them.
 - **Automatic dyno**, stepped or as a continuous ramp, with history, curves and
   CSV export.
 
@@ -225,6 +260,8 @@ under **Units** in the same menu.
 | hold `A` / `S` | ignition / starter |
 | `Q`, `W`, `E`, `R` | throttle 1 %, 10 %, 20 %, 100 % |
 | `D` / `H` | automatic dyno / hold engine speed |
+| `6` | dyno: continuous ramp instead of steps, on / off |
+| `F` | full screen |
 | `7` | A/B: switch between the two kept versions of the engine |
 | `P` / `Tab` | pause / next side-panel tab |
 | `I` | show the Dyno tab; again, back to the tab before |
@@ -236,6 +273,9 @@ under **Units** in the same menu.
 | right arrow | cruise control: set at the current speed, or cancel |
 | `8` | automatic / manual gearbox |
 | `9` | datalogger: start / stop a CSV log (Documents/EngineLab logs) |
+| `0` | a truck's engine brake: next stage, then off |
+| `-` | active exhaust valve: automatic, shut, open |
+| hold `=` | nitrous push button (kit armed, push button on) |
 | hold `Y` or `Shift` | declutch; `T` / `U` adjust the setpoint |
 | `;` | next exhaust acoustic preset |
 | wheel / drag / right-drag | zoom, orbit and pan the 3-D engine view |
@@ -350,8 +390,8 @@ holds the working rules, build notes and verified traps of this repository.
   sport-motorcycle design of 125 cc or less idles near 2,000 rpm (its cams'
   overlap), and 10 cc is the smallest engine (no largest: a 193 L marine
   six and a 71 L 28-cylinder radial design and run);
-- the exhaust designer has no drag-and-drop, no undo/redo and no IR picker —
-  the IR stays editable in JSON/YAML;
+- the exhaust designer lays its canvas out automatically (a node is not
+  placed by hand) and has no IR picker — the IR stays editable in JSON/YAML;
 - structural modes stay estimated per engine family until sourced measurements
   are supplied;
 - the 3-D view lays the exhaust and intake out automatically: lengths,
@@ -361,8 +401,7 @@ holds the working rules, build notes and verified traps of this repository.
   about 0.36 m long on a four-stroke and 0.10 m on a two-stroke (see
   [the architecture document](docs/architecture.md#gas-field-on-the-ducts));
 - Windows is the reference platform. Linux is built and tested on every push,
-  but its GUI has not been checked on screen, no Linux archive is published,
-  and an unprivileged Linux run cannot raise the physics thread, so its
+  its GUI has not been checked on screen, and an unprivileged Linux run cannot raise the physics thread, so its
   real-time factor can read lower for the same engine
   (see [docs/platforms.md](docs/platforms.md)); macOS is not built at all;
 - large engines (V8, V12) are expensive for the physics thread; the application
