@@ -25,6 +25,7 @@
  */
 
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
@@ -929,6 +930,9 @@ private:
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
     std::string filter;
+    // An engine the user saved (`<name>.json`), measured instead of the
+    // catalogue's; its saved ECU tables are not read.
+    std::filesystem::path savedEngineFile;
     double holdRpm = 5'000.0;
     double warmupSeconds = 3.0;
     double measureSeconds = 5.0;
@@ -965,6 +969,7 @@ int main(int argc, char** argv) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
+        else if (argument == "--saved-engine" && index + 1 < argc) savedEngineFile = argv[++index];
         else if (argument == "--rpm" && index + 1 < argc) holdRpm = std::stod(argv[++index]);
         else if (argument == "--relative-rpm" && index + 1 < argc)
             relativeRpm = std::stod(argv[++index]);
@@ -1040,7 +1045,7 @@ int main(int argc, char** argv) {
             disableMufflerPacking = true;
         else if (argument == "--help") {
             std::cout << "usage: EngineLabRealtimeBudgetHarness [--catalog-root DIR] "
-                         "[--filter NAME] [--rpm N] [--warmup S] [--seconds S] "
+                         "[--filter NAME] [--saved-engine FILE.json] [--rpm N] [--warmup S] [--seconds S] "
                          "[--relative-rpm FRACTION] [--intake-workers N] "
                          "[--intake-max-cells N] [--intake-staircase-rounds N] "
                          "[--intake-coupling-us N] [--intake-forward] [--intake-cfl C] [--intake-nozzle-valve] [--intake-per-runner] "
@@ -1110,7 +1115,19 @@ int main(int argc, char** argv) {
     }
 
     std::vector<const enginelab::EngineCatalogEntry*> selectedEntries;
-    if (filter.empty()) {
+    enginelab::EngineCatalogEntry savedEntry;
+    if (!savedEngineFile.empty()) {
+        auto saved = enginelab::readSavedEngine(savedEngineFile);
+        if (!saved.engine) {
+            std::cerr << "FAIL: saved engine: " << saved.error << '\n';
+            return 1;
+        }
+        savedEntry.config = std::move(saved.engine->config);
+        if (addTurbo && !savedEntry.config.forcedInduction.enabled)
+            savedEntry.config = enginelab::withTurbocharger(savedEntry.config);
+        savedEntry.sourcePath = savedEngineFile;
+        selectedEntries.push_back(&savedEntry);
+    } else if (filter.empty()) {
         selectedEntries.reserve(catalog.entries.size());
         for (const auto& entry : catalog.entries)
             selectedEntries.push_back(&entry);

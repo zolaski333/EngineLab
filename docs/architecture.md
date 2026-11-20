@@ -74,7 +74,11 @@ the per-cylinder pass (`processCylinder`) and the end-of-sub-step publish of
 each cylinder's state also run on the pool, one cylinder per item: it writes only that cylinder's state, and its engine-wide events
 (spark and misfire counts) are applied in cylinder order afterwards
 (`EngineLab.JointIntakeManifold` checks 0 against 3 workers on the LS3 and the
-Merlin). Two-strokes keep it inline.
+Merlin). A two-stroke runs them on the pool from two cylinders up when each
+cylinder has its own intake path (crankcase), with the plenum read live: the
+pass only reads it, its sums are taken after it in the serial loop's order,
+and a sub-step in which two cylinders may spark stays serial, so the one
+misfire PRNG keeps its draw order (bit-identical; journal 2026-11-20).
 
 The JUCE callback consumes these streams. It compiles no script, reads no file
 and takes no mutex. Impulse-response decoding, allocations and DSP preparation

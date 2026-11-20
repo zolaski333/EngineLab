@@ -2,6 +2,7 @@
 // charge through a reed, and the catalogue twin runs at its maker's figures.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -14,6 +15,7 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -1015,6 +1017,73 @@ void theWallFilmKeepsEveryMoleItTakes() {
 
 } // namespace
 
+/** From two cylinders up, with a crankcase each, a two-stroke's cylinder pass
+ *  and publish run on the worker pool; a run must not move by one bit with
+ *  it. Cranked, idled (its misfires draw the engine's one PRNG sequence) and
+ *  opened wide, against the same engine with no pool (journal 2026-11-20). */
+void theWorkersLeaveARunBitIdentical() {
+    EngineSpec spec;
+    spec.name = "Designed V4 two-stroke";
+    spec.cycle = EngineCycle::twoStroke;
+    spec.use = EngineUse::roadMotorcycle;
+    spec.layout = EngineLayout::vLayout;
+    spec.cylinderCount = 4U;
+    spec.bankAngleDegrees = 90.0;
+    spec.boreMm = 54.0;
+    spec.strokeMm = 54.0;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "a V4 two-stroke designs: " + designed.error);
+    // Both pistons together, so their sparks fall in one sub-step: the one
+    // case where the PRNG's draw order could race.
+    auto bigBang = catalogueTwoStroke();
+    bigBang.name += " (both cylinders together)";
+    bigBang.cylinders[1].crankOffsetDegrees = bigBang.cylinders[0].crankOffsetDegrees;
+    normaliseEngineConfig(bigBang);
+    require(!validateEngineConfig(bigBang), "a twin firing both cylinders together is valid");
+    for (const auto& config : { catalogueTwoStroke(), bigBang, *designed.config }) {
+        EngineSimulatorOptions serialOptions;
+        serialOptions.intakeWorkerCount = 0;
+        EngineSimulatorOptions pooledOptions;
+        pooledOptions.intakeWorkerCount = 3;
+        const auto serial = std::make_unique<Rig>(config, serialOptions);
+        const auto pooled = std::make_unique<Rig>(config, pooledOptions);
+        require(serial->simulator->intakeWorkerCount() == 0
+                && pooled->simulator->intakeWorkerCount() > 0,
+            config.name + ": the comparison needs one serial and one pooled simulator");
+        auto identical = true;
+        // Cranked shut until it runs, as the designer's probe cranks it.
+        auto caught = false;
+        for (auto frame = 0; frame < 9 * 240 && identical; ++frame) {
+            const auto t = frame * frameSeconds;
+            caught = caught || serial->simulator->state().rpm > 1'000.0;
+            EngineControls controls;
+            controls.ignitionEnabled = true;
+            controls.starterEngaged = !caught && t < 5.0;
+            controls.throttle = t > 6.5 ? 1.0 : 0.0;
+            const auto& a = serial->simulator->step(frameSeconds, controls).state;
+            const auto& b = pooled->simulator->step(frameSeconds, controls).state;
+            identical = std::bit_cast<std::uint64_t>(a.angularVelocityRadPerSecond)
+                    == std::bit_cast<std::uint64_t>(b.angularVelocityRadPerSecond)
+                && std::bit_cast<std::uint64_t>(a.manifoldPressureKpa)
+                    == std::bit_cast<std::uint64_t>(b.manifoldPressureKpa)
+                && std::bit_cast<std::uint64_t>(a.exhaustBackPressureKpa)
+                    == std::bit_cast<std::uint64_t>(b.exhaustBackPressureKpa)
+                && std::bit_cast<std::uint64_t>(a.netTorqueNm)
+                    == std::bit_cast<std::uint64_t>(b.netTorqueNm)
+                && std::bit_cast<std::uint64_t>(a.gasInternalEnergyJoules)
+                    == std::bit_cast<std::uint64_t>(b.gasInternalEnergyJoules)
+                && a.commandedSparkEventCount == b.commandedSparkEventCount
+                && a.misfireEventCount == b.misfireEventCount;
+        }
+        const auto& state = serial->simulator->state();
+        std::cout << config.name << ": " << state.rpm << " rpm, " << state.misfireEventCount
+                  << " misfires of " << state.commandedSparkEventCount << " sparks\n";
+        require(identical, config.name + ": the worker pool leaves a fired run bit-identical");
+        require(state.misfireEventCount > 0 && state.rpm > 1'500.0,
+            config.name + ": the comparison ran, misfired at idle and opened up");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string_view(argv[1]) == "--trace") {
         auto single = false;
@@ -1050,6 +1119,7 @@ int main(int argc, char** argv) {
     theNeedleClipMovesTheMiddleAndNotTheTop();
     thePartThrottleMixtureHoldsWhatFullThrottleGives();
     theWallFilmKeepsEveryMoleItTakes();
+    theWorkersLeaveARunBitIdentical();
     std::cout << "two-stroke: ok\n";
     return EXIT_SUCCESS;
 }

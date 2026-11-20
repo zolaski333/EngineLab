@@ -275,9 +275,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   telemetry cache for listening; state-variable valve-flow reconstruction
   against clicks; whole-project LTO (bit-identical, within noise); `/MP2` on
   the JUCE project in CI (C1060 beside the app's LTCG link); using the
-  half-reserve at 4 processors (3 workers drop audio, 2 cost the 2JZ); a
-  parallel two-stroke cylinder pass (Gauss-Seidel volumes and one PRNG
-  sequence below 8 cylinders); coarse closed-valve steps (x1.05, a sound
+  half-reserve at 4 processors (3 workers drop audio, 2 cost the 2JZ);
+  coarse closed-valve steps (x1.05, a sound
   source); a 150 mm four-stroke exhaust mesh against the idle's outlet air
   (Hayabusa, CP4, 13B, 2JZ fall under 1.0); a rotary's crank step at 3 deg, its face's 2 deg of 720 (13B
   torque +1.45 % mean, +4.6 % at 4,000 rpm against 1.5 deg; 2 deg +0.34 %).

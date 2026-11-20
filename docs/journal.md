@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-20 — Multi-cylinder two-strokes: the cylinder pass on the workers, bit-identical
+
+- Owner: the designed V4 two-stroke below real time. `RealtimeBudgetHarness --saved-engine` (new) `--relative-rpm 0.9 --free-run`, the owner's saved engines: V4-2S 0.88-0.90 (3 workers), I3-2S 0.86, V8-2S 1.40, 250 single 2.17, catalogue RD350 1.25; V4-2S `--with-audio` invalid (~95,000 dropped pressure samples).
+- Profile (`SamplingProfiler`, V4-2S): the 3 workers spin 70 % of their time, the master thread is saturated, so its serial work is the limit; `FiniteVolumeDuct::inventory` is 6 % of it, read-outs (gas internal energy, port vapour) walked over every cell every sub-step.
+- The pass was never Gauss-Seidel in practice: it only reads the plenum (the intake network owns the exchange), its sums can be taken after it in cylinder order, and its one shared write is the misfire PRNG at a spark. Now a two-stroke with one intake path a cylinder runs pass and publish on the pool, a sub-step where two cylinders may spark stays serial; from 8 cylinders up (a PRNG each) the four-strokes' pass. Read-outs on the frame's last sub-step only.
+- Bit-identical: `DynoSweepHarness --step 1000` CSVs equal the old binary's (V4-2S, V4-2S-Carb, I3-2S, V8-2S, RD350, K20A, LS3); `AudioRenderHarness` RD350 WAV equal. New `EngineLab.TwoStroke` check (RD350, a both-together twin, designed V4; crank, idle misfires, full throttle; serial against 3 workers) fails without the spark guard (the draws race: counts change run to run).
+- Free run, interleaved, round 0 discarded, medians before -> after: V4-2S 0.87-0.91 -> 1.03, I3-2S 0.89-0.93 -> 1.01, V8-2S 1.43 -> 1.45, LS3 1.32 -> 1.37, Merlin 1.68 -> 1.63, K20A control 1.25-1.27 -> 1.25-1.31 (host noise ~3 %: the app and a browser held ~2 cores). Read-outs +5 %, pass +5-9 %, publish ~2 % (noise). V4-2S with audio: invalid -> valid at 0.97, still under 1.
+- Unexplained: the V8-2S with `--inline-cylinders` reads 1.27-1.30 in the new binary against 1.42-1.47 in the old (its shipped, parallel path 1.45). Not measured: the app window, the 3-D gas view, other machines. Full ctest not run (Core, JointIntakeManifold, TwoStroke pass).
+
 ## 2026-11-19 — owner: setting up an H-pipe or an X-pipe in the Exhaust designer is "horrible"
 
 - Frictions found: the designer's connections never set port 2, so a hand-drawn H was a Y-split into a Y-merge (the jet pump of 2026-10-30, drawn as a downstream branch); a dual exhaust as two paths (flat-6, Merlin, designed "Dual" V8) could not take one at all ("- PATH" keeps one pipe); by hand 3 parts, 2 deletions, 6 drags, edits (a 1.5 L collector, 58/80 mm defaults); New engine refused one bank.

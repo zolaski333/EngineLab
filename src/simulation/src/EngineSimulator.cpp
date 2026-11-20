@@ -2948,10 +2948,53 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // valves (a rotary's ports) wrap in: 720, or 1,080 on a rotary.
         const auto strokeDegrees = strokeDegreesOf(config_.cycle);
         const auto valveCycleDegrees = crankDomainDegreesOf(config_.cycle);
+        // A two-stroke below the decoupling threshold runs its pass on the
+        // workers without changing a bit (journal 2026-11-20). Each cylinder
+        // owns its crankcase (its intake path's plenum), reed fill and runner,
+        // and the pass only reads the shared state; what it raises for the
+        // engine is summed after it in cylinder order, as the serial loop
+        // summed it. The one shared write is the misfire PRNG, drawn at a
+        // spark: a sub-step in which two cylinders may spark stays serial,
+        // so its draws keep their order. One spark alone cannot race.
+        // From the decoupling threshold up each cylinder draws its own PRNG,
+        // so the spark condition is not needed there (the pass below).
+        auto twoStrokeOwnIntakePaths = twoStroke && intakeWorkerPool_ != nullptr;
+        for (std::size_t first = 0; first < config_.cylinders.size() && twoStrokeOwnIntakePaths; ++first)
+            for (std::size_t second = first + 1; second < config_.cylinders.size(); ++second)
+                if (intakePathIndexByCylinder_[first] == intakePathIndexByCylinder_[second]) {
+                    twoStrokeOwnIntakePaths = false;
+                    break;
+                }
+        auto twoStrokeParallelPass = !decoupleSharedVolumes && twoStrokeOwnIntakePaths
+            && config_.cylinders.size() >= 2
+            && options_.parallelCylinderPass.value_or(true);
+        if (twoStrokeParallelPass) {
+            // The spark schedule's own arithmetic (below, in the pass), from
+            // the same state, with a margin: a superset of the real sparks.
+            std::size_t possibleSparks = 0;
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                const auto phase = std::fmod(state_.crankAngleDegrees
+                    - crankOffsetDegreesFor(config_, config_.cylinders[index])
+                    + phaseWrapBiasDegrees(cycleDegrees), cycleDegrees);
+                const auto previous = previousCylinderPhases_[index];
+                if (crossedPhase(previous, phase, cycleDegrees - strokeDegrees, cycleDegrees)) {
+                    ++possibleSparks;
+                } else if (sparkScheduleArmed_[index]) {
+                    const auto travel = forwardPhaseDegrees(previous, phase, cycleDegrees);
+                    const auto credited = travel <= cycleDegrees * 0.25 ? travel : 0.0;
+                    if (sparkScheduleTravelRemainingDegrees_[index] - credited <= 1.0e-6)
+                        ++possibleSparks;
+                }
+            }
+            twoStrokeParallelPass = possibleSparks < 2;
+        }
+        std::optional<std::array<CylinderSubstepScratch, 32>> twoStrokeScratch;
+        if (twoStrokeParallelPass) twoStrokeScratch.emplace();
         const auto processCylinder = [&](std::size_t cylinderIndex) {
             CylinderSubstepScratch serialScratch {};
             auto& contribution = decoupleSharedVolumes
-                ? parallelState->scratch[cylinderIndex] : serialScratch;
+                ? parallelState->scratch[cylinderIndex]
+                : twoStrokeParallelPass ? (*twoStrokeScratch)[cylinderIndex] : serialScratch;
             const auto& cylinder = config_.cylinders[cylinderIndex];
             const auto intakePathIndex = intakePathIndexByCylinder_[cylinderIndex];
             const auto crankOffset = crankOffsetDegreesFor(config_, cylinder);
@@ -4576,7 +4619,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             contribution.peakPistonAcceleration = std::max(
                 contribution.peakPistonAcceleration, std::abs(kinematics.pistonAccelerationMps2));
             contribution.pistonSpeed += 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0;
-            if (!decoupleSharedVolumes) {
+            if (!decoupleSharedVolumes && !twoStrokeParallelPass) {
                 accumulateContribution(contribution);
                 applyCylinderEvents(contribution);
             }
@@ -4587,10 +4630,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // the inline loop (see `decoupledSharedVolumeCylinderThreshold`) woke
         // threads for ~0.6 us of work per cylinder; these workers are already
         // spinning between the gas dispatches and the body is now 1.5-2.2 us
-        // (journal 2026-10-20). A two-stroke is kept inline: its reed fill is
-        // per intake path, not per cylinder.
+        // (journal 2026-10-20). A two-stroke takes its own path below
+        // (`twoStrokeParallelPass`): its reed fill is per intake path, so it
+        // needs one path a cylinder, and it keeps the plenum read live.
         auto parallelCylinderPass = decoupleSharedVolumes && intakeWorkerPool_ != nullptr
-            && !twoStroke && options_.parallelCylinderPass.value_or(true);
+            && (!twoStroke || twoStrokeOwnIntakePaths)
+            && options_.parallelCylinderPass.value_or(true);
         if (parallelCylinderPass && jointIntakeManifold()) {
             // Port fuel lands in, and the port state is read from, the
             // cylinder's runner duct of the joint network: it must be its own.
@@ -4608,6 +4653,19 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     (*static_cast<const ProcessCylinder*>(context))(index);
                 },
                 const_cast<void*>(static_cast<const void*>(&processCylinder)));
+        } else if (twoStrokeParallelPass) {
+            using ProcessCylinder = std::decay_t<decltype(processCylinder)>;
+            intakeWorkerPool_->runIndices(config_.cylinders.size(),
+                [](void* context, std::size_t index) noexcept {
+                    (*static_cast<const ProcessCylinder*>(context))(index);
+                },
+                const_cast<void*>(static_cast<const void*>(&processCylinder)));
+            // The serial loop's own order and arithmetic: nothing in the pass
+            // reads these sums or counters.
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                accumulateContribution((*twoStrokeScratch)[index]);
+                applyCylinderEvents((*twoStrokeScratch)[index]);
+            }
         } else {
             for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex)
                 processCylinder(cylinderIndex);
@@ -6304,18 +6362,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             frameMinimumAfterfireInductionDelaySeconds * 1'000.0;
         state_.exhaustAfterfireMaximumInductionDelayMs =
             frameMaximumAfterfireInductionDelaySeconds * 1'000.0;
-        state_.manifoldGasMassGrams = 0.0;
-        state_.cylinderGasMassGrams = 0.0;
-        state_.gasInternalEnergyJoules = 0.0;
-        for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
-            state_.manifoldGasMassGrams += intakePlenumGas_[pathIndex].massKg() * 1'000.0;
-            state_.gasInternalEnergyJoules += intakePlenumGas_[pathIndex].internalEnergyJoules();
-        }
-        state_.gasInternalEnergyJoules += physicalExhaustNetwork.inventory().totalEnergyJ;
-        for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
-            state_.cylinderGasMassGrams += cylinderGas_[index].massKg() * 1'000.0;
-            state_.gasInternalEnergyJoules += cylinderGas_[index].internalEnergyJoules()
-                + (ownsIntakeRunner(index) ? intakeDuctForCylinder(index).inventory().totalEnergyJ : 0.0);
+        // Read-outs only (the side panel, the instruments, after `step`), each
+        // a walk over every gas cell, so taken on the frame's last sub-step:
+        // what a caller reads is unchanged. Every sub-step, they were 6 % of
+        // a four-cylinder two-stroke's critical thread (journal 2026-11-20).
+        const auto finalSubstepOfFrame = remainingSteps == 1;
+        if (finalSubstepOfFrame) {
+            state_.manifoldGasMassGrams = 0.0;
+            state_.cylinderGasMassGrams = 0.0;
+            state_.gasInternalEnergyJoules = 0.0;
+            for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
+                state_.manifoldGasMassGrams += intakePlenumGas_[pathIndex].massKg() * 1'000.0;
+                state_.gasInternalEnergyJoules += intakePlenumGas_[pathIndex].internalEnergyJoules();
+            }
+            state_.gasInternalEnergyJoules += physicalExhaustNetwork.inventory().totalEnergyJ;
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                state_.cylinderGasMassGrams += cylinderGas_[index].massKg() * 1'000.0;
+                state_.gasInternalEnergyJoules += cylinderGas_[index].internalEnergyJoules()
+                    + (ownsIntakeRunner(index) ? intakeDuctForCylinder(index).inventory().totalEnergyJ : 0.0);
+            }
         }
         state_.powerKw = state_.torqueNm * state_.angularVelocityRadPerSecond / 1'000.0;
         state_.brakeSpecificFuelConsumptionGPerKwh = state_.cycleAveragedPowerKw > 1.0
@@ -6458,10 +6523,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             cylinderState.meteredFuelMgPerCycle =
                 meteredFuelMolesLastCycle_[index]
                 * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
-            cylinderState.portFuelVapourInventoryMg =
-                intakeDuctForCylinder(index).inventory().speciesMassKg[
-                    static_cast<std::size_t>(
-                        gasdynamics::GasSpecies::fuel)] * 1.0e6;
+            if (finalSubstepOfFrame)
+                cylinderState.portFuelVapourInventoryMg =
+                    intakeDuctForCylinder(index).inventory().speciesMassKg[
+                        static_cast<std::size_t>(
+                            gasdynamics::GasSpecies::fuel)] * 1.0e6;
             cylinderState.portLiquidFilmFuelMg =
                 injectionStates_[index].liquidFilmMoles
                 * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
@@ -6550,7 +6616,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             cylinderState.completedIgnitionPhaseLastCycle =
                 completedIgnitionPhaseLastCycle_[index];
         };
-        if (parallelCylinderPass && options_.parallelCylinderPublish.value_or(true)) {
+        // Each index writes its own published state only, so any order gives
+        // the same bits; the two-stroke pass's sub-steps publish there too.
+        if ((parallelCylinderPass || twoStrokeParallelPass)
+                && options_.parallelCylinderPublish.value_or(true)) {
             using PublishCylinder = std::decay_t<decltype(publishCylinder)>;
             intakeWorkerPool_->runIndices(state_.cylinderStateCount,
                 [](void* context, std::size_t index) noexcept {
