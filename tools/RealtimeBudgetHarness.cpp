@@ -1030,6 +1030,8 @@ int main(int argc, char** argv) {
         else if (argument == "--free-run") freeRun = true;
         else if (argument == "--power-throttled")
             enginelab::platform::simulateBackgroundThrottlingForMeasurement();
+        else if (argument == "--smt-siblings")
+            enginelab::platform::allowSmtSiblingsForMeasurement();
         else if (argument == "--designer-probe") designerProbe = true;
         else if (argument == "--with-audio") withAudio = true;
         else if (argument == "--gas-view") gasView = true;
@@ -1063,7 +1065,7 @@ int main(int argc, char** argv) {
                          "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "
                          "[--disable-muffler-packing] "
-                         "[--enforce FACTOR] [--free-run] [--designer-probe] "
+                         "[--enforce FACTOR] [--free-run] [--smt-siblings] [--designer-probe] "
                          "[--with-audio] [--gas-view] [--disable-exhaust-jet-noise] "
                          "[--disable-fi-power-normalisation] "
                          "[--audio-rate HZ] [--audio-block N] [--native-rate-audio]\n"
@@ -1073,6 +1075,8 @@ int main(int argc, char** argv) {
                          "              reads capacity instead of saturating at 1.0.\n"
                          "  --power-throttled  put the process under EcoQoS, as Windows may do\n"
                          "                     to a background app, instead of opting out of it.\n"
+                         "  --smt-siblings  let the simulation threads share a core's two logical\n"
+                         "                  processors, as before 2026-11-21 (A/B).\n"
                          "  --designer-probe  run the engine designer's real-time check\n"
                          "                    (RealtimeCapacityProbe) on each engine and stop.\n"
                          "  --with-audio  run the production renderer on a fixed-period\n"

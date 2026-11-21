@@ -57,6 +57,48 @@ int main() {
     require(top.size() == 2 && top[0] == 3 && top[1] == 4,
         "with three classes only the fastest class may be chosen");
 
+    // One logical processor per physical core. An i5-10600: six cores, each
+    // listed as two adjacent logical processors of one class.
+    using enginelab::platform::latencyCriticalCpuSets;
+    require(latencyCriticalCpuSets({}).empty(), "no CPU sets reported must restrict nothing");
+    std::vector<CpuSetDescription> smt;
+    for (std::uint32_t index = 0; index < 12; ++index)
+        smt.push_back({ 256 + index, 0, static_cast<std::uint8_t>(index / 2) });
+    const auto perCore = latencyCriticalCpuSets(smt);
+    require(perCore.size() == 6, "an SMT processor must give one logical processor a core");
+    for (std::size_t index = 0; index < perCore.size(); ++index)
+        require(perCore[index] == 256 + 2 * index, "the first listed of each core must be chosen");
+    // No SMT and one class: every processor would be kept, so nothing is
+    // restricted.
+    std::vector<CpuSetDescription> plain;
+    for (std::uint32_t index = 0; index < 8; ++index)
+        plain.push_back({ 256 + index, 0, static_cast<std::uint8_t>(index) });
+    require(latencyCriticalCpuSets(plain).empty(),
+        "a processor without SMT or classes must not be restricted");
+    // The hybrid part above, its cores numbered: performance cores 0-7 with
+    // two logical processors each, efficiency cores 8-23 with one.
+    std::vector<CpuSetDescription> hybridCores;
+    id = 256;
+    for (int index = 0; index < 16; ++index)
+        hybridCores.push_back({ id++, 1, static_cast<std::uint8_t>(index / 2) });
+    for (int index = 0; index < 16; ++index)
+        hybridCores.push_back({ id++, 0, static_cast<std::uint8_t>(8 + index) });
+    const auto hybridPerCore = latencyCriticalCpuSets(hybridCores);
+    require(hybridPerCore.size() == 8, "a hybrid part must give one logical processor a performance core");
+    for (const auto chosen : hybridPerCore)
+        require(chosen < 256 + 16, "only performance cores may be chosen");
+    // An i3-1215U: two performance cores with SMT, four efficiency cores. One
+    // processor a core would stack the master and three spinning workers on
+    // two: both halves of each performance core are kept.
+    std::vector<CpuSetDescription> smallHybrid;
+    id = 256;
+    for (int index = 0; index < 4; ++index)
+        smallHybrid.push_back({ id++, 1, static_cast<std::uint8_t>(index / 2) });
+    for (int index = 0; index < 4; ++index)
+        smallHybrid.push_back({ id++, 0, static_cast<std::uint8_t>(2 + index) });
+    require(latencyCriticalCpuSets(smallHybrid).size() == 4,
+        "fewer than four performance cores must keep both halves of each");
+
     // The live request must be harmless on any machine, and may only hold a
     // thread to processors the machine has.
     std::thread probe([] {

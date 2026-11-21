@@ -67,9 +67,18 @@ in the background) the clock drops as well.
 keeps the timer resolution it asked for while the window is hidden, and holds
 the physics thread and the pool workers to the fastest class of CPU sets when
 the machine has more than one class. On a uniform processor (the Ryzen 7
-8840U reference) nothing is restricted. Nothing of this changes what is computed.
-`EngineLabRealtimeBudgetHarness --power-throttled` measures the throttled case
-on any machine; no hybrid machine has measured the fix itself.
+8840U reference) nothing is restricted by class. Nothing of this changes what
+is computed. `EngineLabRealtimeBudgetHarness --power-throttled` measures the
+throttled case on any machine; no hybrid machine has measured the fix itself.
+
+### Simultaneous multithreading
+
+The same barrier makes two of those threads on the two halves of one core run
+at the slower half's pace. When the process affinity is the system's, they are
+also held to one logical processor of each fastest-class core
+(`latencyCriticalCpuSets`), unless that leaves fewer than four. On the
+i5-10600 it gave every catalogue engine measured 2-12 % (journal 2026-11-21);
+`EngineLabRealtimeBudgetHarness --smt-siblings` restores the old placement.
 
 ### The audio device's rate
 

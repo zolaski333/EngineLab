@@ -53,7 +53,19 @@ std::string symbolName(HANDLE process, DWORD64 address) {
     symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
     symbol->MaxNameLen = 511;
     DWORD64 displacement = 0;
-    if (SymFromAddr(process, address, &displacement, symbol)) return std::string(symbol->Name);
+    if (SymFromAddr(process, address, &displacement, symbol)) {
+        std::string name(symbol->Name);
+        // A lambda's name is only its ordinal in the enclosing function: add
+        // the source line it starts on, so `step`'s many lambdas can be told
+        // apart.
+        IMAGEHLP_LINE64 line {};
+        line.SizeOfStruct = sizeof(line);
+        DWORD lineDisplacement = 0;
+        if (name.find("lambda") != std::string::npos
+            && SymGetLineFromAddr64(process, symbol->Address, &lineDisplacement, &line))
+            name += " (line " + std::to_string(line.LineNumber) + ")";
+        return name;
+    }
     IMAGEHLP_MODULE64 module {};
     module.SizeOfStruct = sizeof(module);
     if (SymGetModuleInfo64(process, address, &module)) return std::string(module.ModuleName) + "!?";
@@ -121,6 +133,7 @@ int main(int argc, char** argv) {
     std::unordered_map<DWORD64, double> selfSeconds;
     std::unordered_map<DWORD64, double> inclusiveSeconds;
     std::map<DWORD, std::map<DWORD64, double>> threadTopFrames;
+    std::map<DWORD, std::map<DWORD64, double>> threadInclusive;
     std::map<std::pair<DWORD64, DWORD64>, double> selfByCaller;
     double totalSeconds = 0.0;
     timeBeginPeriod(1);
@@ -185,7 +198,10 @@ int main(int argc, char** argv) {
             selfByCaller[{ functions.front(), caller == functions.end() ? 0 : *caller }] += used;
             std::set<DWORD64> seen;
             for (const auto function : functions)
-                if (seen.insert(function).second) inclusiveSeconds[function] += used;
+                if (seen.insert(function).second) {
+                    inclusiveSeconds[function] += used;
+                    threadInclusive[id][function] += used;
+                }
         }
         Sleep(static_cast<DWORD>(intervalMs));
     }
@@ -228,6 +244,18 @@ int main(int argc, char** argv) {
         std::sort(rows.rbegin(), rows.rend());
         std::printf("\nthread %lu self\n", id);
         for (std::size_t index = 0; index < std::min<std::size_t>(15, rows.size()); ++index)
+            std::printf("%6.2f %%  %s\n", 100.0 * rows[index].first / std::max(1.0e-12, threads[id].cpuSeconds),
+                symbolName(child.hProcess, rows[index].second).c_str());
+    }
+    // Per thread, inclusive: what a saturated master spends outside the
+    // dispatches is the serial term the workers wait on.
+    for (const auto& [id, functions] : threadInclusive) {
+        if (threads[id].cpuSeconds <= 0.0) continue;
+        std::vector<std::pair<double, DWORD64>> rows;
+        for (const auto& [address, seconds] : functions) rows.emplace_back(seconds, address);
+        std::sort(rows.rbegin(), rows.rend());
+        std::printf("\nthread %lu inclusive\n", id);
+        for (std::size_t index = 0; index < std::min(top, rows.size()); ++index)
             std::printf("%6.2f %%  %s\n", 100.0 * rows[index].first / std::max(1.0e-12, threads[id].cpuSeconds),
                 symbolName(child.hProcess, rows[index].second).c_str());
     }

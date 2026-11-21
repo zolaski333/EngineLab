@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-21 — Latency-critical threads: one logical processor a physical core
+
+- After the second pass the V4-2S master still waited ~23 % of its run on the pool, with its exhaust pipes even in work (max/mean 1.19 over equal substeps): the slow item was the thread, not the work. The OS placed the master and a worker on the two halves of one core (i5-10600, 6 cores x 2); a process affinity of one processor a core gave +9 %.
+- Kept: `requestLatencyCriticalThread()` holds the master and the pool workers to the first logical processor of each fastest-class core (`latencyCriticalCpuSets`), only when the process affinity is the system's (a user's mask is left alone). Scheduling only: no computed value changes. `--smt-siblings` restores the old placement for measurement.
+- Free run, interleaved, 5 rounds after a discarded one, medians shared -> one a core: V4-2S 1.20 -> 1.28, I3-2S 1.17 -> 1.21, designed V8 two-stroke 0.55 -> 0.62, RD350 1.49 -> 1.55, LS3 1.37 -> 1.42, K20A 1.31 -> 1.33, Merlin 1.67 -> 1.78. `--with-audio`: V4-2S 1.17-1.22 (4 of 4 valid) against 1.10-1.12 (2 of 4 valid); LS3 1.29-1.34 against 1.25-1.27.
+- Not measured: the app window, a hybrid processor (P-core SMT halves), a part without SMT (unchanged by construction), more than 64 processors. Linux untouched. `ThreadScheduling` (topologies: i5-10600, hybrid, no SMT), `Core`, `TwoStroke` pass; full ctest not run.
+
 ## 2026-11-21 — Multi-cylinder two-strokes, second pass: the limiter's min and the crankcases on the workers
 
 - Owner: optimise as far as possible, for every engine. Profile after 2026-11-20 (V4-2S, `--intake-workers 0`): `minmod` spent 9 % of the run in `std::min({ ... })`, the library's vectorised `min_element` for three values; the joint intake's forward flush (one crankcase network a cylinder) ran its paths one after another on the master. With 3 workers the V4-2S ran only 1.67 x its serial speed (0.60 -> 1.0); a temporary pool counter: ~72,000 dispatches a second, half the master's time outside them.

@@ -27,12 +27,37 @@ std::vector<std::uint32_t> fastestCpuSets(std::span<const CpuSetDescription> cpu
     return ids;
 }
 
+std::vector<std::uint32_t> latencyCriticalCpuSets(std::span<const CpuSetDescription> cpuSets) {
+    if (cpuSets.empty()) return {};
+    const auto fastestClass = std::ranges::max_element(
+        cpuSets, {}, &CpuSetDescription::efficiencyClass)->efficiencyClass;
+    std::vector<std::uint32_t> ids;
+    std::vector<std::uint8_t> coresTaken;
+    for (const auto& cpuSet : cpuSets) {
+        if (cpuSet.efficiencyClass != fastestClass) continue;
+        if (std::ranges::find(coresTaken, cpuSet.coreIndex) != coresTaken.end()) continue;
+        coresTaken.push_back(cpuSet.coreIndex);
+        ids.push_back(cpuSet.id);
+    }
+    if (ids.size() == cpuSets.size()) return {};
+    // The master and up to three spinning workers need a processor each: two
+    // performance cores (an i3-1215U) would stack them, so keep both halves.
+    constexpr std::size_t spinningThreads = 4;
+    if (ids.size() < spinningThreads) return fastestCpuSets(cpuSets);
+    return ids;
+}
+
 namespace {
 std::atomic<bool> simulateBackgroundThrottling { false };
+std::atomic<bool> allowSmtSiblings { false };
 }
 
 void simulateBackgroundThrottlingForMeasurement() noexcept {
     simulateBackgroundThrottling.store(true, std::memory_order_relaxed);
+}
+
+void allowSmtSiblingsForMeasurement() noexcept {
+    allowSmtSiblings.store(true, std::memory_order_relaxed);
 }
 
 #if defined(_WIN32)
@@ -52,17 +77,30 @@ std::vector<CpuSetDescription> systemCpuSets() {
             buffer.data() + offset);
         if (entry->Size == 0) break;
         if (entry->Type == CpuSetInformation)
-            cpuSets.push_back({ entry->CpuSet.Id, entry->CpuSet.EfficiencyClass });
+            cpuSets.push_back({ entry->CpuSet.Id, entry->CpuSet.EfficiencyClass,
+                                entry->CpuSet.CoreIndex });
         offset += entry->Size;
     }
     return cpuSets;
+}
+
+// Whether the process may run on every processor: a mask set by the user or
+// a container (`start /affinity`) is theirs, and CPU sets must not narrow it
+// further to processors it may exclude.
+bool processUnrestricted() noexcept {
+    DWORD_PTR processMask = 0;
+    DWORD_PTR systemMask = 0;
+    return GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask)
+        && processMask == systemMask;
 }
 
 // Read once: the topology does not change while the process runs.
 const std::vector<std::uint32_t>& performanceCpuSets() noexcept {
     static const auto ids = []() noexcept -> std::vector<std::uint32_t> {
         try {
-            return fastestCpuSets(systemCpuSets());
+            const auto cpuSets = systemCpuSets();
+            return processUnrestricted() && !allowSmtSiblings.load(std::memory_order_relaxed)
+                ? latencyCriticalCpuSets(cpuSets) : fastestCpuSets(cpuSets);
         } catch (...) {
             return {};
         }

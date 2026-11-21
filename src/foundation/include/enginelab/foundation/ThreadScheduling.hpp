@@ -31,6 +31,9 @@ struct CpuSetDescription {
     /** Higher is faster: 0 for efficiency cores, 1 for performance cores on
      *  an Intel hybrid part; one value for every core on a uniform one. */
     std::uint8_t efficiencyClass { 0 };
+    /** The physical core it belongs to: two logical processors of one core
+     *  (SMT, Hyper-Threading) share an index. */
+    std::uint8_t coreIndex { 0 };
 };
 
 /**
@@ -40,6 +43,20 @@ struct CpuSetDescription {
  * restricting there would only take cores away from the scheduler.
  */
 [[nodiscard]] std::vector<std::uint32_t> fastestCpuSets(
+    std::span<const CpuSetDescription> cpuSets);
+
+/**
+ * What requestLatencyCriticalThread() holds a thread to: the fastest class
+ * (as above), then one logical processor per physical core, the first listed.
+ * The simulation's master and its pool workers cross a barrier tens of
+ * thousands of times a second, so two of them on the two halves of one core
+ * run the slower half's pace: the V4-2S held to one processor a core ran
+ * 1.28 x real time against 1.20 (journal 2026-11-21). Empty, "do not
+ * restrict", when that would keep every processor (no SMT, uniform). Fewer
+ * than four cores of the fastest class (the master and three workers spin)
+ * keep both halves of each, as fastestCpuSets() does.
+ */
+[[nodiscard]] std::vector<std::uint32_t> latencyCriticalCpuSets(
     std::span<const CpuSetDescription> cpuSets);
 
 /**
@@ -57,8 +74,9 @@ struct LatencyCriticalThreadResult {
 };
 
 /**
- * For the calling thread: opts it out of power throttling and, on a hybrid
- * processor, holds it to the performance cores.
+ * For the calling thread: opts it out of power throttling and holds it to
+ * latencyCriticalCpuSets(): the performance cores of a hybrid processor, one
+ * logical processor each when SMT gives two.
  */
 LatencyCriticalThreadResult requestLatencyCriticalThread() noexcept;
 
@@ -70,6 +88,13 @@ LatencyCriticalThreadResult requestLatencyCriticalThread() noexcept;
  * prevent be measured on any machine. Call before the runtime starts.
  */
 void simulateBackgroundThrottlingForMeasurement() noexcept;
+
+/**
+ * Measurement only (EngineLabRealtimeBudgetHarness --smt-siblings): holds
+ * latency-critical threads to the fastest class only, both halves of a core
+ * allowed, as before 2026-11-21. Call before the runtime starts.
+ */
+void allowSmtSiblingsForMeasurement() noexcept;
 
 /**
  * The logical processors this process may run on: its affinity mask's when
