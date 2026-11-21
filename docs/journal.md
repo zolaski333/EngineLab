@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-21 — Multi-cylinder two-strokes, second pass: the limiter's min and the crankcases on the workers
+
+- Owner: optimise as far as possible, for every engine. Profile after 2026-11-20 (V4-2S, `--intake-workers 0`): `minmod` spent 9 % of the run in `std::min({ ... })`, the library's vectorised `min_element` for three values; the joint intake's forward flush (one crankcase network a cylinder) ran its paths one after another on the master. With 3 workers the V4-2S ran only 1.67 x its serial speed (0.60 -> 1.0); a temporary pool counter: ~72,000 dispatches a second, half the master's time outside them.
+- Kept: a pairwise `minmod` (all three values one sign, non-zero: same double); the forward flush and the half-step joint loop one path per pool item when every path holds one cylinder, networks serial inside. A first try on the half-step loop alone measured nothing: production runs the forward flush. Multi-runner paths keep the per-duct dispatch (no such engine to measure).
+- Bit-identical: `DynoSweepHarness --step 1000` CSVs equal cd43e8a's (V4-2S, V4-2S-Carb, I3-2S, RD350, K20A, LS3, Merlin, designed V8 two-stroke); `EngineLab.TwoStroke` (serial against 3 workers), `JointIntakeManifold`, `Core` pass.
+- Free run, interleaved, 5 rounds after a discarded one, medians cd43e8a -> minmod -> both: V4-2S 0.86 -> 1.01 -> 1.08, I3-2S 0.88 -> 1.01 -> 1.13, designed V8 two-stroke 0.39 -> 0.48 -> 0.53, LS3 1.29 -> 1.32 -> 1.33 (paths do not apply: control), RD350 1.21 -> 1.34 -> 1.31 (one worker, spread 1.06-1.52). V4-2S `--with-audio`: always invalid before, 1.05-1.07 now (3 runs of 4 valid).
+- Not measured: the app window, other machines, a multi-path four-stroke. Full ctest not run. Left: the master's serial work, about a third of the wall time.
+
 ## 2026-11-20 — Multi-cylinder two-strokes: the cylinder pass on the workers, bit-identical
 
 - Owner: the designed V4 two-stroke below real time. `RealtimeBudgetHarness --saved-engine` (new) `--relative-rpm 0.9 --free-run`, the owner's saved engines: V4-2S 0.88-0.90 (3 workers), I3-2S 0.86, 250 single 2.17, catalogue RD350 1.25; V4-2S `--with-audio` invalid (~95,000 dropped pressure samples).

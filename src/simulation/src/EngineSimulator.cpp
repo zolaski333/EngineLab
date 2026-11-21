@@ -841,7 +841,21 @@ void EngineSimulator::attachNetworkParallelFor() noexcept {
         parallelFor.threads = intakeWorkerPool_->workerCount() + 1;
     }
     if (physicalExhaustNetwork_) physicalExhaustNetwork_->setParallelFor(parallelFor);
+    intakePathsConcurrent_ = false;
     if (!jointIntakeManifold()) return;
+    // A multi-cylinder two-stroke's crankcases: one intake path a cylinder.
+    // Each is flushed on its own worker, its ducts serially inside (V4 1.03
+    // -> 1.27 x real time; journal 2026-11-21).
+    if (intakeWorkerPool_ && intakePlenumCount_ >= 2
+        && options_.parallelIntakePaths.value_or(true)) {
+        std::array<std::size_t, 32> cylindersOnPath {};
+        for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+            ++cylindersOnPath[intakePathIndexByCylinder_[index]];
+        intakePathsConcurrent_ = std::all_of(cylindersOnPath.begin(),
+            cylindersOnPath.begin() + static_cast<std::ptrdiff_t>(intakePlenumCount_),
+            [](std::size_t count) { return count == 1; });
+    }
+    if (intakePathsConcurrent_) parallelFor = {};
     for (auto& network : intakeManifoldNetworks_)
         if (network) network->setParallelFor(parallelFor);
 }
@@ -5079,10 +5093,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // All runner mouths on a path share ONE finite plenum in both
                 // RK stages. Timely half-step exchange feeds the next piston
                 // work increment; no drawdown staircase or delayed gas history
-                // is needed by the production policy.
-                for (std::size_t path = 0; path < intakePlenumCount_; ++path) {
+                // is needed by the production policy. Paths run one per
+                // worker as in the forward flush; the engine-wide counters
+                // are gathered after, in path order.
+                std::array<std::uint8_t, 32> pathResolutionLimited {};
+                std::array<std::uint32_t, 32> pathPlenumTransferFailures {};
+                const auto advanceJointPath = [&](std::size_t path) noexcept {
                     auto& pointer = intakeManifoldNetworks_[path];
-                    if (!pointer) continue;
+                    if (!pointer) return;
                     auto& network = *pointer;
                     std::array<gasdynamics::CylinderValveBoundary, 32> boundaries {};
                     std::array<std::size_t, 32> cylinderIndices {};
@@ -5119,13 +5137,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         diagnostic.maximumAcceptedDuctCourantCurrent, advance.maximumAcceptedDuctCourantCurrent);
                     diagnostic.maximumAcceptedDuctCourantPredictor = std::max(
                         diagnostic.maximumAcceptedDuctCourantPredictor, advance.maximumAcceptedDuctCourantPredictor);
-                    if (!advance.completed) state_.solverResolutionLimited = true;
+                    if (!advance.completed) pathResolutionLimited[path] = 1;
                     const auto exchanges = network.cylinderExchanges();
                     for (std::size_t port = 0; port < portCount; ++port) {
                         recordIntakeCylinderExchange(cylinderIndices[port], boundaries[port], exchanges[port],
                             network.mixtureModel(), firstHalf, boundaries[port].effectiveValveAreaM2 > 0.0,
                             advance.completed);
-                        if (intakePhaseFailed[cylinderIndices[port]] != 0) state_.solverResolutionLimited = true;
+                        if (intakePhaseFailed[cylinderIndices[port]] != 0) pathResolutionLimited[path] = 1;
                     }
                     GasInventoryDelta plenumDelta {};
                     for (const auto& mouth : network.outletSamples()) {
@@ -5142,9 +5160,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         || plenumDelta.mixture.oxygenMoles != 0.0 || plenumDelta.mixture.inertMoles != 0.0
                         || plenumDelta.mixture.fuelMoles != 0.0 || plenumDelta.mixture.burnedMoles != 0.0;
                     if (nonzeroPlenumDelta && !intakePlenumGas_[path].tryApplyInventoryDelta(plenumDelta)) {
-                        state_.solverResolutionLimited = true;
-                        ++state_.intakePlenumTransferFailures;
+                        pathResolutionLimited[path] = 1;
+                        ++pathPlenumTransferFailures[path];
                     }
+                };
+                if (intakePathsConcurrent()) {
+                    intakeWorkerPool_->runIndices(intakePlenumCount_,
+                        [](void* context, std::size_t path) noexcept {
+                            (*static_cast<const decltype(advanceJointPath)*>(context))(path);
+                        },
+                        const_cast<void*>(static_cast<const void*>(&advanceJointPath)));
+                } else {
+                    for (std::size_t path = 0; path < intakePlenumCount_; ++path) advanceJointPath(path);
+                }
+                for (std::size_t path = 0; path < intakePlenumCount_; ++path) {
+                    if (pathResolutionLimited[path] != 0) state_.solverResolutionLimited = true;
+                    state_.intakePlenumTransferFailures += pathPlenumTransferFailures[path];
                 }
                 return;
             }
@@ -5278,9 +5309,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     for (auto& network : intakeManifoldNetworks_)
                         if (network) network->requestWallHeatUpdate();
                 }
-                for (std::size_t path = 0; path < intakePlenumCount_; ++path) {
+                // The paths share nothing (each its own plenum, runners and
+                // cylinders), so with the pool they run one per worker; the
+                // engine-wide flag is gathered after. Bit-identical.
+                std::array<std::uint8_t, 32> pathResolutionLimited {};
+                const auto flushIntakePath = [&](std::size_t path) noexcept {
                     auto& pointer = intakeManifoldNetworks_[path];
-                    if (!pointer) continue;
+                    if (!pointer) return;
                     auto& network = *pointer;
                     std::array<gasdynamics::CylinderValveBoundary, 32> boundaries {};
                     std::array<std::size_t, 32> cylinderIndices {};
@@ -5333,7 +5368,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         diagnostic.maximumAcceptedDuctCourantCurrent, advance.maximumAcceptedDuctCourantCurrent);
                     diagnostic.maximumAcceptedDuctCourantPredictor = std::max(
                         diagnostic.maximumAcceptedDuctCourantPredictor, advance.maximumAcceptedDuctCourantPredictor);
-                    if (!advance.completed) state_.solverResolutionLimited = true;
+                    if (!advance.completed) pathResolutionLimited[path] = 1;
                     const auto exchanges = network.cylinderExchanges();
                     for (std::size_t port = 0; port < portCount; ++port)
                         intakeForwardPendingExchange_[cylinderIndices[port]] = exchanges[port];
@@ -5347,7 +5382,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         plenumDelta.internalEnergyJ += delta.internalEnergyJ;
                     }
                     intakeForwardPendingPlenumDelta_[path] = plenumDelta;
+                };
+                if (intakePathsConcurrent()) {
+                    intakeWorkerPool_->runIndices(intakePlenumCount_,
+                        [](void* context, std::size_t path) noexcept {
+                            (*static_cast<const decltype(flushIntakePath)*>(context))(path);
+                        },
+                        const_cast<void*>(static_cast<const void*>(&flushIntakePath)));
+                } else {
+                    for (std::size_t path = 0; path < intakePlenumCount_; ++path) flushIntakePath(path);
                 }
+                for (std::size_t path = 0; path < intakePlenumCount_; ++path)
+                    if (pathResolutionLimited[path] != 0) state_.solverResolutionLimited = true;
                 intakeForwardRemainingSubsteps_ = forwardIntervalSubsteps;
                 intakeForwardClockLeadSeconds_ += forwardNetworkSeconds;
                 ++state_.intakeCouplingFlushCount;

@@ -49,11 +49,15 @@ constexpr double reconstructionBias = 1.5;
     return result;
 }
 
+// Pairwise, not std::min({ ... }): the initializer-list form calls the
+// library's vectorised min_element for three values, which was ~9 % of a
+// two-stroke's exhaust time. All three are non-zero and of one sign here, so
+// equal values are equal bits and either form returns the same double.
 [[nodiscard]] double minmod(double first, double second, double third) noexcept {
     if (first > 0.0 && second > 0.0 && third > 0.0)
-        return std::min({ first, second, third });
+        return std::min(std::min(first, second), third);
     if (first < 0.0 && second < 0.0 && third < 0.0)
-        return std::max({ first, second, third });
+        return std::max(std::max(first, second), third);
     return 0.0;
 }
 

@@ -51,6 +51,12 @@ struct EngineSimulatorOptions final {
     /** With the pass above on, also publish each cylinder's end-of-sub-step
      * state (kinematics included) on the workers. Absent selects it. */
     std::optional<bool> parallelCylinderPublish;
+    /** With a joint intake manifold on two paths or more (a multi-cylinder
+     * two-stroke's crankcases) and the worker pool on, run each path's
+     * forward intake flush on its own worker instead of one after another.
+     * Absent selects it; false keeps the serial path loop for A/B controls.
+     * Bit-identical either way. */
+    std::optional<bool> parallelIntakePaths;
     /** Cap the spatial cells in each intake runner. Diagnostic A/Bs use this
      * to establish a convergence point without rewriting authored geometry. */
     std::optional<std::size_t> intakeMaximumCellCount;
@@ -408,6 +414,12 @@ private:
     [[nodiscard]] bool jointIntakeManifold() const noexcept {
         return config_.cycle == EngineCycle::rotary || options_.intakeJointManifold.value_or(true);
     }
+    /** Whether the joint intake paths are flushed one per worker (see
+     *  SimulatorOptions::parallelIntakePaths); their networks then run serial
+     *  inside, since the pool is not reentrant. Only paths of one cylinder
+     *  each (a two-stroke's crankcases), the case measured: a path of several
+     *  runners keeps its per-duct dispatch. Set by attachNetworkParallelFor. */
+    [[nodiscard]] bool intakePathsConcurrent() const noexcept { return intakePathsConcurrent_; }
     /** Whether cylinder `index` is the first on its intake runner duct (every
      *  cylinder but a rotary's second and third faces). */
     [[nodiscard]] bool ownsIntakeRunner(std::size_t index) const noexcept {
@@ -652,6 +664,8 @@ private:
     /** One shared finite-plenum RK solve per authored intake path. The runner
      * duct and cylinder-port order match, and both are indexed by this map. */
     std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeManifoldNetworks_;
+    /** See intakePathsConcurrent(). */
+    bool intakePathsConcurrent_ { false };
     std::array<std::size_t, 32> intakeRunnerDuctIndex_ {};
     /** The cylinder's port in its joint network: its runner duct's index,
      *  except on a rotary, whose faces are three ports on one runner. */

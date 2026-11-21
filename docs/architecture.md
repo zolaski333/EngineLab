@@ -79,6 +79,10 @@ cylinder has its own intake path (crankcase), with the plenum read live: the
 pass only reads it, its sums are taken after it in the serial loop's order,
 and a sub-step in which two cylinders may spark stays serial, so the one
 misfire PRNG keeps its draw order (bit-identical; journal 2026-11-20).
+When every intake path holds one cylinder (a two-stroke's crankcases), the
+joint intake paths are also advanced one per pool item, their networks serial
+inside since the pool is not reentrant; a path of several runners keeps the
+per-duct dispatch (bit-identical; journal 2026-11-21).
 
 The JUCE callback consumes these streams. It compiles no script, reads no file
 and takes no mutex. Impulse-response decoding, allocations and DSP preparation
