@@ -2206,14 +2206,38 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // swept by the underside of the piston. The volume change is the
         // pumping; its work reaches the crank through the piston (below).
         const auto twoStrokeCrankcase = config_.cycle == EngineCycle::twoStroke;
-        if (twoStrokeCrankcase)
-            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
-                const auto& cylinder = config_.cylinders[index];
-                intakePlenumGas_[intakePathIndexByCylinder_[index]].setVolumeAdiabatic(
-                    crankcaseVolumeLitres(cylinder, config_.twoStroke.crankcaseCompressionRatio,
-                        std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
-                            + 1'440.0, 360.0)));
-            }
+        // With one cylinder a path (a multi-cylinder two-stroke's crankcases),
+        // a path's crankcase volume, throttle and plenum loss below touch its
+        // own gas only, so a turning engine runs them one path per pool item;
+        // the sums over the paths are taken after, in path order.
+        // Bit-identical (journal 2026-11-21).
+        const auto intakePathPass = intakePathsConcurrent() && !stationary;
+        const auto setCrankcaseVolume = [&](std::size_t index) noexcept {
+            const auto& cylinder = config_.cylinders[index];
+            intakePlenumGas_[intakePathIndexByCylinder_[index]].setVolumeAdiabatic(
+                crankcaseVolumeLitres(cylinder, config_.twoStroke.crankcaseCompressionRatio,
+                    std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
+                        + 1'440.0, 360.0)));
+        };
+        if (twoStrokeCrankcase && !intakePathPass)
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+                setCrankcaseVolume(index);
+        // Resolve plenum jet mixing as a sudden expansion loss. The equivalent
+        // spherical diameter supplies its characteristic length; no numerical
+        // decay time is introduced.
+        const auto applyPlenumLoss = [&](std::size_t pathIndex) noexcept {
+            const auto volumeM3 = intakePlenumGas_[pathIndex].volumeM3();
+            const auto hydraulicDiameterM = std::cbrt(6.0 * volumeM3 / std::numbers::pi);
+            const auto plenumAreaM2 = std::numbers::pi * hydraulicDiameterM
+                * hydraulicDiameterM * 0.25;
+            const auto inletAreaRatio = std::clamp(
+                intakePlenumGas_[pathIndex].characteristicAreaM2()
+                    / std::max(1.0e-9, plenumAreaM2), 0.0, 1.0);
+            const auto suddenExpansionLoss = std::pow(1.0 - inletAreaRatio, 2.0);
+            intakePlenumGas_[pathIndex].applyFlowResistance(
+                hydraulicDiameterM, hydraulicDiameterM, 1.5e-6,
+                suddenExpansionLoss, subDt);
+        };
         // A cylinder intake port lets the charge into the crankcase only while
         // the skirt leaves it open: its window in series with the carburettor,
         // nothing while it is covered, and a reed only if one is fitted. A
@@ -2630,8 +2654,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 state_.blowOffMassFlowKgPerSecond = 0.0;
             }
 
-            auto throttleFlowKgThisStep = 0.0;
-            for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
+            std::array<double, 32> pathThrottleFlowKg {};
+            std::array<double, 32> pathCarburettorFuelKg {};
+            std::array<double, 32> pathNitrousFuelKg {};
+            std::array<std::uint8_t, 32> pathCarburettorMetered {};
+            std::array<std::uint8_t, 32> pathNitrousFuelled {};
+            const auto throttlePath = [&](std::size_t pathIndex) noexcept {
                 const auto& intake = intakeGeometryAt(config_, pathIndex);
                 const auto throttleRadiusM = intake.throttleDiameterMm * 0.0005;
                 const auto throttlePlateAreaM2 = static_cast<double>(intake.throttleCount)
@@ -2657,7 +2685,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     intakeSourcePressureKpa, temperatureK, inletAreaM2,
                     intake.throttleDischargeCoefficient, subDt, reedFitted);
-                throttleFlowKgThisStep += intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg;
+                pathThrottleFlowKg[pathIndex] = intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg;
                 const auto plenumInflowKg = std::max(0.0,
                     intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg);
                 if (twoStrokeCrankcase)
@@ -2705,8 +2733,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         intakePlenumGas_[pathIndex].injectFuelMoles(
                             metering.deliveredMoles * bores,
                             config_.injection.fuelTemperatureC + 273.15);
-                    carburettorFuelMassKgThisStep_ += metering.meteredMoles * bores
+                    pathCarburettorFuelKg[pathIndex] = metering.meteredMoles * bores
                         * config_.fuelProperties.molarMassGramsPerMole * 0.001;
+                    pathCarburettorMetered[pathIndex] = 1;
                 }
                 if (nitrousMassFlowKgPerSecond_ > 0.0) {
                     // One nozzle behind the throttle(s), shared by the plenums.
@@ -2722,13 +2751,40 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             kitFuelMoles, config_.injection.fuelTemperatureC + 273.15);
                         // Counted as fuel used: it burnt uncounted, so the
                         // fuel flow and BSFC undercounted the spray (audit PG-02).
-                        nitrousFuelMassKgThisStep_ += kitFuelMoles
+                        pathNitrousFuelKg[pathIndex] = kitFuelMoles
                             * config_.fuelProperties.molarMassGramsPerMole * 0.001;
+                        pathNitrousFuelled[pathIndex] = 1;
                     }
                 }
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
+            };
+            if (intakePathPass) {
+                const auto advancePath = [&](std::size_t pathIndex) noexcept {
+                    if (twoStrokeCrankcase)
+                        for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+                            if (intakePathIndexByCylinder_[index] == pathIndex) setCrankcaseVolume(index);
+                    throttlePath(pathIndex);
+                    applyPlenumLoss(pathIndex);
+                };
+                intakeWorkerPool_->runIndices(intakePlenumCount_,
+                    [](void* context, std::size_t path) noexcept {
+                        (*static_cast<const decltype(advancePath)*>(context))(path);
+                    },
+                    const_cast<void*>(static_cast<const void*>(&advancePath)));
+            } else {
+                for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex)
+                    throttlePath(pathIndex);
+            }
+            // The serial loop's sums, in its order.
+            auto throttleFlowKgThisStep = 0.0;
+            for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
+                throttleFlowKgThisStep += pathThrottleFlowKg[pathIndex];
+                if (pathCarburettorMetered[pathIndex] != 0)
+                    carburettorFuelMassKgThisStep_ += pathCarburettorFuelKg[pathIndex];
+                if (pathNitrousFuelled[pathIndex] != 0)
+                    nitrousFuelMassKgThisStep_ += pathNitrousFuelKg[pathIndex];
             }
             throttleFlowKgLastStep_ = throttleFlowKgThisStep;
             if (config_.nitrous.fitted) {
@@ -2748,22 +2804,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 state_.nitrousOxygenShare = nitrousOxygenShare_;
             }
         }
-        // Resolve plenum jet mixing as a sudden expansion loss. The equivalent
-        // spherical diameter supplies its characteristic length; no numerical
-        // decay time is introduced.
-        for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
-            const auto volumeM3 = intakePlenumGas_[pathIndex].volumeM3();
-            const auto hydraulicDiameterM = std::cbrt(6.0 * volumeM3 / std::numbers::pi);
-            const auto plenumAreaM2 = std::numbers::pi * hydraulicDiameterM
-                * hydraulicDiameterM * 0.25;
-            const auto inletAreaRatio = std::clamp(
-                intakePlenumGas_[pathIndex].characteristicAreaM2()
-                    / std::max(1.0e-9, plenumAreaM2), 0.0, 1.0);
-            const auto suddenExpansionLoss = std::pow(1.0 - inletAreaRatio, 2.0);
-            intakePlenumGas_[pathIndex].applyFlowResistance(
-                hydraulicDiameterM, hydraulicDiameterM, 1.5e-6,
-                suddenExpansionLoss, subDt);
-        }
+        if (!intakePathPass)
+            for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex)
+                applyPlenumLoss(pathIndex);
         state_.manifoldPressureKpa = 0.0;
         for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex)
             state_.manifoldPressureKpa += intakeGeometryAt(config_, pathIndex).individualThrottles

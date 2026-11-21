@@ -7,9 +7,40 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#if defined(_MSC_VER) && defined(_M_X64)
+#include <immintrin.h>
+#include <intrin.h>
+#endif
 
 namespace enginelab::gasdynamics {
 namespace {
+
+#if defined(_MSC_VER) && defined(_M_X64)
+// MSVC's std::fma is a library routine (`fmal` was 1-1.4 % of a run) even on
+// a processor with the instruction. A fused multiply-add is correctly rounded
+// either way, so the instruction gives the same double; it is used only where
+// the processor has FMA3 and the OS saves the AVX state it lives in.
+const bool hardwareFusedMultiplyAdd = [] {
+    int registers[4] {};
+    __cpuid(registers, 1);
+    const auto ecx = static_cast<unsigned>(registers[2]);
+    constexpr unsigned fma3 = 1U << 12U;
+    constexpr unsigned osxsave = 1U << 27U;
+    constexpr unsigned avx = 1U << 28U;
+    if ((ecx & (fma3 | osxsave | avx)) != (fma3 | osxsave | avx)) return false;
+    return (_xgetbv(0) & 0x6U) == 0x6U;
+}();
+
+[[nodiscard]] inline double fusedMultiplyAdd(double a, double b, double c) noexcept {
+    if (hardwareFusedMultiplyAdd)
+        return _mm_cvtsd_f64(_mm_fmadd_sd(_mm_set_sd(a), _mm_set_sd(b), _mm_set_sd(c)));
+    return std::fma(a, b, c);
+}
+#else
+[[nodiscard]] inline double fusedMultiplyAdd(double a, double b, double c) noexcept {
+    return std::fma(a, b, c);
+}
+#endif
 
 [[nodiscard]] constexpr bool finite(double value) noexcept {
     static_assert(std::numeric_limits<double>::is_iec559
@@ -299,7 +330,7 @@ struct ReservoirInflowConstants final {
     for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
         result.speciesMassDensityKgPerM3[index] = 0.5
             * (initial.speciesMassDensityKgPerM3[index]
-               + std::fma(timeStepSeconds,
+               + fusedMultiplyAdd(timeStepSeconds,
                           secondResidual.speciesMassDensityKgPerM3[index],
                           firstStage.speciesMassDensityKgPerM3[index]));
     }

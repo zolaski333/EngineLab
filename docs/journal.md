@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-21 — Two-stroke crankcase paths on the workers; hardware fused multiply-add
+
+- Profile after 75b8a15 (`SamplingProfiler`, new serial-by-line section): the V4-2S master still ran the crankcase volumes, throttles and plenum losses of its 4 paths one after another, and every duct cell's RK2 combination called MSVC's `std::fma`, a library routine (`fmal`), not the instruction.
+- Kept: when every intake path holds one cylinder, a turning sub-step runs a path's crankcase volume, throttle and plenum loss as one pool item, sums after in path order; `rk2Combination` uses `_mm_fmadd_sd` when cpuid reports FMA3 and the OS saves AVX state (40 M random and cancelling triples: same double as `std::fma`).
+- Bit-identical: `DynoSweepHarness --step 1000` CSVs equal 75b8a15's (V4-2S, V4-2S-Carb, I3-2S, RD350, K20A, LS3, Merlin, designed V8 two-stroke). Refuted on the way: `std::pow(x, 2.0)` -> `x * x` (0.04 % of doubles differ by an ULP; the V8's air_mg moved).
+- Free run, interleaved, 5 rounds after a discarded one, medians 75b8a15 -> now: V4-2S 1.29 -> 1.40, I3-2S 1.17 -> 1.25, designed V8 two-stroke 0.59 -> 0.66, LS3 1.40 -> 1.41, RD350 1.52 -> 1.49 (spread 1.08-1.57). Host held ~1.3 cores of another job throughout.
+- Not measured: the app window, other machines, a processor without FMA3 (falls back to `std::fma`). Left: the master's serial work inside the network advances (interfaces, ports, junctions applied in order), not dispatchable without changing the order. `Core`, `TwoStroke`, `JointIntakeManifold`, `GasDynamics`, exhaust tests pass; full ctest not run.
+
 ## 2026-11-21 — Latency-critical threads: one logical processor a physical core
 
 - After the second pass the V4-2S master still waited ~23 % of its run on the pool, with its exhaust pipes even in work (max/mean 1.19 over equal substeps): the slow item was the thread, not the work. The OS placed the master and a worker on the two halves of one core (i5-10600, 6 cores x 2); a process affinity of one processor a core gave +9 %.

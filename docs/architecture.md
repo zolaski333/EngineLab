@@ -82,7 +82,12 @@ misfire PRNG keeps its draw order (bit-identical; journal 2026-11-20).
 When every intake path holds one cylinder (a two-stroke's crankcases), the
 joint intake paths are also advanced one per pool item, their networks serial
 inside since the pool is not reentrant; a path of several runners keeps the
-per-duct dispatch (bit-identical; journal 2026-11-21).
+per-duct dispatch (bit-identical; journal 2026-11-21). On such an engine a
+turning sub-step's crankcase volume, throttle flow and plenum loss run the
+same way, one path per item, and their sums are taken after in path order.
+The RK2 combination of every duct cell uses the processor's fused
+multiply-add when it has one (`_mm_fmadd_sd`), MSVC's `std::fma` being a
+library call; both round once, so the double is the same.
 
 The JUCE callback consumes these streams. It compiles no script, reads no file
 and takes no mutex. Impulse-response decoding, allocations and DSP preparation

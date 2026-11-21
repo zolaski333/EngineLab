@@ -135,6 +135,33 @@ int main(int argc, char** argv) {
     std::map<DWORD, std::map<DWORD64, double>> threadTopFrames;
     std::map<DWORD, std::map<DWORD64, double>> threadInclusive;
     std::map<std::pair<DWORD64, DWORD64>, double> selfByCaller;
+    // The serial term: samples of a thread running EngineSimulator::step that
+    // are not inside a CylinderWorkerPool call -- the time the workers wait
+    // on. Self per function, and inclusive per source line of `step` itself
+    // (its outermost frame there), so a 4,000-line function can be read.
+    std::unordered_map<DWORD64, std::string> functionNames;
+    std::unordered_map<DWORD64, DWORD> addressLines;
+    std::unordered_map<DWORD64, double> serialSelf;
+    std::map<DWORD, double> serialStepLines;
+    double serialSeconds = 0.0;
+    double stepSeconds = 0.0;
+    const auto nameOf = [&](DWORD64 function) -> const std::string& {
+        auto found = functionNames.find(function);
+        if (found == functionNames.end())
+            found = functionNames.emplace(function, symbolName(child.hProcess, function)).first;
+        return found->second;
+    };
+    const auto lineOf = [&](DWORD64 address) {
+        auto found = addressLines.find(address);
+        if (found != addressLines.end()) return found->second;
+        IMAGEHLP_LINE64 line {};
+        line.SizeOfStruct = sizeof(line);
+        DWORD displacement = 0;
+        const DWORD number = SymGetLineFromAddr64(child.hProcess, address, &displacement, &line)
+            ? line.LineNumber : 0;
+        addressLines.emplace(address, number);
+        return number;
+    };
     double totalSeconds = 0.0;
     timeBeginPeriod(1);
     const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(sampleSeconds);
@@ -196,6 +223,23 @@ int main(int argc, char** argv) {
             const auto caller = std::find_if(functions.begin(), functions.end(),
                 [&](DWORD64 function) { return function != functions.front(); });
             selfByCaller[{ functions.front(), caller == functions.end() ? 0 : *caller }] += used;
+            {
+                auto inPool = false;
+                std::size_t outermostStep = functions.size();
+                for (std::size_t index = 0; index < functions.size(); ++index) {
+                    const auto& name = nameOf(functions[index]);
+                    if (name.find("CylinderWorkerPool::") != std::string::npos) inPool = true;
+                    if (name == "enginelab::EngineSimulator::step") outermostStep = index;
+                }
+                if (outermostStep < functions.size()) {
+                    stepSeconds += used;
+                    if (!inPool) {
+                        serialSeconds += used;
+                        serialSelf[functions.front()] += used;
+                        serialStepLines[lineOf(frames[outermostStep])] += used;
+                    }
+                }
+            }
             std::set<DWORD64> seen;
             for (const auto function : functions)
                 if (seen.insert(function).second) {
@@ -258,6 +302,23 @@ int main(int argc, char** argv) {
         for (std::size_t index = 0; index < std::min(top, rows.size()); ++index)
             std::printf("%6.2f %%  %s\n", 100.0 * rows[index].first / std::max(1.0e-12, threads[id].cpuSeconds),
                 symbolName(child.hProcess, rows[index].second).c_str());
+    }
+    std::printf("\nserial (outside CylinderWorkerPool, inside EngineSimulator::step): "
+                "%.2f of %.2f CPU-s in step\n", serialSeconds, stepSeconds);
+    {
+        std::vector<std::pair<double, DWORD64>> rows;
+        for (const auto& [address, seconds] : serialSelf) rows.emplace_back(seconds, address);
+        std::sort(rows.rbegin(), rows.rend());
+        for (std::size_t index = 0; index < std::min(top, rows.size()); ++index)
+            std::printf("%6.2f %%  %s\n", 100.0 * rows[index].first / std::max(1.0e-12, serialSeconds),
+                nameOf(rows[index].second).c_str());
+        std::vector<std::pair<double, DWORD>> lines;
+        for (const auto& [line, seconds] : serialStepLines) lines.emplace_back(seconds, line);
+        std::sort(lines.rbegin(), lines.rend());
+        std::printf("\nserial by line of EngineSimulator::step (inclusive)\n");
+        for (std::size_t index = 0; index < std::min(top, lines.size()); ++index)
+            std::printf("%6.2f %%  line %lu\n", 100.0 * lines[index].first / std::max(1.0e-12, serialSeconds),
+                lines[index].second);
     }
     SymCleanup(child.hProcess);
     TerminateProcess(child.hProcess, 0);
