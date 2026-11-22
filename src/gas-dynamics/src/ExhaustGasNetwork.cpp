@@ -927,6 +927,7 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
             : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
     };
     interfaceOpeningAreasM2_.clear();
+    interfaceFaceAreasM2_.clear();
     interfaceTurbines_.assign(layout_.interfaces().size(), {});
     interfaceFirstStageRate_.assign(layout_.interfaces().size(), {});
     interfaceSecondStageRate_.assign(layout_.interfaces().size(), {});
@@ -935,6 +936,7 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         const auto area = std::min(endpointArea(connection.upstream),
                                    endpointArea(connection.downstream));
         interfaceOpeningAreasM2_.push_back(area);
+        interfaceFaceAreasM2_.push_back(area);
         if (connection.upstream.type == ExhaustEndpointType::junction)
             junctionPortAreaSums_[connection.upstream.elementIndex] += area;
         if (connection.downstream.type == ExhaustEndpointType::junction)
@@ -2662,6 +2664,19 @@ bool ExhaustGasNetwork::evaluateStage(
     };
     for (std::size_t index = 0; index < layout_.interfaces().size(); ++index) {
         const auto& connection = layout_.interfaces()[index];
+        // A plate open to its full face between two ducts is the plain face,
+        // bit for bit: the quasi-steady orifice there passed the steady flow
+        // but damped the ram wave (individual throttles lost 10-11 % of
+        // their WOT torque; journal 2026-11-22). A turbine stays an orifice.
+        if (connection.restriction
+            && interfaceTurbines_[index].wheelShare <= 0.0
+            && interfaceOpeningAreasM2_[index] >= interfaceFaceAreasM2_[index]
+            && connection.upstream.type != ExhaustEndpointType::junction
+            && connection.downstream.type != ExhaustEndpointType::junction) {
+            computeInterfaceFlux(index);
+            if (!applyInterfaceFlux(index)) return false;
+            continue;
+        }
         if (connection.restriction) {
             if (!exchangeThroughOrifice(index, interfaceOpeningAreasM2_[index]))
                 return false;

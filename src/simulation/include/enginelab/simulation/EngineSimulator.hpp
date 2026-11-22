@@ -396,9 +396,11 @@ private:
      * ambient reservoir behind the runner mouth.
      */
     void configurePhysicalIntakeNetworks();
-    /** Individual throttles: `conductanceAreaM2` (discharge coefficient
-     *  included) shared equally by the plates of the path's runners. */
-    void setIndividualThrottleAreas(std::size_t pathIndex, double conductanceAreaM2) noexcept;
+    /** Individual throttles: each plate of the path's runners opens
+     *  `openFraction` (0-1) of its bore, `plateAreaM2` shared equally by
+     *  the runners and no wider than a runner's face. */
+    void setIndividualThrottleAreas(std::size_t pathIndex, double openFraction,
+                                    double plateAreaM2) noexcept;
     /** Individual throttles: the manifold pressure behind the path's plates,
      *  as a balance manifold reads it; advanced by `subDt`. */
     [[nodiscard]] double individualThrottleManifoldPressureKpa(std::size_t pathIndex,

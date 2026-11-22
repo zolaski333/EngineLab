@@ -897,17 +897,25 @@ double EngineSimulator::individualThrottleManifoldPressureKpa(std::size_t pathIn
 }
 
 void EngineSimulator::setIndividualThrottleAreas(std::size_t pathIndex,
-                                                 double conductanceAreaM2) noexcept {
+                                                 double openFraction,
+                                                 double plateAreaM2) noexcept {
     auto runners = std::size_t { 0 };
     for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
         if (intakePathIndexByCylinder_[index] == pathIndex && ownsIntakeRunner(index)) ++runners;
     if (runners == 0) return;
-    const auto perRunnerM2 = conductanceAreaM2 / static_cast<double>(runners);
+    // Each runner's plate opens its share of the bores. Wide open, a plate
+    // whose bore spans its runner is the runner itself (the network's plain
+    // face): an orifice there, even at the full face, lost 10-11 % of the
+    // WOT torque by damping the ram wave (journal 2026-11-22).
+    const auto fraction = std::clamp(openFraction, 0.0, 1.0);
+    const auto borePerRunnerM2 = plateAreaM2 / static_cast<double>(runners);
     for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
         if (intakePathIndexByCylinder_[index] != pathIndex || !ownsIntakeRunner(index)) continue;
         // In a joint manifold the plates are numbered like the runners.
-        static_cast<void>(intakeNetworkForCylinder(index).setRestrictionOpeningAreaM2(
-            jointIntakeManifold() ? intakeRunnerDuctIndex_[index] : 0, perRunnerM2));
+        auto& network = intakeNetworkForCylinder(index);
+        const auto plate = jointIntakeManifold() ? intakeRunnerDuctIndex_[index] : 0;
+        static_cast<void>(network.setRestrictionOpeningAreaM2(plate,
+            fraction * std::min(borePerRunnerM2, network.restrictionFaceAreaM2(plate))));
     }
 }
 
@@ -2305,8 +2313,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         intake.throttleDischargeCoefficient),
                     intake.throttleDischargeCoefficient, subDt, reedFitted);
                 if (intake.individualThrottles)
-                    setIndividualThrottleAreas(pathIndex, throttleAreaM2
-                        * intake.throttleDischargeCoefficient);
+                    setIndividualThrottleAreas(pathIndex, throttlePlateAreaM2 > 0.0
+                        ? throttleAreaM2 / throttlePlateAreaM2 : 1.0, throttlePlateAreaM2);
             }
         } else {
             constexpr double exhaustCpJPerKgK = 1'120.0;
@@ -2757,8 +2765,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     }
                 }
                 if (intake.individualThrottles)
-                    setIndividualThrottleAreas(pathIndex, throttleAreaM2
-                        * intake.throttleDischargeCoefficient);
+                    setIndividualThrottleAreas(pathIndex, throttlePlateAreaM2 > 0.0
+                        ? throttleAreaM2 / throttlePlateAreaM2 : 1.0, throttlePlateAreaM2);
             };
             if (intakePathPass) {
                 const auto advancePath = [&](std::size_t pathIndex) noexcept {

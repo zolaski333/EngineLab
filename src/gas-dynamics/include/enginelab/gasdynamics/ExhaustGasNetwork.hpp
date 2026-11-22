@@ -469,10 +469,17 @@ public:
 
     /** Open area of a restriction face (CompiledExhaustInterface::restriction),
      *  discharge coefficient included, clamped to the smaller of its two
-     *  faces. Applies from the next advance. Returns false for an interface
-     *  that is not a restriction or an area that is not finite. */
+     *  faces. Opened to that face between two ducts, without a turbine, it
+     *  is the plain face, bit for bit. Applies from the next advance.
+     *  Returns false for an interface that is not a restriction or an area
+     *  that is not finite. */
     [[nodiscard]] bool setRestrictionOpeningAreaM2(std::size_t interfaceIndex,
                                                    double areaM2) noexcept;
+    /** The smaller of an interface's two faces: a restriction's widest opening. */
+    [[nodiscard]] double restrictionFaceAreaM2(std::size_t interfaceIndex) const noexcept {
+        return interfaceIndex < interfaceFaceAreasM2_.size()
+            ? interfaceFaceAreasM2_[interfaceIndex] : 0.0;
+    }
     [[nodiscard]] double restrictionOpeningAreaM2(std::size_t interfaceIndex) const noexcept {
         return interfaceIndex < interfaceOpeningAreasM2_.size()
             ? interfaceOpeningAreasM2_[interfaceIndex] : 0.0;
@@ -664,6 +671,8 @@ private:
     /** Per interface: the full face for a plain one, the plate's open area
      *  for a restriction. */
     std::vector<double> interfaceOpeningAreasM2_;
+    /** Per interface: the smaller of its two faces. */
+    std::vector<double> interfaceFaceAreasM2_;
     struct TurbineSetting final { double wheelShare { 0.0 }; double efficiency { 0.0 }; };
     std::vector<TurbineSetting> interfaceTurbines_;
     /** Active exhaust valves: their faces, whether each is an orifice this
