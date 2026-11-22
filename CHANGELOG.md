@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-22
+
 ### Added
 
 - **V engines with an odd cylinder count** (V3, V5, V7...) in New engine.
@@ -20,6 +22,16 @@ file formats, always with an in-memory migration).
   plates' total area kept and a carburettor resized. One per cylinder puts a
   plate in each runner (individual throttle bodies), drawn there in the 3-D
   view. A four-stroke spark engine's only; off by default.
+
+### Changed
+
+- **Faster simulation, two-strokes most of all.** A multi-cylinder
+  two-stroke's cylinders, crankcases and intake paths now run on the worker
+  threads, and the simulation threads keep one logical processor per core.
+  Real-time factor on the reference PC: the V4 two-stroke 0.89 -> 1.43 (it
+  now runs in real time), I3 two-stroke 0.92 -> 1.27, RD350 1.27 -> 1.59;
+  four-strokes gain 5-10 % (LS3 1.32 -> 1.43, 2JZ 1.30 -> 1.39). The
+  physics and the sound are bit for bit unchanged.
 
 ### Fixed
 
