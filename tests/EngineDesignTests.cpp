@@ -1128,6 +1128,39 @@ void vCranksSharePins() {
 /** A V with an odd count (owner 2026-11-22): the first bank one cylinder
  *  longer, the shorter bank's centred between its cylinders, firing evenly;
  *  Dual is a pipe per bank, a 3-1 and a 2-1 on a V5. */
+void throttleLayouts() {
+    const auto plateArea = [](const IntakeConfig& intake) {
+        return static_cast<double>(intake.throttleCount) * intake.throttleDiameterMm * intake.throttleDiameterMm;
+    };
+    auto spec = sportFour();
+    const auto automatic = designed(spec);
+    require(!automatic.config->intake.individualThrottles, "individual throttles are off by default");
+    spec.throttles = ThrottleLayout::single;
+    const auto single = designed(spec);
+    require(single.config->intake.throttleCount == 1 && !single.config->intake.individualThrottles,
+        "one throttle body for the engine");
+    spec.throttles = ThrottleLayout::individual;
+    const auto individual = designed(spec);
+    require(individual.config->intake.individualThrottles
+            && individual.config->intake.throttleCount == individual.config->cylinders.size(),
+        "one plate in each cylinder's runner");
+    for (const auto layout : { ThrottleLayout::individual, ThrottleLayout::single }) {
+        const auto refit = withThrottleLayout(*automatic.config, layout);
+        require(refit.config.has_value() && throttleLayoutOf(*refit.config) == layout, refit.error);
+        require(std::abs(plateArea(refit.config->intake) / plateArea(automatic.config->intake) - 1.0) < 1.0e-9,
+            "the plates' total area is kept");
+    }
+    spec.fuelSystem = FuelSystem::carburettor;
+    const auto carburetted = designed(spec);
+    require(carburetted.config->intake.carburettor.enabled && carburetted.config->intake.individualThrottles,
+        "a carburettor on each runner's plate");
+    auto twoStroke = twinTwoStroke();
+    twoStroke.throttles = ThrottleLayout::individual;
+    require(!designEngine(twoStroke, parts()).config, "a two-stroke's carburettor already feeds its own crankcase");
+    require(!withThrottleLayout(*designed(twinTwoStroke()).config, ThrottleLayout::individual).config,
+        "nor is one refitted with individual throttles");
+}
+
 void oddVsDesign() {
     const auto bankSizes = [](const EngineConfig& config) {
         std::vector<std::size_t> sizes;
@@ -1352,6 +1385,7 @@ int main() {
     everyLayoutDesigns();
     vCranksSharePins();
     oddVsDesign();
+    throttleLayouts();
     exhaustIsDesigned();
     hPipeFlowsBothWays();
     fuelSystemsAreDesigned();

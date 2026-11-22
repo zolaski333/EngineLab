@@ -19,7 +19,7 @@
  * cylinders, bank_count, bank_angle, bore, stroke, displacement, induction
  * (natural/turbo/super), boost, turbo_count, intake (crankcase_reed/cylinder_port),
  * intake_reed (yes/no), exhaust_system, exhaust_silencer, fuel_system,
- * intake_style (the designer's choices, by their file names). Anything else is a DesignValue
+ * intake_style, throttles (the designer's choices, by their file names). Anything else is a DesignValue
  * override by key, so `expansion_chamber_tuned_length_mm=900` or
  * `exhaust_port_open_deg=88` work exactly as the designer's own fields do, and
  * a typo surfaces as the designer's own "unknown key" error.
@@ -156,6 +156,11 @@ struct SpecLine final {
         if (name == "intake_style") {
             if (const auto style = enginelab::parseIntakeStyle(value)) spec.intakeStyle = *style;
             else result.error = "unknown intake_style: " + value;
+            continue;
+        }
+        if (name == "throttles") {
+            if (const auto layout = enginelab::parseThrottleLayout(value)) spec.throttles = *layout;
+            else result.error = "unknown throttles: " + value;
             continue;
         }
         double number = 0.0;

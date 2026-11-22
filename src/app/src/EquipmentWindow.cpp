@@ -4,6 +4,7 @@
 #include <enginelab/app/Widgets.hpp>
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
+#include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 
 #include <algorithm>
@@ -450,6 +451,66 @@ private:
 
 // --------------------------------------------------------------------------
 
+/** One throttle body for the engine, or one plate in each cylinder's runner
+ *  (withThrottleLayout): a four-stroke spark engine's, and a restart. */
+class ThrottleSection final : public Section {
+public:
+    explicit ThrottleSection(EquipmentWindow::Callbacks& callbacks)
+        : Section(utf8("THROTTLES")), callbacks_(callbacks) {
+        layout_.setOptionTooltip(0, utf8("One throttle body ahead of the plenum, the plates' area kept."));
+        layout_.setOptionTooltip(1, utf8("A plate in each cylinder's runner (individual throttle bodies): the "
+                                         "sharpest response. Wide open each runner is as if it had no plate."));
+        layout_.onChange = [this](int index) { choose(index); };
+        addAndMakeVisible(layout_);
+    }
+
+    [[nodiscard]] int preferredHeight() const override { return headerHeight + 34; }
+
+    void setEngine(const EngineConfig& config, const std::shared_ptr<calibration::CalibrationStore>&) override {
+        config_ = config;
+        setVisible(config.cycle == EngineCycle::fourStroke && config.fuel != FuelType::diesel);
+        const auto& intake = config.intakePaths.empty() ? config.intake : config.intakePaths.front().geometry;
+        const auto individual = throttleLayoutOf(config) == ThrottleLayout::individual;
+        layout_.setSelected(individual ? 1 : 0);
+        const auto bore = juce::String(intake.throttleDiameterMm, 0) + utf8(" mm");
+        setStatus(individual ? juce::String(intake.throttleCount) + utf8(" plates of ") + bore
+                                   + utf8(", one in each runner. The engine restarts on a change.")
+                             : (intake.throttleCount > 1 ? juce::String(intake.throttleCount) + utf8(" bodies of ")
+                                                         : utf8("One body of "))
+                                   + bore + utf8(" ahead of the plenum. The engine restarts on a change."));
+    }
+
+    void setLocked(bool locked) override {
+        Section::setLocked(locked);
+        layout_.setEnabled(!locked);
+    }
+
+    void resized() override {
+        auto row = body().removeFromTop(34);
+        layout_.setBounds(row.removeFromLeft(layout_.idealWidth()).withSizeKeepingCentre(layout_.idealWidth(), 30));
+    }
+
+private:
+    void choose(int index) {
+        const auto wanted = index == 1 ? ThrottleLayout::individual : ThrottleLayout::single;
+        if (locked_ || !callbacks_.applyEngine || wanted == throttleLayoutOf(config_)) return;
+        auto refit = withThrottleLayout(config_, wanted);
+        if (!refit.config) {
+            setStatus(utf8(refit.error.c_str()));
+            setEngine(config_, {});
+            return;
+        }
+        if (!callbacks_.applyEngine(*refit.config)) {
+            setEngine(config_, {});
+            setStatus(utf8("The engine did not take the throttles."));
+        }
+    }
+
+    EquipmentWindow::Callbacks& callbacks_;
+    EngineConfig config_ {};
+    ui::SegmentedControl layout_ { juce::StringArray { "One for the engine", "One per cylinder" } };
+};
+
 /** A section over scalar settings of the ECU's tables (VTEC, launch
  *  control): it reads them from each new snapshot and publishes an edit. */
 class TableSection : public Section {
@@ -805,7 +866,8 @@ juce::String describeNitrousBlockers(std::uint32_t blockers, const NitrousConfig
 class EquipmentWindow::Content final : public juce::Component {
 public:
     Content(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store, Callbacks callbacks)
-        : callbacks_(std::move(callbacks)), nitrous_(callbacks_), valve_(callbacks_), vtec_(callbacks_) {
+        : callbacks_(std::move(callbacks)), throttles_(callbacks_), nitrous_(callbacks_), valve_(callbacks_),
+          vtec_(callbacks_) {
         setOpaque(true);
         for (auto* section : sections()) {
             section->onLayoutChanged = [this] { layoutSections(); };
@@ -817,8 +879,8 @@ public:
         setEngine(config, std::move(store));
     }
 
-    [[nodiscard]] std::array<Section*, 5> sections() noexcept {
-        return { &nitrous_, &antiLag_, &valve_, &vtec_, &launch_ };
+    [[nodiscard]] std::array<Section*, 6> sections() noexcept {
+        return { &throttles_, &nitrous_, &antiLag_, &valve_, &vtec_, &launch_ };
     }
 
     void setEngine(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store) {
@@ -856,6 +918,7 @@ private:
     Callbacks callbacks_;
     juce::Viewport viewport_;
     juce::Component inner_;
+    ThrottleSection throttles_;
     NitrousSection nitrous_;
     ValveSection valve_;
     VtecSection vtec_;

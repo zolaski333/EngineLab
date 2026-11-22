@@ -97,6 +97,19 @@ enum class IntakeStyle : std::uint8_t {
     velocityStacks,
 };
 
+/** How many throttles, and where. */
+enum class ThrottleLayout : std::uint8_t {
+    /** The family's: one body on a car, one per cylinder ahead of the
+     *  plenum on a sport motorcycle; a two-stroke's carburettor feeds its
+     *  own crankcase. */
+    automatic,
+    /** One throttle body for the whole engine, ahead of the plenum. */
+    single,
+    /** One plate in each cylinder's runner (individual throttle bodies), a
+     *  four-stroke spark engine's. */
+    individual,
+};
+
 /**
  * The short description an engine is designed from, with no base engine.
  * A zero or empty field is derived. Bore and stroke, or the displacement, are
@@ -144,6 +157,7 @@ struct EngineSpec final {
     ExhaustSilencer exhaustSilencer { ExhaustSilencer::automatic };
     FuelSystem fuelSystem { FuelSystem::automatic };
     IntakeStyle intakeStyle { IntakeStyle::automatic };
+    ThrottleLayout throttles { ThrottleLayout::automatic };
     /** Values set by hand, by DesignValue key. They win over the derived ones,
      *  and what is derived from them follows. An unknown key is an error. */
     std::map<std::string, double> overrides;
@@ -216,6 +230,16 @@ struct DesignedEngine final {
  */
 [[nodiscard]] DesignedEngine withIntakeStyle(const EngineConfig& config, IntakeStyle style);
 
+/** single or individual: what `config` has (one body for a single body). */
+[[nodiscard]] ThrottleLayout throttleLayoutOf(const EngineConfig& config) noexcept;
+/**
+ * `config` with one throttle body for the engine or one plate a cylinder in
+ * each runner, on every intake path: the plates' total area kept, a
+ * carburettor resized for its bores. A two-stroke, a diesel or a rotary is
+ * refused individual throttles. Never throws; a refusal is in `error`.
+ */
+[[nodiscard]] DesignedEngine withThrottleLayout(const EngineConfig& config, ThrottleLayout layout);
+
 [[nodiscard]] const char* engineUseName(EngineUse) noexcept;
 [[nodiscard]] std::optional<EngineUse> parseEngineUse(std::string_view) noexcept;
 [[nodiscard]] const char* crankPinsName(CrankPins) noexcept;
@@ -228,5 +252,7 @@ struct DesignedEngine final {
 [[nodiscard]] std::optional<FuelSystem> parseFuelSystem(std::string_view) noexcept;
 [[nodiscard]] const char* intakeStyleName(IntakeStyle) noexcept;
 [[nodiscard]] std::optional<IntakeStyle> parseIntakeStyle(std::string_view) noexcept;
+[[nodiscard]] const char* throttleLayoutName(ThrottleLayout) noexcept;
+[[nodiscard]] std::optional<ThrottleLayout> parseThrottleLayout(std::string_view) noexcept;
 
 } // namespace enginelab

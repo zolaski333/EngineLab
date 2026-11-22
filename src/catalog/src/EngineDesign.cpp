@@ -845,6 +845,79 @@ DesignedEngine withIntakeStyle(const EngineConfig& config, IntakeStyle style) {
     return designed;
 }
 
+ThrottleLayout throttleLayoutOf(const EngineConfig& config) noexcept {
+    const auto& intake = config.intakePaths.empty() ? config.intake : config.intakePaths.front().geometry;
+    return intake.individualThrottles ? ThrottleLayout::individual : ThrottleLayout::single;
+}
+
+DesignedEngine withThrottleLayout(const EngineConfig& config, ThrottleLayout layout) {
+    DesignedEngine designed;
+    try {
+        const auto diesel = config.fuel == FuelType::diesel;
+        const auto twoStroke = config.cycle == EngineCycle::twoStroke;
+        const auto rotary = config.cycle == EngineCycle::rotary;
+        if (layout == ThrottleLayout::automatic) layout = ThrottleLayout::single;
+        const auto individual = layout == ThrottleLayout::individual;
+        if (individual && (twoStroke || diesel || rotary))
+            throw std::invalid_argument(twoStroke
+                ? "A two-stroke's carburettor already feeds its own cylinder's crankcase: no individual throttles"
+                : diesel ? "A diesel is unthrottled: no individual throttles"
+                : "Individual throttles are a piston engine's: a rotary keeps its throttle body");
+        if (twoStroke)
+            throw std::invalid_argument("A two-stroke's carburettor feeds its own cylinder's crankcase: one each");
+        auto edited = config;
+        const std::map<std::string, double> none;
+        const auto stoichiometric = config.fuelProperties.stoichiometricAirFuelRatio;
+        const FuelSizing sizing { twoStroke, diesel, rotary, std::max(0.01, breathingDisplacementLitres(config)),
+            static_cast<double>(std::max<std::size_t>(1, config.cylinders.size())),
+            (diesel ? 0.8 : 0.9) * config.redlineRpm,
+            config.forcedInduction.enabled ? std::max(1.0, config.forcedInduction.pressureRatio) : 1.0,
+            cycleDegreesOf(config.cycle),
+            diesel || !(stoichiometric > 0.0) ? 1.0 : stoichiometric / 14.7 };
+        // The plates' total area is kept: the engine breathes as it did at
+        // full throttle, through one bore or one a runner.
+        const auto refit = [&](IntakeConfig& intake, std::size_t cylinders, Derivation& settle) {
+            const auto bores = individual ? static_cast<std::uint32_t>(std::max<std::size_t>(1, cylinders)) : 1U;
+            const auto before = static_cast<double>(std::max(1U, intake.throttleCount));
+            intake.throttleDiameterMm *= std::sqrt(before / static_cast<double>(bores));
+            intake.throttleCount = bores;
+            intake.individualThrottles = individual;
+            if (intake.carburettor.enabled) {
+                intake.carburettor = CarburettorConfig {};
+                sizeCarburettor(intake, edited, sizing, settle);
+            }
+        };
+        Derivation derive(none, designed.values);
+        refit(edited.intake, edited.cylinders.size(), derive);
+        std::vector<DesignValue> paths;
+        Derivation quiet(none, paths);
+        for (auto& path : edited.intakePaths) refit(path.geometry, path.cylinderIds.size(), quiet);
+        edited.throttleDiameterMm = edited.intake.throttleDiameterMm;
+        normaliseEngineConfig(edited);
+        if (auto error = validateEngineConfig(edited)) throw std::invalid_argument(*error);
+        designed.config = std::move(edited);
+    } catch (const std::exception& error) {
+        designed.config.reset();
+        designed.error = error.what();
+    }
+    return designed;
+}
+
+const char* throttleLayoutName(ThrottleLayout layout) noexcept {
+    switch (layout) {
+    case ThrottleLayout::automatic: return "automatic";
+    case ThrottleLayout::single: return "single";
+    case ThrottleLayout::individual: return "individual";
+    }
+    return "automatic";
+}
+
+std::optional<ThrottleLayout> parseThrottleLayout(std::string_view name) noexcept {
+    for (const auto layout : { ThrottleLayout::automatic, ThrottleLayout::single, ThrottleLayout::individual })
+        if (name == throttleLayoutName(layout)) return layout;
+    return std::nullopt;
+}
+
 std::optional<EngineUse> parseEngineUse(std::string_view name) noexcept {
     for (const auto use : { EngineUse::roadCar, EngineUse::sportCar, EngineUse::roadMotorcycle,
              EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle, EngineUse::aircraft, EngineUse::truck })
@@ -1395,10 +1468,19 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         // A two-stroke's throttle is the carburettor bore feeding the crankcase
         // circuit, as in the catalogue's RD350: one. Four bodies there idled a
         // two-stroke four at 2,070 rpm for 1,300, misfiring (journal 2026-10-19).
-        const auto perCylinderThrottles = profile.throttlePerCylinder && !diesel && !twoStroke && count <= 16;
+        if (spec.throttles == ThrottleLayout::individual && (twoStroke || diesel || rotary))
+            throw std::invalid_argument(twoStroke
+                ? "A two-stroke's carburettor already feeds its own cylinder's crankcase: no individual throttles"
+                : diesel ? "A diesel is unthrottled: no individual throttles"
+                : "Individual throttles are a piston engine's: a rotary keeps its throttle body");
+        const auto perCylinderThrottles = spec.throttles == ThrottleLayout::individual
+            || (spec.throttles == ThrottleLayout::automatic
+                && profile.throttlePerCylinder && !diesel && !twoStroke && count <= 16);
+        intake.individualThrottles = spec.throttles == ThrottleLayout::individual;
         intake.throttleCount = static_cast<std::uint32_t>(std::lround(derive("throttle_count", "Throttle bodies", "",
             perCylinderThrottles ? (rotary ? static_cast<double>(rotors) : countD) : 1.0,
-            perCylinderThrottles ? (rotary ? "one per rotor" : "one per cylinder")
+            intake.individualThrottles ? "one in each cylinder's runner"
+                : perCylinderThrottles ? (rotary ? "one per rotor" : "one per cylinder")
                 : twoStroke ? "one, feeding the crankcase circuit" : "one")));
         // A two-stroke's bore feeds one cylinder, because its intake path is
         // that cylinder's crankcase, so it is sized from that cylinder and not

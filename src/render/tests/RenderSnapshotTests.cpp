@@ -153,5 +153,29 @@ int main() {
         require(closest > static_cast<float>(engine.intake.throttleDiameterMm),
                 "a radial two-stroke's carburettors stand apart, each at its cylinder");
     }
+
+    // Individual throttles: a body on each runner, near its middle, and the
+    // plenum's mouths bare.
+    {
+        auto engine = enginelab::makeDefaultInlineFour();
+        engine.intake.individualThrottles = true;
+        engine.intake.throttleCount = static_cast<std::uint32_t>(engine.cylinders.size());
+        for (auto& path : engine.intakePaths) path.geometry = engine.intake;
+        enginelab::normaliseEngineConfig(engine);
+        std::vector<enginelab::render::PortAnchor> ports;
+        for (std::size_t index = 0; index < engine.cylinders.size(); ++index) {
+            enginelab::render::PortAnchor port;
+            port.cylinderId = engine.cylinders[index].id;
+            port.position = { static_cast<float>(index) * 90.0F, 150.0F, 40.0F };
+            port.direction = { 0.0F, 0.3F, 1.0F };
+            port.inner = { static_cast<float>(index) * 90.0F, 120.0F, 20.0F };
+            port.diameterMm = 32.0F;
+            ports.push_back(port);
+        }
+        std::size_t onRunners = 0;
+        for (const auto& piece : enginelab::render::layoutIntake(engine, ports, 86.0F, false))
+            if (piece.kind == enginelab::render::DuctKind::intakeThrottle && piece.elementId != 0U) ++onRunners;
+        require(onRunners == engine.cylinders.size(), "individual throttles draw a body on each runner");
+    }
     return 0;
 }

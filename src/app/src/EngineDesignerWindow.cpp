@@ -158,6 +158,11 @@ public:
             "on the throttle. An open trumpet is the bare bellmouth, no filter at all: the loudest intake."));
         addChoice(twoStrokeIntake_, "Two-stroke intake",
             { "Reed on the crankcase", "Cylinder port with a reed", "Cylinder port (piston port)" });
+        addChoice(throttles_, "Throttles", { "Automatic", "One for the engine", "One per cylinder" });
+        throttles_.combo.setTooltip(utf8("Automatic is the family's: one body on a car, one per cylinder ahead of "
+            "the plenum on a sport motorcycle. One per cylinder puts a plate in each cylinder's runner "
+            "(individual throttle bodies), the sharpest response. A two-stroke's carburettor already feeds "
+            "its own cylinder; a diesel has no throttle."));
         addKeyed(throttleCount_, "Throttle bodies", "throttle_count", intakePage);
         addKeyed(throttleDiameter_, "Throttle bore (mm)", "throttle_diameter_mm", intakePage);
         addKeyed(runnerLength_, "Runner length (mm)", "intake_runner_length_mm", intakePage);
@@ -391,6 +396,8 @@ private:
         if (&field == &bankCount_) return layout == EngineLayout::custom;
         if (&field == &boost_) return induction_.combo.getSelectedItemIndex() > 0;
         if (&field == &twoStrokeIntake_) return cycle_.combo.getSelectedItemIndex() == 1;
+        if (&field == &throttles_)
+            return cycle_.combo.getSelectedItemIndex() == 0 && fuel_.combo.getSelectedItemIndex() != 1;
         if (&field == &turbos_) return induction_.combo.getSelectedItemIndex() == 1;
         if (&field == &firingOrder_) return advanced && layout != EngineLayout::radial;
         if (&field == &crankPins_)
@@ -519,6 +526,8 @@ private:
         }
         spec.fuelSystem = static_cast<FuelSystem>(std::max(0, fuelSystem_.combo.getSelectedItemIndex()));
         spec.intakeStyle = static_cast<IntakeStyle>(std::max(0, intakeStyle_.combo.getSelectedItemIndex()));
+        if (applies(throttles_))
+            spec.throttles = static_cast<ThrottleLayout>(std::max(0, throttles_.combo.getSelectedItemIndex()));
         spec.exhaustSystem = static_cast<ExhaustSystem>(std::max(0, exhaustSystem_.combo.getSelectedItemIndex()));
         spec.exhaustSilencer = static_cast<ExhaustSilencer>(std::max(0, silencer_.combo.getSelectedItemIndex()));
         spec.overrides = overrides_;
@@ -819,7 +828,7 @@ private:
     Field name_, cycle_, fuel_, use_, layout_, cylinders_, bankAngle_, bankCount_, bore_, stroke_, displacement_,
         rotorRadius_, eccentricity_, rotorWidth_, induction_, boost_, turbos_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
     Field redline_, revLimit_, idle_, compression_;
-    Field fuelSystem_, intakeStyle_, twoStrokeIntake_, throttleCount_, throttleDiameter_, runnerLength_,
+    Field fuelSystem_, intakeStyle_, throttles_, twoStrokeIntake_, throttleCount_, throttleDiameter_, runnerLength_,
         runnerDiameter_, plenum_, airbox_, snorkelLength_, snorkelBore_, bellmouth_, injectionStart_, injectionEnd_, mainJet_, pilotJet_,
         venturi_, pumpStroke_, starterJet_;
     Field exhaustSystem_, silencer_, primaryLength_, primaryDiameter_, collectorDiameter_, midpipeLength_,

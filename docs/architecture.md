@@ -290,8 +290,10 @@ compression and the induction (natural, turbocharged, supercharged -- a Roots,
 a centrifugal one on an aircraft -- or a centrifugal supercharger). *Intake & fuel*: the fuel system (`fuel_system`: port or direct
 injection, or a carburettor, on either cycle; a diesel injects directly),
 the intake (`intake_style`: an airbox, a pod filter, or open velocity stacks
-with a bellmouth 1.5 times the throttle's combined bore), the throttles,
-runners, plenum and, as they apply, the injection window or the jets, the
+with a bellmouth 1.5 times the throttle's combined bore), the throttles
+(`throttles`: the family's, one body for the engine, or one plate in each
+cylinder's runner -- a four-stroke spark engine's, wide open the runner's
+plain face), runners, plenum and, as they apply, the injection window or the jets, the
 venturi, the accelerator pump and the starter jet. A petrol four injecting
 directly injects on its intake stroke (420-600 deg, for a homogeneous
 charge), a direct-injected two-stroke from its exhaust port's closing for

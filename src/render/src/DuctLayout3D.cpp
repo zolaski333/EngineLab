@@ -3198,7 +3198,13 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
         // bowl under it.
         auto up = -downAxis - direction * dot(-downAxis, direction);
         up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
-        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
+        // With individual throttles the plates are in the runners (and the
+        // carburettors with them): the plenum's mouths are bare necks.
+        if (geometry.individualThrottles)
+            appendCylinder(bodies.mesh, Mat4::frameAlongY(face, direction), 0.55F * throttle, 0.55F * throttle,
+                           bodyLength, 28);
+        else
+            appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
         mouths.push_back(face + direction * bodyLength);
         mouthCentre += mouths.back();
     }
@@ -3517,6 +3523,9 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
     struct Pending final {
         std::size_t piece;
         IntakeRunner runner;
+        /** Individual throttles: the plate's bore, drawn on the runner. */
+        float plateBore { 0.0F };
+        bool carburettor { false };
     };
     std::vector<Pending> pending;
     std::vector<RoutedPipe> routes;
@@ -3844,7 +3853,9 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             route.startLead = 0.8F * runner.diameter;
             route.endLead = 2.0F * route.radius;
             routes.push_back(std::move(route));
-            pending.push_back({ pieces.size(), runner });
+            pending.push_back({ pieces.size(), runner,
+                                geometry.individualThrottles ? std::max(5.0F, mm(geometry.throttleDiameterMm)) : 0.0F,
+                                geometry.carburettor.enabled });
             pieces.push_back(std::move(piece));
         }
         for (auto& box : plenums) pieces.push_back(std::move(box));
@@ -3873,6 +3884,33 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
         appendTube(piece.mesh, route, radii, 18, false, true);
         route.pop_back();
         radii.pop_back();
+        if (const auto bore = pending[r].plateBore; bore > 0.0F && route.size() >= 2U) {
+            // Individual throttles: the body sits in the runner, the plate
+            // half way along it, where the solver puts it.
+            const auto total = polylineLength(route);
+            auto walked = 0.0F;
+            for (std::size_t k = 1; k < route.size(); ++k) {
+                const auto step = length(route[k] - route[k - 1U]);
+                if (walked + step < 0.5F * (total - 1.1F * bore) && k + 1U < route.size()) {
+                    walked += step;
+                    continue;
+                }
+                const auto direction = normalise(route[k] - route[k - 1U]);
+                const auto start = route[k - 1U]
+                    + direction * std::clamp(0.5F * (total - 1.1F * bore) - walked, 0.0F, step);
+                auto up = -downAxis - direction * dot(-downAxis, direction);
+                up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
+                DuctPiece body;
+                body.kind = DuctKind::intakeThrottle;
+                body.pathId = piece.pathId;
+                body.elementId = piece.elementId;
+                body.nearEngine = true;
+                appendThrottleBore(body.mesh, start, direction, bore, pending[r].carburettor, up);
+                body.centreline = { start, start + direction * (1.1F * bore) };
+                pieces.push_back(std::move(body));
+                break;
+            }
+        }
         piece.centreline = std::move(route);
         piece.radii = std::move(radii);
     }
