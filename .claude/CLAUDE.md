@@ -54,7 +54,8 @@ two-stroke's carburettors drawn one a cylinder, and refused in New engine
 (a radial's one crankcase cannot pump); V engines with an odd count (the
 lone cylinder centred, Dual = 3-1 one side, 2-1 the other on a V5); one
 throttle or one a cylinder (individual throttles), measured before exposed.
-Few builds and tests: only those that prove a step.
+Few builds and tests: only those that prove a step. **Done 2026-11-22**
+(journal 2026-11-22), unpushed, unmerged; waits on the owner.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a
@@ -308,7 +309,9 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or
   trajectory-resolved forward delivery; individual throttles as a small 0-D cell
   per cylinder (-30 % WOT torque at 6,500 rpm, orifice dump loss: the plate
-  belongs inside the 1-D runner); Mazda's published 13B port areas as its
+  belongs inside the 1-D runner); the plenum's inlet area as the in-runner
+  plates' WOT loss (it was the orifice damping the ram wave, journal
+  2026-11-22); Mazda's published 13B port areas as its
   high-rpm gap (+0.4 % at 8,500), or its VDI (no fixed runner passes +1.6 %).
 - **Backfire** (journal 2026-10-24/25): "1-D cannot carry a front" (it rises in
   0.2-0.8 ms); "the heat is too slow to become a wave"; the EVO timing as

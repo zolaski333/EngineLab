@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-22 — Odd V engines; individual throttles at full load
+
+- Odd V (designed, knock-limited, `--designer-probe` / `--idle-firing 20`): V3 4T 2.04 x real time, idle 1,408 rpm sd 19; V5 4T 1.31, 1,374 sd 13, no misfire; V3/V5 2T 1.72/1.24, firing 25-27 % at idle like designed I3/V2/V4 2T controls (not odd-V specific).
+- Individual throttles (`individual_throttles`, no catalogue engine): CP2/CP4 copies lost up to 10.0/11.1 % WOT torque against one throttle (`DynoSweepHarness --step 1000`), runner tap MAP 80-85 kPa. Refuted one at a time: plenum inlet x4 (CP2 -1.8 to +0.3 %, CP4 none), plate at the full face as an orifice (no better). Cause: the quasi-steady orifice at a full-bore plate passes the steady flow but damps the ram wave; as the plain face the gap is within 0.4 %.
+- Kept: a restriction opened to its full face between two ducts, without a turbine, is the plain face, bit for bit; each plate opens its fraction of its bore (no discharge coefficient), capped at its runner. CP2/CP4 now within 0.3 %, lambda and advance equal; every non-ITB row bit-identical.
+- Designed I4s (1.0 L bike, 2.0 L car): ITB vs control -1.5..+0.5 % (bike), +0.8..+4.3 % (car vs one body); carburetted ITB lambda equal to the plenum carb's (fuel still enters the shared plenum: per-runner metering not needed for the mean); idles 1,306 / 1,259 (carb) / 904 rpm, all firing; real time 1.47-1.75 against 1.70-2.00 without.
+- Known limit: the last bit of pedal steps from orifice to plain face (as the active exhaust valve). The acoustic intake still places the throttle at the plenum. Found, not touched: a designed carburetted bike I4 without ITB (four bodies on a plenum) does not idle at all (0 rpm), before and after this change.
+- Targeted tests pass (GasDynamics, RestrictionFace, JointIntakeManifold, LiveIntake, AppLayout, EngineModel3D, RenderSnapshot, EngineDesign); full ctest not run; not seen in the app window.
+
 ## 2026-11-21 — Two-stroke crankcase paths on the workers; hardware fused multiply-add
 
 - Profile after 75b8a15 (`SamplingProfiler`, new serial-by-line section): the V4-2S master still ran the crankcase volumes, throttles and plenum losses of its 4 paths one after another, and every duct cell's RK2 combination called MSVC's `std::fma`, a library routine (`fmal`), not the instruction.

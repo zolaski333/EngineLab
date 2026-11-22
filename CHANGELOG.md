@@ -7,6 +7,30 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **V engines with an odd cylinder count** (V3, V5, V7...) in New engine.
+  The longer bank carries the extra cylinder and the shorter bank's
+  cylinders stand centred between it, one crank pin each; they fire evenly
+  (a V3 four-stroke every 240 deg, a V5 every 144 deg). A Dual exhaust on a
+  V5 is a 3-into-1 on one side and a 2-into-1 on the other.
+- **One throttle for the engine, or one per cylinder.** New engine has a
+  Throttles choice (Automatic, One for the engine, One per cylinder) and the
+  Equipment window a THROTTLES section that refits an engine either way, the
+  plates' total area kept and a carburettor resized. One per cylinder puts a
+  plate in each runner (individual throttle bodies), drawn there in the 3-D
+  view. A four-stroke spark engine's only; off by default.
+
+### Fixed
+
+- **A radial two-stroke** drew all its carburettors as one, on the crank's
+  axis: each is now at its own cylinder. New engine also refuses a radial
+  two-stroke: its cylinders share one crankcase, where the pistons sweep a
+  nearly constant volume, so it cannot scavenge.
+- **Individual throttles lost 10-11 % of their full-load torque** against a
+  single throttle body: a wide-open plate damped the intake's ram wave. Wide
+  open it is now the runner itself; engines without them are unchanged.
+
 ## [0.11.1] — 2026-11-19
 
 The first published release of 0.11: the v0.11.0 tag did not compile on
