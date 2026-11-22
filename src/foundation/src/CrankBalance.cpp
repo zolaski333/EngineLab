@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <map>
 #include <numbers>
 #include <numeric>
 #include <set>
@@ -128,6 +130,15 @@ std::vector<BalanceCylinder> balanceCylinders(const EngineConfig& config) {
     const auto reference = ordered.empty() ? 1.0
         : (ordered.front().pistonMassGrams + ordered.front().connectingRodMassGrams / 3.0)
             * ordered.front().strokeMm;
+    // A V with a cylinder more on one bank (a V3, a V5): each bank's
+    // cylinders in id order, the shorter bank's centred between the longer's.
+    std::map<double, std::size_t> bankSizes;
+    for (const auto& cylinder : ordered) ++bankSizes[cylinder.bankOffsetDegrees];
+    const auto unevenV = config.layout == EngineLayout::vLayout && bankSizes.size() == 2U
+        && bankSizes.begin()->second != std::next(bankSizes.begin())->second;
+    std::size_t longest = 0;
+    for (const auto& [bank, size] : bankSizes) longest = std::max(longest, size);
+    std::map<double, std::size_t> seenOnBank;
     std::vector<BalanceCylinder> result;
     result.reserve(ordered.size());
     for (std::size_t index = 0; index < ordered.size(); ++index) {
@@ -135,7 +146,10 @@ std::vector<BalanceCylinder> balanceCylinders(const EngineConfig& config) {
         BalanceCylinder entry;
         entry.tdcDegrees = cylinder.crankOffsetDegrees;
         entry.bankDegrees = cylinder.bankOffsetDegrees;
-        entry.axialPitches = std::floor(static_cast<double>(index) / perRow);
+        entry.axialPitches = unevenV
+            ? static_cast<double>(seenOnBank[cylinder.bankOffsetDegrees]++)
+                + 0.5 * static_cast<double>(longest - bankSizes[cylinder.bankOffsetDegrees])
+            : std::floor(static_cast<double>(index) / perRow);
         entry.massRadius = (cylinder.pistonMassGrams + cylinder.connectingRodMassGrams / 3.0)
             * cylinder.strokeMm / std::max(1.0e-9, reference);
         entry.rodRatio = cylinder.strokeMm * 0.5 / std::max(1.0e-9, cylinder.connectingRodMm);

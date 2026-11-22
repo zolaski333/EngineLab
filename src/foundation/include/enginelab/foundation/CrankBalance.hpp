@@ -45,7 +45,9 @@ struct CrankBalance final {
  * The cylinders of an engine as the analysis sees them. No axial position is
  * authored, so it is assumed: an inline engine in cylinder id order, one
  * pitch apart; other layouts one pitch per row, a row holding one cylinder of
- * each bank in id order. Reciprocating mass = piston + one third of the rod.
+ * each bank in id order; a V with one bank longer (a V3, a V5) has its shorter
+ * bank's cylinders centred between the longer's. Reciprocating mass = piston
+ * + one third of the rod.
  */
 [[nodiscard]] std::vector<BalanceCylinder> balanceCylinders(const EngineConfig& config);
 

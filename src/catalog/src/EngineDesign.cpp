@@ -980,6 +980,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 throw std::invalid_argument("A rotary is sized by its displacement or its rotor (generating "
                                             "radius, eccentricity, width), not a bore and a stroke");
         }
+        // A radial's cylinders all open into its one crankcase, and pistons
+        // spaced evenly round it sweep a nearly constant volume between them:
+        // the case cannot pump a charge. The simulator gives each cylinder a
+        // crankcase of its own, which no radial has (owner 2026-11-22).
+        if (twoStroke && spec.layout == EngineLayout::radial && spec.cylinderCount > 1)
+            throw std::invalid_argument("A radial two-stroke cannot scavenge through its crankcase: its cylinders "
+                                        "share one, and their pistons sweep a nearly constant volume in it");
         const auto rotors = spec.cylinderCount;
         const auto count = rotary ? 3U * rotors : spec.cylinderCount;
         const auto countD = static_cast<double>(count);
@@ -1148,14 +1155,21 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         const auto bankCount = static_cast<std::uint32_t>(banks.size());
         if (spec.layout == EngineLayout::custom && bankCount < 2)
             throw std::invalid_argument("A custom (W) layout needs 2 or more banks and their angle");
-        if (!radial && count % bankCount != 0)
+        // A V may carry one cylinder more on its first bank (a V3's 2 + 1, a
+        // V5's 3 + 2, owner 2026-11-22); the shorter bank's cylinders stand
+        // centred between the longer one's, half a pitch along.
+        const auto unevenV = spec.layout == EngineLayout::vLayout && count % 2U == 1U;
+        if (spec.layout == EngineLayout::vLayout && count < 2)
+            throw std::invalid_argument("A V has a cylinder on each bank: 2 or more");
+        if (!radial && !unevenV && count % bankCount != 0)
             throw std::invalid_argument("The cylinders do not share out evenly over the banks");
         std::vector<CylinderPlace> places(count);
         std::vector<BalanceCylinder> geometry(count);
         for (std::uint32_t index = 0; index < count; ++index) {
             places[index].bankIndex = radial ? index : index % bankCount;
             places[index].bankDegrees = banks[places[index].bankIndex];
-            places[index].row = radial ? 0.0 : std::floor(static_cast<double>(index) / static_cast<double>(bankCount));
+            places[index].row = radial ? 0.0 : std::floor(static_cast<double>(index) / static_cast<double>(bankCount))
+                + (unevenV && places[index].bankIndex == 1U ? 0.5 : 0.0);
             geometry[index].bankDegrees = places[index].bankDegrees;
             geometry[index].axialPitches = places[index].row;
             geometry[index].rodRatio = 0.5 * stroke / rod;
@@ -1163,11 +1177,14 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
         const auto cycleDegrees = cycleDegreesOf(spec.cycle);
         std::vector<double> tdc(count, 0.0);
         std::vector<std::uint32_t> order = spec.firingOrder;
+        // An odd V's cylinders stand half a pitch apart: none shares a row, so
+        // each has a pin of its own, placed for even firing.
         const auto rowed = (spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::custom)
-            && spec.crankPins != CrankPins::separate;
+            && spec.crankPins != CrankPins::separate && !unevenV;
         std::optional<RowPinCrank> crank;
         std::string pinRule = radial ? "one throw, a master rod and articulated rods"
             : !spec.crankOffsetsDegrees.empty() ? "the cylinders whose offsets put them on one pin share it"
+            : unevenV ? "one per cylinder: the shorter bank's stand between the longer's"
             : spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::custom
             ? "one per cylinder: as asked" : "one per cylinder";
         if (rotary) {
@@ -1462,7 +1479,8 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             : (spec.layout == EngineLayout::vLayout || spec.layout == EngineLayout::flat) && count >= 4 ? 2U
             : spec.layout == EngineLayout::custom ? bankCount : 1U;
         // A rotary's primaries are its rotors'.
-        const auto merged = std::max(1U, (rotary ? rotors : count) / paths);
+        // A V5's longer bank merges three: the collector is sized for it.
+        const auto merged = std::max(1U, ((rotary ? rotors : count) + paths - 1U) / paths);
         const auto collectorDiameter = exhaust.primaryDiameterMm
             * std::max(1.0, std::sqrt(0.55 * static_cast<double>(merged)));
         exhaust.collectorDiameterMm = twoStroke ? collectorDiameter

@@ -1727,7 +1727,41 @@ void checkCollectorFollowsPrimaries() {
         }
 }
 
+/** An odd V's shorter bank stands centred between the longer one's (owner
+    2026-11-22): a V3's lone cylinder between the other two, a V5's two in
+    the gaps of the three. */
+void checkOddVCentred() {
+    for (const auto count : { 3U, 5U }) {
+        EngineSpec spec;
+        spec.name = "Designed odd V";
+        spec.use = EngineUse::sportMotorcycle;
+        spec.layout = EngineLayout::vLayout;
+        spec.cylinderCount = count;
+        spec.bankAngleDegrees = 90.0;
+        spec.displacementLitres = 0.2 * count;
+        const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+        require(designed.config.has_value(), "an odd V designs: " + designed.error);
+        const auto& config = *designed.config;
+        const EngineModel3D model(config);
+        const auto zOf = [&](std::uint32_t id) {
+            for (std::size_t i = 0; i < config.cylinders.size(); ++i)
+                if (config.cylinders[i].id == id) return model.probe(i, 0.0).deckCentre.z;
+            return 0.0F;
+        };
+        const auto& longer = config.banks[0].cylinderIds;
+        const auto& shorter = config.banks[1].cylinderIds;
+        for (std::size_t k = 0; k < shorter.size(); ++k) {
+            const auto between = 0.5F * (zOf(longer[k]) + zOf(longer[k + 1]));
+            std::cout << "EngineModel3D: V" << count << " cylinder " << shorter[k] << " at " << zOf(shorter[k])
+                      << " mm along, " << between << " between its neighbours\n";
+            require(std::abs(zOf(shorter[k]) - between) < 0.05F * static_cast<float>(config.cylinders[0].boreMm),
+                    "an odd V's shorter bank stands centred between the longer one's cylinders");
+        }
+    }
+}
+
 int main() {
+    checkOddVCentred();
     checkCollectorFollowsPrimaries();
     checkEngineBrakeValves();
     checkHPipeDrawing();

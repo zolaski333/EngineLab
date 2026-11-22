@@ -256,6 +256,18 @@ void everyLayoutDesigns() {
     radial.boreMm = 155.6;
     radial.strokeMm = 174.6;
     require(designEngine(radial, parts()).config.has_value(), "a 30 litre radial designs (no size cap)");
+    {
+        // Its one crankcase cannot pump a charge (owner 2026-11-22).
+        auto twoStrokeRadial = radial;
+        twoStrokeRadial.use = EngineUse::roadMotorcycle;
+        twoStrokeRadial.cycle = EngineCycle::twoStroke;
+        twoStrokeRadial.cylinderCount = 5;
+        twoStrokeRadial.boreMm = 54.0;
+        twoStrokeRadial.strokeMm = 54.0;
+        const auto refused = designEngine(twoStrokeRadial, parts());
+        require(!refused.config && refused.error.find("crankcase") != std::string::npos,
+            "a radial two-stroke is refused: its cylinders share one crankcase");
+    }
     radial.boreMm = 114.0;
     radial.strokeMm = 127.0;
     const auto star = designed(radial);
@@ -1113,6 +1125,51 @@ void vCranksSharePins() {
     require(pinsOf(*designed(boxer).config) == 4, "a boxer too");
 }
 
+/** A V with an odd count (owner 2026-11-22): the first bank one cylinder
+ *  longer, the shorter bank's centred between its cylinders, firing evenly;
+ *  Dual is a pipe per bank, a 3-1 and a 2-1 on a V5. */
+void oddVsDesign() {
+    const auto bankSizes = [](const EngineConfig& config) {
+        std::vector<std::size_t> sizes;
+        for (const auto& bank : config.banks) sizes.push_back(bank.cylinderIds.size());
+        return sizes;
+    };
+    for (const auto cycle : { EngineCycle::fourStroke, EngineCycle::twoStroke }) {
+        for (const auto count : { 3U, 5U }) {
+            auto spec = vee(count, count == 3U ? 90.0 : 75.5, EngineUse::sportMotorcycle, 0.2 * count);
+            spec.cycle = cycle;
+            spec.name += cycle == EngineCycle::twoStroke ? " two-stroke" : " four-stroke";
+            const auto engine = designed(spec);
+            const auto& config = *engine.config;
+            require(bankSizes(config) == std::vector<std::size_t>({ (count + 1) / 2, count / 2 }),
+                "an odd V carries the extra cylinder on its first bank");
+            const auto rows = balanceCylinders(config);
+            const auto& first = config.banks[0].cylinderIds;
+            const auto& second = config.banks[1].cylinderIds;
+            const auto rowOf = [&](std::uint32_t id) { return rows[id - 1].axialPitches; };
+            for (std::size_t k = 0; k < second.size(); ++k)
+                require(std::abs(rowOf(second[k]) - 0.5 * (rowOf(first[k]) + rowOf(first[k + 1]))) < 1.0e-9,
+                    "the shorter bank's cylinders stand centred between the longer's");
+            evenlySpaced(config);
+            const auto balance = analyseCrankBalance(config);
+            std::cout << "  " << config.name << ": banks " << first.size() << " + " << second.size() << ", "
+                      << valueOf(engine, "crank_pins")->rule << ", primary force " << balance.primaryForce
+                      << ", couple " << balance.primaryCouple << '\n';
+            if (cycle == EngineCycle::twoStroke)
+                require(config.exhaustPaths.size() == count && config.intakePaths.size() == count,
+                    "an odd V two-stroke has a pipe and a carburettor a cylinder");
+        }
+    }
+    auto dual = vee(5, 75.5, EngineUse::sportMotorcycle, 1.0);
+    dual.exhaustSystem = ExhaustSystem::dual;
+    const auto five = designed(dual);
+    std::vector<std::size_t> pipes;
+    for (const auto& path : five.config->exhaustPaths) pipes.push_back(path.cylinderIds.size());
+    require(pipes == std::vector<std::size_t>({ 3, 2 }), "a dual V5 is a 3-1 on one side, a 2-1 on the other");
+    auto one = vee(1, 90.0, EngineUse::sportMotorcycle, 0.2);
+    require(!designEngine(one, parts()).config, "a V needs a cylinder on each bank");
+}
+
 void catalogueReadsDesigns() {
     const std::filesystem::path source = ENGINELAB_CATALOG_ROOT;
     const auto root = std::filesystem::temp_directory_path() / "enginelab-design-test";
@@ -1294,6 +1351,7 @@ int main() {
     overridesWin();
     everyLayoutDesigns();
     vCranksSharePins();
+    oddVsDesign();
     exhaustIsDesigned();
     hPipeFlowsBothWays();
     fuelSystemsAreDesigned();

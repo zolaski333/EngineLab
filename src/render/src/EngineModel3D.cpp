@@ -354,6 +354,12 @@ void EngineModel3D::buildCylinders() {
             position = found == bank->cylinderIds.end() ? 0.0F
                 : static_cast<float>(std::distance(bank->cylinderIds.begin(), found));
             bankIndex = static_cast<std::size_t>(bank - config_.banks.data());
+            // A V's shorter bank (a V3's lone cylinder, a V5's two) stands
+            // centred between the longer one's (owner 2026-11-22).
+            if (config_.layout == EngineLayout::vLayout && config_.banks.size() == 2U) {
+                const auto longest = std::max(config_.banks[0].cylinderIds.size(), config_.banks[1].cylinderIds.size());
+                position += 0.5F * static_cast<float>(longest - bank->cylinderIds.size());
+            }
         }
         station[i] = position;
         lastStation = std::max(lastStation, position);
@@ -370,16 +376,23 @@ void EngineModel3D::buildCylinders() {
     if (config_.banks.size() == 2U && !radialLike_) {
         bool aligned = false;
         bool sharedPins = true;
+        // An odd V's banks stand half a pitch apart: no two rods share a
+        // row, so its banks need no offset of their own.
+        bool rowShared = false;
         for (std::size_t i = 0; i < count; ++i) {
             if (config_.cylinders[i].connectingRodType != ConnectingRodType::conventional) aligned = true;
             const auto k = evaluateCylinderKinematics(config_, reference_, i, 0.0, 0.0);
             for (std::size_t j = 0; j < count; ++j) {
                 if (j == i || station[j] != station[i] || shift[j] == shift[i]) continue;
+                rowShared = true;
                 const auto other = evaluateCylinderKinematics(config_, reference_, j, 0.0, 0.0);
                 const auto apart = std::hypot(k.crankPinXMm - other.crankPinXMm, k.crankPinYMm - other.crankPinYMm);
                 if (k.crankshaftId != other.crankshaftId || apart >= 0.5) sharedPins = false;
             }
         }
+        if (!rowShared && config_.layout == EngineLayout::vLayout && count > 1U
+            && config_.banks[0].cylinderIds.size() != config_.banks[1].cylinderIds.size())
+            aligned = true;
         const auto halfGap = aligned ? 0.0F : sharedPins ? 0.5F * (0.22F + 0.01F) : 0.5F * (0.28F + 0.2F + 0.01F);
         for (std::size_t i = 0; i < count; ++i)
             shift[i] *= halfGap * static_cast<float>(config_.cylinders[i].boreMm);
