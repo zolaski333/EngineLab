@@ -48,7 +48,13 @@ vehicle's corridor, collectors down then back, mirrored banks, broken
 tails with collars (drawing only; journal 2026-11-18). **Validated by the
 owner 2026-11-19**, merged into `main`. Owner 2026-11-19 (H-pipe setup
 "horrible"): + H-PIPE / + X-PIPE in one click, one-bank H/X in New engine;
-released 0.11.1 with both (the 0.11.0 tag failed GCC). No current priority: ask the owner.
+released 0.11.1 with both (the 0.11.0 tag failed GCC). **Owner go 2026-11-22**
+(`feat/odd-v-throttles`, off `exp/two-stroke-parallel-pass`): a radial
+two-stroke's carburettors drawn one a cylinder, and refused in New engine
+(a radial's one crankcase cannot pump); V engines with an odd count (the
+lone cylinder centred, Dual = 3-1 one side, 2-1 the other on a V5); one
+throttle or one a cylinder (individual throttles), measured before exposed.
+Few builds and tests: only those that prove a step.
 
 Done before it: **the owner's report of 2026-11-14** (real-time regression,
 gearboxes, 3-D mechanism and exhaust, the active valve hidden on a

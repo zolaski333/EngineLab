@@ -1,11 +1,13 @@
 #include <enginelab/render/DuctLayout3D.hpp>
 #include <enginelab/render/RenderSnapshot.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <numbers>
+#include <vector>
 
 namespace {
 void require(bool condition, const char* message) {
@@ -112,5 +114,44 @@ int main() {
     const auto bare = throttleVertices(false, 0.0);
     require(throttleVertices(true, 0.0) > bare, "a pod filter is drawn on the throttle's mouth");
     require(throttleVertices(false, 2.0 * enginelab::IntakeConfig {}.throttleDiameterMm) > bare, "an open trumpet is drawn on the mouth");
+
+    // A radial two-stroke: each cylinder's crankcase circuit is a path of its
+    // own, so each carburettor stands at its own cylinder, not all in one
+    // place on the crank's axis (owner 2026-11-21: they drew as one).
+    {
+        auto engine = enginelab::makeDefaultInlineFour();
+        engine.cycle = enginelab::EngineCycle::twoStroke;
+        engine.intake.carburettor.enabled = true;
+        for (auto& path : engine.intakePaths) path.geometry = engine.intake;
+        enginelab::normaliseEngineConfig(engine);
+        require(engine.intakePaths.size() == engine.cylinders.size(), "a two-stroke has a path a cylinder");
+        std::vector<enginelab::render::PortAnchor> ports;
+        for (std::size_t index = 0; index < engine.cylinders.size(); ++index) {
+            const auto angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(index)
+                / static_cast<float>(engine.cylinders.size());
+            enginelab::render::PortAnchor port;
+            port.cylinderId = engine.cylinders[index].id;
+            port.position = { 180.0F * std::cos(angle), 180.0F * std::sin(angle), -40.0F };
+            port.direction = { 0.0F, 0.0F, -1.0F };
+            port.inner = { 160.0F * std::cos(angle), 160.0F * std::sin(angle), -10.0F };
+            port.diameterMm = 32.0F;
+            ports.push_back(port);
+        }
+        std::vector<enginelab::render::Vec3> carburettors;
+        for (const auto& piece : enginelab::render::layoutIntake(engine, ports, 86.0F, true)) {
+            if (piece.kind != enginelab::render::DuctKind::intakeThrottle || piece.mesh.vertices.empty()) continue;
+            enginelab::render::Vec3 centre {};
+            for (const auto& vertex : piece.mesh.vertices) centre += vertex.position;
+            carburettors.push_back(centre * (1.0F / static_cast<float>(piece.mesh.vertices.size())));
+        }
+        require(carburettors.size() == engine.cylinders.size(), "a radial two-stroke draws a carburettor a cylinder");
+        float closest = 1.0e9F;
+        for (std::size_t a = 0; a < carburettors.size(); ++a)
+            for (std::size_t b = a + 1U; b < carburettors.size(); ++b)
+                closest = std::min(closest, length(carburettors[a] - carburettors[b]));
+        std::cout << "RenderSnapshot: radial two-stroke carburettors at least " << closest << " mm apart\n";
+        require(closest > static_cast<float>(engine.intake.throttleDiameterMm),
+                "a radial two-stroke's carburettors stand apart, each at its cylinder");
+    }
     return 0;
 }

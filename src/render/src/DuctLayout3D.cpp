@@ -3576,7 +3576,29 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
         // Away from the engine, for a supercharger beside the throttle.
         Vec3 away;
 
-        if (radial) {
+        // A radial two-stroke's path is one cylinder's crankcase circuit: its
+        // carburettor stands at the end of that cylinder's own runner, out
+        // along its port. One drum a path, all on the axis, drew five drums
+        // and five carburettors in one place, as if one fed them all (owner
+        // 2026-11-21, R5 2S).
+        const auto ownCarburettor = radial && config.cycle == EngineCycle::twoStroke && runners.size() == 1U;
+        IntakeConfig shared;
+        const auto* drawnGeometry = &geometry;
+        if (ownCarburettor) {
+            const auto& runner = runners.front();
+            const auto out = normalise(runner.port->direction);
+            const Vec3 flat { runner.port->position.x, runner.port->position.y, 0.0F };
+            ends[0] = runner.port->position + out * (0.9F * runner.lengthMm);
+            arrivals[0] = out;
+            bulges[0] = length(flat) > 1.0e-3F ? normalise(flat) : normalise(cross(out, zAxis));
+            faces.push_back(ends[0]);
+            upstream = out;
+            away = out;
+            // Each carburettor draws its share of the airbox the paths copy.
+            shared = geometry;
+            shared.airboxVolumeLitres /= static_cast<double>(pathCount);
+            drawnGeometry = &shared;
+        } else if (radial) {
             // A drum around the crank axis, in front of the cylinders.
             float radius = 0.0F;
             for (const auto& runner : runners)
@@ -3827,7 +3849,7 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
         }
         for (auto& box : plenums) pieces.push_back(std::move(box));
         const auto wantsSupercharger = superchargerWanted && supercharger != nullptr && !supercharger->placed;
-        appendUpstream(pieces, pathId, geometry, faces, upstream, forced, away,
+        appendUpstream(pieces, pathId, *drawnGeometry, faces, upstream, forced, away,
                        wantsSupercharger ? supercharger : nullptr);
         if (wantsSupercharger && supercharger->placed) {
             // The runners and the exhaust stay clear of it.
