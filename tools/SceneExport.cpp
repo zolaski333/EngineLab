@@ -4,6 +4,7 @@
 //   EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]
 //                        [--catalog-root <directory>] [--saved <folder>] [--designed all]
 //                        [--two-stroke-intake <crankcase_reed|cylinder_port>]
+//                        [--exhaust-valve fit] [--carburettor <fit|slide|fixed>]
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
@@ -17,15 +18,25 @@
 // designer's engines over its layouts and exhaust systems, with and without a
 // turbo (EngineModel3DTests' envelope check). `--two-stroke-intake`
 // redraws every two-stroke with that intake, so both layouts can be looked at.
+// `--exhaust-valve fit` fits a valved bypass beside each silencer (the
+// Equipment window's fit) and `--carburettor fit|slide|fixed` the app's carburettor
+// (as its fuel system choice fits one; slide or fixed forces the type), so
+// their drawing can be looked at on engines that come without them.
+// `--time-pose <n>` also prints each engine's build time and the least of n
+// calls to pose(), the view's CPU cost per drawn sub-frame (wall clock: compare
+// runs interleaved on an idle machine only).
 
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
+#include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
 #include <enginelab/render/RouteCheck.hpp>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -251,6 +262,9 @@ int main(int argc, char** argv) {
     std::filesystem::path savedFolder;
     bool designed = false;
     std::optional<TwoStrokeIntake> twoStrokeIntake;
+    int timePose = 0;
+    bool fitExhaustValve = false;
+    std::string carburettor;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string_view key = argv[i];
         if (key == "--out") outDirectory = argv[i + 1];
@@ -258,7 +272,10 @@ int main(int argc, char** argv) {
         else if (key == "--crank") crank = std::stod(argv[i + 1]);
         else if (key == "--catalog-root") catalogRoot = argv[i + 1];
         else if (key == "--saved") savedFolder = argv[i + 1];
+        else if (key == "--time-pose") timePose = std::max(1, std::stoi(argv[i + 1]));
         else if (key == "--designed") designed = std::string_view(argv[i + 1]) == "all";
+        else if (key == "--exhaust-valve") fitExhaustValve = std::string_view(argv[i + 1]) == "fit";
+        else if (key == "--carburettor") carburettor = argv[i + 1];
         else if (key == "--two-stroke-intake") {
             twoStrokeIntake = parseTwoStrokeIntake(argv[i + 1]);
             if (!twoStrokeIntake) {
@@ -270,7 +287,8 @@ int main(int argc, char** argv) {
     if (outDirectory.empty()) {
         std::cerr << "usage: EngineLabSceneExport --out <directory> [--filter <substring>] [--crank <degrees>]"
                      " [--catalog-root <directory>] [--saved <folder>] [--designed all]"
-                     " [--two-stroke-intake <crankcase_reed|cylinder_port>]\n";
+                     " [--two-stroke-intake <crankcase_reed|cylinder_port>] [--exhaust-valve fit]"
+                     " [--carburettor <fit|slide|fixed>]\n";
         return 2;
     }
     const auto catalogue = loadEngineCatalog(catalogRoot);
@@ -301,6 +319,21 @@ int main(int argc, char** argv) {
     for (std::size_t e = 0; e < configs.size(); ++e) {
         auto config = configs[e];
         if (twoStrokeIntake && config.cycle == EngineCycle::twoStroke) config.twoStroke.intake = *twoStrokeIntake;
+        if (fitExhaustValve) (void)ExhaustNetworkEditor::fitSilencerBypass(config);
+        if (!carburettor.empty() && config.fuel != FuelType::diesel) {
+            // As the app's fuel system choice fits one, then of the asked type.
+            auto refit = withFuelSystem(config, FuelSystem::carburettor, catalogRoot);
+            if (!refit.config) {
+                std::cerr << config.name << ": no carburettor: " << refit.error << '\n';
+                continue;
+            }
+            config = std::move(*refit.config);
+            if (carburettor != "fit") {
+                const auto fixed = carburettor == "fixed";
+                config.intake.carburettor.fixedVenturi = fixed;
+                for (auto& path : config.intakePaths) path.geometry.carburettor.fixedVenturi = fixed;
+            }
+        }
         if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
         const auto file = std::to_string(e + 1U) + ".json";
         auto sceneWritten = false;
@@ -318,6 +351,26 @@ int main(int argc, char** argv) {
                       report.count(RouteIssueKind::selfClash), report.count(RouteIssueKind::engineClash),
                       report.count(RouteIssueKind::tightBend), report.count(RouteIssueKind::stretched));
         std::cout << line;
+        if (timePose > 0) {
+            using clock = std::chrono::steady_clock;
+            const auto built = clock::now();
+            const EngineModel3D model(config);
+            const auto buildMs = std::chrono::duration<double, std::milli>(clock::now() - built).count();
+            std::vector<SceneInstance> instances;
+            ScenePoseInput input;
+            input.combustion.fill(1.0F);
+            input.cycleDetail = true;
+            double least = 1.0e30;
+            for (int k = 0; k < timePose; ++k) {
+                input.crankAngleDegrees = 7.3 * k;
+                const auto start = clock::now();
+                model.pose(input, instances);
+                least = std::min(least, std::chrono::duration<double, std::micro>(clock::now() - start).count());
+            }
+            std::snprintf(line, sizeof(line), "         view cost: build %7.1f ms  pose %7.1f us  parts %4zu\n", buildMs,
+                          least, model.parts().size());
+            std::cout << line;
+        }
         for (std::size_t k = 0; k < totals.size(); ++k) totals[k] += report.count(static_cast<RouteIssueKind>(k));
         const auto& p = plausibility;
         char asymmetry[32] = "-";

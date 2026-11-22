@@ -284,6 +284,8 @@ constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
     { 0xa3958b, 0.55F, 0.38F, 1.0F },   // exhaust pipe
     { 0xff7a3d, 0.00F, 1.00F, 0.85F },  // flame
     { 0x8f8a84, 0.60F, 0.45F, 0.30F },  // turbo housing
+    { 0xe9dcb4, 0.00F, 0.60F, 0.45F },  // spray
+    { 0xf1eee6, 0.00F, 0.30F, 1.0F },   // ceramic
 } };
 
 [[nodiscard]] Vec3 linearColour(std::uint32_t srgb) noexcept {
@@ -319,7 +321,7 @@ constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
     }
     if (material == SceneMaterial::flame) return 5;
     if (isShell(material) || material == SceneMaterial::turboHousing) return frame.xray ? 4 : 1;
-    if (material == SceneMaterial::intakeFlow) return 3;
+    if (material == SceneMaterial::intakeFlow || material == SceneMaterial::spray) return 3;
     if (material == SceneMaterial::exhaustPipe) return 1;
     // The gas-flow layer fades the metal so the ducts read through it.
     return frame.layer == SceneLayerMode::gasFlow ? 2 : 1;

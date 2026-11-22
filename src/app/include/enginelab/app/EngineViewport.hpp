@@ -382,6 +382,8 @@ private:
     void pacingLoop();
     void applyView(int view, bool animate);
     void showSettingsMenu();
+    /** Asks where to save the view's last frame as a PNG (message thread). */
+    void saveCapture(juce::Image image);
     void pushSettings();
     void updateOverlayVisibility();
     [[nodiscard]] juce::Rectangle<int> infoArea() const;
@@ -515,6 +517,13 @@ private:
     std::atomic<std::uint64_t> framesRendered_ { 0 };
     std::atomic<bool> initialiseFailed_ { false };
     std::atomic<float> pressureScalePa_ { 0.0F };
+    /** The next frame is read back and offered as a PNG. */
+    std::atomic<bool> captureRequested_ { false };
+    /** The CPU time the 3-D renderer took over its last frame, ms
+        (smoothed): what the view costs the machine beside the physics,
+        the GPU's own time not counted. */
+    std::atomic<double> renderCpuMs_ { 0.0 };
+    std::unique_ptr<juce::FileChooser> captureChooser_;
     std::uint64_t lastFrameCount_ {};
     double lastFpsWall_ {};
     double measuredFps_ {};

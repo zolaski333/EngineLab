@@ -7,6 +7,40 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-22
+
+### Added
+
+- **The 3-D view shows what the engine's controls and cycle are doing.**
+  Camshafts turn at half the crank's speed under their timing chain,
+  advanced by the variable cam timing, with VTEC's lock pin sliding in on
+  the high cam; throttle plates (each runner's on individual throttles) and
+  a slide carburettor's slide follow the throttle; an active exhaust
+  valve's butterfly opens and shuts; a turbocharger's wastegate flap and
+  blow-off valve lift; a fitted nitrous kit is drawn with its bottle, line
+  and plate, spraying while it flows. Under the strobe only (so nothing
+  flickers at full speed), each spark plug sparks at the ECU's advance and
+  each injector's spray shows while it is open. Every element follows a
+  value the simulation already computes; the simulation and the sound are
+  untouched. Throttle bodies, carburettors (float bowl, slide tower, bell
+  mouth), the exhaust valve's housing and actuator and the wastegate's
+  canister are drawn as the parts they are; a four-stroke radial shows
+  its cam ring, pushrods and rockers; two-strokes show their spark plugs;
+  cam and timing covers keep the shafts hidden in the solid view. A
+  carburettor's slide shuts its whole bore and its needle stays in its jet
+  over the whole lift; the wastegate's actuator is a short arm on the
+  turbine's outlet and a rod along the shaft.
+- **Save the 3-D view as a PNG** (settings menu, *Capture*). The info line
+  under the view now also shows how long the renderer takes per frame.
+
+### Fixed
+
+- **Carburettors no longer drawn inside one another in the 3-D view.** A
+  V two-stroke whose cylinders stand side by side along the crank (a V4
+  with shared pins) put its carburettors in one another in the valley; they
+  now stand in a row along the crank. A radial with several intake paths
+  drew all their plenum drums and throttles in one place.
+
 ## [0.12.0] — 2026-11-22
 
 ### Added

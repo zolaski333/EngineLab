@@ -4,6 +4,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
@@ -558,7 +559,10 @@ void checkTurbo(const EngineModel3D& model) {
     for (std::size_t part = 0; part < still.size(); ++part) {
         const auto& a = still[part].transform;
         const auto& b = turned[part].transform;
-        if (model.identify(static_cast<std::uint16_t>(part)).role == PartRole::turbo) ++turbines;
+        // Its wastegate flap and blow-off valve, their bodies and the
+        // wastegate's rod belong to it but are drawn with their controls.
+        const auto control = model.controlPiece(static_cast<std::uint16_t>(part));
+        if (model.identify(static_cast<std::uint16_t>(part)).role == PartRole::turbo && !control) ++turbines;
         if (a.m == b.m) continue;
         ++moved;
         require(model.identify(static_cast<std::uint16_t>(part)).role == PartRole::turbo,
@@ -1324,6 +1328,266 @@ void checkCrankClock() {
     paused.observe(0.0, 90.0, 4'000.0, 0.0);
     require(paused.advance(0.0) == paused.advance(0.2), "a paused simulation does not turn the crank");
 }
+/** The world direction a posed part's local +Y points along. */
+[[nodiscard]] Vec3 localY(const Mat4& m) { return normalise({ m.at(0, 1), m.at(1, 1), m.at(2, 1) }); }
+
+/** What the cycle and the controls move (analysis 2026-11-19, part D): the
+    cams at half the crank's speed with their lobes on the valves, the spark
+    and the sprays only under the strobe, the throttle, exhaust valve,
+    wastegate, blow-off valve and nitrous kit following their state. */
+void checkCycleAndControls(const EngineCatalogLoadResult& catalogue) {
+    const auto named = [&](const std::string& part) -> const EngineConfig& {
+        const auto entry = std::find_if(catalogue.entries.begin(), catalogue.entries.end(),
+            [&](const auto& item) { return item.config.name.find(part) != std::string::npos; });
+        require(entry != catalogue.entries.end(), "the catalogue has " + part);
+        return entry->config;
+    };
+    std::vector<SceneInstance> posed;
+    {
+        const auto& config = named("K20A");
+        const EngineModel3D model(config);
+        require(model.camshafts().size() == 2U, "a twin-cam four has an intake and an exhaust cam");
+        // The lobe over cylinder 1's valves points at its deck at the lift's
+        // peak, and a variable timing advance turns it there that much earlier.
+        for (const auto& cam : model.camshafts()) {
+            const auto& cams = model.camshaftsOf(0);
+            const auto peak = cam.exhaust ? 360.0 - cams.exhaustCenterlineDegrees : 360.0 + cams.intakeCenterlineDegrees;
+            const auto deck = model.probe(0, 0.0).deckCentre;
+            for (const auto advance : { 0.0, 30.0 }) {
+                ScenePoseInput input;
+                input.crankAngleDegrees = config.cylinders.front().crankOffsetDegrees + peak - advance;
+                (cam.exhaust ? input.exhaustCamAdvanceDegrees : input.intakeCamAdvanceDegrees).fill(static_cast<float>(advance));
+                model.pose(input, posed);
+                const auto& mesh = model.parts()[cam.part].mesh;
+                const auto z = model.probe(0, 0.0).deckCentre.z;
+                float reach = 0.0F;
+                Vec3 nose {};
+                for (const auto& vertex : mesh.vertices) {
+                    if (std::abs(vertex.position.z - z) > 0.3F * static_cast<float>(config.cylinders.front().boreMm)) continue;
+                    const auto p = posed[cam.part].transform.transformPoint(vertex.position) - cam.centre;
+                    const auto r = std::hypot(p.x, p.y);
+                    if (r > reach) { reach = r; nose = { p.x, p.y, 0.0F }; }
+                }
+                const auto towards = normalise(Vec3 { deck.x - cam.centre.x, deck.y - cam.centre.y, 0.0F });
+                std::cout << "EngineModel3D: " << (cam.exhaust ? "exhaust" : "intake") << " lobe at peak lift, advance "
+                          << advance << ": " << std::acos(std::clamp(dot(normalise(nose), towards), -1.0F, 1.0F)) * 180.0F / std::numbers::pi_v<float>
+                          << " deg off the deck\n";
+                require(dot(normalise(nose), towards) > std::cos(20.0F * std::numbers::pi_v<float> / 180.0F),
+                        "a cam's lobe points at its valve at the lift's peak, with its timing advance");
+            }
+            // Half the crank's speed: a crank turn turns the cam by half a turn.
+            require(std::abs(std::remainder(model.camshaftRadians(360.0, 0.0) - model.camshaftRadians(0.0, 0.0), 2.0F * std::numbers::pi_v<float>))
+                        > 0.99F * std::numbers::pi_v<float>, "a cam turns half a turn for each crank turn");
+        }
+        // VTEC's pin slides in with the high cam.
+        require(model.vtecPinPart(0) != 0xFFFFU, "VTEC draws its lock pin");
+        ScenePoseInput low, high;
+        high.vtecHighCylinderMask = 1U;
+        model.pose(low, posed);
+        const auto rest = posed[model.vtecPinPart(0)].transform.transformPoint({});
+        model.pose(high, posed);
+        require(length(posed[model.vtecPinPart(0)].transform.transformPoint({}) - rest) > 1.0F,
+                "VTEC's pin slides when the high cam engages");
+
+        // The spark and the spray: only under the strobe, the spark just after
+        // its commanded advance, the spray while the injector is open.
+        require(model.sparkPart(0) != 0xFFFFU && model.sprayPart(0) != 0xFFFFU, "a spark and a spray are drawn");
+        ScenePoseInput input;
+        input.sparkEnabled = true;
+        input.ignitionAdvanceDegrees = 30.0;
+        input.injectorDuty.fill(0.3F);
+        const auto sparkAt = config.cylinders.front().crankOffsetDegrees + 720.0 - 30.0
+            + config.cylinders.front().ignitionOffsetDegrees + 5.0;
+        input.crankAngleDegrees = sparkAt;
+        model.pose(input, posed);
+        require(posed[model.sparkPart(0)].intensity == 0.0F, "no spark outside the strobe");
+        input.cycleDetail = true;
+        model.pose(input, posed);
+        require(posed[model.sparkPart(0)].intensity > 0.5F, "the spark shows under the strobe just after its advance");
+        input.crankAngleDegrees = sparkAt + 60.0;
+        model.pose(input, posed);
+        require(posed[model.sparkPart(0)].intensity == 0.0F, "the spark is out 60 degrees later");
+        const auto sprayShown = [&](double angle, bool strobe) {
+            input.cycleDetail = strobe;
+            input.crankAngleDegrees = config.cylinders.front().crankOffsetDegrees + angle;
+            model.pose(input, posed);
+            const auto& m = posed[model.sprayPart(0)].transform;
+            return std::abs(m.at(0, 1)) + std::abs(m.at(1, 1)) + std::abs(m.at(2, 1)) > 0.1F;
+        };
+        const auto start = config.injection.startAngleDegrees;
+        require(sprayShown(start + 10.0, true), "the spray shows while the injector is open, under the strobe");
+        require(!sprayShown(start + 10.0, false), "no spray outside the strobe");
+        require(!sprayShown(start + 0.31 * 720.0 + 20.0, true), "no spray once the injector has closed");
+
+        // The throttle plate: a few degrees off shut at rest, edge on wide open.
+        const auto plate = std::find_if(model.controlParts().begin(), model.controlParts().end(),
+            [](const EngineModel3D::ControlPart& part) { return part.kind == EngineModel3D::ControlPart::Kind::throttlePlate; });
+        require(plate != model.controlParts().end(), "the throttle body carries its plate");
+        for (const auto throttle : { 0.0, 1.0 }) {
+            ScenePoseInput opening;
+            opening.throttle = throttle;
+            model.pose(opening, posed);
+            const auto facing = std::abs(dot(localY(posed[plate->part].transform), plate->normal));
+            require(throttle == 0.0 ? facing > 0.98F : facing < 0.02F, "the throttle plate turns with the throttle");
+        }
+        require(std::none_of(model.controlParts().begin(), model.controlParts().end(),
+                    [](const EngineModel3D::ControlPart& part) { return part.kind == EngineModel3D::ControlPart::Kind::wastegate; }),
+                "an atmospheric engine has no wastegate");
+    }
+    {
+        // The active exhaust valve's butterfly: shut across its pipe, open
+        // along it.
+        auto config = named("K20A");
+        // The Equipment window's fit: a valved bypass beside the silencer.
+        require(ExhaustNetworkEditor::fitSilencerBypass(config).empty(), "K20A's silencer takes a valved bypass");
+        const EngineModel3D model(config);
+        const auto valve = std::find_if(model.controlParts().begin(), model.controlParts().end(),
+            [](const EngineModel3D::ControlPart& part) { return part.kind == EngineModel3D::ControlPart::Kind::exhaustValve; });
+        require(valve != model.controlParts().end(), "an active exhaust valve is drawn");
+        for (const auto stroke : { 0.0, 1.0 }) {
+            ScenePoseInput input;
+            input.exhaustValveStroke = stroke;
+            model.pose(input, posed);
+            const auto facing = std::abs(dot(localY(posed[valve->part].transform), valve->normal));
+            require(stroke == 0.0 ? facing > 0.99F : facing < 0.01F, "the exhaust valve opens with its stroke");
+        }
+        // The nitrous kit: drawn only when fitted, its spray only while it
+        // sprays.
+        config.nitrous.fitted = true;
+        const EngineModel3D kit(config);
+        const auto spray = std::find_if(kit.controlParts().begin(), kit.controlParts().end(),
+            [](const EngineModel3D::ControlPart& part) { return part.kind == EngineModel3D::ControlPart::Kind::nitrousSpray; });
+        require(spray != kit.controlParts().end(), "a fitted nitrous kit sprays behind the throttle");
+        require(kit.parts().size() > model.parts().size() + 1U, "a fitted nitrous kit draws its bottle and plate");
+        ScenePoseInput input;
+        kit.pose(input, posed);
+        require(posed[spray->part].intensity == 0.0F, "no nitrous spray while the kit is off");
+        input.nitrousMassFlowKgPerSecond = 0.05;
+        kit.pose(input, posed);
+        require(posed[spray->part].intensity > 0.1F, "the nitrous spray shows while it flows");
+    }
+    {
+        // A turbocharger's wastegate flap lifts with its opening.
+        const auto& config = named("2JZ");
+        const EngineModel3D model(config);
+        const auto flap = std::find_if(model.controlParts().begin(), model.controlParts().end(),
+            [](const EngineModel3D::ControlPart& part) { return part.kind == EngineModel3D::ControlPart::Kind::wastegate; });
+        require(flap != model.controlParts().end(), "a turbocharger carries its wastegate flap");
+        ScenePoseInput input;
+        model.pose(input, posed);
+        const auto shut = localY(posed[flap->part].transform);
+        input.wastegateOpening = 1.0;
+        model.pose(input, posed);
+        const auto open = localY(posed[flap->part].transform);
+        const auto turned = std::acos(std::clamp(dot(shut, open), -1.0F, 1.0F)) * 180.0F / std::numbers::pi_v<float>;
+        require(std::abs(turned - 45.0F) < 1.0F, "the wastegate flap lifts 45 degrees wide open");
+        // Its actuator's rod runs outside the drawn housings, open or shut
+        // (it crossed the turbine's, owner report 2026-11-19): along it, no
+        // housing vertex at the same place along the shaft and the same
+        // bearing lies farther out than the rod.
+        const auto& turbo = model.turbos()[static_cast<std::size_t>(flap->turbo)];
+        const auto shaft = turbo.axis;
+        const auto across = normalise(cross(shaft, std::abs(shaft.y) < 0.9F ? Vec3 { 0.0F, 1.0F, 0.0F } : Vec3 { 1.0F, 0.0F, 0.0F }));
+        const auto cylindrical = [&](Vec3 p) {
+            const auto r = p - turbo.turbineCentre;
+            const auto along = dot(r, shaft);
+            const auto radial = r - shaft * along;
+            return std::array<float, 3> { along, length(radial),
+                                          std::atan2(dot(radial, cross(shaft, across)), dot(radial, across)) };
+        };
+        int rods = 0;
+        for (std::uint16_t part = 0; part < model.parts().size(); ++part) {
+            if (!model.controlPiece(part) || part == flap->part || part == flap->body) continue;
+            if (model.identify(part).role != PartRole::turbo || model.parts()[part].mesh.vertices.size() > 64U) continue;
+            ++rods;
+            for (const auto opening : { 0.0, 1.0 }) {
+                input.wastegateOpening = opening;
+                model.pose(input, posed);
+                Vec3 low {}, high {};
+                float lowAlong = 1.0e9F, highAlong = -1.0e9F;
+                for (const auto& vertex : model.parts()[part].mesh.vertices) {
+                    const auto p = posed[part].transform.transformPoint(vertex.position);
+                    if (dot(p, shaft) < lowAlong) { lowAlong = dot(p, shaft); low = p; }
+                    if (dot(p, shaft) > highAlong) { highAlong = dot(p, shaft); high = p; }
+                }
+                float clearance = 1.0e9F;
+                for (int s = 0; s <= 40; ++s) {
+                    const auto rod = cylindrical(low + (high - low) * (static_cast<float>(s) / 40.0F));
+                    for (std::uint16_t housing = 0; housing < model.parts().size(); ++housing) {
+                        if (model.parts()[housing].material != SceneMaterial::turboHousing || model.controlPiece(housing)
+                            || model.identify(housing).turbo != flap->turbo)
+                            continue;
+                        for (const auto& vertex : model.parts()[housing].mesh.vertices) {
+                            const auto h = cylindrical(posed[housing].transform.transformPoint(vertex.position));
+                            if (std::abs(h[0] - rod[0]) > 6.0F
+                                || std::abs(std::remainder(h[2] - rod[2], 2.0F * std::numbers::pi_v<float>)) > 0.17F)
+                                continue;
+                            clearance = std::min(clearance, rod[1] - h[1]);
+                        }
+                    }
+                }
+                std::cout << "EngineModel3D: 2JZ wastegate rod " << clearance << " mm outside its housings\n";
+                require(clearance > 0.0F, "the wastegate's rod runs outside the turbocharger's housings");
+            }
+        }
+        require(rods == 1, "the wastegate's actuator has its rod");
+    }
+    {
+        // A radial's valve train (it drew none, owner report 2026-11-19): a
+        // cam ring at the crankcase's nose whose lobe meets each cylinder's
+        // tappet at that valve's peak lift, a pushrod and a rocker per valve
+        // that move with it.
+        const auto& config = named("Radial");
+        const EngineModel3D model(config);
+        std::vector<std::uint16_t> rings, rockers;
+        for (std::size_t part = 0; part < model.parts().size(); ++part) {
+            const auto identity = model.identify(static_cast<std::uint16_t>(part));
+            if (identity.role != PartRole::camshaft) continue;
+            (identity.cylinder < 0 ? rings : rockers).push_back(static_cast<std::uint16_t>(part));
+        }
+        require(rings.size() == 2U, "a radial has an intake and an exhaust cam track");
+        require(rockers.size() == 4U * model.cylinderCount(), "a radial has a pushrod and a rocker per valve");
+        const auto centre = (model.probe(0, 0.0).bigEnd + model.probe(0, 180.0).bigEnd) * 0.5F;
+        for (const auto ring : rings) {
+            const auto exhaust = model.identify(ring).exhaust;
+            for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+                const auto& cams = model.camshaftsOf(c);
+                const auto peak = exhaust ? 360.0 - cams.exhaustCenterlineDegrees : 360.0 + cams.intakeCenterlineDegrees;
+                ScenePoseInput input;
+                input.crankAngleDegrees = config.cylinders[c].crankOffsetDegrees + peak;
+                model.pose(input, posed);
+                float reach = 0.0F, best = -1.0F;
+                for (const auto& vertex : model.parts()[ring].mesh.vertices) {
+                    const auto p = posed[ring].transform.transformPoint(vertex.position) - centre;
+                    reach = std::max(reach, std::hypot(p.x, p.y));
+                }
+                const auto axis = model.probe(c, 0.0).axis;
+                for (const auto& vertex : model.parts()[ring].mesh.vertices) {
+                    const auto p = posed[ring].transform.transformPoint(vertex.position) - centre;
+                    if (std::hypot(p.x, p.y) < 0.999F * reach) continue;
+                    best = std::max(best, dot(normalise(Vec3 { p.x, p.y, 0.0F }), normalise(Vec3 { axis.x, axis.y, 0.0F })));
+                }
+                require(best > std::cos(5.0F * std::numbers::pi_v<float> / 180.0F),
+                        "a radial's cam lobe meets cylinder " + std::to_string(c + 1U) + "'s tappet at its peak lift");
+            }
+        }
+        ScenePoseInput shut, open;
+        const auto& cams = model.camshaftsOf(0);
+        shut.crankAngleDegrees = config.cylinders.front().crankOffsetDegrees;
+        open.crankAngleDegrees = config.cylinders.front().crankOffsetDegrees + 360.0 + cams.intakeCenterlineDegrees;
+        std::vector<SceneInstance> openPose;
+        model.pose(shut, posed);
+        model.pose(open, openPose);
+        int moved = 0;
+        for (const auto part : rockers)
+            if (model.identify(part).cylinder == 0
+                && length(openPose[part].transform.transformPoint(model.parts()[part].mesh.vertices.front().position)
+                          - posed[part].transform.transformPoint(model.parts()[part].mesh.vertices.front().position)) > 1.0F)
+                ++moved;
+        require(moved >= 2, "a radial's intake pushrod and rocker move as its valve opens");
+    }
+}
+
 } // namespace
 
 /** A two-stroke is drawn as one is built (owner's report 2026-10-24: its
@@ -1409,6 +1673,13 @@ void checkTwoStrokeDrawing(EngineConfig config) {
     config.twoStroke.powerValveClosedExhaustPortOpenDegrees = 0.0;
     const EngineModel3D without(config);
     require(without.powerValvePart(0) == 0xFFFFU, label + "without a power valve no blade is drawn");
+    // Its plugs stand in its heads (they were left out, owner report 2026-11-19).
+    if (config.fuel != FuelType::diesel) {
+        bool plug = false;
+        for (std::size_t part = 0; part < without.parts().size(); ++part)
+            plug = plug || without.identify(static_cast<std::uint16_t>(part)).role == PartRole::sparkPlug;
+        require(plug, label + "a two-stroke's spark plugs are drawn");
+    }
 }
 
 /** An H-pipe is drawn as an H: each side's pipe keeps its lane through its
@@ -1671,6 +1942,83 @@ void checkEngineEnvelope() {
  * every primary set to 1.5 and 4 m: each primary's chord is at least 0.6 of
  * its length.
  */
+/** A two-stroke V4 whose banks share their pins (its cylinders a rod width
+    apart along the crank) stands its four carburettors side by side in the
+    valley, none in another (owner 2026-11-19: a V4 two-stroke's were "laid
+    out anyhow"). Each slide closes its whole bore, and its needle, rising
+    with it, is still in its jet at full lift (owner 2026-11-19: the slide
+    left the bore open). */
+void checkValleyCarburettors() {
+    EngineSpec spec;
+    spec.name = "Designed V4 two-stroke";
+    spec.cycle = EngineCycle::twoStroke;
+    spec.use = EngineUse::sportMotorcycle;
+    spec.layout = EngineLayout::vLayout;
+    spec.cylinderCount = 4U;
+    spec.bankAngleDegrees = 90.0;
+    spec.boreMm = 54.0;
+    spec.strokeMm = 54.5;
+    spec.crankPins = CrankPins::shared;
+    const auto designed = designCatalogueEngine(spec, ENGINELAB_CATALOG_ROOT);
+    require(designed.config.has_value(), "a V4 two-stroke designs: " + designed.error);
+    const auto fitted = withFuelSystem(*designed.config, FuelSystem::carburettor, ENGINELAB_CATALOG_ROOT);
+    require(fitted.config.has_value(), "a V4 two-stroke takes carburettors: " + fitted.error);
+    auto config = *fitted.config;
+    config.intake.carburettor.fixedVenturi = false;
+    for (auto& path : config.intakePaths) path.geometry.carburettor.fixedVenturi = false;
+    const EngineModel3D model(config);
+    std::vector<SceneInstance> posed;
+    ScenePoseInput input;
+    model.pose(input, posed);
+
+    std::vector<std::array<Vec3, 2>> boxes;
+    for (const auto& duct : model.ducts()) {
+        if (duct.kind != DuctKind::intakeThrottle) continue;
+        constexpr auto big = std::numeric_limits<float>::max();
+        Vec3 low { big, big, big }, high { -big, -big, -big };
+        for (const auto& vertex : model.parts()[duct.part].mesh.vertices) {
+            const auto p = posed[duct.part].transform.transformPoint(vertex.position);
+            low = { std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z) };
+            high = { std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z) };
+        }
+        boxes.push_back({ low, high });
+    }
+    float worst = 0.0F;
+    for (std::size_t a = 0; a < boxes.size(); ++a)
+        for (std::size_t b = a + 1U; b < boxes.size(); ++b) {
+            const auto x = std::min(boxes[a][1].x, boxes[b][1].x) - std::max(boxes[a][0].x, boxes[b][0].x);
+            const auto y = std::min(boxes[a][1].y, boxes[b][1].y) - std::max(boxes[a][0].y, boxes[b][0].y);
+            const auto z = std::min(boxes[a][1].z, boxes[b][1].z) - std::max(boxes[a][0].z, boxes[b][0].z);
+            worst = std::max(worst, std::min({ x, y, z }));
+        }
+    std::cout << "EngineModel3D: V4 two-stroke, " << boxes.size() << " carburettors, deepest overlap " << worst << " mm\n";
+    require(boxes.size() == 4U, "a V4 two-stroke has a carburettor for each crankcase");
+    require(worst < 1.0F, "a crowded valley's carburettors stand side by side, none in another");
+
+    const auto bore = static_cast<float>(config.intakePaths.front().geometry.throttleDiameterMm);
+    int slides = 0;
+    for (const auto& control : model.controlParts()) {
+        if (control.kind != EngineModel3D::ControlPart::Kind::throttleSlide) continue;
+        ++slides;
+        float widest = 0.0F, lowest = 0.0F;
+        for (const auto& vertex : model.parts()[control.part].mesh.vertices) {
+            const auto offset = vertex.position - control.centre;
+            const auto along = dot(offset, control.normal);
+            widest = std::max(widest, length(offset - control.normal * along));
+            lowest = std::min(lowest, along);
+        }
+        input.throttle = 1.0;
+        model.pose(input, posed);
+        const auto lift = dot(posed[control.part].transform.transformPoint(control.centre) - control.centre, control.normal);
+        std::cout << "EngineModel3D: slide " << widest / (0.5F * bore) << " of the bore's radius, lift " << lift / bore
+                  << " bores, needle tip " << (lowest + lift) / bore << " bores from the floor at full lift\n";
+        require(widest >= 0.5F * bore, "a carburettor's slide closes its whole bore");
+        require(lift >= 0.9F * bore, "a slide lifts clear of most of its bore at full throttle");
+        require(lowest + lift < 0.0F, "a slide's needle stays in its jet at full lift");
+    }
+    require(slides == 4, "each carburettor carries its slide");
+}
+
 void checkCollectorFollowsPrimaries() {
     struct Case final {
         const char* name;
@@ -1762,6 +2110,7 @@ void checkOddVCentred() {
 
 int main() {
     checkOddVCentred();
+    checkValleyCarburettors();
     checkCollectorFollowsPrimaries();
     checkEngineBrakeValves();
     checkHPipeDrawing();
@@ -1771,6 +2120,7 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    checkCycleAndControls(catalogue);
     {
         // A geometry-only exhaust with a mid pipe: the binding the catalogue's
         // authored networks never reach (audit RENDER-01).
@@ -1972,7 +2322,8 @@ int main() {
         auto clickable = 0;
         for (std::uint16_t part = 0; part < twin.parts().size(); ++part)
             if (const auto identity = twin.identify(part); identity.role == PartRole::turbo && identity.turbo == 1)
-                ++clickable;
+                // Its wastegate flap, canister and rod identify as it too.
+                clickable += twin.controlPiece(part) ? 0 : 1;
         require(clickable == 4, "the second turbocharger's housings and wheels identify as it");
     }
     // The Aircooled's two 3-into-1 banks joined into one 6-into-1: each

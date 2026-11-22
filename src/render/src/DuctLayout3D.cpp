@@ -3162,21 +3162,76 @@ SuperchargerPlacement placeSupercharger(const ForcedInductionConfig& forced, std
     return result;
 }
 
+/** A tube's wall from `inner` to `outer` radius along a frame's +Y over
+    `run`, open at both ends (a rounded lip on each) so what it holds shows. */
+void appendWall(Mesh& mesh, const Mat4& frame, float outer, float inner, float run, int segments) {
+    appendCylinder(mesh, frame, outer, outer, run, segments, false, false);
+    appendCylinder(mesh, frame, inner, inner, run, segments, false, false);
+    const auto lip = 0.5F * (outer - inner);
+    for (const auto at : { 0.0F, run })
+        appendTorus(mesh, frame * Mat4::translation({ 0.0F, at, 0.0F }), inner + lip, lip, segments, 6);
+}
+
 /** One throttle bore of `throttle` diameter from `face` along `direction`,
-    1.1 bores long; a slide carburettor's slide tower towards `up` and its
-    float bowl opposite. */
-void appendThrottleBore(Mesh& mesh, Vec3 face, Vec3 direction, float throttle, bool carburettor, Vec3 up) {
-    const auto bodyLength = 1.1F * throttle;
+    1.1 bores long, open at both ends so its plate (or slide) shows. A
+    throttle body: a flanged tube, the spindle's bosses across it and the
+    position sensor on one. A carburettor: the engine spigot, its body, the
+    bell mouth, the float bowl under it with its drain and fuel inlet, the
+    choke plunger; a slide carburettor's slide tower above it, its cap and
+    cable adjuster. `up` is the tower's way, the spindle runs across. */
+void appendThrottleBore(Mesh& mesh, Vec3 face, Vec3 direction, float throttle, bool carburettor, bool slide, Vec3 up) {
+    const auto t = throttle;
+    const auto bodyLength = 1.1F * t;
     const auto frame = Mat4::frameAlongY(face, direction);
-    appendCylinder(mesh, frame, 0.62F * throttle, 0.62F * throttle, bodyLength, 28);
-    appendTorus(mesh, frame * Mat4::translation({ 0.0F, 0.15F * throttle, 0.0F }), 0.66F * throttle,
-                0.06F * throttle, 28, 8);
-    if (!carburettor) return;
-    const auto middle = face + direction * (0.5F * bodyLength);
-    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (0.45F * throttle), up), 0.42F * throttle, 0.42F * throttle,
-                   0.75F * throttle, 20);
-    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (0.45F * throttle), -up), 0.58F * throttle,
-                   0.58F * throttle, 0.70F * throttle, 24);
+    const auto hinge = normalise(cross(direction, up));
+    const auto middle = face + direction * (0.55F * t);
+    const auto across = [&](Vec3 centre, Vec3 size) {
+        appendBox(mesh, Mat4::basis(hinge, up, direction * -1.0F, centre), size);
+    };
+    const auto bosses = [&](float reach, float radius) {
+        for (const auto sign : { 1.0F, -1.0F })
+            appendCylinder(mesh, Mat4::frameAlongY(middle + hinge * (sign * 0.45F * t), hinge * sign), radius, radius,
+                           reach - 0.45F * t, 16);
+    };
+    if (!carburettor) {
+        appendWall(mesh, frame, 0.62F * t, 0.5F * t, bodyLength, 28);
+        for (const auto at : { 0.04F * t, bodyLength - 0.04F * t })
+            appendTorus(mesh, frame * Mat4::translation({ 0.0F, at, 0.0F }), 0.7F * t, 0.05F * t, 28, 6);
+        bosses(0.74F * t, 0.12F * t);
+        across(middle - hinge * 0.8F * t, { 0.12F * t, 0.42F * t, 0.36F * t });
+        return;
+    }
+    // Spigot, body and bell mouth.
+    appendWall(mesh, frame, 0.56F * t, 0.5F * t, 0.22F * t, 24);
+    appendWall(mesh, frame * Mat4::translation({ 0.0F, 0.22F * t, 0.0F }), 0.72F * t, 0.5F * t, 0.62F * t, 28);
+    appendCylinder(mesh, frame * Mat4::translation({ 0.0F, 0.84F * t, 0.0F }), 0.54F * t, 0.68F * t, 0.26F * t, 24,
+                   false, false);
+    appendTorus(mesh, frame * Mat4::translation({ 0.0F, bodyLength, 0.0F }), 0.68F * t, 0.04F * t, 24, 6);
+    // The float bowl on its neck, its drain and the fuel inlet. As deep as
+    // a real one (its floor about 1.5 bores under the bore's axis): a slide
+    // carburettor's needle stays in its jet over the whole lift.
+    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (0.6F * t), up * -1.0F), 0.3F * t, 0.3F * t, 0.14F * t, 16);
+    across(middle - up * (1.135F * t), { 0.95F * t, 0.83F * t, 0.8F * t });
+    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (1.55F * t), up * -1.0F), 0.08F * t, 0.08F * t, 0.08F * t, 6);
+    appendCylinder(mesh, Mat4::frameAlongY(middle - up * (0.85F * t) + hinge * (0.47F * t), hinge), 0.06F * t, 0.06F * t,
+                   0.3F * t, 10);
+    // The choke plunger on the body's side.
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (0.2F * t) - hinge * (0.65F * t), hinge * -1.0F), 0.09F * t,
+                   0.09F * t, 0.24F * t, 12);
+    if (!slide) {
+        // A fixed venturi: a butterfly on its spindle instead of a slide.
+        bosses(0.82F * t, 0.11F * t);
+        return;
+    }
+    // The needle jet, fixed: from the bowl up through the bore's floor, the
+    // slide's needle sliding in it.
+    appendWall(mesh, Mat4::frameAlongY(middle - up * (0.46F * t), up * -1.0F), 0.075F * t, 0.045F * t, 0.99F * t, 10);
+    // The slide's tower (wider than the bore, as the slide is), its cap and
+    // the cable's adjuster.
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (0.5F * t), up), 0.58F * t, 0.58F * t, 0.95F * t, 24, false, true);
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (1.45F * t), up), 0.62F * t, 0.6F * t, 0.08F * t, 24);
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (1.53F * t), up), 0.07F * t, 0.06F * t, 0.18F * t, 10);
+    appendCylinder(mesh, Mat4::frameAlongY(middle + up * (1.6F * t), up), 0.1F * t, 0.1F * t, 0.05F * t, 6);
 }
 
 /** Throttle bores, airbox and inlet duct upstream of a plenum, in the order
@@ -3200,11 +3255,14 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
         up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
         // With individual throttles the plates are in the runners (and the
         // carburettors with them): the plenum's mouths are bare necks.
-        if (geometry.individualThrottles)
+        if (geometry.individualThrottles) {
             appendCylinder(bodies.mesh, Mat4::frameAlongY(face, direction), 0.55F * throttle, 0.55F * throttle,
                            bodyLength, 28);
-        else
-            appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
+        } else {
+            const auto slide = geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi;
+            appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, slide, up);
+            bodies.bores.push_back({ face, direction, throttle, slide, up });
+        }
         mouths.push_back(face + direction * bodyLength);
         mouthCentre += mouths.back();
     }
@@ -3342,9 +3400,52 @@ void chooseUpstream(const IntakeConfig& geometry, const std::vector<std::pair<Ve
     }
 }
 
+/** An oriented box: the room a carburettor and its manifold take. */
+struct Room final {
+    Vec3 centre;
+    std::array<Vec3, 3> axes;
+    std::array<float, 3> half {};
+};
+
+/** Whether two rooms overlap (separating axes). */
+[[nodiscard]] bool overlapping(const Room& a, const Room& b) {
+    const auto between = b.centre - a.centre;
+    const auto separates = [&](Vec3 axis) {
+        const auto size = length(axis);
+        if (size < 1.0e-4F) return false;
+        axis = axis * (1.0F / size);
+        float reachA = 0.0F, reachB = 0.0F;
+        for (std::size_t k = 0; k < 3U; ++k) {
+            reachA += a.half[k] * std::abs(dot(a.axes[k], axis));
+            reachB += b.half[k] * std::abs(dot(b.axes[k], axis));
+        }
+        return std::abs(dot(between, axis)) >= reachA + reachB;
+    };
+    for (std::size_t i = 0; i < 3U; ++i)
+        if (separates(a.axes[i]) || separates(b.axes[i])) return false;
+    for (std::size_t i = 0; i < 3U; ++i)
+        for (std::size_t j = 0; j < 3U; ++j)
+            if (separates(cross(a.axes[i], b.axes[j]))) return false;
+    return true;
+}
+
+/** How deep a room's corners, faces and middle reach into the engine. */
+[[nodiscard]] float depthIn(const Room& room, const std::vector<EngineSolid>& solids) {
+    float deepest = 0.0F;
+    for (const auto i : { -1.0F, 0.0F, 1.0F })
+        for (const auto j : { -1.0F, 0.0F, 1.0F })
+            for (const auto k : { -1.0F, 0.0F, 1.0F }) {
+                const auto point = room.centre + room.axes[0] * (i * room.half[0]) + room.axes[1] * (j * room.half[1])
+                    + room.axes[2] * (k * room.half[2]);
+                for (const auto& solid : solids) deepest = std::max(deepest, -signedDistance(solid, point));
+            }
+    return deepest;
+}
+
 /** A two-stroke's intake, cylinder by cylinder from the crankcase out, then
     the airbox every carburettor shares (layoutIntake). */
-std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const std::vector<PortAnchor>& ports) {
+std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const std::vector<PortAnchor>& ports,
+                                             const std::vector<EngineSolid>& solids) {
     std::vector<DuctPiece> pieces;
     // Measured off real reed engines: a reed block about 20 mm deep, the
     // carburettor on a 25 mm rubber manifold behind it (3-4 cm from the
@@ -3352,6 +3453,142 @@ std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const s
     constexpr float reedDepth = 20.0F;
     constexpr float manifoldLength = 25.0F;
     constexpr float bootClearance = 25.0F;
+    const auto reed = config.twoStroke.intake != TwoStrokeIntake::cylinderPort || config.twoStroke.intakePortReed;
+
+    // Where each path's reed block, manifold and carburettor go: on its port,
+    // unless that crowds another's (a V whose banks' cylinders stand side by
+    // side along the crank put theirs in one another).
+    struct Stack final {
+        const PortAnchor* port {};
+        float throttle {};
+        bool carburettor {};
+        bool slide {};
+        Vec3 direction;
+        Vec3 up;
+        /** From the port, across its direction. */
+        Vec3 offset;
+        /** Manifold added to the authored 25 mm. */
+        float extra {};
+    };
+    std::vector<Stack> stacks(config.intakePaths.size());
+    std::vector<std::size_t> placed;
+    for (std::size_t p = 0; p < config.intakePaths.size(); ++p) {
+        const auto& path = config.intakePaths[p];
+        if (path.cylinderIds.empty()) continue;
+        const auto* port = portOf(ports, path.cylinderIds.front());
+        if (port == nullptr || port->transferDuct.size() < 2U) continue;
+        auto& stack = stacks[p];
+        stack.port = port;
+        stack.throttle = std::max(5.0F, mm(path.geometry.throttleDiameterMm));
+        stack.carburettor = path.geometry.carburettor.enabled;
+        stack.slide = stack.carburettor && !path.geometry.carburettor.fixedVenturi;
+        stack.direction = normalise(port->direction);
+        stack.up = normalise(port->carburettorUp - stack.direction * dot(port->carburettorUp, stack.direction));
+        placed.push_back(p);
+    }
+    // The reed block and manifold, then the carburettor from its float
+    // bowl's drain to its cable adjuster and from its choke to its fuel
+    // inlet (a throttle body: its flanges and position sensor;
+    // appendThrottleBore), a little inside so touching is no clash.
+    const auto rooms = [&](const Stack& stack) {
+        const auto t = stack.throttle;
+        const auto d = stack.direction;
+        const auto u = stack.up;
+        const auto h = normalise(cross(d, u));
+        const auto run = (reed ? reedDepth : 0.0F) + manifoldLength + stack.extra;
+        const auto start = stack.port->position + stack.offset;
+        const auto face = start + d * run;
+        const auto low = stack.carburettor ? 1.63F * t : 0.75F * t;
+        const auto high = stack.slide ? 1.71F * t : 0.75F * t;
+        const auto side = stack.carburettor ? 0.9F * t : 0.86F * t;
+        return std::array<Room, 2> {{
+            { start + d * (0.5F * run), { h, d, u }, { 0.68F * t - 0.5F, 0.5F * run - 0.5F, 0.6F * t - 0.5F } },
+            { face + d * (0.57F * t) + u * (0.5F * (high - low)), { h, d, u },
+              { side - 0.5F, 0.6F * t - 0.5F, 0.5F * (high + low) - 0.5F } },
+        }};
+    };
+    const auto crowded = [&] {
+        for (std::size_t a = 0; a < placed.size(); ++a)
+            for (std::size_t b = a + 1U; b < placed.size(); ++b)
+                for (const auto& one : rooms(stacks[placed[a]]))
+                    for (const auto& other : rooms(stacks[placed[b]]))
+                        if (overlapping(one, other)) return true;
+        return false;
+    };
+    // Crowded ones that all point one way, their slides along one line (a
+    // V's valley, the slides along the crank): a row along that line, each
+    // turned so its slide rises across it, spread as little as clears them,
+    // and moved out of the valley until they clear both barrels (as the
+    // carburettors in a V4 two-stroke's valley stand).
+    const auto aligned = placed.size() >= 2U && std::all_of(placed.begin(), placed.end(), [&](std::size_t p) {
+        return dot(stacks[p].direction, stacks[placed.front()].direction) > 0.999F
+            && dot(stacks[p].up, stacks[placed.front()].up) > 0.999F;
+    });
+    if (aligned && crowded()) {
+        const auto line = stacks[placed.front()].up;
+        const auto direction = stacks[placed.front()].direction;
+        auto order = placed;
+        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+            return dot(stacks[a].port->position, line) < dot(stacks[b].port->position, line);
+        });
+        std::vector<float> at(order.size());
+        for (std::size_t k = 0; k < order.size(); ++k) at[k] = dot(stacks[order[k]].port->position, line);
+        const auto spacing = [&](std::size_t k) {
+            return 0.9F * (stacks[order[k - 1U]].throttle + stacks[order[k]].throttle) + 4.0F;
+        };
+        for (int pass = 0; pass < 200; ++pass) {
+            auto moved = false;
+            for (std::size_t k = 1; k < order.size(); ++k) {
+                const auto deficit = spacing(k) - (at[k] - at[k - 1U]);
+                if (deficit <= 1.0e-3F) continue;
+                at[k - 1U] -= 0.5F * deficit;
+                at[k] += 0.5F * deficit;
+                moved = true;
+            }
+            if (!moved) break;
+        }
+        for (std::size_t k = 1; k < order.size(); ++k) at[k] = std::max(at[k], at[k - 1U] + spacing(k));
+        // The way the slides rise, and how far out the row stands, from
+        // whichever side needs the shorter manifold.
+        const auto across = normalise(cross(direction, line));
+        float best = std::numeric_limits<float>::max();
+        Vec3 bestUp = across;
+        for (const auto sign : { 1.0F, -1.0F }) {
+            float extra = 0.0F;
+            for (std::size_t k = 0; k < order.size(); ++k) {
+                auto stack = stacks[order[k]];
+                stack.up = across * sign;
+                stack.offset = line * (at[k] - dot(stack.port->position, line));
+                for (stack.extra = extra; stack.extra < 4.0F * stack.throttle; stack.extra += 0.1F * stack.throttle) {
+                    const auto room = rooms(stack);
+                    if (depthIn(room[1], solids) <= 2.0F) break;
+                }
+                extra = std::max(extra, stack.extra);
+            }
+            if (extra < best - 1.0e-3F) {
+                best = extra;
+                bestUp = across * sign;
+            }
+        }
+        for (std::size_t k = 0; k < order.size(); ++k) {
+            auto& stack = stacks[order[k]];
+            stack.up = bestUp;
+            stack.offset = line * (at[k] - dot(stack.port->position, line));
+            stack.extra = best;
+        }
+    }
+    // A carburettor whose float bowl reaches into the engine (a twin's
+    // behind its barrels, over its gearbox) stands a little further out.
+    for (const auto p : placed) {
+        auto& stack = stacks[p];
+        if (depthIn(rooms(stack)[1], solids) <= 2.0F) continue;
+        const auto first = stack.extra;
+        for (; stack.extra < first + 2.0F * stack.throttle; stack.extra += 0.1F * stack.throttle)
+            if (depthIn(rooms(stack)[1], solids) <= 2.0F) break;
+        // Nowhere near clears it (the engine round it): where it was.
+        if (depthIn(rooms(stack)[1], solids) > 2.0F) stack.extra = first;
+    }
+
     struct Mouth final {
         Vec3 point;
         Vec3 direction;
@@ -3360,12 +3597,13 @@ std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const s
     };
     std::vector<Mouth> mouths;
     float airboxLitres = 0.0F;
-    for (const auto& path : config.intakePaths) {
-        if (path.cylinderIds.empty()) continue;
-        const auto* port = portOf(ports, path.cylinderIds.front());
-        if (port == nullptr || port->transferDuct.size() < 2U) continue;
+    for (std::size_t p = 0; p < config.intakePaths.size(); ++p) {
+        const auto& path = config.intakePaths[p];
+        const auto& stack = stacks[p];
+        const auto* port = stack.port;
+        if (port == nullptr) continue;
         const auto& geometry = path.geometry;
-        const auto throttle = std::max(5.0F, mm(geometry.throttleDiameterMm));
+        const auto throttle = stack.throttle;
         airboxLitres = std::max(airboxLitres, mm(geometry.airboxVolumeLitres));
 
         // The transfer duct is the path's runner in the solver.
@@ -3412,19 +3650,22 @@ std::vector<DuctPiece> layoutTwoStrokeIntake(const EngineConfig& config, const s
         bodies.kind = DuctKind::intakeThrottle;
         bodies.pathId = path.id;
         bodies.nearEngine = true;
-        const auto direction = normalise(port->direction);
-        const auto up = normalise(port->carburettorUp - direction * dot(port->carburettorUp, direction));
+        const auto direction = stack.direction;
+        const auto up = stack.up;
         const auto across = normalise(cross(direction, up));
-        const auto reed = config.twoStroke.intake != TwoStrokeIntake::cylinderPort || config.twoStroke.intakePortReed;
+        const auto start = port->position + stack.offset;
         if (reed)
-            addBox(bodies, across, direction, up, port->position + direction * (0.5F * reedDepth),
+            addBox(bodies, across, direction, up, start + direction * (0.5F * reedDepth),
                    { 1.35F * throttle, reedDepth, 1.15F * throttle });
-        const auto manifoldStart = port->position + direction * (reed ? reedDepth : 0.0F);
+        const auto manifoldStart = start + direction * (reed ? reedDepth : 0.0F);
         appendCylinder(bodies.mesh, Mat4::frameAlongY(manifoldStart, direction), 0.6F * throttle, 0.58F * throttle,
-                       manifoldLength, 24);
-        const auto face = manifoldStart + direction * manifoldLength;
-        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled, up);
-        bodies.centreline = { port->position, face + direction * (1.1F * throttle) };
+                       manifoldLength + stack.extra, 24);
+        const auto face = manifoldStart + direction * (manifoldLength + stack.extra);
+        appendThrottleBore(bodies.mesh, face, direction, throttle, geometry.carburettor.enabled,
+                           geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up);
+        bodies.bores.push_back({ face, direction, throttle,
+                                 geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi, up });
+        bodies.centreline = { start, face + direction * (1.1F * throttle) };
         pieces.push_back(std::move(bodies));
         mouths.push_back({ face + direction * (1.1F * throttle), direction, throttle, path.id });
     }
@@ -3515,7 +3756,7 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
     if (supercharger != nullptr) *supercharger = {};
     if (config.cycle == EngineCycle::twoStroke && !radial
         && std::all_of(ports.begin(), ports.end(), [](const PortAnchor& port) { return port.transferDuct.size() >= 2U; }))
-        return layoutTwoStrokeIntake(config, ports);
+        return layoutTwoStrokeIntake(config, ports, solids);
     const auto& forced = config.forcedInduction;
     const auto superchargerWanted = forced.enabled && forced.type == ForcedInductionType::supercharger;
     std::vector<DuctPiece> pieces;
@@ -3523,15 +3764,21 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
     struct Pending final {
         std::size_t piece;
         IntakeRunner runner;
-        /** Individual throttles: the plate's bore, drawn on the runner. */
+        /** Individual throttles: the plate's bore, drawn on the runner, and
+            its distance from the valve (0: the solver's 55 % of the runner). */
         float plateBore { 0.0F };
+        float plateFromValveMm { 0.0F };
         bool carburettor { false };
+        bool slide { false };
     };
     std::vector<Pending> pending;
     std::vector<RoutedPipe> routes;
     // Balance pipes between the boxes of a path: the runners bend round them.
     std::vector<RouteTube> balances;
     auto avoid = solids;
+    // A radial's paths each have their drum: one ahead of the other (with
+    // room for the throttle between them), not all in one place.
+    float radialAhead = 0.0F;
     const auto pathCount = std::max<std::size_t>(1U, config.intakePaths.size());
     for (std::size_t p = 0; p < pathCount; ++p) {
         const auto& geometry = p < config.intakePaths.size() ? config.intakePaths[p].geometry : config.intake;
@@ -3623,7 +3870,8 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             // Far enough ahead that the straight run is most of the runner.
             const auto inward = std::max(0.0F, radius - drum);
             const auto ahead = std::sqrt(std::max(0.0F, 0.45F * shortest * shortest - inward * inward));
-            const Vec3 hub { 0.0F, 0.0F, centre.z - ahead - 0.5F * drumLength };
+            const Vec3 hub { 0.0F, 0.0F, centre.z - ahead - 0.5F * drumLength - radialAhead };
+            radialAhead += drumLength + 1.6F * std::max(5.0F, mm(geometry.throttleDiameterMm)) + 10.0F;
             for (std::size_t i = 0; i < runners.size(); ++i) {
                 const auto outward = normalise(Vec3 { runners[i].port->position.x, runners[i].port->position.y, 0.0F });
                 ends[i] = hub + outward * drum;
@@ -3855,7 +4103,9 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             routes.push_back(std::move(route));
             pending.push_back({ pieces.size(), runner,
                                 geometry.individualThrottles ? std::max(5.0F, mm(geometry.throttleDiameterMm)) : 0.0F,
-                                geometry.carburettor.enabled });
+                                static_cast<float>(geometry.throttleDistanceFromValveMm),
+                                geometry.carburettor.enabled,
+                                geometry.carburettor.enabled && !geometry.carburettor.fixedVenturi });
             pieces.push_back(std::move(piece));
         }
         for (auto& box : plenums) pieces.push_back(std::move(box));
@@ -3885,19 +4135,24 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
         route.pop_back();
         radii.pop_back();
         if (const auto bore = pending[r].plateBore; bore > 0.0F && route.size() >= 2U) {
-            // Individual throttles: the body sits in the runner, the plate
-            // half way along it, where the solver puts it.
-            const auto total = polylineLength(route);
-            auto walked = 0.0F;
-            for (std::size_t k = 1; k < route.size(); ++k) {
-                const auto step = length(route[k] - route[k - 1U]);
-                if (walked + step < 0.5F * (total - 1.1F * bore) && k + 1U < route.size()) {
-                    walked += step;
+            // Individual throttles: a body in the runner, its plate where the
+            // solver puts its restriction face -- the authored distance from
+            // the valve, or 55 % of the runner. Walked from the port end, so
+            // the bore's face is downstream and its direction upstream, as at
+            // a plenum's mouth; the view turns its plate (or lifts its slide).
+            const std::vector<Vec3> fromPort(route.rbegin(), route.rend());
+            const auto total = polylineLength(fromPort);
+            const auto plateAt = pending[r].plateFromValveMm > 0.0F
+                ? std::min(total, pending[r].plateFromValveMm) : 0.55F * total;
+            auto remaining = std::clamp(plateAt - 0.55F * bore, 0.0F, std::max(0.0F, total - 1.1F * bore));
+            for (std::size_t k = 1; k < fromPort.size(); ++k) {
+                const auto step = length(fromPort[k] - fromPort[k - 1U]);
+                if (remaining > step && k + 1U < fromPort.size()) {
+                    remaining -= step;
                     continue;
                 }
-                const auto direction = normalise(route[k] - route[k - 1U]);
-                const auto start = route[k - 1U]
-                    + direction * std::clamp(0.5F * (total - 1.1F * bore) - walked, 0.0F, step);
+                const auto direction = normalise(fromPort[k] - fromPort[k - 1U]);
+                const auto face = fromPort[k - 1U] + direction * std::clamp(remaining, 0.0F, step);
                 auto up = -downAxis - direction * dot(-downAxis, direction);
                 up = length(up) > 1.0e-3F ? normalise(up) : normalise(cross(direction, zAxis));
                 DuctPiece body;
@@ -3905,8 +4160,9 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
                 body.pathId = piece.pathId;
                 body.elementId = piece.elementId;
                 body.nearEngine = true;
-                appendThrottleBore(body.mesh, start, direction, bore, pending[r].carburettor, up);
-                body.centreline = { start, start + direction * (1.1F * bore) };
+                appendThrottleBore(body.mesh, face, direction, bore, pending[r].carburettor, pending[r].slide, up);
+                body.bores.push_back({ face, direction, bore, pending[r].slide, up });
+                body.centreline = { face, face + direction * (1.1F * bore) };
                 pieces.push_back(std::move(body));
                 break;
             }

@@ -60,6 +60,30 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - `EngineLab.EngineDesign`: the one-click H on the designed dual V8 equals the designer's H part for part (type, length, bore, volume, K, k, 2 side ports). `EngineLab.ExhaustPathTopologyEditor`: H/X on graph and scalar dual V8, a second H, refusals (one pipe; two turbo paths). It caught the junctions' 300 mm config default (each side +600 mm). `EngineLab.EngineModel3D` caught the I6 one-bank H 18 mm below the corridor: its twin pipes run side by side and a 250 mm balance pipe sagged; two bores there, designed 0 of 84 implausible (clash/self/engine/bend/stretch 133/22/0/426/227 with the 4 new designs).
 - Still refused: two turbocharged paths (a turbine per path collector; one graph with two collectors has none).
 - Physics, gas, audio code untouched; catalogue engines and every design that built before build as before (no harness run: no input of theirs reaches the changed code). One-click H on the scalar flat-6 not checked in 3-D; not seen in the app on screen.
+## 2026-11-19 — 3-D view: carburettors in a crowded valley, slide and needle, wastegate arm (owner)
+
+- Owner: a V4-2S's carburettors "laid out anyhow"; a slide that does not shut the bore; a needle that rises with the slide; a turbo "rod, then a second at right angles". The needle does rise with its slide on every slide carburettor (it meters the jet's annulus): kept, now long enough to stay in a drawn fixed needle jet (tip 0.05 bore under the floor at full lift); slide 1.04 bore radii wide, lift 0.95 bore.
+- `SceneExport` over the owner's 59 saved engines, plain and `--carburettor fit`: carburettors inside another carburettor's box 5 engines -> 0 (V4-2S x3 at 91 %, V4-4S, the radial I3 with three drums in one place); none deeper than 2 mm in an engine solid. Route totals unchanged except saved bends 160 -> 158.
+- Catalogue (18) and `--designed all` (80), plain and `--carburettor fit`: ducts and issues unchanged except the carburetted RD350 (and the saved 250Mono2S), whose carburettors stand further out of the gearbox the deeper bowl reached 2.3 mm into; turbo parts changed only by the wastegate.
+- 2JZ wastegate rod 14 / 9 mm outside its housings shut / open (gate > 0; an arm square to the flap fell 4.6 mm inside at 45 deg). The stub is ~2 cm, not ~12.
+- New test: a designed V4 two-stroke with shared pins, 0 mm overlap (36.7 mm with the row layout disabled); slide and needle gates fail on the old geometry by construction (0.72 bore radii, needle tip 0.3 bore above the floor). `EngineLab.EngineModel3D` passes. Hayabusa with carburettors: bells inside its airbox, spigots 19 mm in its plenum box, left as is. Not seen on screen in the app.
+
+## 2026-11-19 — 3-D view: owner's report on part D (valves, carburettors, radial cams, two-stroke plugs, solid view)
+
+- Redrawn: throttle bodies and their plates (spindle, screws, quadrant), carburettors (bowl, slide tower, bell, choke), the exhaust valve's housing and actuator, the wastegate's canister and rod, the blow-off valve; plugs in two-strokes' heads; cam and timing covers (shells) so the solid view hides the shafts; a radial's cam ring, pushrods and rockers.
+- `EngineLabSceneExport`, catalogue (18) and `--designed all` (80) against the build before part D: ducts, solids, issues, ports and every count identical (3/0/0/16/2; 127/20/0/419/224; 1 of 18 and 0 of 80 implausible).
+- Radial-like R5: at each cylinder's peak lift a lobe of each track is within 5 deg of its tappet (test gate). 2JZ wastegate rod: -4.8 mm inside the turbine housing before, 66-67 mm outside after (angle-and-station check against the drawn housing; the gas volute alone did not see the clash).
+- Carburettors and the exhaust valve looked at on K20A/RD350 copies (new exporter flags `--carburettor`, `--exhaust-valve fit`; the bypass fit gives K20A 1 clash, 1 stretch, not this change's). 2JZ's spindle now runs ~12 cm out past the volute to reach the rod.
+- `EngineLab.EngineModel3D`, `AppLayout` pass; new checks fail on the old code (no radial cams, no two-stroke plugs, rod inside). Not seen on screen in the app; full `ctest` not run.
+
+## 2026-11-19 — 3-D view: cams, sparks, sprays, throttles, valves, nitrous (analysis part D)
+
+- Owner's plan, amended: spray under the strobe only; visible knock, engine on its mounts and steady-mode flow arrows dropped. Drawing only, no new solid: drawn after the layout.
+- `EngineLabSceneExport` catalogue (18) and `--designed all` (80) against the build before: ducts, solids, issues and every existing part bit-identical; totals unchanged (3/0/0/16/2, 1 of 18 implausible; 127/20/0/419/224, 0 of 80).
+- View cost (`--time-pose 2000`, least of n, one interleaved pair): pose +0.2-0.8 us per engine (Merlin 8.6 -> 9.4 us, 142 -> 174 parts; 13B 1.5 -> 1.7); build within run-to-run noise (LS3 455/395 ms). GPU cost not measured (headless); the app now shows the renderer's CPU ms per frame.
+- K20A lobes point 11 deg off the deck centre at peak lift, with and without a 30 deg advance (test gate 20). Nitrous bottle (forced on K20A, LS3) 162-181 mm from any duct surface.
+- `EngineLab.EngineModel3D` passes (new checks fail on the old code: no cams, sparks, sprays or controls); two turbo part counts now leave the flap out. Not seen on screen in the app; PNG capture not run.
+- Limit: no pushrod engine in the configuration, so the LS3 is drawn with overhead cams.
 
 ## 2026-11-19 — users: silenced exhausts "blow" over the engine (2JZ); the muffler flow noise
 

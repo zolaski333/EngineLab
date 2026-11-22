@@ -28,8 +28,12 @@ enum class SceneMaterial : std::uint8_t {
     flame,
     /** Turbine and compressor housings: translucent in X-ray, so the wheels show. */
     turboHousing,
+    /** An injector's fuel spray, the nitrous kit's: translucent. */
+    spray,
+    /** A spark plug's insulator: white porcelain. */
+    ceramic,
 };
-inline constexpr std::size_t sceneMaterialCount = 11;
+inline constexpr std::size_t sceneMaterialCount = 13;
 
 /** Bits for the view layers (All / Combustion / Mechanical / Gas flow). */
 enum SceneLayer : std::uint8_t {
@@ -58,6 +62,13 @@ struct SceneInstance final {
     float intensity { 1.0F };
 };
 
+/** 32 ones: the default of a per-cylinder multiplier. */
+[[nodiscard]] constexpr std::array<float, 32> unitPerCylinder() noexcept {
+    std::array<float, 32> ones {};
+    for (auto& one : ones) one = 1.0F;
+    return ones;
+}
+
 struct ScenePoseInput final {
     /** Primary crank angle over the 720-degree domain, as the simulator reports it. */
     double crankAngleDegrees {};
@@ -82,6 +93,32 @@ struct ScenePoseInput final {
     /** How many cylinders the engine brake holds (EngineState): the first
         ones, their exhaust valve cracked open around firing TDC. */
     std::uint32_t engineBrakeCylinders { 0 };
+    /** The picture is strobed (slowed down or frozen): what happens once a
+        cycle (the injector's spray, the spark) is drawn only then, so
+        nothing flickers in the live view. */
+    bool cycleDetail { false };
+    /** The ECU's spark advance, degrees before firing top dead centre
+        (EngineState): where each cylinder's flame kernel starts (with its
+        ignition offset) and, strobed, where its plug sparks. For a diesel,
+        the start of injection. */
+    double ignitionAdvanceDegrees { 15.0 };
+    /** The ECU fires the plugs (spark enabled, no cut). */
+    bool sparkEnabled { false };
+    /** Each cylinder's injector open time over its cycle (CylinderState). */
+    std::array<float, 32> injectorDuty {};
+    /** Each cylinder's variable cam timing (CylinderState): crank degrees its
+        intake and exhaust lobes are advanced, and its lift multiplier. */
+    std::array<float, 32> intakeCamAdvanceDegrees {};
+    std::array<float, 32> exhaustCamAdvanceDegrees {};
+    std::array<float, 32> valveLiftMultiplier { unitPerCylinder() };
+    /** The turbochargers' common wastegate, 0 shut to 1 open, and the flow
+        through their blow-off valve, kg/s (EngineState). */
+    double wastegateOpening {};
+    double blowOffMassFlowKgPerSecond {};
+    /** The active exhaust valves' butterfly stroke, 0 shut to 1 open. */
+    double exhaustValveStroke { 1.0 };
+    /** The nitrous kit's flow, kg/s of liquid nitrous (0 while it does not spray). */
+    double nitrousMassFlowKgPerSecond {};
 };
 
 struct SceneBounds final {
@@ -109,6 +146,8 @@ struct SceneDuct final {
     Vec3 openAxis { 0.0F, 1.0F, 0.0F };
     /** DuctPiece::foldedMm: how much shorter than authored it is drawn. */
     float foldedMm {};
+    /** DuctPiece::bores: a throttle body's plates or slides. */
+    std::vector<ThrottleBore> bores {};
 };
 
 /** What a part is, for the part inspector. */
@@ -135,6 +174,14 @@ enum class PartRole : std::uint8_t {
     gearbox,
     /** A two-stroke's power valve, the blade in its exhaust port's roof. */
     powerValve,
+    /** A camshaft with its lobes and sprocket, the timing chain, a VTEC pin. */
+    camshaft,
+    /** The spark plugs. */
+    sparkPlug,
+    /** A throttle plate, or a slide carburettor's slide and needle. */
+    throttlePlate,
+    /** The nitrous kit: bottle, line, plate and its spray. */
+    nitrous,
 };
 
 struct PartIdentity final {
@@ -145,6 +192,8 @@ struct PartIdentity final {
     int duct { -1 };
     /** Index in EngineModel3D::turbos(); -1 when not a turbocharger. */
     int turbo { -1 };
+    /** A camshaft's: true for the exhaust cam. */
+    bool exhaust {};
 };
 
 /**
@@ -208,6 +257,72 @@ public:
     [[nodiscard]] Vec3 injectorAim(std::size_t index) const noexcept {
         return index < cylinders_.size() ? cylinders_[index].injectorAim : Vec3 {};
     }
+    /** The camshafts as drawn: an intake and an exhaust per bank of a
+        poppet-valve four-stroke (none on a radial, a two-stroke or a rotary). */
+    struct CamshaftPlacement final {
+        std::uint16_t part {};
+        /** A point on its axis (it runs along +Z), z = 0. */
+        Vec3 centre;
+        bool exhaust {};
+        /** The bank's first cylinder: its cam timing turns the shaft. */
+        std::size_t cylinder {};
+    };
+    [[nodiscard]] const std::vector<CamshaftPlacement>& camshafts() const noexcept { return camshafts_; }
+    /** A cam's turn about its axis from where it is drawn, radians about +Z,
+        at a crank angle and a crank-degree advance of its lobes: half the
+        crank's turn, the same way round. */
+    [[nodiscard]] float camshaftRadians(double crankAngleDegrees, double advanceDegrees) const noexcept;
+    /** Cylinder `index`'s spark (a point at its plug's electrode) and its
+        injector's spray; 0xFFFF without one. */
+    [[nodiscard]] std::uint16_t sparkPart(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].sparkPart : std::uint16_t { 0xFFFFU };
+    }
+    [[nodiscard]] std::uint16_t sprayPart(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].sprayPart : std::uint16_t { 0xFFFFU };
+    }
+    /** Cylinder `index`'s VTEC lock pin; 0xFFFF without one. */
+    [[nodiscard]] std::uint16_t vtecPinPart(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].vtecPinPart : std::uint16_t { 0xFFFFU };
+    }
+    /** A part one control turns or slides: a throttle plate or slide, an
+        active exhaust valve's butterfly, a wastegate flap, a blow-off
+        valve's piston, the nitrous spray. */
+    struct ControlPart final {
+        enum class Kind : std::uint8_t { throttlePlate, throttleSlide, exhaustValve, wastegate, blowOff, nitrousSpray };
+        Kind kind { Kind::throttlePlate };
+        std::uint16_t part {};
+        /** What holds it and does not move (an exhaust valve's band and
+            actuator, a runner's throttle body, a wastegate's canister, a
+            blow-off valve's body); 0xFFFF without one. */
+        std::uint16_t body { 0xFFFFU };
+        /** Index in ducts() (a throttle body, a runner, an exhaust part); -1
+            otherwise. */
+        int duct { -1 };
+        /** Index in turbos() for a wastegate or a blow-off valve; -1 otherwise. */
+        int turbo { -1 };
+        /** A plate: its centre, the unit flow direction and its spindle.
+            A flap: its hinge, the face's normal and the hinge axis, `size`
+            its radius. A slide, a piston or a spray: where it sits shut
+            (`centre`) and the unit way it opens (`normal`), `size` its travel
+            or reach. */
+        Vec3 centre;
+        Vec3 normal { 0.0F, 1.0F, 0.0F };
+        Vec3 hinge { 1.0F, 0.0F, 0.0F };
+        float size {};
+    };
+    [[nodiscard]] const std::vector<ControlPart>& controlParts() const noexcept { return controlParts_; }
+    /** Whether `part` is a control's: its moving part, its body or its link. */
+    [[nodiscard]] bool controlPiece(std::uint16_t part) const noexcept {
+        for (const auto& control : controlParts_)
+            if (part == control.part || part == control.body) return true;
+        for (const auto& link : links_)
+            if (part == link.part) return true;
+        return false;
+    }
+    /** A throttle plate's angle off shut, radians, at a throttle opening 0-1:
+        a few degrees at rest (a plate is set off square so it cannot jam in
+        its bore), 90 wide open. */
+    [[nodiscard]] static float throttlePlateRadians(double throttle) noexcept;
     /** The supercharger as drawn; `placed` is false without one. Its solid is
         in solids(), after the engine's. */
     [[nodiscard]] const SuperchargerPlacement& supercharger() const noexcept { return supercharger_; }
@@ -290,6 +405,16 @@ private:
         std::uint16_t linerPart { 0xFFFFU };
         std::uint16_t runnerPart { 0xFFFFU };
         std::uint16_t injectorPart { 0xFFFFU };
+        std::uint16_t sparkPart { 0xFFFFU };
+        std::uint16_t sprayPart { 0xFFFFU };
+        /** A VTEC lock pin, and how far it slides to lock the high lobe in. */
+        std::uint16_t vtecPinPart { 0xFFFFU };
+        Vec3 vtecPinSlide;
+        /** Where the spark jumps: the plug's electrode, just inside the head. */
+        Vec3 sparkPoint;
+        /** The spray's reach from the injector tip with the injector open for
+            its whole window. */
+        float sprayReach {};
         /** A two-stroke's power valve blade, and how far it drops to shut. */
         std::uint16_t powerValvePart { 0xFFFFU };
         Vec3 powerValveDrop;
@@ -330,6 +455,23 @@ private:
     void buildSupercharger();
     /** Without `draw`, only its solids (before the ducts); with it, its parts. */
     void buildGearbox(bool draw);
+    /** What the cycle or a control moves, drawn after the layout (no solid
+        of theirs moves a duct): cams and their drive, plugs and sparks,
+        sprays, throttle plates, exhaust valves, turbo valves, nitrous. */
+    void buildValvetrain();
+    void buildIgnitionAndInjection();
+    void buildControls();
+    void buildNitrous();
+    void poseCycleParts(const ScenePoseInput&, std::vector<SceneInstance>&) const;
+    void poseControls(const ScenePoseInput&, std::vector<SceneInstance>&) const;
+    /** A radial's cam ring, tappets, pushrods, rockers and rocker boxes. */
+    void buildRadialValvetrain();
+    /** A spark plug standing on `seat` along `axis`, its hex `hexAbove` mm
+        over the seat (where the head's top is), sized for `boreMm`. */
+    void appendSparkPlug(Mesh& steel, Mesh& ceramic, Vec3 seat, Vec3 axis, float hexAbove, float boreMm) const;
+    /** A rod from a fixed `anchor` to a point that moves with a control part
+        (a lever's end): drawn as a unit rod, scaled between them each frame. */
+    void addLink(std::size_t control, Vec3 anchor, Vec3 leverLocal, float radius, std::uint8_t layers);
     void computeBounds();
 
     EngineConfig config_;
@@ -385,6 +527,49 @@ private:
     };
     std::vector<Rotor> rotors_;
     std::uint16_t rotaryShaftPart_ { 0xFFFFU };
+    std::vector<CamshaftPlacement> camshafts_;
+    /** The timing chain and the crank's sprocket: camshaft roles. */
+    std::vector<std::uint16_t> camDriveParts_;
+    std::uint16_t sparkPlugPart_ { 0xFFFFU };
+    std::uint16_t sparkInsulatorPart_ { 0xFFFFU };
+    std::vector<ControlPart> controlParts_;
+    /** The nitrous bottle, its line and its plate. */
+    std::uint16_t nitrousPart_ { 0xFFFFU };
+    /** A rocker turned by its valve's lift, and its pushrod, which follows
+        the rocker's pushrod end. */
+    struct Rocker final {
+        std::uint16_t rocker {};
+        std::uint16_t pushrod {};
+        std::size_t cylinder {};
+        bool exhaust {};
+        Vec3 pivot;
+        /** The rocker's turning axis (unit), and the arm from the pivot to the
+            valve's tip, mm: a lift turns it by lift / arm. */
+        Vec3 axis;
+        float arm {};
+        /** The pushrod's top at rest. */
+        Vec3 pushrodTop;
+    };
+    std::vector<Rocker> rockers_;
+    /** A radial's cam ring tracks: each turns against the crank at
+        1 / (2 x lobes) of its speed, a lobe at its first cylinder's
+        follower when that cylinder's valve peaks. */
+    struct CamTrack final {
+        std::uint16_t part {};
+        bool exhaust {};
+        float lobes { 1.0F };
+        double phaseDegrees {};
+    };
+    std::vector<CamTrack> camTracks_;
+    struct Link final {
+        std::uint16_t part {};
+        std::size_t control {};
+        Vec3 anchor;
+        Vec3 leverLocal;
+    };
+    std::vector<Link> links_;
+    /** +1 when the crank turns positively about +Z in the world. */
+    float crankSense_ { 1.0F };
 };
 
 struct PartHit final {

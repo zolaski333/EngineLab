@@ -731,6 +731,86 @@ turns at the drive ratio times the displayed crank angle.
 Engine views frame the engine with its ports, runners, plenum and primaries;
 the *Exhaust* view frames the whole system.
 
+### What the cycle and the controls move
+
+Since 2026-11-19 (analysis part D) the view draws the parts the simulation
+already drives, each from a value it computes; nothing new is simulated.
+They are drawn after the layout, with no solid of their own, so the ducts,
+the routes and the route check are bit-identical (`EngineLabSceneExport`,
+catalogue and `--designed all`).
+
+- **Cams and their drive.** A poppet-valve four-stroke has an intake and
+  an exhaust shaft per bank over its valves, a lobe over each (a tangent
+  cam sized by the duration and lift) and a sprocket with a timing mark,
+  driven from a crank sprocket by one chain in front of the first cylinder.
+  They turn at half the crank's speed; each bank's turns by its first
+  cylinder's variable timing (`intakeValveAdvanceDegrees`,
+  `exhaustValveAdvanceDegrees`), and the valves follow the same advance and
+  `valveLiftMultiplier`. VTEC draws the high lobe between a pair of valves
+  and a lock pin that slides in while `vtecHighCylinderMask` holds the
+  high cam. The configuration has no pushrod engine: a cam-in-block (the
+  LS3) is drawn with overhead cams too. A cam cover over each bank's cams
+  and a timing cover over the chain are shells (translucent in X-ray,
+  opaque in solid), so the solid view no longer shows bare shafts over
+  the heads. A four-stroke radial has a cam ring at the crankcase's nose,
+  an intake and an exhaust track of (n - 1) / 2 lobes turning against the
+  crank at 1 / (n - 1) of its speed (a lobe meets each tappet at that
+  valve's peak lift), a pushrod in its tube and a rocker in its box per
+  valve; the rockers tip by lift / arm and the pushrods rise with them.
+  Two-strokes and rotaries have none.
+- **Spark and spray, under the strobe only** (nothing flickers by
+  default). The plugs (thread, hex, ribbed white insulator, terminal)
+  stand on each spark engine's axis, a two-stroke's in its thin head; the
+  spark
+  shows for the 20 crank degrees after the ECU's advance (with the
+  cylinder's ignition offset), and the flame kernel now starts there too
+  (it started at a fixed 15 degrees). The spray is a cone from the
+  injector tip, to the valve (port) or into the chamber (direct), from the
+  window's start for `injectorDutyCycle` of the cycle (a diesel's from its
+  commanded start); its reach follows the share of the window it is open.
+- **Throttle.** A plate in each drawn throttle bore, a few degrees off shut
+  at rest, edge-on wide open, following `throttle`; a slide carburettor's
+  slide and needle rise with it. Individual throttles get a body (and a
+  carburettor's bowl and slide) in each runner where the solver puts its
+  restriction face (`throttleDistanceFromValveMm`, else 55 % of the
+  runner), the plenum's mouths bare necks. A throttle body is an open
+  flanged tube with its spindle's bosses and position sensor, the plate on
+  its spindle with its screws and cable quadrant; a carburettor has its
+  spigot, body, bell mouth, float bowl, fuel inlet and choke, a slide
+  carburettor its slide tower and cap (a fixed venturi a butterfly). The
+  slide is wider than the bore (it shuts all of it) and lifts 0.95 of a
+  bore; its needle, clipped in it, rises with it, as on every slide
+  carburettor, and is long enough to stay in the fixed needle jet at full
+  lift, the float bowl's floor 1.55 bores under the bore's axis. A
+  two-stroke's carburettors that would stand in one another (a V whose
+  banks share their pins puts two cylinders a rod width apart in its
+  valley) are set in a row along the crank instead, slides rising across
+  it, spread as little as clears them and moved out of the valley until
+  they clear the barrels; one whose float bowl reaches into the engine
+  stands further out. A radial's intake paths each have their drum, one
+  ahead of the other.
+- **Exhaust valve.** A butterfly at the inlet of each pipe carrying an
+  active valve, turned by `exhaustValveStroke` (shut across the pipe, open
+  along it), in a housing band with its spindle's bosses; an actuator
+  beside the pipe pulls the lever by a rod that follows it.
+- **Turbo valves.** A wastegate flap on the outlet face beside the
+  exducer lifts up to 45 degrees with `wastegateOpening`, as on a real
+  internal wastegate: its spindle is a short stub out through a boss in
+  the outlet's wall, its arm reaches out past the volute (square to the rod
+  at half its travel), and a canister level with the compressor pulls it by
+  a rod that runs along the shaft outside both housings. A blow-off valve (body, dome,
+  vacuum nipple) has a piston that rises with its flow, full lift at the
+  flow its area passes choked from 2 bar. The rods are posed from their
+  levers each frame; a control's body and rod select as the control.
+- **Nitrous.** A fitted kit draws a plate under the first throttle body,
+  a bottle beyond the engine and gearbox towards the rear (sized by its
+  capacity, out of the engine framing) and its line; the plate's spray
+  shows while `nitrousMassFlowKgPerSecond` flows.
+
+*Save the view as a PNG* (settings menu, *Capture*) reads the next frame
+back. The info line shows the renderer's CPU time per frame beside the
+frame rate; the GPU's own time is not measured.
+
 ### Gas field on the ducts
 
 The exhaust and the intake runners and plenums are coloured by the gas
