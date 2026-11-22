@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-22 — The carburetted bike I4's dead idle is the outlet's oxygen, not its pilot
+
+- Engine: designed 1.0 L bike I4, four carburettors on a 1.3 L plenum, pilot sized for AFR 13.5 at the screw's 0.42 (`PhysicsPerfHarness --trace 1 --idle --watch`, temporary probe on the metering, removed).
+- Base: the carburettor meters AFR 13.4 at the screw floor, the plenum reads 16 (oxygen-based, lagging), the cylinder 23.5; the engine traps ~2.3 g/s of air-equivalent oxygen for ~1.15 g/s through the throttles. The idle valve hunts 0.42 <-> 0.88 (the starter jet rides above the screw), 1,050-1,930 rpm, and the engine stalls once the starter stops.
+- One factor at a time: plenum 1.3 -> 0.3 L, same limit cycle (not the plenum's lag). Exhaust mesh 25 mm (`--exhaust-cell-mm 25`), everything else equal: a steady idle at 1,250-1,290 rpm, AFR 13.0, no misfire.
+- Read: the coarse outlet cells' ambient oxygen (journal 2026-11-01/02) reaches the cylinders; injected engines trim it out in closed loop, an open-loop carburettor cannot. The pilot is right. Not fixed: the cure (`exp/outlet-mesh`) moves the default sound and costs real time; an owner decision.
+
 ## 2026-11-22 — Odd V engines; individual throttles at full load
 
 - Odd V (designed, knock-limited, `--designer-probe` / `--idle-firing 20`): V3 4T 2.04 x real time, idle 1,408 rpm sd 19; V5 4T 1.31, 1,374 sd 13, no misfire; V3/V5 2T 1.72/1.24, firing 25-27 % at idle like designed I3/V2/V4 2T controls (not odd-V specific).

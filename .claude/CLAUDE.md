@@ -260,6 +260,8 @@ whether an exhaust change moved the timbre (`shape`) or only the level
   the lugged through-flow. A four-stroke's idle rides on the 360 mm cells within
   0.3 m of the outlet: ambient oxygen diffuses to the valve (sport 125 2,074 rpm
   for 1,300; refined there, 1,325, but the sound moves: `exp/outlet-mesh`).
+  An open-loop carburettor cannot trim that oxygen out: a designed carb bike
+  I4 hunts and stalls, and idles at 1,280 rpm on a 25 mm mesh.
 
 ## Refuted — do not propose again without new evidence
 
