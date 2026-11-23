@@ -211,9 +211,23 @@ void checkReadouts(const enginelab::EngineCatalogLoadResult& catalog) {
     model->state.cycleAveragedPowerKw = 62.0;
     model->state.exhaustTemperatureC = 722.0;
     enginelab::ui::ReadoutStrip strip(*model);
-    strip.setSize(652, 92);
+    // An empty history draws no sparkline; a short one starts on the right.
+    strip.setSize(652, enginelab::ui::ReadoutStrip::height);
+    snapshot(strip, "readouts-empty.png");
+    for (auto index = 0; index < 120; ++index) {
+        auto sample = model->state;
+        const auto rise = static_cast<double>(index) / 119.0;
+        sample.cycleAveragedTorqueNm = 40.0 + 140.0 * rise;
+        sample.cycleAveragedPowerKw = 8.0 + 54.0 * rise * rise;
+        sample.manifoldPressureKpa = 35.0 + 60.0 * rise;
+        sample.airFuelRatioValid = index % 40 != 0;
+        sample.airFuelRatio = 14.7 - 2.0 * rise;
+        sample.exhaustTemperatureC = 450.0 + 270.0 * rise;
+        sample.coolantTemperatureC = 89.0;
+        model->telemetry.push(sample);
+    }
     snapshot(strip, "readouts-652.png");
-    strip.setSize(1100, 92);
+    strip.setSize(1100, enginelab::ui::ReadoutStrip::height);
     snapshot(strip, "readouts-1100.png");
 }
 

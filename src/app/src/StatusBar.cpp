@@ -25,7 +25,7 @@ StatusBar::Content StatusBar::compose() const {
     const auto& health = model_.health;
     // Below 0.95 the simulation runs in slow motion: controls answer late and
     // users report it as an engine fault, so it has to be visible at a glance.
-    content.realtimeColour = health.realtimeFactor < 0.95 ? colours::warn : colours::faint;
+    content.realtimeColour = health.realtimeFactor < 0.95 ? colours::warn : colours::label;
     content.items.add(utf8("Physics real-time \xc3\x97") + juce::String(health.realtimeFactor, 2));
     content.items.add(health.paused ? juce::String("Simulation paused")
                                     : utf8("Simulation speed \xc3\x97") + juce::String(health.timeScale, 2));
@@ -55,7 +55,7 @@ void StatusBar::paint(juce::Graphics& g) {
 
     g.setFont(monoFont(13.0F, false));
     const auto countersWidth = juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), content_.counters);
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.drawText(content_.counters, area.removeFromRight(countersWidth + 4.0F), juce::Justification::centredRight, false);
     area.removeFromRight(18.0F);
 
@@ -70,7 +70,7 @@ void StatusBar::paint(juce::Graphics& g) {
         const auto& item = content_.items[index];
         const auto width = juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), item) + 4.0F;
         if (width > area.getWidth()) break;
-        g.setColour(index == 0 ? content_.realtimeColour : colours::faint);
+        g.setColour(index == 0 ? content_.realtimeColour : colours::label);
         g.drawText(item, area.removeFromLeft(width), juce::Justification::centredLeft, false);
     }
 }

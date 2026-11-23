@@ -4,13 +4,14 @@
 
 namespace enginelab::ui {
 
-/** Row of live figures under the engine view: tachometer, torque, power,
+/** Row of live figures under the engine view: the engine speed on a tape,
+    then torque, power,
     manifold pressure, mixture, exhaust gas and coolant. */
 class ReadoutStrip final : public juce::Component {
 public:
     explicit ReadoutStrip(const DashboardModel&);
     void paint(juce::Graphics&) override;
-    static constexpr int height = 92;
+    static constexpr int height = 100;
 
 private:
     void drawTachometer(juce::Graphics&, juce::Rectangle<float> area) const;
