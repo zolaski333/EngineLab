@@ -10,7 +10,9 @@
     own controls reachable with Tab (`enableKeyboardNavigation`). */
 namespace enginelab::ui {
 
-/** Rounded button with an optional key cap on its right and an optional icon. */
+/** A hairline button with an optional key cap on its right and an optional
+    icon. A button that carries a state (a toggle, or one given `setEngaged`)
+    shows a lamp on its left: lit when on, dark when off. */
 class ActionButton final : public juce::Button {
 public:
     enum class Style { standard, primary, tool, compact };
@@ -20,7 +22,7 @@ public:
     void setKeyCap(const juce::String& keyCap);
     /** A stroked outline in a 24 x 24 box, drawn left of the text. */
     void setIcon(juce::Path icon);
-    /** Shows the "engaged" (green) state without being a toggle. */
+    /** Shows the "engaged" state (a lit lamp) without being a toggle. */
     void setEngaged(bool);
     [[nodiscard]] bool engaged() const noexcept { return engaged_; }
     [[nodiscard]] int idealWidth() const;
@@ -37,10 +39,15 @@ private:
     juce::String keyCap_;
     juce::Path icon_;
     bool engaged_ { false };
+    bool stateful_ { false };
 };
 
-/** Row of mutually exclusive options. `pill` is the floating overlay style of
-    the viewport, `tabs` the underlined style of the side panel. */
+/** A square indicator lamp: dark when off, lit in `colour` when on. */
+void drawLamp(juce::Graphics&, juce::Rectangle<float> area, bool lit, juce::Colour colour);
+
+/** Row of mutually exclusive options. `pill` is a recessed strip whose chosen
+    option is inverted (light, dark text), `tabs` the underlined style of the
+    side panel. */
 class SegmentedControl final : public juce::Component, public juce::SettableTooltipClient {
 public:
     enum class Style { pill, tabs };

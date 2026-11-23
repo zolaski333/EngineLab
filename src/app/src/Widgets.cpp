@@ -13,17 +13,34 @@ namespace {
 [[nodiscard]] juce::Font buttonFont(ActionButton::Style style) {
     switch (style) {
     case ActionButton::Style::standard:
-    case ActionButton::Style::primary: return uiFont(15.5F, true);
-    case ActionButton::Style::tool: return uiFont(15.0F);
-    case ActionButton::Style::compact: return uiFont(14.0F);
+    case ActionButton::Style::primary: return uiMediumFont(15.5F);
+    case ActionButton::Style::tool: return uiMediumFont(15.0F);
+    case ActionButton::Style::compact: return uiMediumFont(14.5F);
     }
-    return uiFont(15.0F);
+    return uiMediumFont(15.0F);
 }
 
 [[nodiscard]] juce::Font segmentFont(SegmentedControl::Style style) {
-    return style == SegmentedControl::Style::tabs ? uiFont(15.0F, true) : uiFont(14.0F);
+    return style == SegmentedControl::Style::tabs ? uiFont(15.5F, true) : uiMediumFont(14.5F);
 }
+
+constexpr float lampSize = 7.0F;
+constexpr float lampGap = 8.0F;
 } // namespace
+
+void drawLamp(juce::Graphics& g, juce::Rectangle<float> area, bool lit, juce::Colour colour) {
+    const auto lamp = area.withSizeKeepingCentre(lampSize, lampSize);
+    if (lit) {
+        // A lit lamp glows a little past its edge; an unlit one is a dark tile.
+        g.setColour(colour.withAlpha(0.22F));
+        g.fillRoundedRectangle(lamp.expanded(2.0F), cornerRadius + 1.0F);
+        g.setColour(colour);
+        g.fillRoundedRectangle(lamp, 1.0F);
+    } else {
+        g.setColour(colours::unlit);
+        g.fillRoundedRectangle(lamp, 1.0F);
+    }
+}
 
 ActionButton::ActionButton(const juce::String& label, Style style)
     : juce::Button(label), style_(style) {
@@ -50,13 +67,16 @@ void ActionButton::setIcon(juce::Path icon) {
 }
 
 void ActionButton::setEngaged(bool engaged) {
-    if (engaged_ == engaged) return;
+    // A button told its state once carries one: its lamp stays from then on.
+    if (engaged_ == engaged && stateful_) return;
     engaged_ = engaged;
+    stateful_ = true;
     repaint();
 }
 
 int ActionButton::idealWidth() const {
     auto width = textWidth(buttonFont(style_), getButtonText()) + 24.0F;
+    if ((stateful_ || isToggleable()) && style_ != Style::primary) width += lampSize + lampGap;
     if (!icon_.isEmpty()) width += getButtonText().isEmpty() ? 15.0F : 22.0F;
     if (keyCap_.isNotEmpty()) width += keyCapWidth(keyCap_) + 10.0F;
     return static_cast<int>(std::ceil(width));
@@ -65,47 +85,47 @@ int ActionButton::idealWidth() const {
 void ActionButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
     const auto bounds = getLocalBounds().toFloat().reduced(0.5F);
     const auto on = getToggleState() || engaged_;
-    const auto radius = style_ == Style::compact ? 7.0F : (style_ == Style::tool ? 8.0F : 9.0F);
+    const auto radius = cornerRadius;
     const auto alpha = isEnabled() ? 1.0F : 0.42F;
     auto textColour = colours::text;
     auto onAccent = false;
 
     if (style_ == Style::primary && !on) {
-        auto top = juce::Colour(0xfff07a49);
-        auto bottom = colours::accentDeep;
-        if (down) { top = top.darker(0.12F); bottom = bottom.darker(0.12F); }
-        else if (highlighted) { top = top.brighter(0.06F); bottom = bottom.brighter(0.06F); }
-        g.setGradientFill(juce::ColourGradient(top.withMultipliedAlpha(alpha), 0.0F, bounds.getY(),
-            bottom.withMultipliedAlpha(alpha), 0.0F, bounds.getBottom(), false));
+        // The one invitation on a panel: inverted, light with dark text.
+        auto fill = colours::text;
+        if (down) fill = fill.darker(0.15F);
+        else if (highlighted) fill = juce::Colours::white;
+        g.setColour(fill.withMultipliedAlpha(alpha));
         g.fillRoundedRectangle(bounds, radius);
-        g.setColour(juce::Colour(0xfff08a5e).withMultipliedAlpha(alpha));
-        g.drawRoundedRectangle(bounds, radius, 1.0F);
-        textColour = juce::Colours::white;
+        textColour = colours::ink;
         onAccent = true;
     } else if (style_ == Style::primary) {
         // A running dyno: the same button now cancels, so it stops looking
-        // like an invitation.
-        g.setColour(juce::Colour(0xff2a1a12).withMultipliedAlpha(alpha));
+        // like an invitation and reads as a warning.
+        g.setColour(colours::warnFill.withMultipliedAlpha(alpha));
         g.fillRoundedRectangle(bounds, radius);
-        g.setColour(colours::accent.withMultipliedAlpha(highlighted ? alpha : alpha * 0.75F));
+        g.setColour(colours::warn.withMultipliedAlpha(highlighted ? alpha : alpha * 0.75F));
         g.drawRoundedRectangle(bounds, radius, 1.0F);
-        textColour = colours::accentLight;
-    } else if (on) {
-        g.setColour(colours::okFill.withMultipliedAlpha(alpha));
-        g.fillRoundedRectangle(bounds, radius);
-        g.setColour(colours::okBorder.withMultipliedAlpha(alpha));
-        g.drawRoundedRectangle(bounds, radius, 1.0F);
-        textColour = juce::Colour(0xffbfe8d6);
+        textColour = colours::warn;
     } else {
-        auto fill = highlighted || down ? colours::panelRaised : colours::panel;
+        auto fill = on ? colours::panelRaised : colours::panel;
+        if (highlighted || down) fill = colours::selection;
         if (down) fill = fill.brighter(0.05F);
         g.setColour(fill.withMultipliedAlpha(alpha));
         g.fillRoundedRectangle(bounds, radius);
-        g.setColour((highlighted ? colours::lineHover : colours::lineStrong).withMultipliedAlpha(alpha));
+        g.setColour((highlighted ? colours::lineHover : (on ? colours::lineHover : colours::lineStrong))
+            .withMultipliedAlpha(alpha));
         g.drawRoundedRectangle(bounds, radius, 1.0F);
+        if (!on) textColour = colours::muted;
     }
 
     auto content = bounds.reduced(style_ == Style::compact ? 8.0F : 12.0F, 0.0F);
+    if ((stateful_ || isToggleable()) && style_ != Style::primary) {
+        juce::Graphics::ScopedSaveState state(g);
+        g.setOpacity(alpha);
+        drawLamp(g, content.removeFromLeft(lampSize), on, colours::ok);
+        content.removeFromLeft(lampGap);
+    }
     if (keyCap_.isNotEmpty()) {
         const auto capWidth = keyCapWidth(keyCap_);
         juce::Graphics::ScopedSaveState state(g);
@@ -130,8 +150,8 @@ void ActionButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
     g.drawFittedText(getButtonText(), content.toNearestInt(),
                      centred ? juce::Justification::centred : juce::Justification::centredLeft, 1);
     if (hasKeyboardFocus(false)) {
-        g.setColour(colours::accentLight);
-        g.drawRoundedRectangle(bounds.reduced(1.0F), radius, 2.0F);
+        g.setColour(onAccent ? colours::ink : colours::text);
+        g.drawRoundedRectangle(bounds.reduced(2.0F), radius, 1.0F);
     }
 }
 
@@ -222,32 +242,37 @@ int SegmentedControl::optionAt(juce::Point<float> position) const {
 
 void SegmentedControl::paint(juce::Graphics& g) {
     if (style_ == Style::pill) {
+        // Over the 3-D view too: nearly opaque, so the labels stay readable.
         const auto bounds = getLocalBounds().toFloat().reduced(0.5F);
-        g.setColour(juce::Colour(0xd10d1211));
-        g.fillRoundedRectangle(bounds, 9.0F);
+        g.setColour(colours::well.withAlpha(0.92F));
+        g.fillRoundedRectangle(bounds, cornerRadius);
         g.setColour(colours::lineStrong);
-        g.drawRoundedRectangle(bounds, 9.0F, 1.0F);
+        g.drawRoundedRectangle(bounds, cornerRadius, 1.0F);
     }
     g.setFont(segmentFont(style_));
     for (int index = 0; index < options_.size(); ++index) {
         const auto option = optionBounds(index);
         const auto active = index == selected_;
+        auto label = active ? colours::text : (index == hovered_ ? colours::text : colours::muted);
         if (style_ == Style::pill) {
-            if (active || index == hovered_) {
-                g.setColour(active ? colours::selection : colours::panelRaised);
-                g.fillRoundedRectangle(option, 6.0F);
+            if (active) {
+                g.setColour(colours::text);
+                g.fillRoundedRectangle(option, 1.0F);
+                label = colours::ink;
+            } else if (index == hovered_) {
+                g.setColour(colours::selection);
+                g.fillRoundedRectangle(option, 1.0F);
             }
         } else if (active) {
-            g.setColour(colours::accent);
+            g.setColour(colours::text);
             g.fillRect(option.withTop(option.getBottom() - 2.0F));
         }
-        g.setColour(active ? colours::text : (index == hovered_ ? colours::text.withAlpha(0.8F)
-                                                                : colours::muted));
+        g.setColour(label);
         g.drawText(options_[index], option, juce::Justification::centred, false);
     }
     if (hasKeyboardFocus(false)) {
-        g.setColour(colours::accentLight);
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0F), 8.0F, 2.0F);
+        g.setColour(colours::text);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0F), cornerRadius, 1.0F);
     }
 }
 
@@ -286,10 +311,10 @@ void SliderRow::setName(const juce::String& name) {
 void SliderRow::paint(juce::Graphics& g) {
     auto header = getLocalBounds().toFloat().removeFromTop(18.0F);
     g.setColour(isEnabled() ? colours::muted : colours::faint);
-    g.setFont(uiFont(14.0F));
+    g.setFont(uiFont(15.0F));
     g.drawText(name_, header, juce::Justification::centredLeft, true);
     g.setColour(isEnabled() ? colours::text : colours::faint);
-    g.setFont(monoFont(14.0F));
+    g.setFont(monoFont(13.5F));
     const auto value = format ? format(slider.getValue()) : juce::String(slider.getValue(), 1);
     g.drawText(value, header, juce::Justification::centredRight, false);
 }
