@@ -329,6 +329,9 @@ public:
     /** Rebuilds the 3-D model; call after every engine change. */
     void setEngine(const EngineConfig&);
     void stepLayer(int delta);
+    /** Shows the 2-D cutaway for this session without touching the saved
+        renderer setting (the interface bench's `--renderer 2d`). */
+    void forceCutaway();
     /** Called by the main component's 30 Hz timer. */
     void refresh();
     /** Frames the 3-D view drew in the last second, and its CPU time per
@@ -486,6 +489,7 @@ private:
     double microphoneSpacingM_ { 0.36 };
     juce::String glError_;
     bool glFailed_ { false };
+    bool forcedCutaway_ { false };
     double attachedAt_ {};
     juce::OpenGLContext context_;
 

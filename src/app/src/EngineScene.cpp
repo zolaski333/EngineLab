@@ -97,7 +97,7 @@ vec3 shade(vec3 n, vec3 v, vec3 l, vec3 radiance, vec3 base, vec3 f0, float a, f
 }
 
 vec3 studio(vec3 r, float rough) {
-    vec3 c = mix(vec3(0.010, 0.013, 0.012), vec3(0.26, 0.31, 0.30), smoothstep(-0.25, 0.85, r.y));
+    vec3 c = mix(vec3(0.011, 0.012, 0.013), vec3(0.28, 0.29, 0.30), smoothstep(-0.25, 0.85, r.y));
     float sharpness = mix(40.0, 2.5, rough);
     float gain = mix(1.0, 0.35, rough);
     c += vec3(1.0, 0.95, 0.88) * pow(max(dot(r, vec3(0.57, 0.70, 0.43)), 0.0), sharpness) * 2.4 * gain;
@@ -148,7 +148,7 @@ void main() {
         vec4 gas = mix(texelFetch(uField, row + i0), texelFetch(uField, row + i1), x - float(i0));
         if (uShowWaves == 1) {
             uBaseColour = gas.rgb;
-            uEmissive += max(gas.rgb - vec3(0.0656, 0.0868, 0.0805), 0.0) * 1.6;
+            uEmissive += max(gas.rgb - vec3(0.1087, 0.1139, 0.1247), 0.0) * 1.6;
         }
         uEmissive += incandescence(gas.a);
     }
@@ -171,7 +171,7 @@ void main() {
         float fall = clamp(1.0 - d / uLightPosition[i].w, 0.0, 1.0);
         colour += shade(n, v, toLight / max(d, 1e-3), uLightColour[i] * fall * fall, uBaseColour, f0, a, uMetalness);
     }
-    vec3 hemisphere = mix(vec3(0.004, 0.005, 0.005), vec3(0.35, 0.46, 0.43), 0.5 + 0.5 * n.y) * 0.35;
+    vec3 hemisphere = mix(vec3(0.004, 0.005, 0.005), vec3(0.40, 0.42, 0.44), 0.5 + 0.5 * n.y) * 0.35;
     colour += hemisphere * uBaseColour * (1.0 - uMetalness);
     colour += studio(reflect(-v, n), rough) * environmentBrdf(f0, rough, facing);
     colour += studio(n, 1.0) * 0.25 * uBaseColour * (1.0 - uMetalness);
@@ -217,7 +217,7 @@ void main() {
     vec2 uv = gl_FragCoord.xy / uSize;
     vec2 q = (uv - vec2(0.5, 0.6)) / vec2(0.901, 0.721);
     float t = clamp(length(q) / 0.7, 0.0, 1.0);
-    vec3 c = mix(vec3(0.0941, 0.1294, 0.1216), vec3(0.0431, 0.0588, 0.0549), t);
+    vec3 c = mix(vec3(0.0902, 0.0941, 0.1020), vec3(0.0431, 0.0471, 0.0510), t);
     float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
     fragColour = vec4(c + (noise - 0.5) / 255.0, 1.0);
 }
@@ -273,14 +273,14 @@ struct MaterialLook final {
 
 // Colours, metalness and roughness of the prototype's three.js materials.
 constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
-    { 0xc9d1ce, 0.95F, 0.28F, 1.0F },   // steel
-    { 0x8e9895, 0.90F, 0.40F, 1.0F },   // forged
+    { 0xc8cacd, 0.95F, 0.28F, 1.0F },   // steel
+    { 0x8e9296, 0.90F, 0.40F, 1.0F },   // forged
     { 0xdfe4e2, 0.80F, 0.30F, 1.0F },   // piston
     { 0x9fdcef, 0.85F, 0.30F, 1.0F },   // intake valve
     { 0xe8b9a2, 0.85F, 0.35F, 1.0F },   // exhaust valve
-    { 0x6f8a84, 0.20F, 0.55F, 0.15F },  // block shell
-    { 0x5d736e, 0.20F, 0.55F, 0.13F },  // head shell
-    { 0x41b6d7, 0.40F, 0.40F, 0.55F },  // intake flow
+    { 0x8a8e93, 0.20F, 0.55F, 0.15F },  // block shell
+    { 0x74787d, 0.20F, 0.55F, 0.13F },  // head shell
+    { 0x4fb6dc, 0.40F, 0.40F, 0.55F },  // intake flow
     { 0xa3958b, 0.55F, 0.38F, 1.0F },   // exhaust pipe
     { 0xff7a3d, 0.00F, 1.00F, 0.85F },  // flame
     { 0x8f8a84, 0.60F, 0.45F, 0.30F },  // turbo housing
@@ -723,9 +723,9 @@ struct EngineSceneRenderer::Impl final {
         glUniform4f(floorColour, 0.0F, 0.0F, 0.0F, 0.45F);
         glDrawArrays(GL_TRIANGLES, radialLineVertices + circleLineVertices, shadowVertices);
         glUniform1i(floorMode, 0);
-        glUniform4f(floorColour, 0.122F, 0.165F, 0.153F, 1.0F);
+        glUniform4f(floorColour, 0.137F, 0.145F, 0.157F, 1.0F);
         glDrawArrays(GL_LINES, 0, radialLineVertices);
-        glUniform4f(floorColour, 0.106F, 0.141F, 0.133F, 1.0F);
+        glUniform4f(floorColour, 0.110F, 0.118F, 0.129F, 1.0F);
         glDrawArrays(GL_LINES, radialLineVertices, circleLineVertices);
 
         // Each burning cylinder lights its surroundings.

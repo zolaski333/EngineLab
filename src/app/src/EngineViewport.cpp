@@ -106,13 +106,13 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
         const auto cylinderWidth = std::clamp(diameter * 0.115F, 42.0F, 72.0F);
         const auto cylinderHeight = std::clamp(diameter * 0.245F, 88.0F, 138.0F);
         const auto center = body.getCentre();
-        g.setColour(juce::Colour(0xff18221f));
+        g.setColour(colours::panelRaised);
         g.fillEllipse(center.x - radius * 0.72F, center.y - radius * 0.72F, radius * 1.44F, radius * 1.44F);
-        g.setColour(juce::Colour(0xff2b3834));
+        g.setColour(colours::lineStrong);
         g.drawEllipse(center.x - radius * 0.72F, center.y - radius * 0.72F, radius * 1.44F, radius * 1.44F, 1.4F);
-        g.setColour(juce::Colour(0x3341b6d7));
+        g.setColour(colours::intake.withAlpha(0.20F));
         g.drawEllipse(center.x - radius * 1.13F, center.y - radius * 1.13F, radius * 2.26F, radius * 2.26F, 5.0F);
-        g.setColour(juce::Colour(0x44ef6f3c));
+        g.setColour(colours::accent.withAlpha(0.27F));
         g.drawEllipse(center.x - radius * 1.34F, center.y - radius * 1.34F, radius * 2.68F, radius * 2.68F, 5.0F);
 
         for (int index = 0; index < count; ++index) {
@@ -156,14 +156,14 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
             if (showFlow && liveCylinder != nullptr) {
                 const auto intakePulse = static_cast<float>(std::clamp(liveCylinder->intakeFlowMgPerCycle / 55.0, 0.0, 1.0));
                 const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 55.0, 0.0, 1.0));
-                g.setColour(juce::Colour(0xff41b6d7).withAlpha(0.18F + intakePulse * 0.52F));
+                g.setColour(colours::intake.withAlpha(0.18F + intakePulse * 0.52F));
                 g.drawLine(center.x + unitX * radius * 1.13F, center.y + unitY * radius * 1.13F,
                            cylinderCenterX, cylinderCenterY, 1.4F + intakePulse * 3.4F);
-                g.setColour(juce::Colour(0xffef6f3c).withAlpha(0.18F + exhaustPulse * 0.52F));
+                g.setColour(colours::accent.withAlpha(0.18F + exhaustPulse * 0.52F));
                 g.drawLine(center.x + unitX * radius * 1.34F, center.y + unitY * radius * 1.34F,
                            cylinderCenterX, cylinderCenterY, 1.4F + exhaustPulse * 3.4F);
             }
-            g.setColour(juce::Colour(0xff9ba8a3));
+            g.setColour(colours::label);
             g.drawLine(pistonCenterX, pistonCenterY, crankPinX, crankPinY, 4.0F);
             g.saveState();
             g.addTransform(juce::AffineTransform::rotation(static_cast<float>(angle + std::numbers::pi * 0.5),
@@ -171,27 +171,27 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
             const auto chamber = juce::Rectangle<float>(cylinderCenterX - cylinderWidth * 0.5F,
                                                         cylinderCenterY - cylinderHeight * 0.5F,
                                                         cylinderWidth, cylinderHeight);
-            g.setColour(juce::Colour(0xff111817));
-            g.fillRoundedRectangle(chamber, 7.0F);
-            g.setColour(juce::Colour(0xff3a4743));
-            g.drawRoundedRectangle(chamber, 7.0F, 1.3F);
+            g.setColour(colours::panel);
+            g.fillRoundedRectangle(chamber, 3.0F);
+            g.setColour(colours::lineHover);
+            g.drawRoundedRectangle(chamber, 3.0F, 1.0F);
             if (showCombustion && liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
-                g.setColour(liveCylinder->misfiring ? juce::Colour(0x88ffca28) : juce::Colour(0x99ff7a3d));
+                g.setColour(liveCylinder->misfiring ? colours::critical.withAlpha(0.53F) : colours::accentLight.withAlpha(0.60F));
                 g.fillEllipse(chamber.reduced(8.0F, cylinderHeight * 0.35F));
             }
-            g.setColour(juce::Colour(0xff41b6d7));
+            g.setColour(colours::intake);
             g.drawLine(chamber.getX() + cylinderWidth * 0.30F, chamber.getY() + 5.0F,
                        chamber.getX() + cylinderWidth * 0.30F, chamber.getY() + 23.0F, 3.0F);
-            g.setColour(juce::Colour(0xffef6f3c));
+            g.setColour(colours::accent);
             g.drawLine(chamber.getX() + cylinderWidth * 0.70F, chamber.getY() + 5.0F,
                        chamber.getX() + cylinderWidth * 0.70F, chamber.getY() + 23.0F, 3.0F);
-            g.setColour(juce::Colour(0xffb7c1bd));
+            g.setColour(colours::muted);
             g.fillRoundedRectangle(chamber.getX() + 5.0F, chamber.getBottom() - 28.0F - travel * 18.0F,
                                    cylinderWidth - 10.0F, 20.0F, 3.0F);
             g.restoreState();
             if (liveCylinder != nullptr) {
-                g.setColour(liveCylinder->misfireProbability > 0.2 ? juce::Colour(0xffffca28) : juce::Colour(0xffaab7b2));
-                g.setFont(juce::FontOptions(10.5F, juce::Font::bold));
+                g.setColour(liveCylinder->misfireProbability > 0.2 ? colours::critical : colours::label);
+                g.setFont(monoFont(11.0F));
                 g.drawFittedText("C" + juce::String(liveCylinder->id) + "  "
                     + model_.units.text(units::Quantity::pressure, liveCylinder->pressureEstimateBar * 100.0),
                     juce::Rectangle<float>(cylinderCenterX - 38.0F, cylinderCenterY - 8.0F, 76.0F, 16.0F).toNearestInt(),
@@ -199,7 +199,7 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
             }
         }
         const auto crankNeedle = state.crankAngleDegrees * std::numbers::pi / 180.0;
-        g.setColour(juce::Colour(0xffef6f3c));
+        g.setColour(colours::text);
         g.fillEllipse(center.x - 11.0F, center.y - 11.0F, 22.0F, 22.0F);
         g.drawLine(center.x, center.y,
                    center.x + static_cast<float>(std::cos(crankNeedle)) * diameter * 0.085F,
@@ -221,10 +221,10 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
         : area.getHeight() * 0.72F;
 
     const auto runnerTop = area.getY() + 10.0F;
-    g.setColour(juce::Colour(0x3341b6d7));
-    g.fillRoundedRectangle(area.withY(runnerTop).withHeight(11.0F).reduced(12.0F, 0.0F), 5.0F);
-    g.setColour(juce::Colour(0x44ef6f3c));
-    g.fillRoundedRectangle(area.withY(area.getBottom() - 18.0F).withHeight(11.0F).reduced(12.0F, 0.0F), 5.0F);
+    g.setColour(colours::intake.withAlpha(0.20F));
+    g.fillRoundedRectangle(area.withY(runnerTop).withHeight(11.0F).reduced(12.0F, 0.0F), 2.0F);
+    g.setColour(colours::accent.withAlpha(0.27F));
+    g.fillRoundedRectangle(area.withY(area.getBottom() - 18.0F).withHeight(11.0F).reduced(12.0F, 0.0F), 2.0F);
 
     for (int index = 0; index < count; ++index) {
         const auto& cylinder = config.cylinders[static_cast<std::size_t>(index)];
@@ -267,8 +267,8 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
             g.addTransform(juce::AffineTransform::rotation(static_cast<float>(visualDegrees * std::numbers::pi / 180.0),
                                                            centerX, crankY));
         }
-        g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(x, top, cylinderWidth, height, 7.0F);
-        g.setColour(juce::Colour(0xff3a4743)); g.drawRoundedRectangle(x, top, cylinderWidth, height, 7.0F, 1.5F);
+        g.setColour(colours::panel); g.fillRoundedRectangle(x, top, cylinderWidth, height, 3.0F);
+        g.setColour(colours::lineHover); g.drawRoundedRectangle(x, top, cylinderWidth, height, 3.0F, 1.0F);
         const auto valves = config.cycle != EngineCycle::twoStroke;
         const auto fallbackIntakeLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 + config.camshafts.intakeCenterlineDegrees,
             config.camshafts.intakeDurationDegrees, config.camshafts.intakeLiftMm, config.camshafts.intakeLiftProfile);
@@ -281,31 +281,31 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
         const auto exhaustDrop = static_cast<float>(exhaustLift
             / std::max({ 1.0, config.camshafts.exhaustLiftMm, config.camshafts.highExhaustLiftMm }) * 17.0);
         if (showValvetrain) {
-            g.setColour(juce::Colour(0xff41b6d7)); g.drawLine(x + cylinderWidth * 0.30F, top + 5.0F, x + cylinderWidth * 0.30F, top + 22.0F + intakeDrop, 3.0F);
+            g.setColour(colours::intake); g.drawLine(x + cylinderWidth * 0.30F, top + 5.0F, x + cylinderWidth * 0.30F, top + 22.0F + intakeDrop, 3.0F);
             g.fillEllipse(x + cylinderWidth * 0.21F, top + 18.0F + intakeDrop, cylinderWidth * 0.18F, 4.0F);
-            g.setColour(juce::Colour(0xffef6f3c)); g.drawLine(x + cylinderWidth * 0.70F, top + 5.0F, x + cylinderWidth * 0.70F, top + 22.0F + exhaustDrop, 3.0F);
+            g.setColour(colours::accent); g.drawLine(x + cylinderWidth * 0.70F, top + 5.0F, x + cylinderWidth * 0.70F, top + 22.0F + exhaustDrop, 3.0F);
             g.fillEllipse(x + cylinderWidth * 0.61F, top + 18.0F + exhaustDrop, cylinderWidth * 0.18F, 4.0F);
         }
         if (showCombustion && liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
-            g.setColour(liveCylinder->misfiring ? juce::Colour(0x88ffca28) : juce::Colour(0x99ff7a3d));
+            g.setColour(liveCylinder->misfiring ? colours::critical.withAlpha(0.53F) : colours::accentLight.withAlpha(0.60F));
             g.fillEllipse(x + 9.0F, top + 30.0F, cylinderWidth - 18.0F, 22.0F);
         }
         if (showFlow && liveCylinder != nullptr) {
             const auto intakePulse = static_cast<float>(std::clamp(liveCylinder->intakeFlowMgPerCycle / 45.0, 0.0, 1.0));
             const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 45.0, 0.0, 1.0));
-            g.setColour(juce::Colour(0xff41b6d7).withAlpha(0.20F + intakePulse * 0.58F));
+            g.setColour(colours::intake.withAlpha(0.20F + intakePulse * 0.58F));
             g.drawLine(centerX, runnerTop + 9.0F, centerX, top + 25.0F, 2.0F + intakePulse * 4.0F);
-            g.setColour(juce::Colour(0xffef6f3c).withAlpha(0.20F + exhaustPulse * 0.58F));
+            g.setColour(colours::accent.withAlpha(0.20F + exhaustPulse * 0.58F));
             g.drawLine(centerX, top + height - 24.0F, centerX, area.getBottom() - 13.0F, 2.0F + exhaustPulse * 4.0F);
         }
-        g.setColour(juce::Colour(0xffb7c1bd)); g.fillRoundedRectangle(x + 5.0F, pistonY, cylinderWidth - 10.0F, 22.0F, 3.0F);
+        g.setColour(colours::muted); g.fillRoundedRectangle(x + 5.0F, pistonY, cylinderWidth - 10.0F, 22.0F, 3.0F);
         const auto crankX = centerX + static_cast<float>(std::sin(pistonAngle)) * 14.0F;
-        g.setColour(juce::Colour(0xff9ba8a3)); g.drawLine(centerX, pistonY + 18.0F, crankX, crankY, 4.0F);
-        g.setColour(juce::Colour(0xffef6f3c)); g.fillEllipse(crankX - 4.0F, crankY - 4.0F, 8.0F, 8.0F);
+        g.setColour(colours::label); g.drawLine(centerX, pistonY + 18.0F, crankX, crankY, 4.0F);
+        g.setColour(colours::text); g.fillEllipse(crankX - 4.0F, crankY - 4.0F, 8.0F, 8.0F);
         if (liveCylinder != nullptr) {
             const auto& cylinderState = *liveCylinder;
-            g.setColour(cylinderState.misfireProbability > 0.2 ? juce::Colour(0xffffca28) : juce::Colour(0xff82918b));
-            g.setFont(juce::FontOptions(10.5F, juce::Font::bold));
+            g.setColour(cylinderState.misfireProbability > 0.2 ? colours::critical : colours::label);
+            g.setFont(monoFont(11.0F));
             g.drawFittedText("C" + juce::String(cylinderState.id) + "  "
                 + model_.units.text(units::Quantity::pressure, cylinderState.pressureEstimateBar * 100.0),
                 juce::Rectangle<float>(x + 3.0F, top + height - 14.0F, cylinderWidth - 6.0F, 12.0F).toNearestInt(),
@@ -368,10 +368,17 @@ namespace {
 constexpr int cycleRowHeight = 17;
 constexpr std::size_t cycleMaximumRows = 8;
 const std::array<const char*, 4> strokeNames { "Power", "Exhaust", "Intake", "Compression" };
-const std::array<juce::Colour, 4> strokeColours { juce::Colour(0xffef6f3c), juce::Colour(0xffc9a493),
-                                                  juce::Colour(0xff41b6d7), juce::Colour(0xffa9b8b3) };
-const std::array<juce::Colour, 4> strokeBands { juce::Colour(0x55ef6f3c), juce::Colour(0x448a6a5a),
-                                                juce::Colour(0x4441b6d7), juce::Colour(0x446a7a75) };
+// Functions, not tables: the theme's colours are themselves initialised at
+// start-up, in another order.
+[[nodiscard]] juce::Colour strokeColour(std::size_t stroke) {
+    const std::array<juce::Colour, 4> text { colours::accent, colours::exhaust, colours::intake, colours::label };
+    return text[stroke];
+}
+[[nodiscard]] juce::Colour strokeBand(std::size_t stroke) {
+    const std::array<juce::Colour, 4> bands { colours::accent.withAlpha(0.33F), colours::exhaust.withAlpha(0.40F),
+                                              colours::intake.withAlpha(0.27F), colours::lineHover };
+    return bands[stroke];
+}
 } // namespace
 
 void CyclePanel::setCylinders(std::vector<juce::String> labels, EngineCycle cycle) {
@@ -387,10 +394,10 @@ int CyclePanel::idealHeight() const {
 
 void CyclePanel::paint(juce::Graphics& g) {
     const auto bounds = getLocalBounds().toFloat().reduced(0.5F);
-    g.setColour(juce::Colour(0xd10d1211));
-    g.fillRoundedRectangle(bounds, 9.0F);
+    g.setColour(colours::background.withAlpha(0.84F));
+    g.fillRoundedRectangle(bounds, cornerRadius);
     g.setColour(colours::lineStrong);
-    g.drawRoundedRectangle(bounds, 9.0F, 1.0F);
+    g.drawRoundedRectangle(bounds, cornerRadius, 1.0F);
     if (!phaseOf) return;
     auto area = getLocalBounds().reduced(12, 8);
     const auto rows = std::min(labels_.size(), cycleMaximumRows);
@@ -405,28 +412,28 @@ void CyclePanel::paint(juce::Graphics& g) {
         g.setFont(monoFont(11.0F));
         g.setColour(colours::muted);
         g.drawText(labels_[i], row.removeFromLeft(28.0F), juce::Justification::centredLeft, false);
-        g.setColour(strokeColours[stroke]);
+        g.setColour(strokeColour(stroke));
         g.drawText(strokeNames[stroke], row.removeFromRight(78.0F), juce::Justification::centredRight, false);
         const auto track = row.withSizeKeepingCentre(row.getWidth() - 8.0F, 6.0F);
         juce::Path clip;
-        clip.addRoundedRectangle(track, 3.0F);
+        clip.addRoundedRectangle(track, 1.0F);
         g.saveState();
         g.reduceClipRegion(clip);
         const auto bands = twoStroke ? std::size_t { 2 } : std::size_t { 4 };
         const auto bandWidth = 1.0F / static_cast<float>(bands);
         for (std::size_t band = 0; band < bands; ++band) {
-            g.setColour(strokeBands[twoStroke && band == 1 ? 3 : band]);
+            g.setColour(strokeBand(twoStroke && band == 1 ? 3 : band));
             g.fillRect(track.withX(track.getX() + track.getWidth() * static_cast<float>(band) * bandWidth)
                            .withWidth(track.getWidth() * bandWidth));
         }
         g.restoreState();
-        g.setColour(juce::Colours::white);
+        g.setColour(colours::text);
         g.fillRect(juce::Rectangle<float>(track.getX() + track.getWidth() * static_cast<float>(phase / cycleDegrees) - 1.0F,
                                           track.getY() - 2.0F, 2.0F, 10.0F));
     }
     if (labels_.size() > cycleMaximumRows) {
         g.setFont(uiFont(11.5F));
-        g.setColour(colours::faint);
+        g.setColour(colours::label);
         g.drawText("+" + juce::String(static_cast<int>(labels_.size() - cycleMaximumRows)) + " more cylinders",
                    area.removeFromTop(cycleRowHeight), juce::Justification::centredLeft, false);
     }
@@ -456,31 +463,33 @@ void WaveLegend::setStrength(bool strength) {
 
 void WaveLegend::paint(juce::Graphics& g) {
     auto area = getLocalBounds().toFloat();
-    g.setColour(juce::Colour(0xd10d1211));
-    g.fillRoundedRectangle(area, 9.0F);
+    g.setColour(colours::background.withAlpha(0.84F));
+    g.fillRoundedRectangle(area, cornerRadius);
     g.setColour(colours::lineStrong);
-    g.drawRoundedRectangle(area.reduced(0.5F), 9.0F, 1.0F);
+    g.drawRoundedRectangle(area.reduced(0.5F), cornerRadius, 1.0F);
     area = area.reduced(12.0F, 8.0F);
 
     auto header = area.removeFromTop(14.0F);
-    g.setFont(uiFont(10.5F, true).withExtraKerningFactor(0.06F));
+    g.setFont(sectionFont());
     g.setColour(colours::muted);
-    g.drawText(strength_ ? utf8("PULSATION STRENGTH") : utf8("PRESSURE WAVES"), header,
+    g.drawText(strength_ ? utf8("Pulsation strength") : utf8("Pressure waves"), header,
                juce::Justification::centredLeft, false);
     g.setFont(monoFont(10.5F, false));
     g.drawText(strength_ ? legendFigure(scalePa_) + " kPa rms" : utf8("±") + legendFigure(scalePa_) + " kPa",
                header, juce::Justification::centredRight, false);
 
-    // The bar of the prototype: violet, grey at the mean, orange, pale yellow.
+    // The Test cell scale, as render::pressureColour paints the ducts: violet,
+    // grey at the mean, amber, pale yellow.
+    const auto pressureNeutral = juce::Colour(0xff5d5f63);
     // The strength bar starts at the grey: a root mean square is never
     // negative.
     const auto bar = area.removeFromTop(14.0F).withSizeKeepingCentre(area.getWidth(), 8.0F);
-    juce::ColourGradient gradient(juce::Colour(strength_ ? 0xff4a5451 : 0xff9a7bff), bar.getX(), 0.0F,
-                                  juce::Colour(0xffffe6b0), bar.getRight(), 0.0F, false);
-    if (!strength_) gradient.addColour(0.5, juce::Colour(0xff4a5451));
-    gradient.addColour(strength_ ? 0.7 : 0.85, juce::Colour(0xffff6a2b));
+    juce::ColourGradient gradient(strength_ ? pressureNeutral : colours::pressureLow, bar.getX(), 0.0F,
+                                  colours::accentLight, bar.getRight(), 0.0F, false);
+    if (!strength_) gradient.addColour(0.5, pressureNeutral);
+    gradient.addColour(strength_ ? 0.7 : 0.85, colours::accent);
     g.setGradientFill(gradient);
-    g.fillRoundedRectangle(bar, 4.0F);
+    g.fillRoundedRectangle(bar, 1.0F);
 
     g.setFont(uiFont(11.0F));
     g.setColour(colours::muted);
@@ -809,7 +818,7 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
         // A faint box: the value can be clicked and typed.
         if (field.editable) {
             g.setColour(colours::line);
-            g.drawRoundedRectangle(valueArea.reduced(2, 3).toFloat(), 4.0F, 1.0F);
+            g.drawRoundedRectangle(valueArea.reduced(2, 3).toFloat(), cornerRadius, 1.0F);
         }
         g.setColour(std::abs(value - original) > 1.0e-6 ? colours::accentLight
                                                          : (field.editable ? colours::text : colours::muted));
@@ -938,10 +947,10 @@ void PartInspector::endTyping(bool apply) {
 
 void PartInspector::paint(juce::Graphics& g) {
     auto area = getLocalBounds().toFloat();
-    g.setColour(juce::Colour(0xeb0d1211));
-    g.fillRoundedRectangle(area, 9.0F);
+    g.setColour(colours::background.withAlpha(0.92F));
+    g.fillRoundedRectangle(area, cornerRadius);
     g.setColour(colours::lineStrong);
-    g.drawRoundedRectangle(area.reduced(0.5F), 9.0F, 1.0F);
+    g.drawRoundedRectangle(area.reduced(0.5F), cornerRadius, 1.0F);
 
     const auto close = closeArea().toFloat().reduced(7.0F);
     g.setColour(colours::muted);
@@ -952,7 +961,7 @@ void PartInspector::paint(juce::Graphics& g) {
     g.setColour(colours::text);
     g.setFont(uiFont(13.5F, true));
     g.drawText(title_, content.removeFromTop(18).withTrimmedRight(24), juce::Justification::centredLeft, true);
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.setFont(uiFont(11.5F));
     g.drawText(subtitle_, content.removeFromTop(16).withTrimmedRight(24), juce::Justification::centredLeft, true);
     content.removeFromTop(4);
@@ -969,7 +978,7 @@ void PartInspector::paint(juce::Graphics& g) {
     if (edit_) paintEdit(g, content.removeFromBottom(editHeight()));
     if (note_.isNotEmpty()) {
         content.removeFromTop(6);
-        noteLayout(note_, colours::faint, static_cast<float>(content.getWidth())).draw(g, content.toFloat());
+        noteLayout(note_, colours::label, static_cast<float>(content.getWidth())).draw(g, content.toFloat());
     }
 }
 
@@ -980,10 +989,10 @@ void PartInspector::paintScope(juce::Graphics& g, juce::Rectangle<float> area) c
     g.drawText(scope_->caption, area.removeFromTop(15.0F), juce::Justification::centredLeft, true);
     const auto ticks = area.removeFromBottom(14.0F);
     auto plot = area.reduced(0.0F, 3.0F);
-    g.setColour(juce::Colour(0xff0a0e0d));
-    g.fillRoundedRectangle(plot, 4.0F);
+    g.setColour(colours::well);
+    g.fillRoundedRectangle(plot, 1.0F);
     g.setColour(colours::line);
-    g.drawRoundedRectangle(plot, 4.0F, 1.0F);
+    g.drawRoundedRectangle(plot, 1.0F, 1.0F);
     plot = plot.reduced(4.0F, 6.0F);
 
     const auto& kpa = scope_->kpa;
@@ -1410,6 +1419,11 @@ void EngineViewport::setEngine(const EngineConfig& config) {
             }
 }
 
+void EngineViewport::forceCutaway() {
+    forcedCutaway_ = true;
+    applyRenderer();
+}
+
 void EngineViewport::stepLayer(int delta) {
     layers_.setSelected(std::clamp(layers_.selected() + delta, 0, 3), juce::sendNotificationSync);
 }
@@ -1426,7 +1440,7 @@ void EngineViewport::pushSettings() {
 }
 
 void EngineViewport::applyRenderer() {
-    const auto use3d = settings_.renderer3d && !glFailed_;
+    const auto use3d = settings_.renderer3d && !glFailed_ && !forcedCutaway_;
     if (use3d) {
         if (context_.getTargetComponent() == nullptr) {
             framesRendered_ = 0;
@@ -3199,22 +3213,23 @@ void EngineViewport::refresh() {
 }
 
 juce::Rectangle<int> EngineViewport::infoArea() const {
-    const auto left = cycle_.getRight() + 12;
+    // Right of the cycle panel, unless a narrow view lifted it above this row.
+    const auto left = cycle_.isVisible() && cycle_.getBottom() > getHeight() - 30 ? cycle_.getRight() + 12 : 12;
     const auto right = speed_.isVisible() ? speed_.getX() - 12 : getWidth() - 12;
-    // Above the legend when it shows.
-    const auto bottom = legend_.isVisible() ? legend_.getY() - 6 : getHeight() - 12;
+    // Beside the speed controls (the legend sits above them, on the right).
+    const auto bottom = getHeight() - 12;
     return { left, bottom - 18, std::max(0, right - left), 18 };
 }
 
 void EngineViewport::paint(juce::Graphics& g) {
     if (context_.getTargetComponent() == nullptr) {
         const auto bounds = getLocalBounds().toFloat();
-        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff18211f), bounds.getCentreX(),
+        g.setGradientFill(juce::ColourGradient(colours::panelRaised, bounds.getCentreX(),
             bounds.getY() + bounds.getHeight() * 0.4F, colours::background,
             bounds.getCentreX() + bounds.getWidth() * 0.7F, bounds.getY() + bounds.getHeight() * 0.4F, true));
         g.fillRect(bounds);
     }
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.setFont(uiFont(12.5F));
     g.drawText(infoText_, infoArea(), juce::Justification::centredBottom, true);
 }
@@ -3231,8 +3246,12 @@ void EngineViewport::resized() {
     playback_.setBounds(getWidth() - 12 - playback_.idealWidth(), getHeight() - 44, playback_.idealWidth(), 32);
     speed_.setBounds(playback_.getX() - 10 - speed_.idealWidth(), getHeight() - 44, speed_.idealWidth(), 32);
     const auto cycleHeight = cycle_.idealHeight();
-    cycle_.setBounds(12, getHeight() - 12 - cycleHeight, 250, cycleHeight);
-    legend_.setBounds((getWidth() - 300) / 2, getHeight() - 12 - 58, 300, 58);
+    // A narrow view puts the cycle panel above the speed controls rather than under them.
+    const auto controlsLeft = speed_.isVisible() ? speed_.getX() : playback_.getX();
+    const auto cycleBottom = 12 + 250 + 8 > controlsLeft ? getHeight() - 44 - 8 : getHeight() - 12;
+    cycle_.setBounds(12, cycleBottom - cycleHeight, 250, cycleHeight);
+    // The pressure legend sits right, above the speed and playback controls.
+    legend_.setBounds(getWidth() - 12 - 300, getHeight() - 44 - 8 - 58, 300, 58);
     layoutInspector();
 }
 

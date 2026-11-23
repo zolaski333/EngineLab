@@ -50,6 +50,9 @@ inline const juce::Colour accentLight { 0xffffd978 };
 inline const juce::Colour pressureLow { 0xff9a86ff };
 /** Data: the intake charge. */
 inline const juce::Colour intake { 0xff4fb6dc };
+/** Data: the exhaust stroke, a burnt charge leaving (warm, not the amber of
+    pressure). */
+inline const juce::Colour exhaust { 0xffb8916a };
 /** Running, a gain. */
 inline const juce::Colour ok { 0xff8fc79c };
 inline const juce::Colour okFill { 0xff142019 };

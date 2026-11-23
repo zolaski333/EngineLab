@@ -2330,6 +2330,12 @@ void MainComponent::stepUiBench() {
         }
         static const juce::StringArray tabs { "dyno", "telemetry", "audio", "diagnostics" };
         if (tabs.contains(settings.tab)) side_.showTab(tabs.indexOf(settings.tab));
+        if (settings.renderer == "2d") viewport_.forceCutaway();
+        static const juce::StringArray layers { "all", "combustion", "mechanical", "gas" };
+        if (layers.contains(settings.layer)) {
+            viewport_.stepLayer(-3);
+            viewport_.stepLayer(layers.indexOf(settings.layer));
+        }
         controls_.ignition.setToggleState(true, juce::dontSendNotification);
         if (runtime_) {
             runtime_->setIgnitionEnabled(true);

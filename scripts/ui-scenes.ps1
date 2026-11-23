@@ -40,6 +40,9 @@ $captures = [ordered]@{
     # From the Test cell interface on (the build before has no such menus).
     'menu-design'        = "--engine 2JZ --throttle 0 --menu design --width 1440 --height 860 $short"
     'menu-test'          = "--engine 2JZ --dyno --menu test --width 1280 --height 720 $short"
+    'layer-gas'          = "--engine 2JZ --throttle 0.2 --layer gas --width 1440 --height 860 $short"
+    'cutaway-2d'         = "--engine 2JZ --throttle 0.2 --renderer 2d --width 1440 --height 860 $short"
+    'cutaway-2d-v8'      = "--engine LS3 --throttle 0.2 --renderer 2d --width 1280 --height 720 $short"
 }
 $costs = [ordered]@{
     'perf-2jz'      = '--engine 2JZ --dyno --tab dyno --width 1440 --height 860 --warmup 8 --seconds 20'

@@ -129,11 +129,12 @@ std::vector<int> bindGasField(const EngineModel3D& model, const GasFieldSnapshot
 }
 
 Vec3 pressureColour(float normalised) noexcept {
-    // Violet for rarefaction so it never reads as intake air (cyan).
-    static const auto neutral = srgb(0x4a5451);
-    static const auto positive = srgb(0xff6a2b);
-    static const auto hot = srgb(0xffe6b0);
-    static const auto negative = srgb(0x9a7bff);
+    // The Test cell scale (ui::colours accent, accentLight, pressureLow):
+    // violet for rarefaction so it never reads as intake air (cyan).
+    static const auto neutral = srgb(0x5d5f63);
+    static const auto positive = srgb(0xf0a43c);
+    static const auto hot = srgb(0xffd978);
+    static const auto negative = srgb(0x9a86ff);
     // Compressed (power 0.75): weak reflections downstream stay visible next
     // to the strong blowdown pulses.
     const auto magnitude = std::pow(std::min(1.0F, std::abs(normalised)), 0.75F);

@@ -36,6 +36,8 @@ std::optional<UiBenchSettings> parseUiBench(const juce::StringArray& arguments, 
         else if (option == "--tab") settings.tab = take().toLowerCase();
         else if (option == "--open") settings.open = take().toLowerCase();
         else if (option == "--menu") settings.menu = take().toLowerCase();
+        else if (option == "--layer") settings.layer = take().toLowerCase();
+        else if (option == "--renderer") settings.renderer = take().toLowerCase();
         else if (option == "--dyno") settings.dyno = true;
         else if (option == "--out") settings.output = juce::File(take());
         else if (option == "--capture-marker") settings.captureMarker = juce::File(take());

@@ -29,6 +29,10 @@ struct UiBenchSettings final {
     /** A tool window opened after the warm-up: ecu, exhaust, fuel, equipment,
         passby, vehicle, audio or designer. */
     juce::String open;
+    /** The engine view's layer: all, combustion, mechanical or gas; empty leaves it. */
+    juce::String layer;
+    /** 2d shows the 2-D cutaway instead of the 3-D view (not saved). */
+    juce::String renderer;
     /** A top-bar menu shown open for the capture: design, tune, test, listen, more. */
     juce::String menu;
     bool dyno { false };
