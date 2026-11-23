@@ -86,10 +86,10 @@ EcuTunerComponent::EcuTunerComponent(
     interpolateButton_.onClick = [this] { applyTool(CellOperation::interpolate, 0.0); };
     undoButton_.onClick = [this] { stepHistory(true); };
     redoButton_.onClick = [this] { stepHistory(false); };
-    statusLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff8fb7a8));
-    descriptionLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffa8b0ad));
+    statusLabel_.setColour(juce::Label::textColourId, ui::colours::ok);
+    descriptionLabel_.setColour(juce::Label::textColourId, ui::colours::muted);
     descriptionLabel_.setFont(juce::FontOptions(12.0F));
-    selectionLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff9eaaa6));
+    selectionLabel_.setColour(juce::Label::textColourId, ui::colours::label);
     selectionLabel_.setFont(juce::FontOptions(12.0F));
     const std::array<juce::Component*, 15> components {
         &mapSelector_, &loadButton_, &saveButton_, &refreshButton_, &statusLabel_, &descriptionLabel_,
@@ -155,9 +155,9 @@ void EcuTunerComponent::updateVtecButton() {
     const auto* entry = draft_.find(calibration::keys::vtecEnabled);
     const auto* setting = entry != nullptr ? std::get_if<calibration::ScalarCalibration>(entry) : nullptr;
     const auto on = setting != nullptr && setting->value >= 0.5;
-    vtecButton_.setButtonText(setting != nullptr ? (on ? "VTEC ON" : "VTEC OFF") : "FIT VTEC CAMS");
+    vtecButton_.setButtonText(setting != nullptr ? (on ? "VTEC on" : "VTEC off") : "Fit VTEC cams");
     vtecButton_.setColour(juce::TextButton::buttonColourId,
-                          on ? juce::Colour(0xff7a4a16) : juce::Colour(0xff26302e));
+                          on ? ui::colours::accentDeep : ui::colours::panelRaised);
     vtecButton_.setVisible(setting != nullptr || vtecFittable_);
     vtecButton_.setEnabled(!sessionLocked_);
 }
@@ -166,9 +166,9 @@ void EcuTunerComponent::updateAntiLagButton() {
     const auto* entry = draft_.find(calibration::keys::antiLagEnabled);
     const auto* setting = entry != nullptr ? std::get_if<calibration::ScalarCalibration>(entry) : nullptr;
     const auto on = setting != nullptr && setting->value >= 0.5;
-    antiLagButton_.setButtonText(on ? "ANTI-LAG ON" : "ANTI-LAG OFF");
+    antiLagButton_.setButtonText(on ? "Anti-lag on" : "Anti-lag off");
     antiLagButton_.setColour(juce::TextButton::buttonColourId,
-                             on ? juce::Colour(0xff7a4a16) : juce::Colour(0xff26302e));
+                             on ? ui::colours::accentDeep : ui::colours::panelRaised);
     antiLagButton_.setEnabled(!sessionLocked_);
     if (antiLagButton_.isVisible() != (setting != nullptr)) {
         antiLagButton_.setVisible(setting != nullptr);
@@ -216,9 +216,9 @@ void EcuTunerComponent::setSessionLocked(bool locked) {
         editor->setReadOnly(locked);
     updateToolState();
     statusLabel_.setText(locked
-        ? utf8("DYNO SESSION · REVISION ") + juce::String(baseRevision_)
+        ? utf8("Dyno session · revision ") + juce::String(baseRevision_)
             + utf8(" PINNED · EDITING LOCKED")
-        : "REVISION " + juce::String(baseRevision_) + utf8("  ·  LIVE MODE"),
+        : "Revision " + juce::String(baseRevision_) + utf8("  ·  live mode"),
         juce::dontSendNotification);
 }
 
@@ -326,9 +326,9 @@ void EcuTunerComponent::reloadFromSnapshot(bool preserveSelection) {
         mapSelector_.setSelectedItemIndex(0, juce::dontSendNotification);
         selection_.clear();
     }
-    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + utf8("  ·  ")
-        + (hotReloader_->watching() ? "HOT RELOAD: " + juce::String(hotReloader_->path().string())
-                                    : juce::String("LIVE MODE")),
+    statusLabel_.setText("Revision " + juce::String(baseRevision_) + utf8("  ·  ")
+        + (hotReloader_->watching() ? "hot reload: " + juce::String(hotReloader_->path().string())
+                                    : juce::String("live mode")),
         juce::dontSendNotification);
     rebuildCells();
 }
@@ -395,7 +395,7 @@ void EcuTunerComponent::rebuildCells() {
             auto label = std::make_unique<juce::Label>();
             label->setText(number(breakpoint, 0), juce::dontSendNotification);
             label->setJustificationType(juce::Justification::centred);
-            label->setColour(juce::Label::textColourId, juce::Colour(0xff9eaaa6));
+            label->setColour(juce::Label::textColourId, ui::colours::label);
             addAndMakeVisible(*label);
             xLabels_.push_back(std::move(label));
         }
@@ -405,7 +405,7 @@ void EcuTunerComponent::rebuildCells() {
             auto label = std::make_unique<juce::Label>();
             label->setText(number(breakpoint, 2), juce::dontSendNotification);
             label->setJustificationType(juce::Justification::centredRight);
-            label->setColour(juce::Label::textColourId, juce::Colour(0xff9eaaa6));
+            label->setColour(juce::Label::textColourId, ui::colours::label);
             addAndMakeVisible(*label);
             yLabels_.push_back(std::move(label));
         }
@@ -427,7 +427,7 @@ void EcuTunerComponent::rebuildCells() {
         editor->setFont(juce::FontOptions(14.0F, juce::Font::bold));
         editor->setColour(juce::TextEditor::backgroundColourId, cellColour(value, minimum * scale, maximum * scale));
         editor->setColour(juce::TextEditor::textColourId, juce::Colours::white);
-        editor->setColour(juce::TextEditor::highlightColourId, juce::Colour(0xffe89945));
+        editor->setColour(juce::TextEditor::highlightColourId, ui::colours::accentDeep);
         editor->onReturnKey = [this, index] { commitCell(index); };
         editor->onFocusLost = [this, index] { commitCell(index); };
         editor->addMouseListener(this, true);
@@ -461,7 +461,7 @@ void EcuTunerComponent::rebuildGroupPage(const Page& page) {
         label->setText(utf8((metadata.displayName.empty() ? member : metadata.displayName)
             + (unit.empty() ? std::string {} : "  [" + unit + "]")), juce::dontSendNotification);
         label->setJustificationType(juce::Justification::centredLeft);
-        label->setColour(juce::Label::textColourId, juce::Colour(0xffd5dcd9));
+        label->setColour(juce::Label::textColourId, ui::colours::text);
         label->setTooltip(utf8(member + ": " + metadata.description));
         addAndMakeVisible(*label);
         rowLabels_.push_back(std::move(label));
@@ -470,10 +470,10 @@ void EcuTunerComponent::rebuildGroupPage(const Page& page) {
         editor->setText(text, false);
         editor->setJustification(juce::Justification::centred);
         editor->setFont(juce::FontOptions(14.0F, juce::Font::bold));
-        editor->setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff22302d));
+        editor->setColour(juce::TextEditor::backgroundColourId, ui::colours::well);
         editor->setColour(juce::TextEditor::textColourId, juce::Colours::white);
-        editor->setColour(juce::TextEditor::highlightColourId, juce::Colour(0xffe89945));
-        editor->setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff46524e));
+        editor->setColour(juce::TextEditor::highlightColourId, ui::colours::accentDeep);
+        editor->setColour(juce::TextEditor::outlineColourId, ui::colours::lineHover);
         editor->setTooltip(utf8(member + ": " + metadata.description));
         const auto index = valueEditors_.size();
         editor->onReturnKey = [this, index] { commitCell(index); };
@@ -497,7 +497,7 @@ void EcuTunerComponent::rebuildGroupPage(const Page& page) {
 
 void EcuTunerComponent::updateActiveCellHighlight() {
     for (auto& editor : valueEditors_)
-        editor->setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff46524e));
+        editor->setColour(juce::TextEditor::outlineColourId, ui::colours::lineHover);
     const auto* entry = draft_.find(selectedCalibrationId().toStdString());
     const auto* table = entry != nullptr
         ? std::get_if<calibration::CalibrationTable2D>(entry) : nullptr;
@@ -515,7 +515,7 @@ void EcuTunerComponent::updateActiveCellHighlight() {
     const auto y = nearest(table->yAxis.breakpoints, operatingLoad_);
     const auto active = y * xCount_ + x;
     if (active < valueEditors_.size())
-        valueEditors_[active]->setColour(juce::TextEditor::outlineColourId, juce::Colour(0xffffb34d));
+        valueEditors_[active]->setColour(juce::TextEditor::outlineColourId, ui::colours::accent);
 }
 
 void EcuTunerComponent::commitCell(std::size_t valueIndex) {
@@ -568,7 +568,7 @@ bool EcuTunerComponent::publishEdit(calibration::CalibrationEntry edited,
     undo_.push_back(previous);
     redo_.clear();
     if (undo_.size() > 200) undo_.erase(undo_.begin());
-    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + utf8("  ·  APPLIED LIVE"),
+    statusLabel_.setText("Revision " + juce::String(baseRevision_) + utf8("  ·  applied live"),
                          juce::dontSendNotification);
     updateToolState();
     return true;
@@ -626,7 +626,7 @@ void EcuTunerComponent::stepHistory(bool undo) {
     }
     baseRevision_ = result.activeRevision;
     selectPageOf(id);
-    statusLabel_.setText("REVISION " + juce::String(baseRevision_)
+    statusLabel_.setText("Revision " + juce::String(baseRevision_)
         + utf8(undo ? "  ·  UNDONE" : "  ·  REDONE"), juce::dontSendNotification);
     rebuildCells();
 }
@@ -680,7 +680,7 @@ void EcuTunerComponent::mouseDown(const juce::MouseEvent& event) {
 }
 
 void EcuTunerComponent::paintOverChildren(juce::Graphics& graphics) {
-    graphics.setColour(juce::Colour(0xff6fd3ff));
+    graphics.setColour(ui::colours::intake);
     for (const auto index : selection_)
         if (index < valueEditors_.size())
             graphics.drawRect(valueEditors_[index]->getBounds().expanded(2), 2);
@@ -770,12 +770,12 @@ void EcuTunerComponent::timerCallback() {
 }
 
 void EcuTunerComponent::paint(juce::Graphics& graphics) {
-    graphics.fillAll(juce::Colour(0xff111817));
-    graphics.setColour(juce::Colour(0xff273330));
+    graphics.fillAll(ui::colours::panel);
+    graphics.setColour(ui::colours::line);
     graphics.drawHorizontalLine(96, 12.0F, static_cast<float>(getWidth() - 12));
-    graphics.setColour(juce::Colour(0xff77847f));
+    graphics.setColour(ui::colours::label);
     graphics.setFont(11.0F);
-    if (cellIds_.empty()) graphics.drawText("LOAD / RPM", 12, 76, 96, 18, juce::Justification::centredLeft);
+    if (cellIds_.empty()) graphics.drawText("Load / rpm", 12, 76, 96, 18, juce::Justification::centredLeft);
     graphics.drawText("Operating point  " + juce::String(operatingRpm_, 0) + utf8(" rpm  ·  ")
         + juce::String(operatingLoad_ * 100.0, 1) + " %", getWidth() - 270, 76, 255, 18,
         juce::Justification::centredRight);
@@ -856,7 +856,7 @@ void EcuTunerComponent::resized() {
 }
 
 EcuTunerWindow::EcuTunerWindow(std::shared_ptr<calibration::CalibrationStore> store)
-    : juce::DocumentWindow(utf8("EngineLab · ECU tuner"), juce::Colour(0xff111817),
+    : juce::DocumentWindow(utf8("EngineLab · ECU tuner"), ui::colours::panel,
                            juce::DocumentWindow::closeButton, true) {
     tuner_ = new EcuTunerComponent(std::move(store));
     setContentOwned(tuner_, true);

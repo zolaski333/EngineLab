@@ -225,16 +225,16 @@ public:
           progressBar_(progressValue_) {
         setOpaque(true);
 
-        mixGroup_.setText("REAL-TIME MIX");
-        exportGroup_.setText("OFFLINE HQ RENDER");
-        physicsGroup_.setText("AUDIO PHYSICS  /  PRESSURE -> EXHAUST");
+        mixGroup_.setText("Real-time mix");
+        exportGroup_.setText("Offline HQ render");
+        physicsGroup_.setText("Audio physics: pressure to exhaust");
         for (auto* group : { &mixGroup_, &exportGroup_, &physicsGroup_ }) {
             group->setColour(
                 juce::GroupComponent::outlineColourId,
-                juce::Colour(0xff33423e));
+                ui::colours::line);
             group->setColour(
                 juce::GroupComponent::textColourId,
-                juce::Colour(0xff9cc8b7));
+                ui::colours::label);
             addAndMakeVisible(*group);
         }
 
@@ -242,10 +242,10 @@ public:
             juce::FontOptions(18.0F, juce::Font::bold));
         engineLabel_.setColour(
             juce::Label::textColourId,
-            juce::Colour(0xffe4ece8));
+            ui::colours::text);
         statusLabel_.setColour(
             juce::Label::textColourId,
-            juce::Colour(0xff8da39a));
+            ui::colours::label);
         statusLabel_.setFont(juce::FontOptions(12.0F));
         statusLabel_.setJustificationType(
             juce::Justification::centredRight);
@@ -269,7 +269,7 @@ public:
                 utf8(names[index]), juce::dontSendNotification);
             controlLabels_[index].setColour(
                 juce::Label::textColourId,
-                juce::Colour(0xffaebbb6));
+                ui::colours::muted);
             controlLabels_[index].setFont(
                 juce::FontOptions(12.0F));
             addAndMakeVisible(controlLabels_[index]);
@@ -289,17 +289,17 @@ public:
         for (std::size_t index = 0;
              index < muteButtons_.size(); ++index) {
             muteButtons_[index] =
-                std::make_unique<juce::TextButton>("MUTE");
+                std::make_unique<juce::TextButton>("Mute");
             soloButtons_[index] =
-                std::make_unique<juce::TextButton>("SOLO");
+                std::make_unique<juce::TextButton>("Solo");
             muteButtons_[index]->setClickingTogglesState(true);
             soloButtons_[index]->setClickingTogglesState(true);
             muteButtons_[index]->setColour(
                 juce::TextButton::buttonOnColourId,
-                juce::Colour(0xff9d4736));
+                ui::colours::critical);
             soloButtons_[index]->setColour(
                 juce::TextButton::buttonOnColourId,
-                juce::Colour(0xff347d68));
+                ui::colours::okBorder);
             muteButtons_[index]->onClick =
                 [this] { publishMix(); };
             soloButtons_[index]->onClick =
@@ -324,7 +324,7 @@ public:
         };
         captureVoicingToggle_.setColour(
             juce::ToggleButton::textColourId,
-            juce::Colour(0xffc4d0cb));
+            ui::colours::muted);
         captureVoicingToggle_.setComponentID("monitor-capture");
         captureVoicingToggle_.onClick = [this] { publishMix(); };
         addAndMakeVisible(catalogueMixButton_);
@@ -344,7 +344,7 @@ public:
             true, juce::dontSendNotification);
         stemsToggle_.setColour(
             juce::ToggleButton::textColourId,
-            juce::Colour(0xffc4d0cb));
+            ui::colours::muted);
         addAndMakeVisible(sampleRateSelector_);
         addAndMakeVisible(formatSelector_);
         addAndMakeVisible(stemsToggle_);
@@ -357,7 +357,7 @@ public:
             "The loop pack holds the idle, then a point every step up to just "
             "under the redline, on load and off load.");
         loopOggToggle_.setColour(
-            juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
+            juce::ToggleButton::textColourId, ui::colours::muted);
         loopOggToggle_.setTooltip(
             "Also write an Ogg Vorbis copy of every loop (the WAV is the exact one).");
         loopPackButton_.setTooltip(
@@ -382,7 +382,7 @@ public:
             if (exportThread_.joinable()) {
                 exportThread_.request_stop();
                 statusLabel_.setText(
-                    "CANCELLING...",
+                    "Cancelling...",
                     juce::dontSendNotification);
             }
         };
@@ -403,7 +403,7 @@ public:
 
         scenarioLabel_.setColour(
             juce::Label::textColourId,
-            juce::Colour(0xff91a09a));
+            ui::colours::label);
         scenarioLabel_.setFont(juce::FontOptions(12.0F));
         scenarioLabel_.setJustificationType(
             juce::Justification::topLeft);
@@ -412,7 +412,7 @@ public:
 
         proofLabel_.setColour(
             juce::Label::textColourId,
-            juce::Colour(0xff8fb7a8));
+            ui::colours::ok);
         proofLabel_.setFont(juce::FontOptions(12.0F));
         proofLabel_.setJustificationType(
             juce::Justification::topLeft);
@@ -434,7 +434,7 @@ public:
             physicsLabels_[index].setText(
                 utf8(physicsNames[index]), juce::dontSendNotification);
             physicsLabels_[index].setColour(
-                juce::Label::textColourId, juce::Colour(0xffaebbb6));
+                juce::Label::textColourId, ui::colours::muted);
             physicsLabels_[index].setFont(juce::FontOptions(12.0F));
             addAndMakeVisible(physicsLabels_[index]);
         }
@@ -456,7 +456,7 @@ public:
         sparkCutSlider_.setTextValueSuffix(" ratio");
 
         afterfireToggle_.setColour(
-            juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
+            juce::ToggleButton::textColourId, ui::colours::muted);
         afterfireToggle_.setComponentID("afterfire-enabled");
         afterfireToggle_.onClick = [this] {
             if (afterfireToggle_.getToggleState())
@@ -467,7 +467,7 @@ public:
         // below keeps the detailed calibration and its explicit APPLY; this
         // switch shows the live state, never the pending one.
         mixAfterfireToggle_.setColour(
-            juce::ToggleButton::textColourId, juce::Colour(0xffefb08a));
+            juce::ToggleButton::textColourId, ui::colours::warn);
         mixAfterfireToggle_.setComponentID("mix-afterfire");
         mixAfterfireToggle_.setTooltip(
             "Pops and bangs on overrun: a late spark, whose unburnt charge "
@@ -489,7 +489,7 @@ public:
         };
         addAndMakeVisible(mixAfterfireToggle_);
         wetLimiterToggle_.setColour(
-            juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
+            juce::ToggleButton::textColourId, ui::colours::muted);
         addAndMakeVisible(afterfireToggle_);
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
@@ -514,12 +514,12 @@ public:
                               &applyPhysicsButton_ })
             addAndMakeVisible(*button);
         physicsTelemetryLabel_.setColour(
-            juce::Label::textColourId, juce::Colour(0xff8fb7a8));
+            juce::Label::textColourId, ui::colours::ok);
         physicsTelemetryLabel_.setFont(juce::FontOptions(12.0F));
         physicsTelemetryLabel_.setJustificationType(juce::Justification::topLeft);
         addAndMakeVisible(physicsTelemetryLabel_);
         physicsStatusLabel_.setColour(
-            juce::Label::textColourId, juce::Colour(0xffd49a72));
+            juce::Label::textColourId, ui::colours::warn);
         physicsStatusLabel_.setFont(juce::FontOptions(11.5F));
         addAndMakeVisible(physicsStatusLabel_);
 
@@ -585,10 +585,10 @@ public:
     }
 
     void paint(juce::Graphics& graphics) override {
-        graphics.fillAll(juce::Colour(0xff0d1312));
+        graphics.fillAll(ui::colours::background);
         juce::ColourGradient gradient(
-            juce::Colour(0xff17221f), 0.0F, 0.0F,
-            juce::Colour(0xff0a0f0e), 0.0F,
+            ui::colours::panelRaised, 0.0F, 0.0F,
+            ui::colours::background, 0.0F,
             static_cast<float>(getHeight()), false);
         graphics.setGradientFill(gradient);
         graphics.fillRect(getLocalBounds());
@@ -780,10 +780,10 @@ private:
             juce::Slider::TextBoxRight, false, 58, 22);
         slider.setColour(
             juce::Slider::thumbColourId,
-            juce::Colour(0xffef7040));
+            ui::colours::accent);
         slider.setColour(
             juce::Slider::trackColourId,
-            juce::Colour(0xff9c4c32));
+            ui::colours::accentDeep);
         addAndMakeVisible(slider);
     }
 
@@ -990,14 +990,14 @@ private:
 
     void updateEnginePresentation() {
         engineLabel_.setText(
-            "AUDIO WORKSHOP  /  "
+            "Audio workshop  /  "
                 + utf8(engine_.name),
             juce::dontSendNotification);
         if (!exportRunning_)
             statusLabel_.setText(
                 compiledExhaustTopology_
-                    ? "PHYSICAL GRAPH ACTIVE"
-                    : "COMPATIBILITY MODE",
+                    ? "Physical graph active"
+                    : "Compatibility mode",
                 juce::dontSendNotification);
     }
 
@@ -1202,7 +1202,7 @@ private:
         setExportControlsEnabled(false);
         revealButton_.setEnabled(false);
         statusLabel_.setText(
-            "PREPARING RENDER...",
+            "Preparing render...",
             juce::dontSendNotification);
 
         auto safe =
@@ -1232,7 +1232,7 @@ private:
                                 [safe, stageCopy] {
                                     if (safe)
                                         safe->statusLabel_.setText(
-                                            "RENDERING  "
+                                            "Rendering  "
                                                 + utf8(stageCopy),
                                             juce::
                                                 dontSendNotification);
@@ -1262,7 +1262,7 @@ private:
             lastOutputDirectory_ = outputDirectory;
             revealButton_.setEnabled(true);
             statusLabel_.setText(
-                "EXPORT COMPLETE  /  "
+                "Export complete  /  "
                     + juce::String(
                         static_cast<juce::int64>(
                             result.renderedFrames))
@@ -1305,11 +1305,11 @@ private:
             threadProgress_.store(
                 0.0, std::memory_order_relaxed);
             statusLabel_.setText(
-                "EXPORT CANCELLED  /  NO PARTIAL WAV",
+                "Export cancelled  /  no partial WAV",
                 juce::dontSendNotification);
         } else {
             statusLabel_.setText(
-                "EXPORT FAILED",
+                "Export failed",
                 juce::dontSendNotification);
             ui::showMessage(this,
                 juce::MessageBoxIconType::WarningIcon,
@@ -1363,7 +1363,7 @@ private:
         progressValue_ = 0.0;
         setExportControlsEnabled(false);
         revealButton_.setEnabled(false);
-        statusLabel_.setText("PREPARING LOOP PACK...", juce::dontSendNotification);
+        statusLabel_.setText("Preparing loop pack...", juce::dontSendNotification);
 
         auto safe = juce::Component::SafePointer<WorkshopContent>(this);
         exportThread_ = std::jthread(
@@ -1383,7 +1383,7 @@ private:
                             juce::MessageManager::callAsync([safe, stageCopy] {
                                 if (safe)
                                     safe->statusLabel_.setText(
-                                        "LOOP PACK  " + utf8(stageCopy),
+                                        "Loop pack  " + utf8(stageCopy),
                                         juce::dontSendNotification);
                             });
                         }
@@ -1406,7 +1406,7 @@ private:
             lastOutputDirectory_ = outputDirectory;
             revealButton_.setEnabled(true);
             statusLabel_.setText(
-                "LOOP PACK COMPLETE  /  "
+                "Loop pack complete  /  "
                     + juce::String(static_cast<int>(result.loops.size())) + " LOOPS",
                 juce::dontSendNotification);
             juce::String message;
@@ -1429,10 +1429,10 @@ private:
                 "Loop pack", message);
         } else if (result.cancelled) {
             threadProgress_.store(0.0, std::memory_order_relaxed);
-            statusLabel_.setText("LOOP PACK CANCELLED  /  NO FILE KEPT",
+            statusLabel_.setText("Loop pack cancelled  /  no file kept",
                 juce::dontSendNotification);
         } else {
-            statusLabel_.setText("LOOP PACK FAILED", juce::dontSendNotification);
+            statusLabel_.setText("Loop pack failed", juce::dontSendNotification);
             ui::showMessage(this, juce::MessageBoxIconType::WarningIcon,
                 "Loop pack failed", utf8(result.error));
         }
@@ -1446,12 +1446,12 @@ private:
             ? telemetryProvider_()
             : audioPhysicsTelemetryFor(engine_, EngineState {});
         physicsTelemetryLabel_.setText(
-            "LIVE  cycles " + juce::String(telemetry.minimumCycleMultiplier, 3)
+            "Live  cycles " + juce::String(telemetry.minimumCycleMultiplier, 3)
                 + " .. " + juce::String(telemetry.maximumCycleMultiplier, 3)
                 + "  |  afterfire " + juce::String(telemetry.afterfireHeatReleaseKw, 2)
                 + " kW / " + juce::String(telemetry.afterfireFuelBurnMgPerSecond, 1)
                 + " mg/s  |  decel "
-                + (telemetry.overrunAfterfireActive ? "ACTIVE" : "off")
+                + (telemetry.overrunAfterfireActive ? "active" : "off")
                 + "  |  porous mufflers "
                 + juce::String(static_cast<int>(telemetry.porousMufflerCount)),
             juce::dontSendNotification);
@@ -1492,11 +1492,11 @@ private:
         muteButtons_;
     std::array<std::unique_ptr<juce::TextButton>, 4>
         soloButtons_;
-    juce::TextButton catalogueMixButton_ { "VOICING CATALOGUE" };
-    juce::TextButton resetButton_ { "NEUTRAL" };
-    juce::ToggleButton captureVoicingToggle_ { "CAPTURE MODE" };
+    juce::TextButton catalogueMixButton_ { "Voicing catalogue" };
+    juce::TextButton resetButton_ { "Neutral" };
+    juce::ToggleButton captureVoicingToggle_ { "Capture mode" };
     juce::ToggleButton mixAfterfireToggle_ {
-        "AFTERFIRE  (pops and bangs on overrun)"
+        "Afterfire  (pops and bangs on overrun)"
     };
 
     juce::ComboBox sampleRateSelector_;
@@ -1505,22 +1505,22 @@ private:
         "Master + exact stems + order map"
     };
     juce::TextButton scenarioButton_ {
-        "SCENARIO JSON..."
+        "Scenario JSON..."
     };
     juce::TextButton defaultScenarioButton_ {
-        "DEFAULT"
+        "Default"
     };
     juce::Label scenarioLabel_;
     juce::TextButton exportButton_ {
-        "CHOOSE FOLDER AND EXPORT"
+        "Choose folder and export"
     };
-    juce::TextButton cancelButton_ { "CANCEL" };
+    juce::TextButton cancelButton_ { "Cancel" };
     juce::TextButton revealButton_ {
-        "OPEN FOLDER"
+        "Open folder"
     };
     juce::ComboBox loopStepSelector_;
     juce::ToggleButton loopOggToggle_ { "+ OGG" };
-    juce::TextButton loopPackButton_ { "LOOP PACK FOR GAMES..." };
+    juce::TextButton loopPackButton_ { "Loop pack for games..." };
     juce::Label proofLabel_;
     double progressValue_ { 0.0 };
     std::atomic<double> threadProgress_ { 0.0 };
@@ -1536,13 +1536,13 @@ private:
     juce::Slider overrunSparkSlider_;
     juce::Slider pocketMixingSlider_;
     juce::Slider sparkCutSlider_;
-    juce::ToggleButton afterfireToggle_ { "PHYSICAL AFTERFIRE ON" };
+    juce::ToggleButton afterfireToggle_ { "Physical afterfire on" };
     juce::ToggleButton wetLimiterToggle_ {
-        "SPARK-CUT LIMITER / FUEL KEPT"
+        "Spark-cut limiter / fuel kept"
     };
-    juce::TextButton demoPhysicsButton_ { "AUDIBLE DEMO" };
-    juce::TextButton bypassPhysicsButton_ { "BYPASS" };
-    juce::TextButton applyPhysicsButton_ { "APPLY LIVE" };
+    juce::TextButton demoPhysicsButton_ { "Audible demo" };
+    juce::TextButton bypassPhysicsButton_ { "Bypass" };
+    juce::TextButton applyPhysicsButton_ { "Apply live" };
     juce::Label physicsTelemetryLabel_;
     juce::Label physicsStatusLabel_;
 
@@ -1562,7 +1562,7 @@ AudioWorkshopWindow::AudioWorkshopWindow(
     RunningEngineProvider runningEngine)
     : juce::DocumentWindow(
         "EngineLab - Audio workshop",
-        juce::Colour(0xff0d1312),
+        ui::colours::background,
         juce::DocumentWindow::closeButton,
         true) {
     content_ = new WorkshopContent(

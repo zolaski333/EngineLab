@@ -127,8 +127,8 @@ public:
 
     void paintListBoxItem(int row, juce::Graphics& graphics, int width, int height,
                           bool selected) override {
-        if (selected) graphics.fillAll(juce::Colour(0xff334c45));
-        graphics.setColour(selected ? juce::Colour(0xffffc56d) : juce::Colour(0xffd4dcda));
+        if (selected) graphics.fillAll(ui::colours::selection);
+        graphics.setColour(selected ? ui::colours::accent : ui::colours::text);
         graphics.setFont(juce::FontOptions(13.0F, selected ? juce::Font::bold : 0));
         graphics.drawText(text_ ? text_(row) : juce::String {}, 8, 0, width - 12, height,
                           juce::Justification::centredLeft, true);
@@ -168,15 +168,15 @@ public:
     std::function<void(const std::vector<std::uint32_t>&)> onSourceMenu;
 
     void paint(juce::Graphics& graphics) override {
-        graphics.fillAll(juce::Colour(0xff101716));
-        graphics.setColour(juce::Colour(0xff25312e));
+        graphics.fillAll(ui::colours::panel);
+        graphics.setColour(ui::colours::line);
         graphics.drawRect(getLocalBounds(), 1);
         nodeBounds_.clear();
         sourceBounds_.clear();
 
         const auto* path = pathProvider_ ? pathProvider_() : nullptr;
         if (path == nullptr || !path->network || path->network->components.empty()) {
-            graphics.setColour(juce::Colour(0xff83908c));
+            graphics.setColour(ui::colours::label);
             graphics.setFont(juce::FontOptions(15.0F));
             graphics.drawFittedText("No custom network. Generate the legacy network or add components.",
                                     getLocalBounds().reduced(30), juce::Justification::centred, 3);
@@ -193,7 +193,7 @@ public:
         std::unordered_map<std::uint32_t, std::size_t> sourceRow;
         for (const auto cylinderId : path->cylinderIds) {
             const auto rotor = rotorOf_ ? rotorOf_(cylinderId) : -1;
-            const auto label = rotor >= 0 ? "ROTOR " + juce::String(rotor + 1) : "CYL " + juce::String(cylinderId);
+            const auto label = rotor >= 0 ? "Rotor " + juce::String(rotor + 1) : "Cyl " + juce::String(cylinderId);
             const auto found = std::find(sourceLabels.begin(), sourceLabels.end(), label);
             sourceRow[cylinderId] = static_cast<std::size_t>(std::distance(sourceLabels.begin(), found));
             if (found == sourceLabels.end()) sourceLabels.push_back(label);
@@ -323,7 +323,7 @@ public:
             }
         }
 
-        graphics.setColour(juce::Colour(0xff60716c));
+        graphics.setColour(ui::colours::lineHover);
         for (const auto& connection : network.connections) {
             const auto source = nodeBounds_.find(connection.fromComponentId);
             const auto target = nodeBounds_.find(connection.toComponentId);
@@ -359,9 +359,9 @@ public:
             for (const auto cylinderId : path->cylinderIds)
                 if (sourceRow[cylinderId] == index) pillCylinders.push_back(cylinderId);
             sourceBounds_.emplace_back(pill, std::move(pillCylinders));
-            graphics.setColour(juce::Colour(0xff263532));
-            graphics.fillRoundedRectangle(pill, 5.0F);
-            graphics.setColour(juce::Colour(0xffa9bbb5));
+            graphics.setColour(ui::colours::selection);
+            graphics.fillRoundedRectangle(pill, ui::cornerRadius);
+            graphics.setColour(ui::colours::muted);
             graphics.setFont(juce::FontOptions(11.0F, juce::Font::bold));
             graphics.drawText(sourceLabels[index], pill.toNearestInt(), juce::Justification::centred);
             // What this source feeds: its components, or past a rotor's port
@@ -379,7 +379,7 @@ public:
             }
             std::sort(targets.begin(), targets.end());
             targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
-            graphics.setColour(juce::Colour(0xff60716c));
+            graphics.setColour(ui::colours::lineHover);
             for (const auto id : targets)
                 if (const auto target = nodeBounds_.find(id); target != nodeBounds_.end())
                     graphics.drawLine(pill.getRight(), pill.getCentreY(),
@@ -395,15 +395,15 @@ public:
             const auto selected = selectedId == component.id;
             const auto colour = componentTypeColour(component.type);
             graphics.setColour(colour.withAlpha(selected ? 0.92F : 0.62F));
-            graphics.fillRoundedRectangle(bounds, 7.0F);
-            graphics.setColour(selected ? juce::Colour(0xffffd086) : colour.brighter(0.5F));
-            graphics.drawRoundedRectangle(bounds, 7.0F, selected ? 2.5F : 1.0F);
+            graphics.fillRoundedRectangle(bounds, ui::cornerRadius);
+            graphics.setColour(selected ? ui::colours::accentLight : colour.brighter(0.5F));
+            graphics.drawRoundedRectangle(bounds, ui::cornerRadius, selected ? 2.5F : 1.0F);
             graphics.setColour(juce::Colours::white);
             graphics.setFont(juce::FontOptions(12.0F, juce::Font::bold));
             graphics.drawText("#" + juce::String(component.id) + "  " + componentTypeName(component.type)
                                   + (component.inletValve ? "  + valve" : ""),
                               bounds.removeFromTop(25.0F).toNearestInt(), juce::Justification::centred);
-            graphics.setColour(juce::Colour(0xffe1e9e6));
+            graphics.setColour(ui::colours::text);
             graphics.setFont(juce::FontOptions(10.0F));
             const auto detail = juce::String(component.diameterMm, 0) + " mm"
                 + (component.lengthMm > 0.0 ? "  x  " + juce::String(component.lengthMm, 0) + " mm" : "");
@@ -416,10 +416,10 @@ public:
             const auto target = hit(dragPoint_).component;
             if (target)
                 if (const auto bounds = nodeBounds_.find(*target); bounds != nodeBounds_.end()) {
-                    graphics.setColour(juce::Colour(0xffffd086));
-                    graphics.drawRoundedRectangle(bounds->second.expanded(3.0F), 9.0F, 2.0F);
+                    graphics.setColour(ui::colours::accentLight);
+                    graphics.drawRoundedRectangle(bounds->second.expanded(3.0F), ui::cornerRadius + 2.0F, 2.0F);
                 }
-            graphics.setColour(juce::Colour(0xffffd086));
+            graphics.setColour(ui::colours::accentLight);
             const float dashes[] { 6.0F, 4.0F };
             graphics.drawDashedLine({ press_.anchor, dragPoint_ }, dashes, 2, 2.0F);
         }
@@ -593,14 +593,14 @@ public:
     }
 
     void paint(juce::Graphics& graphics) override {
-        graphics.fillAll(juce::Colour(0xff0d1312));
+        graphics.fillAll(ui::colours::background);
         const auto header = juce::Rectangle<int>(0, 0, getWidth(), 54);
-        graphics.setGradientFill(juce::ColourGradient(juce::Colour(0xff1d2b27), 0.0F, 0.0F,
-            juce::Colour(0xff111817), static_cast<float>(getWidth()), 0.0F, false));
+        graphics.setGradientFill(juce::ColourGradient(ui::colours::panelRaised, 0.0F, 0.0F,
+            ui::colours::panel, static_cast<float>(getWidth()), 0.0F, false));
         graphics.fillRect(header);
-        graphics.setColour(juce::Colour(0xffdce7e3));
+        graphics.setColour(ui::colours::text);
         graphics.setFont(juce::FontOptions(18.0F, juce::Font::bold));
-        graphics.drawText("EXHAUST DESIGNER", 14, 0, 280, 54,
+        graphics.drawText("Exhaust designer", 14, 0, 280, 54,
                           juce::Justification::centredLeft);
     }
 
@@ -718,8 +718,8 @@ private:
         topologyGroup_.setText("Connections and assignments");
         for (auto* group : std::array<juce::GroupComponent*, 4> {
                  &graphGroup_, &componentGroup_, &propertyGroup_, &topologyGroup_ }) {
-            group->setColour(juce::GroupComponent::outlineColourId, juce::Colour(0xff31413d));
-            group->setColour(juce::GroupComponent::textColourId, juce::Colour(0xff9eb3ac));
+            group->setColour(juce::GroupComponent::outlineColourId, ui::colours::lineStrong);
+            group->setColour(juce::GroupComponent::textColourId, ui::colours::label);
             addAndMakeVisible(*group);
         }
 
@@ -746,16 +746,16 @@ private:
             "Deletes the current path; its cylinders join the destination, either with a Y junction "
             "(both collectors kept) or rebuilt as one N-into-1 collector.");
         deletePathButton_.onClick = [this] { deletePath(); };
-        undoButton_.setButtonText("UNDO");
+        undoButton_.setButtonText("Undo");
         undoButton_.setTooltip("Undoes the last edit of the working copy (Ctrl+Z).");
         undoButton_.setComponentID("exhaust-undo");
         undoButton_.onClick = [this] { undo(); };
-        redoButton_.setButtonText("REDO");
+        redoButton_.setButtonText("Redo");
         redoButton_.setTooltip("Redoes the edit just undone (Ctrl+Y or Ctrl+Shift+Z).");
         redoButton_.setComponentID("exhaust-redo");
         redoButton_.onClick = [this] { redo(); };
         applyButton_.setComponentID("exhaust-apply");
-        legacyButton_.setButtonText("GENERATE FROM LEGACY");
+        legacyButton_.setButtonText("Generate from legacy");
         legacyButton_.setTooltip("Replaces the selected path's graph with a simple, valid network.");
         legacyButton_.onClick = [this] { generateLegacyNetwork(); };
         hPipeButton_.setButtonText("+ H-PIPE");
@@ -770,12 +770,12 @@ private:
                                 "drawn as two paths becomes one path first, both exhausts kept. Undo takes it off.");
         xPipeButton_.setComponentID("exhaust-add-x-pipe");
         xPipeButton_.onClick = [this] { addCrossover(ExhaustCrossoverKind::xPipe); };
-        applyButton_.setButtonText("VALIDATE AND APPLY");
-        applyButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff477d68));
+        applyButton_.setButtonText("Validate and apply");
+        applyButton_.setColour(juce::TextButton::buttonColourId, ui::colours::okBorder);
         applyButton_.onClick = [this] { apply(); };
         pathCylinderSelector_.setTextWhenNothingSelected("Cylinder to move");
         destinationPathSelector_.setTextWhenNothingSelected("Destination path");
-        moveCylinderButton_.setButtonText("MOVE");
+        moveCylinderButton_.setButtonText("Move");
         moveCylinderButton_.setTooltip(
             "Moves the cylinder to the chosen path and repairs the roots of the custom DAG.");
         moveCylinderButton_.onClick = [this] { moveCylinderToPath(); };
@@ -788,17 +788,17 @@ private:
         mappingList_.setRowHeight(23);
         for (auto* list : std::array<juce::ListBox*, 3> {
                  &componentList_, &connectionList_, &mappingList_ }) {
-            list->setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff111817));
-            list->setColour(juce::ListBox::outlineColourId, juce::Colour(0xff293633));
+            list->setColour(juce::ListBox::backgroundColourId, ui::colours::panel);
+            list->setColour(juce::ListBox::outlineColourId, ui::colours::line);
             list->setOutlineThickness(1);
             addAndMakeVisible(*list);
         }
 
         populateTypeSelector(addTypeSelector_);
         addTypeSelector_.setSelectedItemIndex(0, juce::dontSendNotification);
-        addButton_.setButtonText("ADD");
+        addButton_.setButtonText("Add");
         addButton_.onClick = [this] { addComponent(); };
-        deleteComponentButton_.setButtonText("DELETE");
+        deleteComponentButton_.setButtonText("Delete");
         deleteComponentButton_.onClick = [this] { deleteComponent(); };
         componentList_.setComponentID("exhaust-components");
         addTypeSelector_.setComponentID("exhaust-add-type");
@@ -806,7 +806,7 @@ private:
         deleteComponentButton_.setComponentID("exhaust-delete-component");
 
         componentTypeLabel_.setText("Type", juce::dontSendNotification);
-        componentTypeLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffaebbb7));
+        componentTypeLabel_.setColour(juce::Label::textColourId, ui::colours::muted);
         populateTypeSelector(componentTypeSelector_);
         const std::array<const char*, 12> names {
             "ID", "Length (mm)", "Inlet diameter (mm)",
@@ -818,12 +818,12 @@ private:
         };
         for (std::size_t index = 0; index < propertyLabels_.size(); ++index) {
             propertyLabels_[index].setText(names[index], juce::dontSendNotification);
-            propertyLabels_[index].setColour(juce::Label::textColourId, juce::Colour(0xffaebbb7));
+            propertyLabels_[index].setColour(juce::Label::textColourId, ui::colours::muted);
             propertyLabels_[index].setFont(juce::FontOptions(11.5F));
             propertyEditors_[index].setColour(juce::TextEditor::backgroundColourId,
-                                               juce::Colour(0xff17211f));
+                                               ui::colours::well);
             propertyEditors_[index].setColour(juce::TextEditor::outlineColourId,
-                                               juce::Colour(0xff31413d));
+                                               ui::colours::lineStrong);
             propertyEditors_[index].onReturnKey = [this] { updateSelectedComponent(); };
             addAndMakeVisible(propertyLabels_[index]);
             addAndMakeVisible(propertyEditors_[index]);
@@ -852,11 +852,11 @@ private:
             "Muffler: packing thickness. Catalyst: fraction of the face that is actually open.");
         propertyEditors_[11].setTooltip(
             "Muffler: open area of the perforated tube. Catalyst: effective volumetric heat capacity of the solid substrate.");
-        updateComponentButton_.setButtonText("UPDATE COMPONENT");
+        updateComponentButton_.setButtonText("Update component");
         updateComponentButton_.onClick = [this] { updateSelectedComponent(); };
-        packingDemoButton_.setButtonText("DEMO PACKING");
+        packingDemoButton_.setButtonText("Demo packing");
         packingDemoButton_.onClick = [this] { setPackingPreset(true); };
-        packingBypassButton_.setButtonText("BYPASS PACKING");
+        packingBypassButton_.setButtonText("Bypass packing");
         packingBypassButton_.onClick = [this] { setPackingPreset(false); };
         componentTypeSelector_.onChange = [this] {
             updatePackingEditorAvailability(true);
@@ -866,7 +866,7 @@ private:
         mappingTitle_.setText("Cylinder -> first component", juce::dontSendNotification);
         for (auto* label : std::array<juce::Label*, 3> {
                  &componentTypeLabel_, &connectionTitle_, &mappingTitle_ }) {
-            label->setColour(juce::Label::textColourId, juce::Colour(0xffb6c5c0));
+            label->setColour(juce::Label::textColourId, ui::colours::muted);
             label->setFont(juce::FontOptions(12.0F, juce::Font::bold));
             addAndMakeVisible(*label);
         }
@@ -881,13 +881,13 @@ private:
                                 "right-click a part to replace or delete it, a cylinder to disconnect it.");
         cylinderSelector_.setTextWhenNothingSelected("Cylinder");
         mappingComponentSelector_.setTextWhenNothingSelected("Component");
-        addConnectionButton_.setButtonText("CONNECT");
+        addConnectionButton_.setButtonText("Connect");
         addConnectionButton_.onClick = [this] { addConnection(); };
-        deleteConnectionButton_.setButtonText("DELETE");
+        deleteConnectionButton_.setButtonText("Delete");
         deleteConnectionButton_.onClick = [this] { deleteConnection(); };
-        assignCylinderButton_.setButtonText("ASSIGN");
+        assignCylinderButton_.setButtonText("Assign");
         assignCylinderButton_.onClick = [this] { assignCylinder(); };
-        deleteMappingButton_.setButtonText("UNASSIGN");
+        deleteMappingButton_.setButtonText("Unassign");
         deleteMappingButton_.onClick = [this] { deleteMapping(); };
 
         statusLabel_.setFont(juce::FontOptions(12.0F));
@@ -1404,7 +1404,7 @@ private:
                                     "or above throttle (%)");
         valveDialog_->addTextEditor("travel", juce::String(valve.travelSeconds, 2), "Travel time (s)");
         valveDialog_->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
-        valveDialog_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        valveDialog_->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
         ui::placeInWindow(*valveDialog_, *this);
         auto safe = juce::Component::SafePointer<DesignerContent>(this);
         valveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
@@ -2146,10 +2146,10 @@ private:
 
     void setStatus(const juce::String& message, bool error) {
         statusIsError_ = error;
-        statusLabel_.setText((error ? "ERROR  |  " : "INFO  |  ") + message,
+        statusLabel_.setText((error ? "Error  |  " : "Info  |  ") + message,
                              juce::dontSendNotification);
         statusLabel_.setColour(juce::Label::textColourId,
-            error ? juce::Colour(0xffff8177) : juce::Colour(0xff8fc7ae));
+            error ? ui::colours::critical : ui::colours::ok);
     }
 
     EngineConfig working_;
@@ -2221,7 +2221,7 @@ private:
 
 ExhaustDesignerWindow::ExhaustDesignerWindow(const EngineConfig& config,
                                                ApplyCallback applyCallback)
-    : juce::DocumentWindow("EngineLab - Exhaust designer", juce::Colour(0xff0d1312),
+    : juce::DocumentWindow("EngineLab - Exhaust designer", ui::colours::background,
                            juce::DocumentWindow::closeButton, true) {
     content_ = new DesignerContent(config, std::move(applyCallback));
     setContentOwned(content_, true);

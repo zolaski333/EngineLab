@@ -251,24 +251,24 @@ int main() {
         if (auto* button =
                 dynamic_cast<juce::TextButton*>(child)) {
             const auto text = button->getButtonText();
-            if (text == "MUTE") {
+            if (text == "Mute") {
                 ++muteCount;
                 if (!button->isEnabled()) ++disabledMuteCount;
-            } else if (text == "SOLO") {
+            } else if (text == "Solo") {
                 ++soloCount;
                 if (!button->isEnabled()) ++disabledSoloCount;
             } else if (text
-                       == "CHOOSE FOLDER AND EXPORT") {
+                       == "Choose folder and export") {
                 exportButtonFound = true;
-            } else if (text == "AUDIBLE DEMO") {
+            } else if (text == "Audible demo") {
                 demoPhysicsButton = button;
-            } else if (text == "VOICING CATALOGUE") {
+            } else if (text == "Voicing catalogue") {
                 catalogueMixButton = button;
-            } else if (text == "NEUTRAL") {
+            } else if (text == "Neutral") {
                 neutralMixButton = button;
-            } else if (text == "APPLY LIVE") {
+            } else if (text == "Apply live") {
                 applyPhysicsButton = button;
-            } else if (text == "LOOP PACK FOR GAMES...") {
+            } else if (text == "Loop pack for games...") {
                 loopPackButton = button;
             }
         }
@@ -916,7 +916,7 @@ int main() {
             tuner.setVtecFittable(false);
             require(!tuner.vtecButtonVisible(), "an engine that cannot take VTEC cams shows no VTEC button");
             tuner.setVtecFittable(true);
-            require(tuner.vtecButtonVisible() && tuner.vtecButtonText() == "FIT VTEC CAMS",
+            require(tuner.vtecButtonVisible() && tuner.vtecButtonText() == "Fit VTEC cams",
                     "an engine without VTEC cams offers to fit them");
             auto asked = 0;
             tuner.onFitVtecCams = [&] {
@@ -933,12 +933,12 @@ int main() {
         tuner.setSize(980, 620);
         tuner.setVtecFittable(true);
         const auto vtec = [&store] { return store->snapshot()->scalar(calibration::keys::vtecEnabled).value_or(-1.0); };
-        require(tuner.vtecButtonVisible() && tuner.vtecButtonText() == "VTEC ON" && vtec() == 1.0,
+        require(tuner.vtecButtonVisible() && tuner.vtecButtonText() == "VTEC on" && vtec() == 1.0,
                 "with VTEC cams fitted the tuner shows VTEC on");
         tuner.pressVtecButton();
-        require(tuner.vtecButtonText() == "VTEC OFF" && vtec() == 0.0, "VTEC OFF holds the low cam");
+        require(tuner.vtecButtonText() == "VTEC off" && vtec() == 0.0, "VTEC OFF holds the low cam");
         tuner.pressVtecButton();
-        require(tuner.vtecButtonText() == "VTEC ON" && vtec() == 1.0, "and VTEC ON gives the high cam back");
+        require(tuner.vtecButtonText() == "VTEC on" && vtec() == 1.0, "and VTEC ON gives the high cam back");
         tuner.setSessionLocked(true);
         tuner.pressVtecButton();
         require(vtec() == 1.0, "a locked tuner (a dyno run) leaves VTEC alone");
@@ -960,12 +960,12 @@ int main() {
         const auto antiLag = [&store] {
             return store->snapshot()->scalar(calibration::keys::antiLagEnabled).value_or(-1.0);
         };
-        require(tuner.antiLagButtonVisible() && tuner.antiLagButtonText() == "ANTI-LAG OFF" && antiLag() == 0.0,
+        require(tuner.antiLagButtonVisible() && tuner.antiLagButtonText() == "Anti-lag off" && antiLag() == 0.0,
                 "a turbocharged petrol engine's tuner shows anti-lag, off");
         tuner.pressAntiLagButton();
-        require(tuner.antiLagButtonText() == "ANTI-LAG ON" && antiLag() == 1.0, "one click arms it");
+        require(tuner.antiLagButtonText() == "Anti-lag on" && antiLag() == 1.0, "one click arms it");
         tuner.pressAntiLagButton();
-        require(tuner.antiLagButtonText() == "ANTI-LAG OFF" && antiLag() == 0.0, "and one more turns it off");
+        require(tuner.antiLagButtonText() == "Anti-lag off" && antiLag() == 0.0, "and one more turns it off");
         // Its single-value settings are one page, one row each, not one
         // selector item per value; so are the limits.
         juce::ComboBox* selector = nullptr;
@@ -1274,7 +1274,7 @@ int main() {
             auto editors = 0;
             for (auto* child : tuner.getChildren()) {
                 auto* button = dynamic_cast<juce::TextButton*>(child);
-                if (button != nullptr && button->getButtonText() == "UNDO") tools = button->getBounds();
+                if (button != nullptr && button->getButtonText() == "Undo") tools = button->getBounds();
             }
             for (auto* child : tuner.getChildren()) {
                 auto* editor = dynamic_cast<juce::TextEditor*>(child);

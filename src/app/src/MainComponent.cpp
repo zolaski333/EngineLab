@@ -925,8 +925,8 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
         editor->setSize(720, 470);
         editor->setFont(juce::FontOptions(14.0F));
     }
-    configEditor_->addButton(utf8("APPLY"), 1, juce::KeyPress(juce::KeyPress::returnKey));
-    configEditor_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    configEditor_->addButton(utf8("Apply"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    configEditor_->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     ui::placeInWindow(*configEditor_, *this);
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     configEditor_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
@@ -965,9 +965,9 @@ void MainComponent::showKeyBindingsEditor() {
         editor->setReturnKeyStartsNewLine(true);
         editor->setSize(620, 520);
     }
-    keyBindingsEditor_->addButton("APPLY", 1, juce::KeyPress(juce::KeyPress::returnKey,
+    keyBindingsEditor_->addButton("Apply", 1, juce::KeyPress(juce::KeyPress::returnKey,
         juce::ModifierKeys::ctrlModifier, 0));
-    keyBindingsEditor_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    keyBindingsEditor_->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     ui::placeInWindow(*keyBindingsEditor_, *this);
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     keyBindingsEditor_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
@@ -1613,7 +1613,7 @@ void MainComponent::exportDynoCsv() {
     if (const auto* selected = model_.selectedArchivedRun()) run = selected;
     else if (!model_.archivedRuns.empty()) run = &model_.archivedRuns.back();
     else if (!model_.currentRun.points.empty()) run = &model_.currentRun;
-    if (run == nullptr) { showError("CSV DYNO", utf8("No run to export.")); return; }
+    if (run == nullptr) { showError("Dyno CSV", utf8("No run to export.")); return; }
     juce::String csv;
     csv << "#schema;enginelab-dyno-v3\n"
         << "#run_id;" << juce::String(static_cast<juce::int64>(run->id)) << '\n'
@@ -1677,7 +1677,7 @@ void MainComponent::exportDynoCsv() {
             if (!safe) return;
             auto file = chooser.getResult();
             if (file != juce::File {} && !file.withFileExtension("csv").replaceWithText(csv))
-                safe->showError("CSV DYNO", utf8("The file could not be written."));
+                safe->showError("Dyno CSV", utf8("The file could not be written."));
             safe->fileChooser_.reset();
         });
 }
@@ -1755,8 +1755,8 @@ void MainComponent::saveEngineAs() {
              "It is then listed under My engines."),
         juce::MessageBoxIconType::NoIcon);
     saveDialog_->addTextEditor("name", suggested, utf8("Name"));
-    saveDialog_->addButton(utf8("SAVE"), 1, juce::KeyPress(juce::KeyPress::returnKey));
-    saveDialog_->addButton(utf8("CANCEL"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    saveDialog_->addButton(utf8("Save"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    saveDialog_->addButton(utf8("Cancel"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
     ui::placeInWindow(*saveDialog_, *this);
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     saveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {

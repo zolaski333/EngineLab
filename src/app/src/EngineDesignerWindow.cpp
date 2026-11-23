@@ -272,7 +272,7 @@ public:
         graphics.fillAll(ui::colours::background);
         graphics.setColour(ui::colours::text);
         graphics.setFont(ui::uiFont(18.0F, true));
-        graphics.drawText(utf8("NEW ENGINE"), 16, 10, 300, 28, juce::Justification::centredLeft);
+        graphics.drawText(utf8("New engine"), 16, 10, 300, 28, juce::Justification::centredLeft);
         graphics.setColour(ui::colours::muted);
         graphics.setFont(ui::uiFont(13.0F));
         graphics.drawText(utf8("From nothing: say what the engine is, every other value follows from rules fitted to "
@@ -638,7 +638,7 @@ private:
             keys.insert(value.key);
             if (auto* field = keyedField(value.key))
                 field->editor.setTextToShowWhenEmpty(shown(value.value) + (value.unit.empty() ? juce::String()
-                    : " " + utf8(value.unit.c_str())), ui::colours::faint);
+                    : " " + utf8(value.unit.c_str())), ui::colours::label);
         }
         if (keys == designedKeys_) return;
         designedKeys_ = std::move(keys);
@@ -664,7 +664,7 @@ private:
             break;
         case 3:
             text = value.overridden ? utf8("you") : utf8("rule");
-            colour = value.overridden ? ui::colours::accentLight : ui::colours::faint;
+            colour = value.overridden ? ui::colours::accentLight : ui::colours::label;
             break;
         default: text = utf8(value.rule.c_str()); colour = ui::colours::muted; break;
         }
@@ -841,7 +841,7 @@ private:
     juce::TextButton overrideReset_ { utf8("Rule") };
     juce::Label status_;
     juce::TextButton advanced_ { utf8("Advanced") };
-    juce::TextButton build_ { utf8("BUILD AND RUN") };
+    juce::TextButton build_ { utf8("Build and run") };
     juce::TextButton cancel_ { utf8("Cancel") };
 };
 
