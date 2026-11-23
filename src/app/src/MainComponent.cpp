@@ -2308,7 +2308,8 @@ void MainComponent::stepUiBench() {
         auto* main = findParentComponentOfClass<juce::TopLevelWindow>();
         for (int index = 0; index < juce::TopLevelWindow::getNumTopLevelWindows(); ++index) {
             auto* window = juce::TopLevelWindow::getTopLevelWindow(index);
-            if (window != nullptr && window != main && window->isVisible() && window->isOnDesktop())
+            if (window != nullptr && window != main && window->isVisible() && window->isOnDesktop()
+                && dynamic_cast<juce::AlertWindow*>(window) == nullptr)
                 return window;
         }
         return nullptr;
@@ -2358,7 +2359,10 @@ void MainComponent::stepUiBench() {
             else if (settings.open == "designer") showEngineDesigner();
             if (auto* window = toolWindow()) {
                 window->setAlwaysOnTop(true);
-                window->toFront(true);
+                if (auto* main = findParentComponentOfClass<juce::TopLevelWindow>()) {
+                    main->setAlwaysOnTop(false);
+                    main->toBehind(window);
+                }
             }
             if (settings.dyno && runtime_ && !runtime_->dynoRunning()) runtime_->startDyno();
             run.lastSampleWall = now;
@@ -2389,7 +2393,8 @@ void MainComponent::stepUiBench() {
             if (settings.captureMarker != juce::File()) {
                 const auto scale = juce::Desktop::getInstance().getGlobalScaleFactor();
                 auto* window = toolWindow();
-                if (window != nullptr) window->toFront(false);
+                if (auto* main = findParentComponentOfClass<juce::TopLevelWindow>(); window != nullptr && main != nullptr)
+                    main->toBehind(window);
                 const auto bounds = (window != nullptr ? window->getScreenBounds() : getScreenBounds()).toFloat()
                     * scale;
                 (void)settings.captureMarker.replaceWithText(
