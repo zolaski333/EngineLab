@@ -167,8 +167,8 @@ is unchanged.
 
 ## Using it in the Audio workshop
 
-The `AFTERFIRE  (pops and bangs on overrun)` switch in the `REAL-TIME MIX`
-group turns backfires on or off and applies at once, without `APPLY LIVE`. It
+The `Afterfire  (pops and bangs on overrun)` switch in the `Real-time mix`
+group turns backfires on or off and applies at once, without `Apply live`. It
 stays in sync with the box in the physics group, and returns to the live state
 if it is refused (dyno run in progress). The wet limiter has its own box in the
 physics group. Both are off whenever an engine is loaded.
@@ -179,17 +179,17 @@ spark cut. On an engine that never authored an afterfire calibration (900 K,
 10 ms, no pockets), turning backfires on installs the measured profile
 (`MeasuredBackfireProfile`): 800 K, 0.5 ms, +10 deg, 40 ms pockets, a 70 %
 spark cut, and the schema 8 induction correlation in place of a flat timer.
-An authored calibration is kept. `AUDIBLE DEMO` installs the same profile with
+An authored calibration is kept. `Audible demo` installs the same profile with
 the wet limiter and a 6 % cycle variation.
 
-`APPLY LIVE` sends the calibration to the simulation thread through a mailbox.
+`Apply live` sends the calibration to the simulation thread through a mailbox.
 It keeps engine speed, phase, gas inventories and wall temperatures, and is
 refused during a dyno pull.
 
 For a direct test:
 
 1. select `Audio Physics Lab 689 Twin`;
-2. turn `AFTERFIRE` on (or `AUDIBLE DEMO`);
+2. turn `Afterfire` on (or `Audible demo`);
 3. hold the engine above 3,000 rpm with more than 20 % throttle;
 4. release completely.
 

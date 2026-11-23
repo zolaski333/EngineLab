@@ -220,6 +220,18 @@ file's header says which question it answers and lists its options.
 | `TurboDownstreamAuthorityHarness` | does the exhaust after the turbine change a turbocharged engine's power? `--spool <rpm>` instead steps the throttle at one held speed and prints the spool second by second: boost, shaft speed against design (`N/Nd`), flow coefficient against design, compressor efficiency and power, lambda, the cylinder's air and fuel, and the active limits |
 | `UserDynoHarness` | the dyno started as a user does, from an engine already running above the first point: a preparation phase, no stall, points from the low end. `--start-rpm RPM` sets the speed the dyno is started from; `--trace` prints speed, target, brake, recoveries and points every 20 ms |
 
+The application itself is an instrument of its interface: `EngineLab
+--ui-bench` opens one scene (`--engine`, `--throttle`, `--dyno`, `--width`,
+`--height`, `--scale`, `--tab` a side tab, `--open` a tool window, `--menu` a
+top-bar menu, `--layer` an engine-view layer, `--renderer 2d` the 2-D
+cutaway), warms up for `--warmup` s, then measures `--seconds` s and writes a
+CSV of the real-time factor, the 3-D view's fps and render CPU, the message
+thread's and the process's CPU (`--out`), with a capture of the window.
+`scripts/ui-scenes.ps1 -Exe <exe> -OutDir <folder> [-Only a,b] [-Perf]` runs
+the reference scenes (captures, or with `-Perf` four engines on a dyno run);
+two builds compare only interleaved, as `RealtimeBudgetHarness`: a single run
+varies by a factor of two on the message thread.
+
 `WasapiLoopbackRecorder.cpp` is not part of the build: a standalone recorder of
 the sound card's output (compile line in its header), used to measure another
 program's sound with the same analysis.

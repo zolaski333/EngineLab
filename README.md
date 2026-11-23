@@ -246,7 +246,7 @@ deterministic harnesses and sanitizer builds are in
 
 ## Controls
 
-Key bindings can be changed from **Key bindings…** in the `⋯` menu; `keybindings.json`
+Key bindings can be changed from **Key bindings…** in the `⋯` menu of the top bar; `keybindings.json`
 rejects unknown actions, duplicates (a binding without Shift also answers its key
 with Shift held, so `Q` and `Shift+Q` count as one) and reserved shortcuts (Escape,
 Return, F1-F12, Ctrl+S and Ctrl+Shift+S). In a tool window (Fuel, Equipment, Pass-by)
@@ -265,7 +265,7 @@ under **Units** in the same menu.
 | `7` | A/B: switch between the two kept versions of the engine |
 | `P` / `Tab` | pause / next side-panel tab |
 | `I` | show the Dyno tab; again, back to the tab before |
-| `Ctrl+M` / `Ctrl+P` | the `⋯` menu (every window is listed there) / the engine picker |
+| `Ctrl+M` / `Ctrl+P` | the top bar's menus (Design, Tune, Test, Listen, `⋯`; the arrows walk between them, every window is listed there) / the engine picker |
 | `M` / `,` | next / previous engine view layer |
 | `1` to `5` | time scale 0.25×, 0.5×, 1×, 2×, 4× |
 | up / down arrow | upshift, downshift (a gear key takes an automatic gearbox back to manual) |
@@ -308,8 +308,8 @@ active.
 
 The **Exhaust designer** works on a copy of the engine: generate a starting
 network, add and configure its components, connect the nodes, assign every
-cylinder and **VALIDATE AND APPLY** (refused during a dyno run). **Export
-engine…** in the `⋯` menu then saves the engine to JSON or YAML.
+cylinder and **Validate and apply** (refused during a dyno run). **Export
+engine…** in the **Design** menu then saves the engine to JSON or YAML.
 
 Two example scripts are ready to import: `examples/street-turbo.els` and
 `examples/physical-audio-lab.els`.

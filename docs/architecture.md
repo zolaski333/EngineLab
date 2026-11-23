@@ -119,11 +119,11 @@ constructor.
 
 | Panel | Area |
 |---|---|
-| `TopBar` | engine picker, run state, Exhaust / Fuel / Equipment / Pass-by / Vehicle / ECU / Audio windows, `⋯` menu |
+| `TopBar` | engine plate (the picker), the Design / Tune / Test / Listen / `⋯` menus (`TopMenus` lists their entries; every window and file command is there), the state lamps (IGN, CRANK, RUN, DYNO, BOOST, LIMIT, KNOCK, FAULT, LOG, B, PAUSE) |
 | `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key, and the switch of each fitted option, anti-lag's included), trims; it scrolls in a `juce::Viewport` when taller than the window (`preferredHeight()`) |
 | `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
 | `ReadoutStrip` | tachometer and six live readouts |
-| `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs; its `VehiclePanel` (the vehicle's figures typed in, taken live) is shown in the top bar's Vehicle window |
+| `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs; its `VehiclePanel` (the vehicle's figures typed in, taken live) is shown in the Vehicle window (Design menu) |
 | `StatusBar` | fault summary, real-time factor, simulation speed, counters |
 
 `Theme` holds the colour tokens, fonts and the `ui::LookAndFeel` installed for
@@ -469,7 +469,7 @@ only for `other` or a group the running engine refuses; cylinder sizes and
 camshafts take its ramp (the inspector's choice, 3 s from the JSON editor).
 The JSON editor and the 3-D view's inspector go through it.
 
-The top bar's A/B button (`MainComponent::switchAbVersion`, key 7) keeps the
+Tune > Switch to version B (`MainComponent::switchAbVersion`, key 7) keeps the
 version not running in `abVersions_` and hands the other one to
 `applyEngineEdit` with no ramp, so the switch is heard at once. Each version
 also keeps its ECU tables (a calibration snapshot), published back into the
@@ -879,7 +879,7 @@ solver's own state, not by an animation:
   turns the camera's microphones off and has `MainComponent` call
   `RealtimeEngineAudio::setPassByEnabled`: the car loops past a microphone
   7.5 m off its lane (`realtime-audio.md`, *Trackside microphone*); a
-  pass-by run (top bar, Pass-by) drives it instead.
+  pass-by run (Listen > Pass-by) drives it instead.
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.
@@ -989,7 +989,7 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   step), keeps the fuel's name and changes no spark map or knock-limit
   curve -- the advance is the user's to tune. The same fields
   (`app/FuelEditing.hpp`, shared) are in the *Fuel* window (`FuelWindow`),
-  opened by the top bar's *Fuel* button and by the Telemetry section's: its
+  opened by Tune > *Fuel…* and by the Telemetry section's: its
   edits wait for *Apply*, and a field not edited keeps the fuel's exact
   value;
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its

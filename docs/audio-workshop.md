@@ -2,7 +2,7 @@
 
 ## What it does
 
-The **Audio** button in the top bar opens a separate workshop without stopping the engine.
+**Listen > Audio workshop…** in the top bar opens a separate workshop without stopping the engine.
 This window brings together:
 
 - the real-time mix faders;
@@ -72,7 +72,7 @@ There is therefore no hidden room preset and no fake 100 % wet.
 
 ## Loop pack for games
 
-`LOOP PACK FOR GAMES...` renders seamless loops for a game's sample-based
+`Loop pack for games...` renders seamless loops for a game's sample-based
 engine sound, BeamNG's `soundConfig` and `soundConfigExhaust` for instance. It
 is off until clicked and changes nothing else. The step selector (250, 500 or
 1,000 rpm) and `+ OGG` sit beside it; the command line gives the same pack

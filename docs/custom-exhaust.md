@@ -9,7 +9,7 @@ routes used by the historical diagnostic tools. In production,
 high band. The network is therefore never reduced globally to a single
 restriction or a single acoustic tube per path.
 
-The **Exhaust** button in the top bar opens a graphical designer for the most common
+**Design > Exhaust designer…** in the top bar opens a graphical designer for the most common
 operations. JSON/YAML stays the persistence format and still allows the
 structural changes the interface does not cover. A `.els` script can use this
 file as its `base`, but the DSL does not create the graph nodes itself yet.
@@ -35,7 +35,7 @@ not touch the running engine until the copy is applied.
    between two paths: it gets a copy of its nearest neighbour's primary into
    the same collector (a 4-into-1 becomes a 5-into-1), or a new collector after
    the destination's pipe when it has none. The IR stays in the engine file.
-2. If the path has no graph yet, select **GENERATE FROM LEGACY**. One primary
+2. If the path has no graph yet, select **Generate from legacy**. One primary
    per cylinder, a junction, a mid pipe (when `midpipe_length_mm` is set), a
    muffler and an outlet are created from `geometry`.
 3. Add the components, then edit their type, ID, dimensions, restriction,
@@ -75,9 +75,9 @@ not touch the running engine until the copy is applied.
 5. **UNDO** and **REDO** (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z) step through the
    working copy's last 100 edits. An apply keeps the history; loading another
    engine clears it. A text field being typed in keeps its own Ctrl+Z.
-6. Select **VALIDATE AND APPLY**. The complete validation described below runs
+6. Select **Validate and apply**. The complete validation described below runs
    before any change to the engine.
-7. Use **EXPORT** in the main window to save the applied configuration as JSON
+7. Use **Design > Export** in the main window to save the applied configuration as JSON
    or YAML.
 
 An error keeps the copy for correction and leaves the current runtime
@@ -163,8 +163,8 @@ spool by 25 to 43 % (2026-10-07).
 ### Measured porous packing
 
 The designer exposes the three fields below when a `muffler` component is
-selected. **DEMO PACKING** fills in 24,000 Pa·s/m², 35 mm and 0.28;
-**BYPASS PACKING** sets all three fields back to zero. An update is a
+selected. **Demo packing** fills in 24,000 Pa·s/m², 35 mm and 0.28;
+**Bypass packing** sets all three fields back to zero. An update is a
 structural change and restarts the engine when the graph is applied.
 
 A `muffler` component can describe its absorption with three measurements

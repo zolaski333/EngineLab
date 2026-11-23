@@ -7,6 +7,39 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Changed
+
+- **A new interface, "Test cell".** The application now looks like an
+  engine test cell's desk rather than a generic dashboard: graphite
+  chrome, nearly monochrome, with colour kept for data (amber for gas
+  above ambient and boost, violet below, cyan for the intake charge, red
+  for heat, knock and faults) and for lit lamps; condensed Barlow for
+  text and IBM Plex Mono for figures (both embedded); 2 px corners and
+  hairlines instead of rounded cards; sentence case everywhere.
+- **The top bar** holds the engine plate (the picker, an amber lamp when
+  the engine is edited and unsaved), four menus and a row of state lamps
+  (IGN, CRANK, RUN, DYNO, BOOST, LIMIT, KNOCK, FAULT, LOG, B, PAUSE).
+  *Design*: new engine, exhaust designer, equipment, vehicle, save, save
+  as, delete, import, export, edit JSON, reload. *Tune*: ECU tuner, fuel,
+  A/B. *Test*: dyno run, dyno CSV, datalog. *Listen*: audio workshop,
+  pass-by. `⋯`: key bindings, units, full screen. `Ctrl+M` opens the
+  menus and the arrows walk between them; every command and key
+  stays reachable.
+- **The control desk**: an ignition switch and a momentary starter, a
+  vertical throttle fader with its scale, speed and throttle in large
+  figures, the drive controls in pairs.
+- **The cluster**: a segmented tachometer with its shift band and
+  redline, and six live channels with a trace of their last seconds.
+- **The engine view**: a neutral studio light and grey metal, so the
+  gas colours read; the cycle panel and pressure legend no longer cover
+  the speed controls on a small window. The 2-D cutaway takes the same
+  colours and stays as light to draw.
+- Every secondary window (ECU tuner, exhaust designer, audio workshop,
+  engine designer, fuel, equipment, pass-by, vehicle) takes the same
+  colours, corners and labels.
+- The simulation and the sound are untouched (the deterministic
+  harnesses are bit-identical before and after).
+
 ## [0.13.0] — 2026-11-22
 
 ### Added

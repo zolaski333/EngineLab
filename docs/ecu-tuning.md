@@ -1,6 +1,6 @@
 # ECU tuner and hot reload
 
-The **ECU** button opens a map editor modelled on calibration tools: table
+**Tune > ECU tuner…** in the top bar opens a map editor modelled on calibration tools: table
 selection, engine speed/load axes, coloured cells, highlighted operating point,
 limits and active revision.
 
@@ -145,8 +145,8 @@ no governor and no such entry: its idle stop screw sets its idle
 
 An engine with VTEC cams (a second, longer and higher, cam lobe per valve,
 `variable_profile_enabled` and `high_*` in the engine file) carries four VTEC
-settings in its tables, and the tuner's top row a **VTEC ON / VTEC OFF**
-switch. An engine without them shows **FIT VTEC CAMS** instead (not on a
+settings in its tables, and the tuner's top row a **VTEC on / VTEC off**
+switch. An engine without them shows **Fit VTEC cams** instead (not on a
 two-stroke); clicking a valve in the 3-D view does the same with "VTEC
 cams", where the high cam's duration and lift are edited, and takes them off
 with "No VTEC cams". Fitted, the high cam is the low one plus 24 deg and
@@ -268,9 +268,9 @@ on the whole selection at once:
 - `-` / `+`: one step, ten units of the last displayed digit (0.1 for a table
   shown with two decimals, 10 rpm for a whole-number limit);
 - `-5 %` / `+5 %`: scales the cells;
-- `SMOOTH`: each cell becomes the mean of itself and its four neighbours
+- `Smooth`: each cell becomes the mean of itself and its four neighbours
   (selected or not), read before the pass so the order does not matter;
-- `INTERPOLATE`: fills the selection's rectangle bilinearly from its four
+- `Interpolate`: fills the selection's rectangle bilinearly from its four
   corner cells (a curve: linearly between its two ends).
 
 Results are clamped to the entry's hard limits. Every published change, typed
