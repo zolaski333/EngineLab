@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-23 — The "Test cell" interface against the build before it
+
+- Physics and sound: `AudioRenderHarness` output identical from its line 13 on (the lines before are the real-time wiring), `IntakeDuctBench` checksums identical (6 rows).
+- Cost (`scripts/ui-scenes.ps1 -Perf`, 2JZ / Hayabusa / 13B / Merlin on a dyno run at 1440 x 860, 20 s each; 4 rounds alternating which build runs first, round 0 discarded, minimum of 3 medians, before -> after): real-time factor 1.00 -> 1.00 on all four (capped at 1: the app cannot free-run); 3-D view 60.6-61.2 fps both (v-sync); its render CPU 0.08-0.20 ms a frame both; process CPU equal within the rounds' spread (2,346-2,856 ms/s both).
+- Message thread: 76 -> 92 ms/s (2JZ, Hayabusa), 61 -> 76 (Merlin), 76 -> 122 (13B). Read in steps of one 15.6 ms scheduler tick; the 13B's extra two ticks were not traced. The new cluster draws 40 segments and six traces at 30 Hz; not optimised.
+- Not measured: another machine, a small PC, the 2-D cutaway before/after (the build before cannot force it; only its colours changed), the app at 125-150 % beyond the 1280 x 720 scene.
+- Full `ctest -j 4` (whole project rebuilt first): 114/115; `EngineLab.AudioRender` timed out at 180 s under the load and passes alone (135 s). Captures before/after: `scripts/ui-scenes.ps1` on both builds, not seen by the owner yet.
+
 ## 2026-11-22 — The carburetted bike I4's dead idle is the outlet's oxygen, not its pilot
 
 - Engine: designed 1.0 L bike I4, four carburettors on a 1.3 L plenum, pilot sized for AFR 13.5 at the screw's 0.42 (`PhysicsPerfHarness --trace 1 --idle --watch`, temporary probe on the metering, removed).
