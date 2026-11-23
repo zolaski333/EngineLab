@@ -331,6 +331,10 @@ public:
     void stepLayer(int delta);
     /** Called by the main component's 30 Hz timer. */
     void refresh();
+    /** Frames the 3-D view drew in the last second, and its CPU time per
+        frame (ms): read by `--ui-bench`. */
+    [[nodiscard]] double measuredFps() const noexcept { return measuredFps_; }
+    [[nodiscard]] double renderCpuMs() const noexcept { return renderCpuMs_.load(); }
 
     void paint(juce::Graphics&) override;
     void resized() override;

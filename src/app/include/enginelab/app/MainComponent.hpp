@@ -16,6 +16,7 @@
 #include <enginelab/app/SidePanel.hpp>
 #include <enginelab/app/StatusBar.hpp>
 #include <enginelab/app/TopBar.hpp>
+#include <enginelab/app/UiBench.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
@@ -188,6 +189,17 @@ private:
     /** A line in the 3-D view's inspector and in the Fuel window. */
     void setEditStatus(const juce::String&);
     void showMoreMenu();
+    /** `--ui-bench` (UiBench.hpp): the scripted scene, one step per tick. */
+    void stepUiBench();
+    std::optional<ui::UiBenchSettings> bench_;
+    struct BenchRun final {
+        int phase { 0 };
+        double phaseStartWall { 0.0 };
+        double lastSampleWall { 0.0 };
+        double lastThreadCpu { 0.0 };
+        double lastProcessCpu { 0.0 };
+        std::vector<ui::UiBenchSample> samples;
+    } benchRun_;
     /** Repaints every panel after the display units changed. */
     void unitsChanged();
     void startEngineScriptWatcher(const std::filesystem::path&);

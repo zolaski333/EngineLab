@@ -17,7 +17,20 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**The audit register of 2026-11-16** (`docs/audit.md`, 90 findings; owner
+**The "Test cell" interface, owner go 2026-11-23 for the whole plan**
+(`feat/test-cell-ui`, off `main`; the web mockup is `ui-mockup/`, untracked):
+step 0 a before-reference (key map and command inventory as tests, window
+captures, in-app real-time factor / 3-D fps / message-thread CPU through
+`EngineLab --ui-bench`, harness checksums); then Theme and fonts, widgets, top
+bar (lamps; menus Design / Tune / Test / Listen: propose the split to the
+owner), control desk, cluster, side panel, 3-D overlays, x-ray render, every
+secondary window, docs. The 2-D cutaway takes the new colours and stays light
+for small PCs. Strobe (picture only) stays apart from real slow-down. No
+regression: physics and sound bit-identical, real-time factor and fps within
+the interleaved bar, every command still reachable, 1280 x 720 to 2560 x 1440
+and 125-150 % scale readable. One release at the end, no intermediate one.
+
+Done before it: **the audit register of 2026-11-16** (`docs/audit.md`, 90 findings; owner
 go 2026-11-16 for lots 0-4 only, autonomous), in this order: (0) a clean
 base on `fix/audit-2026-11-16`; (1) crashes and the build: PLAT-01, DR-03,
 PG-07, DR-04, A2-07, APP-12, PH-02, RT-05, RT-08; (2) lost user data:

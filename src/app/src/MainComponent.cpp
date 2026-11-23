@@ -12,6 +12,7 @@
 #include <array>
 #include <variant>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -268,6 +269,14 @@ MainComponent::MainComponent() {
     selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
     if (!savedEngineErrors.isEmpty())
         showError(utf8("Engine files"), savedEngineErrors.joinIntoString("\n"));
+    {
+        juce::String benchError;
+        bench_ = ui::parseUiBench(juce::JUCEApplicationBase::getCommandLineParameterArray(), benchError);
+        if (benchError.isNotEmpty()) {
+            std::cerr << "--ui-bench: " << benchError << '\n';
+            juce::MessageManager::callAsync([] { juce::JUCEApplicationBase::quit(); });
+        }
+    }
     startTimerHz(30);
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this)] { if (safe) safe->grabKeyboardFocus(); });
 }
@@ -2284,6 +2293,107 @@ void MainComponent::timerCallback() {
     side_.refresh();
     if (vehicleWindow_ && vehicleWindow_->isVisible()) vehiclePanel_.refresh();
     status_.refresh();
+    if (bench_) stepUiBench();
+}
+
+void MainComponent::stepUiBench() {
+    auto& run = benchRun_;
+    const auto& settings = *bench_;
+    const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const auto elapsed = now - run.phaseStartWall;
+    const auto next = [&run, now] { ++run.phase; run.phaseStartWall = now; };
+    switch (run.phase) {
+    case 0: {
+        juce::Desktop::getInstance().setGlobalScaleFactor(settings.scale);
+        if (settings.engine.isNotEmpty()) {
+            for (std::size_t index = 0; index < presets_.size(); ++index) {
+                if (juce::String(presets_[index].config.name).containsIgnoreCase(settings.engine)) {
+                    selectEngine(static_cast<int>(index));
+                    break;
+                }
+            }
+        }
+        if (auto* window = findParentComponentOfClass<juce::ResizableWindow>()) {
+            window->setContentComponentSize(settings.width, settings.height);
+            window->setTopLeftPosition(0, 0);
+            window->setAlwaysOnTop(true);
+        }
+        static const juce::StringArray tabs { "dyno", "telemetry", "audio", "diagnostics" };
+        if (tabs.contains(settings.tab)) side_.showTab(tabs.indexOf(settings.tab));
+        controls_.ignition.setToggleState(true, juce::dontSendNotification);
+        if (runtime_) {
+            runtime_->setIgnitionEnabled(true);
+            runtime_->setStarterEngaged(true);
+        }
+        next();
+        break;
+    }
+    case 1: // cranking until it runs on its own
+        if (model_.state.rpm > 500.0 || elapsed > 5.0) {
+            if (runtime_) runtime_->setStarterEngaged(false);
+            setThrottlePreset(settings.throttle);
+            next();
+        }
+        break;
+    case 2: // warm-up, then the tool window and the dyno
+        if (elapsed >= settings.warmupSeconds) {
+            if (settings.open == "ecu") showEcuTuner();
+            else if (settings.open == "exhaust") showExhaustDesigner();
+            else if (settings.open == "fuel") showFuelWindow();
+            else if (settings.open == "equipment") showEquipmentWindow();
+            else if (settings.open == "passby") showPassByWindow();
+            else if (settings.open == "vehicle") showVehicleWindow();
+            else if (settings.open == "audio") showAudioWorkshop();
+            else if (settings.open == "designer") showEngineDesigner();
+            if (settings.dyno && runtime_ && !runtime_->dynoRunning()) runtime_->startDyno();
+            run.lastSampleWall = now;
+            run.lastThreadCpu = ui::currentThreadCpuSeconds();
+            run.lastProcessCpu = ui::processCpuSeconds();
+            next();
+        }
+        break;
+    case 3: // one sample a second
+        if (now - run.lastSampleWall >= 1.0) {
+            const auto thread = ui::currentThreadCpuSeconds();
+            const auto process = ui::processCpuSeconds();
+            const auto span = now - run.lastSampleWall;
+            ui::UiBenchSample sample;
+            sample.wallSeconds = elapsed;
+            sample.rpm = model_.state.rpm;
+            sample.realtimeFactor = model_.health.realtimeFactor;
+            sample.viewFps = viewport_.measuredFps();
+            sample.viewRenderCpuMs = viewport_.renderCpuMs();
+            sample.messageThreadCpuMs = (thread - run.lastThreadCpu) * 1'000.0 / span;
+            sample.processCpuMs = (process - run.lastProcessCpu) * 1'000.0 / span;
+            run.samples.push_back(sample);
+            run.lastSampleWall = now;
+            run.lastThreadCpu = thread;
+            run.lastProcessCpu = process;
+        }
+        if (elapsed >= settings.measureSeconds) {
+            if (settings.captureMarker != juce::File()) {
+                const auto scale = juce::Desktop::getInstance().getGlobalScaleFactor();
+                const auto bounds = getScreenBounds().toFloat() * scale;
+                (void)settings.captureMarker.replaceWithText(
+                    juce::String(juce::roundToInt(bounds.getX())) + " " + juce::String(juce::roundToInt(bounds.getY()))
+                    + " " + juce::String(juce::roundToInt(bounds.getWidth())) + " "
+                    + juce::String(juce::roundToInt(bounds.getHeight())));
+            }
+            next();
+        }
+        break;
+    case 4: // held still for a screen capture
+        if (elapsed >= (settings.captureMarker != juce::File() ? settings.captureHoldSeconds : 0.0)) {
+            if (settings.output != juce::File())
+                (void)settings.output.replaceWithText(
+                    ui::uiBenchCsv(settings, juce::String(config_.name), run.samples));
+            next();
+            juce::JUCEApplicationBase::quit();
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 void MainComponent::pushCameraMicrophones() {

@@ -74,6 +74,22 @@ void checkActionMap() {
     require(parsed("ctrl + M").isValid(), "a chord's description parses");
 }
 
+// The keyboard of 0.13.0, the interface before "Test cell": a new interface
+// may move a command, never its key. tests/data/ui/default-keybindings.json
+// is that reference; ENGINELAB_SNAPSHOT_DIR receives today's map beside it.
+void checkKeymapUnchanged() {
+    const enginelab::ActionMap defaults { enginelab::ActionMap::DefaultsOnly {} };
+    const auto json = defaults.toJson();
+    const auto directory = juce::SystemStats::getEnvironmentVariable("ENGINELAB_SNAPSHOT_DIR", {});
+    if (directory.isNotEmpty())
+        (void)juce::File(directory).getChildFile("default-keybindings.json").replaceWithText(json);
+    const auto reference = juce::File(ENGINELAB_CATALOG_ROOT).getChildFile("tests/data/ui/default-keybindings.json");
+    require(reference.existsAsFile(), "the reference key map exists");
+    const auto normalised = [](juce::String text) { return text.removeCharacters("\r").trim(); };
+    require(normalised(reference.loadFileAsString()) == normalised(json),
+            "every default key is the one of 0.13.0 (tests/data/ui/default-keybindings.json)");
+}
+
 void checkTopBar() {
     enginelab::ui::TopBar bar;
     for (const auto width : { 1280, 1440, 1920 }) {
@@ -141,6 +157,7 @@ int main() {
     const auto catalog = enginelab::loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(!catalog.entries.empty(), "catalog loads");
     checkActionMap();
+    checkKeymapUnchanged();
     checkTopBar();
     checkTelemetry(catalog);
     checkReadouts(catalog);

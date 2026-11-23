@@ -1,0 +1,71 @@
+# Every command the main window offers with the mouse, as of 0.13.0 (the
+# interface before "Test cell"). EngineLab.AppLayout checks that each id is
+# still reachable in the new interface; the keyboard is checked separately
+# against default-keybindings.json. A command may move; it may not vanish.
+#
+# id                     | where in 0.13.0
+engine.pick              | top bar, engine picker
+engine.save              | top bar, ... menu
+engine.saveAs            | top bar, ... menu
+engine.deleteSaved       | top bar, ... menu
+engine.new               | top bar, ... menu (New engine...)
+engine.editJson          | top bar, ... menu
+engine.import            | top bar, ... menu
+engine.export            | top bar, ... menu
+engine.reload            | top bar, ... menu
+dyno.exportCsv           | top bar, ... menu; Dyno tab, Export CSV
+window.exhaust           | top bar, Exhaust; ... menu
+window.fuel              | top bar, Fuel; ... menu; Telemetry tab, Fuel
+window.equipment         | top bar, Equipment; ... menu
+window.passBy            | top bar, Pass-by; ... menu
+window.vehicle           | top bar, Vehicle; ... menu
+window.ecu               | top bar, ECU; ... menu
+window.audio             | top bar, Audio; ... menu
+datalog.toggle           | top bar, Log; ... menu
+ab.switch                | top bar, A; ... menu
+settings.keyBindings     | top bar, ... menu
+settings.units           | top bar, ... menu, Units
+view.fullScreen          | top bar, ... menu
+drive.ignition           | control panel
+drive.starter            | control panel (held)
+dyno.toggle              | control panel, Start dyno
+drive.throttle           | control panel, throttle slider
+drive.throttlePresets    | control panel, 1 / 10 / 20 / 100 %
+drive.gearDown           | control panel
+drive.gearUp             | control panel
+drive.brake              | control panel (held)
+drive.clutch             | control panel (held)
+drive.cruise             | control panel
+drive.automatic          | control panel, Auto
+drive.resetTrip          | control panel
+drive.engineBrake        | control panel (engines with one)
+drive.exhaustValve       | control panel (exhausts with one)
+drive.nitrous            | control panel (engines with a kit)
+drive.antiLag            | control panel (tables that carry it)
+trims.afr                | control panel, trims
+trims.spark              | control panel, trims
+view.layer               | 3-D view, All / Combustion / Mechanical / Gas flow
+view.camera              | 3-D view, Front / Side / 3/4 / Exhaust
+view.shading             | 3-D view, X-ray / Solid
+view.simulationSpeed     | 3-D view, 0.25x / 0.5x / 1x (physics and sound slow down)
+view.playback            | 3-D view, Live / Strobe 1:50 / Strobe 1:250 / Freeze (picture only)
+view.renderer            | 3-D view settings, 3-D (GPU) / 2-D cutaway
+view.frameRate           | 3-D view settings, frame-rate cap
+view.vsync               | 3-D view settings
+view.motionBlur          | 3-D view settings
+view.antiAliasing        | 3-D view settings
+view.exhaustWaveMesh     | 3-D view settings, Standard / Fine
+view.pressureWaves       | 3-D view settings, Hidden / Steady / Live
+sound.cameraMicrophone   | 3-D view settings
+sound.tracksideMicrophone| 3-D view settings
+view.savePng             | 3-D view settings, Save the view as a PNG
+view.partInspector       | 3-D view, click a part: inspector with Reset / Next cycle / choices / value
+side.tab                 | side panel, Dyno / Telemetry / Audio / Diagnostics
+dyno.runName             | Dyno tab, run name
+dyno.runColour           | Dyno tab, Colour
+dyno.runVisibility       | Dyno tab, Hide
+dyno.runDelete           | Dyno tab, Delete
+dyno.runSelect           | Dyno tab, run list
+telemetry.showInjectors  | Telemetry tab, Show in 3-D
+audio.exhaustPreset      | Audio tab, exhaust preset (engines without a physical exhaust)
+vehicle.fields           | Vehicle window, fields, driven axles, tyre grip
