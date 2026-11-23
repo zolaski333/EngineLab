@@ -7,6 +7,8 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-11-23
+
 ### Changed
 
 - **A new interface, "Test cell".** The application now looks like an
