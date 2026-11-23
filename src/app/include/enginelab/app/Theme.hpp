@@ -4,47 +4,74 @@
 
 #include <functional>
 
-/** Visual identity of the desktop application: colour tokens, fonts and the
-    look-and-feel every window shares. Panels draw with these tokens only, so a
-    palette change happens here and nowhere else. */
+/** Visual identity of the desktop application ("Test cell", 2026-11-23):
+    colour tokens, fonts and the look-and-feel every window shares. Panels draw
+    with these tokens only, so a palette change happens here and nowhere else.
+
+    Colour is data. The chrome is graphite and nearly monochrome; colour
+    appears only for gas pressure (amber above ambient, violet below), the
+    intake charge (cyan), heat and alarms (red), and lamps that are lit.
+    Corners are 2 px hairline instruments, never rounded cards. */
 namespace enginelab::ui {
 
+/** The corner radius of every frame, button, field and panel. */
+inline constexpr float cornerRadius = 2.0F;
+
 namespace colours {
-inline const juce::Colour background { 0xff0b0f0e };
-inline const juce::Colour chrome { 0xff0d1211 };      // top bar and status bar
-inline const juce::Colour panel { 0xff111716 };
-inline const juce::Colour panelRaised { 0xff161e1c };
-inline const juce::Colour line { 0xff222c29 };
-inline const juce::Colour lineStrong { 0xff2d3a36 };
-inline const juce::Colour lineHover { 0xff3e4f4a };
-inline const juce::Colour selection { 0xff24302c };
-inline const juce::Colour grid { 0xff1d2624 };
-inline const juce::Colour text { 0xffe6ece9 };
-inline const juce::Colour muted { 0xff8a9893 };
-inline const juce::Colour faint { 0xff5c6a65 };
+inline const juce::Colour background { 0xff0d0e0f };
+inline const juce::Colour chrome { 0xff101113 };      // top bar and status bar
+inline const juce::Colour panel { 0xff121315 };
+inline const juce::Colour panelRaised { 0xff17181a };
+/** Recessed wells: a fader's slot, a plot's ground. */
+inline const juce::Colour well { 0xff0a0b0c };
+inline const juce::Colour line { 0xff232528 };
+inline const juce::Colour lineStrong { 0xff303337 };
+inline const juce::Colour lineHover { 0xff44484d };
+inline const juce::Colour selection { 0xff24262a };
+inline const juce::Colour grid { 0xff1c1e21 };
+inline const juce::Colour text { 0xffe9e7e2 };
+inline const juce::Colour muted { 0xffb3b0a9 };
+/** Decoration only (ticks, disabled glyphs): below 4.5:1 on purpose. */
+inline const juce::Colour faint { 0xff6b6964 };
 // Section headings and readout labels: small text the user reads, so at least
-// 4.5:1 on every panel fill (WCAG 2.1 1.4.3; `faint` reads 2.9-3.4, audit RT-03).
-inline const juce::Colour label { 0xff808e89 };
-inline const juce::Colour accent { 0xffef6f3c };
-inline const juce::Colour accentDeep { 0xffd85b2b };
-inline const juce::Colour accentLight { 0xfff6a15d };
-inline const juce::Colour intake { 0xff41b6d7 };
-inline const juce::Colour ok { 0xff79b89f };
-inline const juce::Colour okFill { 0xff12231d };
-inline const juce::Colour okBorder { 0xff2f6b55 };
-inline const juce::Colour warn { 0xffffd46a };
-inline const juce::Colour warnFill { 0xff231d10 };
-inline const juce::Colour critical { 0xffff9a8c };
-inline const juce::Colour criticalFill { 0xff2a1513 };
-inline const juce::Colour redline { 0xff5c2723 };
+// 4.5:1 on every panel fill (WCAG 2.1 1.4.3; audit RT-03; checked by
+// EngineLab.AppLayout).
+inline const juce::Colour label { 0xff939089 };
+/** An unlit lamp or segment. */
+inline const juce::Colour unlit { 0xff2a2c2f };
+/** Text on a lit lamp or an inverted (selected) control. */
+inline const juce::Colour ink { 0xff0d0e0f };
+/** Data: gas above ambient, boost, the live cursor and operating point. */
+inline const juce::Colour accent { 0xfff0a43c };
+inline const juce::Colour accentDeep { 0xffc98428 };
+/** Data: a pressure peak. */
+inline const juce::Colour accentLight { 0xffffd978 };
+/** Data: gas below ambient. */
+inline const juce::Colour pressureLow { 0xff9a86ff };
+/** Data: the intake charge. */
+inline const juce::Colour intake { 0xff4fb6dc };
+/** Running, a gain. */
+inline const juce::Colour ok { 0xff8fc79c };
+inline const juce::Colour okFill { 0xff142019 };
+inline const juce::Colour okBorder { 0xff3d6b4c };
+inline const juce::Colour warn { 0xfff0a43c };
+inline const juce::Colour warnFill { 0xff241b0e };
+/** Heat, knock, a fault. */
+inline const juce::Colour critical { 0xffff6a4a };
+inline const juce::Colour criticalFill { 0xff2a1512 };
+inline const juce::Colour redline { 0xff4a211b };
 } // namespace colours
 
-/** Interface text: Inter Regular, or Inter SemiBold when `bold`. Both are
-    embedded in the executable (src/app/resources/fonts). */
+/** Interface text: Barlow Semi Condensed Regular, or SemiBold when `bold`
+    (src/app/resources/fonts, embedded). Characters Barlow lacks (lambda, arrows,
+    the ellipsis, triangles, dots) come from Inter, embedded as the fallback. */
 [[nodiscard]] juce::Font uiFont(float height, bool bold = false);
-/** Figures and key caps: JetBrains Mono Bold, or Medium when not `bold`. */
+/** Barlow Semi Condensed Medium: buttons and tabs. */
+[[nodiscard]] juce::Font uiMediumFont(float height);
+/** Figures and key caps: IBM Plex Mono Medium, or Regular when not `bold`.
+    Characters Plex lacks come from JetBrains Mono, embedded as the fallback. */
 [[nodiscard]] juce::Font monoFont(float height, bool bold = true);
-/** Small upper-case section heading with the prototype's letter spacing. */
+/** A section heading: small, semi-bold, in the label colour, sentence case. */
 [[nodiscard]] juce::Font sectionFont();
 
 /** `const char*` literals are Latin-1 for juce::String; every non-ASCII literal
@@ -61,10 +88,16 @@ inline const juce::Colour redline { 0xff5c2723 };
 void drawKeyCap(juce::Graphics&, juce::Rectangle<float> area, const juce::String& keyCap,
                 bool onAccent = false);
 
-void fillCard(juce::Graphics&, juce::Rectangle<float> area, float radius = 9.0F,
+void fillCard(juce::Graphics&, juce::Rectangle<float> area, float radius = cornerRadius,
               juce::Colour fill = colours::panel, juce::Colour border = colours::line);
 void drawSectionLabel(juce::Graphics&, juce::Rectangle<float> area, const juce::String& text,
                       juce::Justification = juce::Justification::centredLeft);
+
+/** WCAG 2.1 contrast ratio of two opaque colours (1 to 21). */
+[[nodiscard]] double contrastRatio(juce::Colour, juce::Colour);
+/** The typeface names the text fonts fall back to for characters they lack. */
+inline constexpr const char* symbolsSans = "EngineLab Symbols Sans";
+inline constexpr const char* symbolsMono = "EngineLab Symbols Mono";
 
 /** The window `component` is drawn in (its top-level component), or null
     while it is in no window on screen. Alert boxes and dialogs are drawn
@@ -123,8 +156,9 @@ public:
                        bool mouseDown) override;
     int getDefaultScrollbarWidth() override { return 10; }
     /** Maps JUCE's default sans-serif and monospaced fonts to the embedded
-        Inter and JetBrains Mono, so windows that build plain FontOptions
-        share the theme's typefaces. */
+        Barlow Semi Condensed and IBM Plex Mono, so windows that build plain
+        FontOptions share the theme's typefaces; maps the fallback names
+        (symbolsSans, symbolsMono) to the embedded Inter and JetBrains Mono. */
     juce::Typeface::Ptr getTypefaceForFont(const juce::Font&) override;
     juce::Rectangle<int> getTooltipBounds(const juce::String& tipText, juce::Point<int> screenPos,
                                           juce::Rectangle<int> parentArea) override;

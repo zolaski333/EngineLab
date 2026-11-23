@@ -24,13 +24,15 @@ licences.
 
 ## Fonts
 
-The interface embeds two typefaces in the executable, both under the
-[SIL Open Font License 1.1](https://openfontlicense.org):
+The interface embeds four typefaces in the executable, all under the
+[SIL Open Font License 1.1](https://openfontlicense.org), unmodified:
 
 | Typeface | Version | Weights | Source |
 |---|---|---|---|
-| Inter | 4.1 | Regular, SemiBold, Bold | <https://github.com/rsms/inter> |
-| JetBrains Mono | 2.304 | Medium, Bold | <https://github.com/JetBrains/JetBrainsMono> |
+| Barlow Semi Condensed | 1.408 | Regular, Medium, SemiBold | <https://github.com/jpt/barlow> |
+| IBM Plex Mono (Reserved Font Name "Plex") | 2.003 | Regular, Medium | <https://github.com/IBM/plex> |
+| Inter | 4.1 | Regular (fallback for the characters Barlow lacks) | <https://github.com/rsms/inter> |
+| JetBrains Mono | 2.304 | Medium (fallback for the characters Plex Mono lacks) | <https://github.com/JetBrains/JetBrainsMono> |
 
 The font files and their license texts are in `src/app/resources/fonts/`.
 Release archives include the license texts in `licenses/`.

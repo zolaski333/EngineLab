@@ -4,17 +4,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
 #include <utility>
 
 namespace enginelab::ui {
 namespace {
 struct EmbeddedTypefaces final {
-    juce::Typeface::Ptr regular = load(EngineLabFonts::InterRegular_ttf, EngineLabFonts::InterRegular_ttfSize);
-    juce::Typeface::Ptr semiBold = load(EngineLabFonts::InterSemiBold_ttf, EngineLabFonts::InterSemiBold_ttfSize);
-    juce::Typeface::Ptr bold = load(EngineLabFonts::InterBold_ttf, EngineLabFonts::InterBold_ttfSize);
-    juce::Typeface::Ptr monoMedium = load(EngineLabFonts::JetBrainsMonoMedium_ttf, EngineLabFonts::JetBrainsMonoMedium_ttfSize);
-    juce::Typeface::Ptr monoBold = load(EngineLabFonts::JetBrainsMonoBold_ttf, EngineLabFonts::JetBrainsMonoBold_ttfSize);
+    juce::Typeface::Ptr regular = load(EngineLabFonts::BarlowSemiCondensedRegular_ttf,
+                                       EngineLabFonts::BarlowSemiCondensedRegular_ttfSize);
+    juce::Typeface::Ptr medium = load(EngineLabFonts::BarlowSemiCondensedMedium_ttf,
+                                      EngineLabFonts::BarlowSemiCondensedMedium_ttfSize);
+    juce::Typeface::Ptr semiBold = load(EngineLabFonts::BarlowSemiCondensedSemiBold_ttf,
+                                        EngineLabFonts::BarlowSemiCondensedSemiBold_ttfSize);
+    juce::Typeface::Ptr monoRegular = load(EngineLabFonts::IBMPlexMonoRegular_ttf,
+                                           EngineLabFonts::IBMPlexMonoRegular_ttfSize);
+    juce::Typeface::Ptr monoMedium = load(EngineLabFonts::IBMPlexMonoMedium_ttf,
+                                          EngineLabFonts::IBMPlexMonoMedium_ttfSize);
+    // The fallbacks: Barlow and Plex Mono have no λ, arrows, ⋯, ▲ or ●.
+    juce::Typeface::Ptr symbolsSans = load(EngineLabFonts::InterRegular_ttf, EngineLabFonts::InterRegular_ttfSize);
+    juce::Typeface::Ptr symbolsMono = load(EngineLabFonts::JetBrainsMonoMedium_ttf,
+                                           EngineLabFonts::JetBrainsMonoMedium_ttfSize);
 
     static juce::Typeface::Ptr load(const char* data, int size) {
         return juce::Typeface::createSystemTypefaceFor(data, static_cast<std::size_t>(size));
@@ -26,21 +36,40 @@ struct EmbeddedTypefaces final {
     return instance;
 }
 
-[[nodiscard]] juce::Font fontFor(const juce::Typeface::Ptr& typeface, float height) {
-    return juce::Font(juce::FontOptions(typeface).withHeight(height));
+[[nodiscard]] juce::Font fontFor(const juce::Typeface::Ptr& typeface, float height, const char* fallback) {
+    return juce::Font(juce::FontOptions(typeface).withHeight(height)
+        .withFallbacks({ juce::String(fallback) }).withFallbackEnabled(true));
 }
 } // namespace
 
 juce::Font uiFont(float height, bool bold) {
-    return fontFor(bold ? typefaces().semiBold : typefaces().regular, height);
+    return fontFor(bold ? typefaces().semiBold : typefaces().regular, height, symbolsSans);
+}
+
+juce::Font uiMediumFont(float height) {
+    return fontFor(typefaces().medium, height, symbolsSans);
 }
 
 juce::Font monoFont(float height, bool bold) {
-    return fontFor(bold ? typefaces().monoBold : typefaces().monoMedium, height);
+    return fontFor(bold ? typefaces().monoMedium : typefaces().monoRegular, height, symbolsMono);
 }
 
 juce::Font sectionFont() {
-    return uiFont(13.0F, true).withExtraKerningFactor(0.08F);
+    return uiFont(13.0F, true);
+}
+
+double contrastRatio(juce::Colour a, juce::Colour b) {
+    const auto luminance = [](juce::Colour colour) {
+        const auto linear = [](std::uint8_t channel) {
+            const auto c = static_cast<double>(channel) / 255.0;
+            return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * linear(colour.getRed()) + 0.7152 * linear(colour.getGreen())
+            + 0.0722 * linear(colour.getBlue());
+    };
+    const auto la = luminance(a);
+    const auto lb = luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
 }
 
 juce::String utf8(const char* text) { return juce::String::fromUTF8(text); }
@@ -69,19 +98,18 @@ juce::String keyCapText(const juce::String& keyDescription) {
 
 float keyCapWidth(const juce::String& keyCap) {
     juce::GlyphArrangement glyphs;
-    glyphs.addLineOfText(monoFont(12.5F), keyCap, 0.0F, 0.0F);
-    return std::max(20.0F, glyphs.getBoundingBox(0, -1, true).getWidth() + 12.0F);
+    glyphs.addLineOfText(monoFont(11.5F, false), keyCap, 0.0F, 0.0F);
+    return std::max(18.0F, glyphs.getBoundingBox(0, -1, true).getWidth() + 10.0F);
 }
 
 void drawKeyCap(juce::Graphics& g, juce::Rectangle<float> area, const juce::String& keyCap,
                 bool onAccent) {
-    const auto cap = area.withSizeKeepingCentre(keyCapWidth(keyCap), std::min(area.getHeight(), 19.0F));
-    g.setColour(onAccent ? juce::Colours::black.withAlpha(0.20F) : juce::Colour(0xff0a0e0d));
-    g.fillRoundedRectangle(cap, 5.0F);
-    g.setColour(onAccent ? juce::Colours::white.withAlpha(0.25F) : colours::lineStrong);
-    g.drawRoundedRectangle(cap.reduced(0.5F), 5.0F, 1.0F);
-    g.setColour(onAccent ? juce::Colours::white : colours::muted);
-    g.setFont(monoFont(12.5F));
+    // A key is a hairline box with the key in mono: an engraving, not a button.
+    const auto cap = area.withSizeKeepingCentre(keyCapWidth(keyCap), std::min(area.getHeight(), 18.0F));
+    g.setColour(onAccent ? colours::ink.withAlpha(0.45F) : colours::lineStrong);
+    g.drawRoundedRectangle(cap.reduced(0.5F), cornerRadius, 1.0F);
+    g.setColour(onAccent ? colours::ink : colours::label);
+    g.setFont(monoFont(11.5F, false));
     g.drawText(keyCap, cap, juce::Justification::centred, false);
 }
 
@@ -97,7 +125,10 @@ void drawSectionLabel(juce::Graphics& g, juce::Rectangle<float> area, const juce
                       juce::Justification justification) {
     g.setColour(colours::label);
     g.setFont(sectionFont());
-    g.drawText(text.toUpperCase(), area, justification, true);
+    // Sentence case: a heading reads as a word, not a shout (Test cell).
+    const auto shown = text == text.toUpperCase() && text.length() > 1
+        ? text.substring(0, 1) + text.substring(1).toLowerCase() : text;
+    g.drawText(shown, area, justification, true);
 }
 
 namespace {
@@ -178,8 +209,8 @@ bool placeInWindow(juce::Component& dialog, juce::Component& host) {
 LookAndFeel::LookAndFeel()
     : juce::LookAndFeel_V4(juce::LookAndFeel_V4::ColourScheme {
           colours::background, colours::panel, colours::panel,
-          colours::lineStrong, colours::text, colours::accent,
-          juce::Colours::white, colours::selection, colours::text }) {
+          colours::lineStrong, colours::text, colours::muted,
+          colours::text, colours::selection, colours::text }) {
     setColour(juce::ResizableWindow::backgroundColourId, colours::background);
     setColour(juce::DocumentWindow::backgroundColourId, colours::background);
     setColour(juce::TextButton::buttonColourId, colours::panel);
@@ -196,17 +227,17 @@ LookAndFeel::LookAndFeel()
     setColour(juce::PopupMenu::highlightedTextColourId, colours::text);
     setColour(juce::Label::textColourId, colours::text);
     setColour(juce::Slider::backgroundColourId, colours::line);
-    setColour(juce::Slider::trackColourId, colours::accent);
+    setColour(juce::Slider::trackColourId, colours::muted);
     setColour(juce::Slider::thumbColourId, colours::text);
     setColour(juce::Slider::textBoxTextColourId, colours::text);
     setColour(juce::Slider::textBoxBackgroundColourId, colours::panel);
     setColour(juce::Slider::textBoxOutlineColourId, colours::lineStrong);
     setColour(juce::TextEditor::backgroundColourId, colours::panel);
     setColour(juce::TextEditor::outlineColourId, colours::lineStrong);
-    setColour(juce::TextEditor::focusedOutlineColourId, colours::accent);
+    setColour(juce::TextEditor::focusedOutlineColourId, colours::muted);
     setColour(juce::TextEditor::textColourId, colours::text);
-    setColour(juce::TextEditor::highlightColourId, colours::accent.withAlpha(0.35F));
-    setColour(juce::CaretComponent::caretColourId, colours::accent);
+    setColour(juce::TextEditor::highlightColourId, colours::text.withAlpha(0.22F));
+    setColour(juce::CaretComponent::caretColourId, colours::text);
     setColour(juce::ScrollBar::thumbColourId, colours::lineStrong);
     setColour(juce::ListBox::backgroundColourId, colours::panel);
     setColour(juce::ListBox::outlineColourId, colours::line);
@@ -219,7 +250,7 @@ LookAndFeel::LookAndFeel()
 }
 
 juce::Font LookAndFeel::getTextButtonFont(juce::TextButton&, int buttonHeight) {
-    return uiFont(std::min(15.0F, static_cast<float>(buttonHeight) * 0.5F), true);
+    return uiMediumFont(std::min(15.0F, static_cast<float>(buttonHeight) * 0.5F));
 }
 
 void LookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& button,
@@ -232,9 +263,9 @@ void LookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& button,
     else if (down) fill = fill.brighter(0.12F);
     else if (highlighted) fill = fill.brighter(0.06F);
     g.setColour(fill);
-    g.fillRoundedRectangle(bounds, 7.0F);
+    g.fillRoundedRectangle(bounds, cornerRadius);
     g.setColour(on ? colours::okBorder : (highlighted ? colours::lineHover : colours::lineStrong));
-    g.drawRoundedRectangle(bounds, 7.0F, 1.0F);
+    g.drawRoundedRectangle(bounds, cornerRadius, 1.0F);
 }
 
 void LookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool, int, int, int, int,
@@ -243,10 +274,10 @@ void LookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool, i
                                                static_cast<float>(height)).reduced(0.5F);
     g.setColour(box.findColour(juce::ComboBox::backgroundColourId)
         .withMultipliedAlpha(box.isEnabled() ? 1.0F : 0.5F));
-    g.fillRoundedRectangle(bounds, 7.0F);
+    g.fillRoundedRectangle(bounds, cornerRadius);
     g.setColour(box.isMouseOver(true) && box.isEnabled() ? colours::lineHover
                                                          : box.findColour(juce::ComboBox::outlineColourId));
-    g.drawRoundedRectangle(bounds, 7.0F, 1.0F);
+    g.drawRoundedRectangle(bounds, cornerRadius, 1.0F);
     const auto arrowZone = juce::Rectangle<float>(static_cast<float>(width) - 24.0F, 0.0F, 16.0F,
                                                   static_cast<float>(height));
     juce::Path chevron;
@@ -289,15 +320,15 @@ void LookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int
     auto row = area.toFloat().reduced(4.0F, 1.0F);
     if (isHighlighted && isActive) {
         g.setColour(colours::selection);
-        g.fillRoundedRectangle(row, 5.0F);
+        g.fillRoundedRectangle(row, cornerRadius);
     }
     auto colour = textColour != nullptr ? *textColour : colours::text;
     if (!isActive) colour = colours::faint;
     auto content = row.reduced(8.0F, 0.0F);
     auto tickArea = content.removeFromLeft(16.0F);
     if (isTicked) {
-        g.setColour(colours::accent);
-        g.fillEllipse(tickArea.withSizeKeepingCentre(6.0F, 6.0F));
+        g.setColour(colour);
+        g.fillRect(tickArea.withSizeKeepingCentre(6.0F, 6.0F));
     }
     content.removeFromLeft(4.0F);
     if (hasSubMenu) {
@@ -326,24 +357,21 @@ void LookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, int width, i
                                              static_cast<float>(width), static_cast<float>(height));
     const auto alpha = slider.isEnabled() ? 1.0F : 0.45F;
     if (style == juce::Slider::LinearBarVertical) {
-        // The throttle: a filled column that rises from the bottom.
+        // The throttle: a recessed slot filled from the bottom in a neutral
+        // grey, its level a bright hairline. Colour stays for data.
         const auto frame = slider.getLocalBounds().toFloat().reduced(0.5F);
-        g.setColour(colours::panel);
-        g.fillRoundedRectangle(frame, 9.0F);
+        g.setColour(colours::well);
+        g.fillRoundedRectangle(frame, cornerRadius);
         const auto fillTop = std::clamp(sliderPos, frame.getY(), frame.getBottom());
-        auto fill = frame.withTop(fillTop);
+        const auto fill = frame.reduced(1.0F, 0.0F).withTop(fillTop).withTrimmedBottom(1.0F);
         if (fill.getHeight() > 0.5F) {
-            juce::Graphics::ScopedSaveState state(g);
-            juce::Path clip;
-            clip.addRoundedRectangle(frame, 9.0F);
-            g.reduceClipRegion(clip);
-            g.setGradientFill(juce::ColourGradient(colours::accentLight.withMultipliedAlpha(alpha),
-                0.0F, frame.getY(), colours::accentDeep.withMultipliedAlpha(alpha), 0.0F,
-                frame.getBottom(), false));
+            g.setColour(colours::selection.withMultipliedAlpha(alpha));
             g.fillRect(fill);
+            g.setColour(colours::text.withMultipliedAlpha(alpha));
+            g.fillRect(fill.withHeight(2.0F));
         }
         g.setColour(slider.isMouseOverOrDragging() ? colours::lineHover : colours::lineStrong);
-        g.drawRoundedRectangle(frame, 9.0F, 1.0F);
+        g.drawRoundedRectangle(frame, cornerRadius, 1.0F);
         return;
     }
     if (!slider.isHorizontal()) {
@@ -351,30 +379,37 @@ void LookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, int width, i
                                                maxSliderPos, style, slider);
         return;
     }
-    const auto track = area.withSizeKeepingCentre(area.getWidth(), 4.0F);
-    g.setColour(colours::line);
-    g.fillRoundedRectangle(track, 2.0F);
+    const auto track = area.withSizeKeepingCentre(area.getWidth(), 3.0F);
+    g.setColour(colours::lineStrong);
+    g.fillRect(track);
     // Bipolar ranges (trims) fill from zero, unipolar ones from the minimum.
     const auto range = slider.getRange();
     const auto origin = range.getStart() < 0.0 && range.getEnd() > 0.0
         ? static_cast<float>(slider.getPositionOfValue(0.0)) : track.getX();
     const auto left = std::min(origin, sliderPos);
     const auto right = std::max(origin, sliderPos);
-    g.setColour(colours::accent.withMultipliedAlpha(alpha));
-    g.fillRoundedRectangle(track.withX(left).withWidth(std::max(0.0F, right - left)), 2.0F);
-    const auto thumb = juce::Rectangle<float>(13.0F, 13.0F).withCentre({ sliderPos, track.getCentreY() });
-    g.setColour(colours::text.withMultipliedAlpha(alpha));
-    g.fillEllipse(thumb);
-    g.setColour(colours::accent.withMultipliedAlpha(alpha));
-    g.drawEllipse(thumb.reduced(1.0F), slider.isMouseOverOrDragging() ? 2.5F : 2.0F);
+    g.setColour(colours::muted.withMultipliedAlpha(alpha));
+    g.fillRect(track.withX(left).withWidth(std::max(0.0F, right - left)));
+    if (origin > track.getX()) {
+        g.setColour(colours::faint);
+        g.fillRect(juce::Rectangle<float>(1.0F, 9.0F).withCentre({ origin, track.getCentreY() }));
+    }
+    // A fader cap: a narrow upright block, brighter under the pointer.
+    const auto thumb = juce::Rectangle<float>(7.0F, 15.0F).withCentre({ sliderPos, track.getCentreY() });
+    g.setColour((slider.isMouseOverOrDragging() ? colours::text : colours::muted).withMultipliedAlpha(alpha));
+    g.fillRoundedRectangle(thumb, cornerRadius);
+    g.setColour(colours::ink);
+    g.fillRect(thumb.withSizeKeepingCentre(thumb.getWidth() - 4.0F, 1.0F));
 }
 
 juce::Typeface::Ptr LookAndFeel::getTypefaceForFont(const juce::Font& font) {
     const auto& name = font.getTypefaceName();
     if (name == juce::Font::getDefaultSansSerifFontName())
-        return font.isBold() ? typefaces().bold : typefaces().regular;
+        return font.isBold() ? typefaces().semiBold : typefaces().regular;
     if (name == juce::Font::getDefaultMonospacedFontName())
-        return font.isBold() ? typefaces().monoBold : typefaces().monoMedium;
+        return font.isBold() ? typefaces().monoMedium : typefaces().monoRegular;
+    if (name == symbolsSans) return typefaces().symbolsSans;
+    if (name == symbolsMono) return typefaces().symbolsMono;
     return juce::LookAndFeel_V4::getTypefaceForFont(font);
 }
 
@@ -385,7 +420,7 @@ int LookAndFeel::getSliderThumbRadius(juce::Slider& slider) {
 void LookAndFeel::fillTextEditorBackground(juce::Graphics& g, int width, int height,
                                            juce::TextEditor& editor) {
     g.setColour(editor.findColour(juce::TextEditor::backgroundColourId));
-    g.fillRoundedRectangle(0.0F, 0.0F, static_cast<float>(width), static_cast<float>(height), 6.0F);
+    g.fillRoundedRectangle(0.0F, 0.0F, static_cast<float>(width), static_cast<float>(height), cornerRadius);
 }
 
 void LookAndFeel::drawTextEditorOutline(juce::Graphics& g, int width, int height,
@@ -395,7 +430,7 @@ void LookAndFeel::drawTextEditorOutline(juce::Graphics& g, int width, int height
     g.setColour(editor.findColour(focused ? juce::TextEditor::focusedOutlineColourId
                                           : juce::TextEditor::outlineColourId));
     g.drawRoundedRectangle(0.5F, 0.5F, static_cast<float>(width) - 1.0F,
-                           static_cast<float>(height) - 1.0F, 6.0F, focused ? 1.5F : 1.0F);
+                           static_cast<float>(height) - 1.0F, cornerRadius, 1.0F);
 }
 
 void LookAndFeel::drawScrollbar(juce::Graphics& g, juce::ScrollBar&, int x, int y, int width,
@@ -406,7 +441,7 @@ void LookAndFeel::drawScrollbar(juce::Graphics& g, juce::ScrollBar&, int x, int 
         ? juce::Rectangle<int>(x, thumbStart, width, thumbSize)
         : juce::Rectangle<int>(thumbStart, y, thumbSize, height);
     g.setColour(mouseOver || mouseDown ? colours::lineHover : colours::lineStrong);
-    g.fillRoundedRectangle(thumb.toFloat().reduced(2.5F), 3.0F);
+    g.fillRoundedRectangle(thumb.toFloat().reduced(3.0F), cornerRadius);
 }
 
 juce::Rectangle<int> LookAndFeel::getTooltipBounds(const juce::String& tipText,
@@ -426,7 +461,7 @@ juce::Rectangle<int> LookAndFeel::getTooltipBounds(const juce::String& tipText,
 
 void LookAndFeel::drawTooltip(juce::Graphics& g, const juce::String& text, int width, int height) {
     const auto bounds = juce::Rectangle<float>(static_cast<float>(width), static_cast<float>(height));
-    fillCard(g, bounds, 6.0F, colours::panelRaised, colours::lineStrong);
+    fillCard(g, bounds, cornerRadius, colours::panelRaised, colours::lineStrong);
     juce::AttributedString attributed;
     attributed.append(text, uiFont(14.0F), colours::text);
     juce::TextLayout layout;

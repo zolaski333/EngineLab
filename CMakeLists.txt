@@ -194,7 +194,8 @@ if(TARGET EngineLabOfflineAudioExporter AND TARGET EngineLabAbClipRenderer)
 endif()
 install(DIRECTORY engines parts assets examples voicing DESTINATION . COMPONENT EngineLab)
 install(FILES packaging/README.txt LICENSE.md THIRD_PARTY_NOTICES.md DESTINATION . COMPONENT EngineLab)
-install(FILES src/app/resources/fonts/OFL-Inter.txt src/app/resources/fonts/OFL-JetBrainsMono.txt
+install(FILES src/app/resources/fonts/OFL-BarlowSemiCondensed.txt src/app/resources/fonts/OFL-IBMPlexMono.txt
+    src/app/resources/fonts/OFL-Inter.txt src/app/resources/fonts/OFL-JetBrainsMono.txt
     DESTINATION licenses COMPONENT EngineLab)
 # The statically linked libraries' own notices, taken from the pinned sources
 # CMake fetched: MIT asks for the copyright and permission text to travel with

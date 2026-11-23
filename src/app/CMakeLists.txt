@@ -4,15 +4,17 @@ juce_add_gui_app(EngineLabApp
     BUNDLE_ID "com.enginelab.desktop"
     VERSION "${PROJECT_VERSION}")
 juce_generate_juce_header(EngineLabApp)
-# Inter and JetBrains Mono (SIL OFL 1.1) are compiled into the executable so the
-# interface looks the same on every machine.
+# Barlow Semi Condensed and IBM Plex Mono, with Inter and JetBrains Mono as
+# their fallbacks for symbols (all SIL OFL 1.1), are compiled into the
+# executable so the interface looks the same on every machine.
 juce_add_binary_data(EngineLabFonts
     HEADER_NAME EngineLabFonts.h
     NAMESPACE EngineLabFonts
     SOURCES
-        resources/fonts/Inter-Regular.ttf resources/fonts/Inter-SemiBold.ttf
-        resources/fonts/Inter-Bold.ttf
-        resources/fonts/JetBrainsMono-Medium.ttf resources/fonts/JetBrainsMono-Bold.ttf)
+        resources/fonts/BarlowSemiCondensed-Regular.ttf resources/fonts/BarlowSemiCondensed-Medium.ttf
+        resources/fonts/BarlowSemiCondensed-SemiBold.ttf
+        resources/fonts/IBMPlexMono-Regular.ttf resources/fonts/IBMPlexMono-Medium.ttf
+        resources/fonts/Inter-Regular.ttf resources/fonts/JetBrainsMono-Medium.ttf)
 target_sources(EngineLabApp PRIVATE
     src/Main.cpp src/MainComponent.cpp src/ActionMap.cpp src/AudioWorkshopWindow.cpp src/EcuTunerWindow.cpp
     src/FuelEditing.cpp src/FuelWindow.cpp src/EquipmentWindow.cpp src/PassByWindow.cpp src/WavRecorder.cpp

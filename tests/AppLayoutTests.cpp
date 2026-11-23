@@ -14,11 +14,13 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -90,6 +92,42 @@ void checkKeymapUnchanged() {
             "every default key is the one of 0.13.0 (tests/data/ui/default-keybindings.json)");
 }
 
+// The "Test cell" theme: every text colour readable on every panel fill
+// (WCAG 2.1 1.4.3, 4.5:1), and the characters the text fonts lack drawn by
+// the embedded fallbacks, not by a system font or an empty box.
+void checkTheme() {
+    namespace colours = enginelab::ui::colours;
+    using enginelab::ui::contrastRatio;
+    require(std::abs(contrastRatio(juce::Colours::black, juce::Colours::white) - 21.0) < 1.0e-9,
+            "the contrast ratio is WCAG's (black on white is 21:1)");
+    const std::pair<const char*, juce::Colour> texts[] = {
+        { "text", colours::text }, { "muted", colours::muted }, { "label", colours::label },
+        { "accent", colours::accent }, { "ok", colours::ok }, { "critical", colours::critical },
+        { "intake", colours::intake }, { "pressureLow", colours::pressureLow } };
+    const std::pair<const char*, juce::Colour> fills[] = {
+        { "background", colours::background }, { "chrome", colours::chrome }, { "panel", colours::panel },
+        { "panelRaised", colours::panelRaised }, { "well", colours::well }, { "selection", colours::selection },
+        { "okFill", colours::okFill }, { "warnFill", colours::warnFill }, { "criticalFill", colours::criticalFill } };
+    for (const auto& [textName, textColour] : texts)
+        for (const auto& [fillName, fillColour] : fills)
+            require(contrastRatio(textColour, fillColour) >= 4.5,
+                    std::string(textName) + " on " + fillName + " reaches 4.5:1");
+    // Ink on a lit lamp or an inverted control.
+    for (const auto lit : { colours::text, colours::accent, colours::ok, colours::critical })
+        require(contrastRatio(colours::ink, lit) >= 4.5, "ink on a lit lamp reaches 4.5:1");
+
+    const auto lambda = enginelab::ui::utf8("\xce\xbb");
+    const auto sans = enginelab::ui::uiFont(14.0F).findSuitableFontForText(lambda);
+    const auto mono = enginelab::ui::monoFont(14.0F).findSuitableFontForText(lambda);
+    require(sans.getTypefacePtr() != nullptr && sans.getTypefacePtr()->getName().startsWith("Inter"),
+            "a lambda in interface text is drawn by the embedded Inter");
+    require(mono.getTypefacePtr() != nullptr && mono.getTypefacePtr()->getName().startsWith("JetBrains"),
+            "a lambda in a figure is drawn by the embedded JetBrains Mono");
+    const auto plain = enginelab::ui::uiFont(14.0F).findSuitableFontForText("Torque");
+    require(plain.getTypefacePtr() != nullptr && plain.getTypefacePtr()->getName().startsWith("Barlow"),
+            "Latin text stays in Barlow Semi Condensed");
+}
+
 void checkTopBar() {
     enginelab::ui::TopBar bar;
     for (const auto width : { 1280, 1440, 1920 }) {
@@ -154,6 +192,9 @@ void checkReadouts(const enginelab::EngineCatalogLoadResult& catalog) {
 
 int main() {
     juce::ScopedJuceInitialiser_GUI initialiseGui;
+    enginelab::ui::LookAndFeel lookAndFeel;
+    juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
+    checkTheme();
     const auto catalog = enginelab::loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(!catalog.entries.empty(), "catalog loads");
     checkActionMap();
@@ -161,6 +202,7 @@ int main() {
     checkTopBar();
     checkTelemetry(catalog);
     checkReadouts(catalog);
-    std::cout << "App layout: key map, top bar, telemetry and readouts PASS\n";
+    std::cout << "App layout: theme, key map, top bar, telemetry and readouts PASS\n";
+    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
     return 0;
 }
