@@ -7,6 +7,13 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-11-23
+
+The first published release of 0.14: the v0.14.0 tag did not compile on
+Linux (a GCC missing-field-initializers warning in the top bar, an error
+there) and was never released, so 0.14.1 carries everything listed under
+0.14.0 below; nothing else changed.
+
 ## [0.14.0] — 2026-11-23
 
 ### Changed

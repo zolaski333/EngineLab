@@ -30,7 +30,8 @@ regression: physics and sound bit-identical, real-time factor and fps within
 the interleaved bar, every command still reachable, 1280 x 720 to 2560 x 1440
 and 125-150 % scale readable. One release at the end, no intermediate one.
 **Done 2026-11-23** (journal 2026-11-23): menus split as proposed and
-accepted; validated by the owner, merged into `main`, released 0.14.0.
+accepted; validated by the owner, merged into `main`, released 0.14.1 (the
+0.14.0 tag failed GCC).
 
 Done before it: **the audit register of 2026-11-16** (`docs/audit.md`, 90 findings; owner
 go 2026-11-16 for lots 0-4 only, autonomous), in this order: (0) a clean

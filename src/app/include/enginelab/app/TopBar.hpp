@@ -36,7 +36,7 @@ public:
         bool ignition { false };
         bool datalogRecording { false };
         bool abOnB { false };
-        juce::String datalogTooltip;
+        juce::String datalogTooltip {};
     };
 
     TopBar();
@@ -101,12 +101,12 @@ private:
     };
 
     struct Lamp final {
-        const char* text;
-        juce::String tooltip;
-        juce::Colour colour;
+        const char* text { nullptr };
+        juce::String tooltip {};
+        juce::Colour colour {};
         bool lit { false };
         bool shown { true };
-        juce::Rectangle<float> area;
+        juce::Rectangle<float> area {};
     };
 
     void stepMenu(TopMenu from, int direction);

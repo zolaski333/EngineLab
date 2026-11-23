@@ -26,22 +26,22 @@ struct MenuState final {
     bool datalogRecording { false };
     bool abOnB { false };
     bool fullScreen { false };
-    juce::String datalogKey;
-    juce::String abKey;
-    juce::String dynoKey;
-    juce::String fullScreenKey;
+    juce::String datalogKey {};
+    juce::String abKey {};
+    juce::String dynoKey {};
+    juce::String fullScreenKey {};
 };
 
 struct MenuEntry final {
     /** The command's id in tests/data/ui/commands.txt. */
-    juce::String id;
-    juce::String label;
-    juce::String shortcut;
+    juce::String id {};
+    juce::String label {};
+    juce::String shortcut {};
     bool enabled { true };
     bool ticked { false };
     /** A rule above it, and a heading when `heading` is not empty. */
     bool separatorBefore { false };
-    juce::String heading;
+    juce::String heading {};
     /** Its items are built by the main component (Units). */
     bool subMenu { false };
 };

@@ -16,10 +16,10 @@ struct Trace final {
 };
 
 struct Readout final {
-    juce::String label;
-    juce::String value;
-    juce::String unit;
-    juce::String detail;
+    juce::String label {};
+    juce::String value {};
+    juce::String unit {};
+    juce::String detail {};
     juce::Colour colour { colours::text };
     Trace trace {};
 };
