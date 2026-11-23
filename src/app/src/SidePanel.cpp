@@ -214,8 +214,8 @@ void TelemetryPanel::paint(juce::Graphics& g) {
         { "RPM", colours::accent, 0.0, redline, [](const EngineState& s) { return s.rpm; } },
         { "MAP", colours::intake, 20.0, 110.0, [](const EngineState& s) { return s.manifoldPressureKpa; } },
         { "Lambda", colours::ok, 0.55, 1.35, [](const EngineState& s) { return s.lambda; } },
-        { "Knock", juce::Colour(0xffffca28), 0.0, 1.0, [](const EngineState& s) { return s.knockLevel; } },
-        { "Exhaust", juce::Colour(0xffff7a45), 80.0, 220.0,
+        { "Knock", colours::critical, 0.0, 1.0, [](const EngineState& s) { return s.knockLevel; } },
+        { "Exhaust", colours::pressureLow, 80.0, 220.0,
           [](const EngineState& s) { return s.exhaustRunnerPressureKpa; } },
     }};
     const auto& telemetry = model_.telemetry;
@@ -331,7 +331,7 @@ void AudioPanel::paint(juce::Graphics& g) {
     for (std::size_t index = 0; index < levels.size(); ++index) {
         const auto& level = levels[index];
         auto row = area.removeFromTop(static_cast<float>(mixRowHeight)).reduced(0.0F, 3.0F);
-        fillCard(g, row, 7.0F, colours::panel, colours::line);
+        fillCard(g, row, cornerRadius, colours::panel, colours::line);
         auto content = row.reduced(8.0F, 0.0F);
         if (keyCaps_[index].isNotEmpty()) {
             const auto capWidth = std::max(24.0F, keyCapWidth(keyCaps_[index]));
@@ -349,15 +349,15 @@ void AudioPanel::paint(juce::Graphics& g) {
         content.removeFromRight(8.0F);
         const auto meter = content.withSizeKeepingCentre(content.getWidth(), 6.0F);
         g.setColour(colours::line);
-        g.fillRoundedRectangle(meter, 3.0F);
+        g.fillRoundedRectangle(meter, 1.0F);
         if (level.available) {
             g.setColour(colours::accent);
             g.fillRoundedRectangle(meter.withWidth(meter.getWidth()
-                * static_cast<float>(std::clamp(level.fraction, 0.0, 1.0))), 3.0F);
+                * static_cast<float>(std::clamp(level.fraction, 0.0, 1.0))), 1.0F);
         }
     }
     area.removeFromTop(10.0F);
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.setFont(uiFont(13.5F));
     g.drawFittedText(utf8("Hold a key and turn the mouse wheel to adjust a level. "
                           "Audio, in the top bar, opens the full workshop."),
@@ -498,7 +498,7 @@ void VehiclePanel::paint(juce::Graphics& g) {
     area.removeFromTop(8.0F + 32.0F + 8.0F + 28.0F + 12.0F);
     auto note = area.removeFromTop(44.0F);
     g.setFont(uiFont(13.5F));
-    g.setColour(status_.isNotEmpty() ? colours::accent : colours::faint);
+    g.setColour(status_.isNotEmpty() ? colours::accent : colours::label);
     g.drawFittedText(status_.isNotEmpty() ? status_
                          : utf8("Type a figure and press Enter: the running engine takes it, in the gear it is in."),
                      note.toNearestInt(), juce::Justification::topLeft, 3, 0.9F);
@@ -547,7 +547,7 @@ void DiagnosticsPanel::paint(juce::Graphics& g) {
     drawSectionLabel(g, area.removeFromTop(sectionHeight), "Faults");
     if (model_.diagnostics.empty()) {
         auto card = area.removeFromTop(50.0F).withTrimmedBottom(6.0F);
-        fillCard(g, card, 8.0F, colours::okFill, colours::okBorder);
+        fillCard(g, card, cornerRadius, colours::okFill, colours::okBorder);
         g.setColour(colours::ok);
         g.setFont(uiFont(14.5F, true));
         g.drawText(utf8("No fault detected"), card.reduced(12.0F, 0.0F), juce::Justification::centredLeft, true);
@@ -557,12 +557,12 @@ void DiagnosticsPanel::paint(juce::Graphics& g) {
         const auto critical = diagnostic.severity == DiagnosticSeverity::critical;
         const auto information = diagnostic.severity == DiagnosticSeverity::information;
         const auto accent = critical ? colours::critical : (information ? colours::intake : colours::warn);
-        fillCard(g, card, 8.0F, critical ? colours::criticalFill : colours::panel, colours::line);
+        fillCard(g, card, cornerRadius, critical ? colours::criticalFill : colours::panel, colours::line);
         g.setColour(accent);
         g.fillRoundedRectangle(card.removeFromLeft(4.0F).reduced(0.0F, 6.0F), 2.0F);
         auto body = card.reduced(10.0F, 4.0F);
         g.setFont(monoFont(11.5F, false));
-        g.setColour(colours::faint);
+        g.setColour(colours::label);
         g.drawText(juce::String::fromUTF8(diagnostic.code.c_str()), body.removeFromTop(14.0F),
                    juce::Justification::centredLeft, true);
         g.setColour(colours::text);

@@ -102,7 +102,7 @@ void DynoChart::paint(juce::Graphics& g) {
         const auto y = plot.getBottom() - plot.getHeight() * static_cast<float>(grid) / 5.0F;
         g.setColour(colours::grid);
         g.drawHorizontalLine(static_cast<int>(y), plot.getX(), plot.getRight());
-        g.setColour(colours::faint);
+        g.setColour(colours::label);
         g.drawText(model.units.value(units::Quantity::torque, maxTorque * static_cast<double>(grid) / 5.0, 0),
                    juce::Rectangle<float>(area.getX() + 4.0F, y - 7.0F, 34.0F, 14.0F),
                    juce::Justification::centredRight);
@@ -208,10 +208,10 @@ void DynoChart::paint(juce::Graphics& g) {
     const auto tooltip = juce::Rectangle<float>(
         std::clamp(mouse.x + 12.0F, plot.getX(), plot.getRight() - tooltipWidth),
         std::max(plot.getY(), mouse.y - 62.0F), tooltipWidth, 56.0F);
-    g.setColour(juce::Colour(0xf00b1110));
-    g.fillRoundedRectangle(tooltip, 6.0F);
+    g.setColour(colours::panelRaised.withAlpha(0.96F));
+    g.fillRoundedRectangle(tooltip, cornerRadius);
     g.setColour(nearestColour);
-    g.drawRoundedRectangle(tooltip, 6.0F, 1.2F);
+    g.drawRoundedRectangle(tooltip, cornerRadius, 1.0F);
     g.setColour(colours::text);
     g.setFont(uiFont(13.0F));
     g.drawFittedText(text, tooltip.reduced(8.0F, 5.0F).toNearestInt(), juce::Justification::centredLeft, 3);
@@ -235,7 +235,7 @@ void RunList::paint(juce::Graphics& g) {
         auto cell = juce::Rectangle<float>(0.0F, static_cast<float>(row * rowHeight),
                                            static_cast<float>(getWidth()), static_cast<float>(rowHeight))
                         .reduced(0.0F, 2.0F);
-        fillCard(g, cell, 8.0F, selected ? colours::panelRaised : colours::panel,
+        fillCard(g, cell, cornerRadius, selected ? colours::panelRaised : colours::panel,
                  selected ? colours::lineHover : colours::line);
         auto content = cell.reduced(10.0F, 0.0F);
         const auto swatch = content.removeFromLeft(12.0F).withSizeKeepingCentre(12.0F, 3.0F);
@@ -272,7 +272,7 @@ DynoPanel::DynoPanel(const DashboardModel& model, std::function<bool()> wheelMod
     runs_.onSelect = [this](int index) { if (onSelectRun) onSelectRun(index); };
     runsPane_.setViewedComponent(&runs_, false);
     runsPane_.forwardWheel = std::move(wheelModifierActive);
-    runName_.setTextToShowWhenEmpty(utf8("Run name"), colours::faint);
+    runName_.setTextToShowWhenEmpty(utf8("Run name"), colours::label);
     runName_.setSelectAllWhenFocused(true);
     runName_.setFont(uiFont(14.0F));
     runName_.setIndents(8, 6);
@@ -368,7 +368,7 @@ void DynoPanel::paint(juce::Graphics& g) {
                                const juce::String& unit, auto display, int decimals) {
         fillCard(g, card);
         auto body = card.reduced(11.0F, 8.0F);
-        g.setColour(colours::faint);
+        g.setColour(colours::label);
         g.setFont(sectionFont());
         g.drawText(label, body.removeFromTop(16.0F), juce::Justification::centredLeft, false);
         const auto value = peak.value > 0.0 ? display(peak.value, decimals) : utf8("\xe2\x80\x94");
@@ -384,14 +384,14 @@ void DynoPanel::paint(juce::Graphics& g) {
                    juce::Justification::centredLeft, true);
     };
     const auto& unitFormat = model_.units;
-    drawPeak(cards.removeFromLeft(cardWidth), "PEAK TORQUE", torque, unitFormat.symbol(units::Quantity::torque),
+    drawPeak(cards.removeFromLeft(cardWidth), "Peak torque", torque, unitFormat.symbol(units::Quantity::torque),
              [&unitFormat](double value, int decimals) { return unitFormat.value(units::Quantity::torque, value, decimals); }, 0);
-    drawPeak(cards.removeFromRight(cardWidth), "PEAK POWER", power, unitFormat.symbol(units::Quantity::power),
+    drawPeak(cards.removeFromRight(cardWidth), "Peak power", power, unitFormat.symbol(units::Quantity::power),
              [&unitFormat](double value, int decimals) { return unitFormat.value(units::Quantity::power, value, decimals); }, 1);
 
     drawSectionLabel(g, runsLabel_, "Saved runs");
     if (model_.archivedRuns.empty()) {
-        g.setColour(colours::faint);
+        g.setColour(colours::label);
         g.setFont(uiFont(14.0F));
         g.drawText(utf8("No saved run yet. A finished dyno run appears here."),
                    runsPane_.getBounds().toFloat(), juce::Justification::centredLeft, true);
