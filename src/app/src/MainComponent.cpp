@@ -120,16 +120,7 @@ MainComponent::MainComponent() {
                   engine.reason + utf8("\n\nCorrect the file, then choose Reload engine (Return) to read the "
                                        "engine files again."));
     };
-    topBar_.abButton.onClick = [this] { switchAbVersion(); };
-    topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
-    topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
-    topBar_.fuelButton.onClick = [this] { showFuelWindow(); };
-    topBar_.equipmentButton.onClick = [this] { showEquipmentWindow(); };
-    topBar_.passByButton.onClick = [this] { showPassByWindow(); };
-    topBar_.vehicleButton.onClick = [this] { showVehicleWindow(); };
-    topBar_.audioButton.onClick = [this] { showAudioWorkshop(); };
-    topBar_.moreButton.onClick = [this] { showMoreMenu(); };
-    topBar_.logButton.onClick = [this] { toggleDatalog(); };
+    topBar_.onMenu = [this](ui::TopMenu menu, juce::Component& anchor) { showTopMenu(menu, anchor); };
 
     controls_.ignition.onClick = [this] {
         if (runtime_) runtime_->setIgnitionEnabled(controls_.ignition.getToggleState());
@@ -570,9 +561,8 @@ bool MainComponent::applyNitrousEdit(const NitrousConfig& kit) {
 void MainComponent::toggleDatalog() {
     if (dataLogger_.recording()) {
         dataLogger_.stop();
-        topBar_.logButton.setEngaged(false);
-        topBar_.logButton.setTooltip(utf8("Datalogger: last log ") + fileOf(dataLogger_.file()).getFullPathName()
-            + " (" + juce::String(static_cast<juce::int64>(dataLogger_.rows())) + " rows). Key 9 starts another.");
+        datalogTooltip_ = utf8("Datalogger: last log ") + fileOf(dataLogger_.file()).getFullPathName()
+            + " (" + juce::String(static_cast<juce::int64>(dataLogger_.rows())) + " rows). Key 9 starts another.";
         return;
     }
     auto name = juce::File::createLegalFileName(utf8(config_.name)).replaceCharacter(' ', '-');
@@ -585,8 +575,7 @@ void MainComponent::toggleDatalog() {
         showError(utf8("Datalogger"), utf8("Cannot write ") + file.getFullPathName());
         return;
     }
-    topBar_.logButton.setEngaged(true);
-    topBar_.logButton.setTooltip(utf8("Recording to ") + file.getFullPathName() + utf8(" (key 9 stops)"));
+    datalogTooltip_ = utf8("Recording to ") + file.getFullPathName() + utf8(" (key 9 stops)");
 }
 
 bool MainComponent::applyEngineEdit(const EngineConfig& requested, double rampSeconds) {
@@ -643,15 +632,11 @@ void MainComponent::switchAbVersion() {
                       issuesText(published.issues) + utf8("\n\nThe engine keeps the tables it was running."));
     }
     abActive_ = next;
-    topBar_.abButton.setButtonText(abActive_ == 0 ? "A" : "B");
-    topBar_.abButton.setEngaged(abActive_ == 1);
 }
 
 void MainComponent::resetAbVersions() {
     abVersions_ = {};
     abActive_ = 0;
-    topBar_.abButton.setButtonText("A");
-    topBar_.abButton.setEngaged(false);
 }
 
 bool MainComponent::applyCamshaftEdit(const EngineConfig& edited, double rampSeconds) {
@@ -1326,61 +1311,75 @@ void MainComponent::showExhaustDesigner() {
 }
 
 void MainComponent::showMoreMenu() {
-    const auto running = runtime_ != nullptr && runtime_->dynoRunning();
+    // Ctrl+M: the first menu; the arrows then walk to the others, so the
+    // keyboard reaches every command (audits UA-07, APP-09).
+    topBar_.openMenu(ui::TopMenu::design);
+}
+
+ui::MenuState MainComponent::menuState() const {
+    ui::MenuState state;
+    state.engineLoaded = runtime_ != nullptr;
+    state.dynoRunning = runtime_ != nullptr && runtime_->dynoRunning();
+    state.savedEngine = selectedPresetIndex_ >= 0
+        && !presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty();
+    state.datalogRecording = dataLogger_.recording();
+    state.abOnB = abActive_ == 1;
+    if (auto* window = findParentComponentOfClass<juce::DocumentWindow>()) state.fullScreen = window->isFullScreen();
+    state.datalogKey = actionMap_.shortcut(AppAction::datalog);
+    state.abKey = actionMap_.shortcut(AppAction::abSwitch);
+    state.dynoKey = actionMap_.shortcut(AppAction::dyno);
+    state.fullScreenKey = actionMap_.shortcut(AppAction::fullscreen);
+    return state;
+}
+
+void MainComponent::showTopMenu(ui::TopMenu which, juce::Component& anchor) {
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     juce::PopupMenu menu;
-    const auto add = [&menu, safe](const juce::String& text, bool enabled, const juce::String& shortcut,
-                                   void (MainComponent::*action)()) {
-        juce::PopupMenu::Item item(text);
-        item.isEnabled = enabled;
-        item.shortcutKeyDescription = shortcut;
-        item.action = [safe, action] { if (safe) (safe.getComponent()->*action)(); };
+    for (const auto& entry : ui::menuEntries(which, menuState())) {
+        if (entry.separatorBefore) menu.addSeparator();
+        if (entry.heading.isNotEmpty()) menu.addSectionHeader(entry.heading);
+        if (entry.subMenu) {
+            juce::PopupMenu units;
+            model_.units.addMenu(units, [safe] { if (safe) safe->unitsChanged(); });
+            menu.addSubMenu(entry.label, units, entry.enabled);
+            continue;
+        }
+        juce::PopupMenu::Item item(entry.label);
+        item.isEnabled = entry.enabled;
+        item.isTicked = entry.ticked;
+        item.shortcutKeyDescription = entry.shortcut;
+        item.action = [safe, id = entry.id] { if (safe) safe->runMenuCommand(id); };
         menu.addItem(std::move(item));
-    };
-    const auto savedEngine = selectedPresetIndex_ >= 0
-        && !presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty();
-    add(savedEngine ? utf8("Save engine") : utf8("Save engine…"), runtime_ != nullptr, utf8("Ctrl+S"),
-        &MainComponent::saveEngine);
-    add(utf8("Save engine as…"), runtime_ != nullptr, utf8("Ctrl+Shift+S"), &MainComponent::saveEngineAs);
-    add(utf8("Delete saved engine…"), savedEngine, {}, &MainComponent::deleteSavedEngine);
-    menu.addSeparator();
-    add(utf8("New engine…"), runtime_ != nullptr && !running, {}, &MainComponent::showEngineDesigner);
-    add(utf8("Edit engine JSON…"), !running, {},
-        static_cast<void (MainComponent::*)()>(&MainComponent::showConfigEditor));
-    add(utf8("Import engine…"), !running, {}, &MainComponent::importEngine);
-    add(utf8("Export engine…"), true, {}, &MainComponent::exportEngine);
-    add(utf8("Export dyno CSV…"), true, {}, &MainComponent::exportDynoCsv);
-    menu.addSeparator();
-    // Every window of the top bar, so the keyboard (and a bar too narrow to
-    // show them all) reaches each one (audits UA-07, APP-09).
-    menu.addSectionHeader(utf8("Windows"));
-    add(utf8("Exhaust designer"), !running, {}, &MainComponent::showExhaustDesigner);
-    add(utf8("Fuel"), true, {}, &MainComponent::showFuelWindow);
-    add(utf8("Equipment"), true, {}, &MainComponent::showEquipmentWindow);
-    add(utf8("Pass-by"), true, {}, &MainComponent::showPassByWindow);
-    add(utf8("Vehicle"), true, {}, &MainComponent::showVehicleWindow);
-    add(utf8("ECU tuner"), !running, {}, &MainComponent::showEcuTuner);
-    add(utf8("Audio workshop"), true, {}, &MainComponent::showAudioWorkshop);
-    add(dataLogger_.recording() ? utf8("Stop the datalog") : utf8("Start a datalog"), true,
-        actionMap_.shortcut(AppAction::datalog), &MainComponent::toggleDatalog);
-    add(utf8("Switch A/B version"), true, actionMap_.shortcut(AppAction::abSwitch), &MainComponent::switchAbVersion);
-    menu.addSeparator();
-    add(utf8("Reload engine"), !running, "Return", &MainComponent::reloadEngine);
-    add(utf8("Key bindings…"), true, {}, &MainComponent::showKeyBindingsEditor);
-    juce::PopupMenu unitsMenu;
-    model_.units.addMenu(unitsMenu, [safe] { if (safe) safe->unitsChanged(); });
-    menu.addSubMenu(utf8("Units"), unitsMenu);
-    juce::PopupMenu::Item fullScreen(utf8("Full screen"));
-    fullScreen.shortcutKeyDescription = actionMap_.shortcut(AppAction::fullscreen);
-    fullScreen.action = [safe] {
-        if (!safe) return;
-        if (auto* window = safe->findParentComponentOfClass<juce::DocumentWindow>())
+    }
+    menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&anchor).withMinimumWidth(230),
+                       [safe](int) { if (safe) safe->topBar_.menuClosed(); });
+}
+
+void MainComponent::runMenuCommand(const juce::String& id) {
+    if (id == "engine.new") showEngineDesigner();
+    else if (id == "window.exhaust") showExhaustDesigner();
+    else if (id == "window.equipment") showEquipmentWindow();
+    else if (id == "window.vehicle") showVehicleWindow();
+    else if (id == "engine.save") saveEngine();
+    else if (id == "engine.saveAs") saveEngineAs();
+    else if (id == "engine.deleteSaved") deleteSavedEngine();
+    else if (id == "engine.import") importEngine();
+    else if (id == "engine.export") exportEngine();
+    else if (id == "engine.editJson") showConfigEditor();
+    else if (id == "engine.reload") reloadEngine();
+    else if (id == "window.ecu") showEcuTuner();
+    else if (id == "window.fuel") showFuelWindow();
+    else if (id == "ab.switch") switchAbVersion();
+    else if (id == "dyno.toggle") toggleDyno();
+    else if (id == "dyno.exportCsv") exportDynoCsv();
+    else if (id == "datalog.toggle") toggleDatalog();
+    else if (id == "window.audio") showAudioWorkshop();
+    else if (id == "window.passBy") showPassByWindow();
+    else if (id == "settings.keyBindings") showKeyBindingsEditor();
+    else if (id == "view.fullScreen") {
+        if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
             window->setFullScreen(!window->isFullScreen());
-    };
-    menu.addItem(std::move(fullScreen));
-    menu.showMenuAsync(juce::PopupMenu::Options {}
-        .withTargetComponent(&topBar_.moreButton)
-        .withMinimumWidth(240));
+    } else jassertfalse; // an entry TopMenus lists and nothing runs
 }
 
 void MainComponent::unitsChanged() {
@@ -2258,8 +2257,6 @@ void MainComponent::timerCallback() {
     collectFinishedRuns();
     const auto running = model_.dynoRunning;
     if (ecuTunerWindow_) ecuTunerWindow_->setSessionLocked(running);
-    topBar_.ecuButton.setEnabled(!running);
-    topBar_.exhaustButton.setEnabled(!running);
     if (fuelWindow_ && fuelWindow_->isVisible()) {
         fuelWindow_->setLocked(running);
         fuelWindow_->setConfig(config_);
@@ -2285,7 +2282,8 @@ void MainComponent::timerCallback() {
 
     // Each panel repaints only its own area; the static chrome does not
     // repaint at all unless its content changed.
-    topBar_.refresh(model_);
+    topBar_.refresh(model_, { controls_.ignition.getToggleState(), dataLogger_.recording(), abActive_ == 1,
+                              datalogTooltip_ });
     controls_.refresh(model_);
     viewport_.refresh();
     pushCameraMicrophones();
@@ -2390,6 +2388,8 @@ void MainComponent::stepUiBench() {
             run.lastProcessCpu = process;
         }
         if (elapsed >= settings.measureSeconds) {
+            static const juce::StringArray menus { "design", "tune", "test", "listen", "more" };
+            if (menus.contains(settings.menu)) topBar_.openMenu(static_cast<ui::TopMenu>(menus.indexOf(settings.menu)));
             if (settings.captureMarker != juce::File()) {
                 const auto scale = juce::Desktop::getInstance().getGlobalScaleFactor();
                 auto* window = toolWindow();

@@ -23,6 +23,7 @@ target_sources(EngineLabApp PRIVATE
     src/EngineViewport.cpp src/EngineScene.cpp src/ReadoutStrip.cpp src/DynoPanel.cpp src/SidePanel.cpp src/StatusBar.cpp
     src/UnitFormat.cpp include/enginelab/app/UnitFormat.hpp
     src/UiBench.cpp include/enginelab/app/UiBench.hpp
+    src/TopMenus.cpp include/enginelab/app/TopMenus.hpp
     include/enginelab/app/MainComponent.hpp include/enginelab/app/ActionMap.hpp
     include/enginelab/app/AudioWorkshopWindow.hpp
     include/enginelab/app/EcuTunerWindow.hpp

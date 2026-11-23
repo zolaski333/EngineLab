@@ -37,6 +37,9 @@ $captures = [ordered]@{
     'window-vehicle'     = "--engine 2JZ --throttle 0 --open vehicle --width 1440 --height 860 $short"
     'window-audio'       = "--engine 2JZ --throttle 0 --open audio --width 1440 --height 860 $short"
     'window-designer'    = "--engine 2JZ --throttle 0 --open designer --width 1440 --height 860 $short"
+    # From the Test cell interface on (the build before has no such menus).
+    'menu-design'        = "--engine 2JZ --throttle 0 --menu design --width 1440 --height 860 $short"
+    'menu-test'          = "--engine 2JZ --dyno --menu test --width 1280 --height 720 $short"
 }
 $costs = [ordered]@{
     'perf-2jz'      = '--engine 2JZ --dyno --tab dyno --width 1440 --height 860 --warmup 8 --seconds 20'

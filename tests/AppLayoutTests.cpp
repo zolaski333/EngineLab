@@ -128,22 +128,51 @@ void checkTheme() {
             "Latin text stays in Barlow Semi Condensed");
 }
 
+// Every command the top bar of 0.13.0 offered (tests/data/ui/commands.txt,
+// "top bar") is in one of the Test cell menus, and only once.
+void checkMenusCoverCommands() {
+    using enginelab::ui::TopMenu;
+    const auto inventory = juce::File(ENGINELAB_CATALOG_ROOT).getChildFile("tests/data/ui/commands.txt");
+    require(inventory.existsAsFile(), "the command inventory exists");
+    juce::StringArray listed;
+    for (const auto menu : { TopMenu::design, TopMenu::tune, TopMenu::test, TopMenu::listen, TopMenu::more })
+        for (const auto& entry : enginelab::ui::menuEntries(menu, {})) {
+            require(!listed.contains(entry.id), "a command is in one menu only: " + entry.id.toStdString());
+            listed.add(entry.id);
+        }
+    juce::StringArray lines;
+    lines.addLines(inventory.loadFileAsString());
+    auto topBarCommands = 0;
+    for (const auto& line : lines) {
+        if (line.trim().isEmpty() || line.trimStart().startsWithChar('#')) continue;
+        const auto id = line.upToFirstOccurrenceOf("|", false, false).trim();
+        const auto where = line.fromFirstOccurrenceOf("|", false, false).trim();
+        if (!where.startsWith("top bar") || id == "engine.pick") continue;
+        ++topBarCommands;
+        require(listed.contains(id), "the command " + id.toStdString() + " of the 0.13.0 top bar is in a menu");
+    }
+    require(topBarCommands >= 20, "the inventory lists the top bar's commands");
+}
+
 void checkTopBar() {
     enginelab::ui::TopBar bar;
-    for (const auto width : { 1280, 1440, 1920 }) {
+    // 1024 is a 1280 px window at 125 %.
+    for (const auto width : { 1024, 1280, 1440, 1920, 2560 }) {
         bar.setBounds(0, 0, width, enginelab::ui::TopBar::height);
-        std::vector<juce::Component*> buttons;
+        std::vector<juce::Component*> parts;
         for (auto* child : bar.getChildren())
-            if (child->isVisible() && dynamic_cast<enginelab::ui::ActionButton*>(child) != nullptr)
-                buttons.push_back(child);
-        require(buttons.size() >= 2, "the top bar shows its menu and tools");
-        for (std::size_t a = 0; a < buttons.size(); ++a) {
-            require(bar.getLocalBounds().contains(buttons[a]->getBounds()), "a tool button stays in the bar");
-            for (std::size_t b = a + 1; b < buttons.size(); ++b)
-                require(!buttons[a]->getBounds().intersects(buttons[b]->getBounds()),
-                        "at " + std::to_string(width) + " px two tool buttons do not overlap (audit APP-09)");
+            if (child->isVisible()) parts.push_back(child);
+        require(parts.size() == 6, "the plate and the five menus are always shown");
+        for (std::size_t a = 0; a < parts.size(); ++a) {
+            require(bar.getLocalBounds().contains(parts[a]->getBounds()), "a menu stays in the bar");
+            require(!parts[a]->getBounds().intersects(bar.lampsArea()),
+                    "at " + std::to_string(width) + " px the lamps leave the menus and the plate alone");
+            for (std::size_t b = a + 1; b < parts.size(); ++b)
+                require(!parts[a]->getBounds().intersects(parts[b]->getBounds()),
+                        "at " + std::to_string(width) + " px two menus do not overlap (audit APP-09)");
         }
-        if (width == 1920) require(buttons.size() == 10, "a wide bar shows every tool button");
+        if (width >= 1440) require(bar.shownLampCount() == 11, "a wide bar shows every lamp");
+        require(bar.shownLampCount() >= 6, "even a short bar keeps the essential lamps");
         if (width == 1280) snapshot(bar, "topbar-1280.png");
     }
 }
@@ -199,6 +228,7 @@ int main() {
     require(!catalog.entries.empty(), "catalog loads");
     checkActionMap();
     checkKeymapUnchanged();
+    checkMenusCoverCommands();
     checkTopBar();
     checkTelemetry(catalog);
     checkReadouts(catalog);

@@ -189,6 +189,9 @@ private:
     /** A line in the 3-D view's inspector and in the Fuel window. */
     void setEditStatus(const juce::String&);
     void showMoreMenu();
+    [[nodiscard]] ui::MenuState menuState() const;
+    void showTopMenu(ui::TopMenu, juce::Component& anchor);
+    void runMenuCommand(const juce::String& id);
     /** `--ui-bench` (UiBench.hpp): the scripted scene, one step per tick. */
     void stepUiBench();
     std::optional<ui::UiBenchSettings> bench_;
@@ -254,6 +257,8 @@ private:
     /** The one not running is kept here; empty until first switched to. */
     std::array<std::optional<AbVersion>, 2> abVersions_;
     std::size_t abActive_ { 0 };
+    /** The datalog lamp's tooltip: where the log goes, or went. */
+    juce::String datalogTooltip_;
     /** Runs the other A/B version: live where the edit allows, instantly. */
     void switchAbVersion();
     void resetAbVersions();

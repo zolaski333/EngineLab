@@ -530,6 +530,7 @@ add_executable(EngineLabAppLayoutTests
     "${CMAKE_SOURCE_DIR}/src/app/src/SidePanel.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/Theme.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/TopBar.cpp"
+    "${CMAKE_SOURCE_DIR}/src/app/src/TopMenus.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/UnitFormat.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/src/Widgets.cpp")
 target_include_directories(EngineLabAppLayoutTests PRIVATE
