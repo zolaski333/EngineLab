@@ -2302,6 +2302,17 @@ void MainComponent::stepUiBench() {
     const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
     const auto elapsed = now - run.phaseStartWall;
     const auto next = [&run, now] { ++run.phase; run.phaseStartWall = now; };
+    // The tool window the scene opened: brought above the main window (which
+    // stays on top for the capture) and captured instead of it.
+    const auto toolWindow = [this]() -> juce::TopLevelWindow* {
+        auto* main = findParentComponentOfClass<juce::TopLevelWindow>();
+        for (int index = 0; index < juce::TopLevelWindow::getNumTopLevelWindows(); ++index) {
+            auto* window = juce::TopLevelWindow::getTopLevelWindow(index);
+            if (window != nullptr && window != main && window->isVisible() && window->isOnDesktop())
+                return window;
+        }
+        return nullptr;
+    };
     switch (run.phase) {
     case 0: {
         juce::Desktop::getInstance().setGlobalScaleFactor(settings.scale);
@@ -2345,6 +2356,10 @@ void MainComponent::stepUiBench() {
             else if (settings.open == "vehicle") showVehicleWindow();
             else if (settings.open == "audio") showAudioWorkshop();
             else if (settings.open == "designer") showEngineDesigner();
+            if (auto* window = toolWindow()) {
+                window->setAlwaysOnTop(true);
+                window->toFront(true);
+            }
             if (settings.dyno && runtime_ && !runtime_->dynoRunning()) runtime_->startDyno();
             run.lastSampleWall = now;
             run.lastThreadCpu = ui::currentThreadCpuSeconds();
@@ -2373,7 +2388,10 @@ void MainComponent::stepUiBench() {
         if (elapsed >= settings.measureSeconds) {
             if (settings.captureMarker != juce::File()) {
                 const auto scale = juce::Desktop::getInstance().getGlobalScaleFactor();
-                const auto bounds = getScreenBounds().toFloat() * scale;
+                auto* window = toolWindow();
+                if (window != nullptr) window->toFront(false);
+                const auto bounds = (window != nullptr ? window->getScreenBounds() : getScreenBounds()).toFloat()
+                    * scale;
                 (void)settings.captureMarker.replaceWithText(
                     juce::String(juce::roundToInt(bounds.getX())) + " " + juce::String(juce::roundToInt(bounds.getY()))
                     + " " + juce::String(juce::roundToInt(bounds.getWidth())) + " "
