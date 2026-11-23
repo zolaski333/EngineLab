@@ -24,7 +24,7 @@ ControlPanel::ControlPanel() {
     dyno.setTooltip(utf8("Automatic dyno run (H holds the engine speed, 6 arms the continuous ramp)"));
     for (auto* button : { &ignition, &starter, &dyno }) addAndMakeVisible(*button);
 
-    throttle.setSliderStyle(juce::Slider::LinearBarVertical);
+    throttle.setSliderStyle(juce::Slider::LinearVertical);
     throttle.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
     throttle.setRange(0.0, 100.0, 1.0);
     throttle.setWantsKeyboardFocus(false);
@@ -280,31 +280,52 @@ void ControlPanel::sliderValueChanged(juce::Slider*) {
 }
 
 void ControlPanel::paint(juce::Graphics& g) {
-    g.fillAll(colours::background);
+    g.fillAll(colours::panel);
     g.setColour(colours::line);
     g.fillRect(getLocalBounds().removeFromRight(1));
+    for (const auto rule : groupRules_)
+        g.fillRect(0.0F, rule, static_cast<float>(getWidth() - 1), 1.0F);
     drawSectionLabel(g, engineLabel_, "Engine");
     drawSectionLabel(g, throttleLabel_, "Throttle");
     drawSectionLabel(g, driveLabel_, "Drive");
-    const auto speedFont = monoFont(32.0F);
-    const auto speedWidth = juce::GlyphArrangement::getStringWidth(speedFont, speedText_);
+
+    // The speed in big figures, its unit beside it.
+    const auto bigFont = monoFont(30.0F);
+    const auto speedWidth = juce::GlyphArrangement::getStringWidth(bigFont, speedText_);
     g.setColour(colours::text);
-    g.setFont(speedFont);
-    g.drawText(speedText_, speedValue_, juce::Justification::topLeft, false);
-    g.setColour(colours::muted);
+    g.setFont(bigFont);
+    g.drawText(speedText_, speedValue_, juce::Justification::centredLeft, false);
+    g.setColour(colours::label);
     g.setFont(uiFont(14.0F));
-    g.drawText(speedUnit_, speedValue_.withTrimmedLeft(speedWidth + 5.0F).withTrimmedTop(12.0F),
-               juce::Justification::topLeft, true);
+    g.drawText(speedUnit_, speedValue_.withTrimmedLeft(speedWidth + 5.0F).withTrimmedTop(8.0F),
+               juce::Justification::centredLeft, true);
     auto lines = tripText_;
-    g.setFont(uiFont(13.5F));
+    g.setColour(colours::muted);
+    g.setFont(uiFont(14.5F));
     g.drawFittedText(driveDetail_, lines.removeFromTop(lines.getHeight() * 0.5F).toNearestInt(),
                      juce::Justification::centredLeft, 1, 0.8F);
-    g.setColour(colours::faint);
+    g.setColour(colours::label);
     g.drawFittedText(tripDetail_, lines.toNearestInt(), juce::Justification::centredLeft, 1, 0.8F);
+
+    // The throttle's opening, and the fader's scale on its left.
+    const auto opening = fixed(throttle.getValue(), 0);
     g.setColour(throttle.isEnabled() ? colours::text : colours::muted);
-    g.setFont(monoFont(32.0F));
-    g.drawText(fixed(throttle.getValue(), 0) + " %", throttleValue_,
-               juce::Justification::topLeft, false);
+    g.setFont(bigFont);
+    g.drawText(opening, throttleValue_, juce::Justification::centredLeft, false);
+    g.setColour(colours::label);
+    g.setFont(uiFont(14.0F));
+    g.drawText("%", throttleValue_.withTrimmedLeft(juce::GlyphArrangement::getStringWidth(bigFont, opening) + 5.0F)
+                        .withTrimmedTop(8.0F),
+               juce::Justification::centredLeft, false);
+    g.setFont(monoFont(11.0F, false));
+    // As the slider places its thumb: its travel is inset by the thumb's radius.
+    const auto travel = throttle.getBounds().toFloat().reduced(0.0F, 6.0F);
+    for (const auto mark : { 0, 20, 50, 100 }) {
+        const auto level = std::round(travel.getBottom() - travel.getHeight() * static_cast<float>(mark) * 0.01F);
+        const auto box = juce::Rectangle<float>(travel.getX() - 32.0F, level - 7.0F, 24.0F, 14.0F);
+        g.drawText(juce::String(mark), box, juce::Justification::centredRight, false);
+        g.fillRect(box.getRight() + 3.0F, level, 4.0F, 1.0F);
+    }
     drawSectionLabel(g, trimsHeader_, juce::String("Calibration trims  ") + (trimsOpen_ ? utf8("\xe2\x80\x93") : "+"));
 }
 
@@ -323,29 +344,48 @@ int ControlPanel::arrange(bool apply) {
     const auto mark = [apply](juce::Rectangle<float>& member, juce::Rectangle<int> bounds) {
         if (apply) member = bounds.toFloat();
     };
-    auto area = getLocalBounds().withHeight(100000).reduced(16);
-    mark(engineLabel_, area.removeFromTop(22));
-    for (auto* button : { &ignition, &starter, &dyno }) {
-        place(*button, area.removeFromTop(42));
-        area.removeFromTop(8);
-    }
-    area.removeFromTop(10);
-    mark(throttleLabel_, area.removeFromTop(22));
-    auto throttleRow = area.removeFromTop(150);
-    place(throttle, throttleRow.removeFromLeft(44));
+    if (apply) groupRules_.clear();
+    auto area = getLocalBounds().withHeight(100000).reduced(14, 0);
+    // A group: a hairline above it (but the first), its heading, its controls.
+    const auto startGroup = [&area, &mark, apply, this](juce::Rectangle<float>& label) {
+        if (area.getY() > 0 && apply) groupRules_.push_back(static_cast<float>(area.getY()));
+        area.removeFromTop(12);
+        mark(label, area.removeFromTop(18));
+        area.removeFromTop(6);
+    };
+
+    startGroup(engineLabel_);
+    place(ignition, area.removeFromTop(36));
+    area.removeFromTop(6);
+    place(starter, area.removeFromTop(36));
+    area.removeFromTop(6);
+    place(dyno, area.removeFromTop(36));
+    area.removeFromTop(14);
+
+    startGroup(throttleLabel_);
+    auto throttleRow = area.removeFromTop(156);
+    throttleRow.removeFromLeft(34); // the fader's scale
+    place(throttle, throttleRow.removeFromLeft(38));
     throttleRow.removeFromLeft(12);
-    mark(throttleValue_, throttleRow.removeFromTop(40));
-    auto presets = throttleRow.removeFromBottom(66);
-    auto topPresets = presets.removeFromTop(30);
-    auto bottomPresets = presets.removeFromBottom(30);
+    mark(throttleValue_, throttleRow.removeFromTop(36));
+    auto presets = throttleRow.removeFromBottom(64);
+    auto topPresets = presets.removeFromTop(29);
+    auto bottomPresets = presets.removeFromBottom(29);
     const auto half = (topPresets.getWidth() - 6) / 2;
     place(throttleIdle, topPresets.removeFromLeft(half));
     place(throttleLow, topPresets.removeFromRight(half));
     place(throttleMid, bottomPresets.removeFromLeft(half));
     place(throttleFull, bottomPresets.removeFromRight(half));
     area.removeFromTop(14);
-    mark(driveLabel_, area.removeFromTop(22));
-    mark(speedValue_, area.removeFromTop(38));
+
+    startGroup(driveLabel_);
+    {
+        // The speed, and the trip's reset on its right.
+        auto row = area.removeFromTop(34);
+        const auto resetWidth = resetTrip.idealWidth();
+        place(resetTrip, row.removeFromRight(resetWidth).withSizeKeepingCentre(resetWidth, 26));
+        mark(speedValue_, row);
+    }
     mark(tripText_, area.removeFromTop(36));
     area.removeFromTop(6);
     const auto pair = [&area, &place](ActionButton& left, ActionButton& right) {
@@ -355,33 +395,17 @@ int ControlPanel::arrange(bool apply) {
         place(right, row.removeFromRight(halfWidth));
         area.removeFromTop(6);
     };
-    {
-        // Gear down, Auto, Gear up on one row.
-        auto row = area.removeFromTop(30);
-        const auto third = (row.getWidth() - 12) / 3;
-        place(gearDown, row.removeFromLeft(third));
-        place(gearUp, row.removeFromRight(third));
-        place(automatic, row.reduced(6, 0));
-        area.removeFromTop(6);
-    }
+    pair(gearDown, gearUp);
+    pair(automatic, cruise);
     pair(brake, clutch);
-    pair(cruise, resetTrip);
-    if (engineBrake.isVisible()) {
-        place(engineBrake, area.removeFromTop(30));
+    for (auto* fitted : { &engineBrake, &exhaustValve, &nitrous, &antiLag }) {
+        if (!fitted->isVisible()) continue;
+        place(*fitted, area.removeFromTop(30));
         area.removeFromTop(6);
     }
-    if (exhaustValve.isVisible()) {
-        place(exhaustValve, area.removeFromTop(30));
-        area.removeFromTop(6);
-    }
-    if (nitrous.isVisible()) {
-        place(nitrous, area.removeFromTop(30));
-        area.removeFromTop(6);
-    }
-    if (antiLag.isVisible()) {
-        place(antiLag, area.removeFromTop(30));
-        area.removeFromTop(6);
-    }
+    area.removeFromTop(8);
+
+    if (apply) groupRules_.push_back(static_cast<float>(area.getY()));
     area.removeFromTop(8);
     mark(trimsHeader_, area.removeFromTop(22));
     area.removeFromTop(4);
@@ -390,7 +414,7 @@ int ControlPanel::arrange(bool apply) {
         area.removeFromTop(10);
         place(sparkTrim, area.removeFromTop(SliderRow::preferredHeight));
     }
-    return area.getY() + 16;
+    return area.getY() + 12;
 }
 
 void ControlPanel::resized() { (void)arrange(true); }

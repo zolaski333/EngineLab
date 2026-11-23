@@ -15,7 +15,9 @@ namespace enginelab::ui {
     shows a lamp on its left: lit when on, dark when off. */
 class ActionButton final : public juce::Button {
 public:
-    enum class Style { standard, primary, tool, compact };
+    /** `toggleSwitch` draws a track and knob instead of a lamp (the
+        ignition); `momentary` inverts while held or engaged (the starter). */
+    enum class Style { standard, primary, tool, compact, toggleSwitch, momentary };
 
     explicit ActionButton(const juce::String& label = {}, Style = Style::standard);
     void setStyle(Style);

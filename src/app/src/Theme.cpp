@@ -356,22 +356,37 @@ void LookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, int width, i
     const auto area = juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(y),
                                              static_cast<float>(width), static_cast<float>(height));
     const auto alpha = slider.isEnabled() ? 1.0F : 0.45F;
-    if (style == juce::Slider::LinearBarVertical) {
-        // The throttle: a recessed slot filled from the bottom in a neutral
-        // grey, its level a bright hairline. Colour stays for data.
-        const auto frame = slider.getLocalBounds().toFloat().reduced(0.5F);
+    if (style == juce::Slider::LinearVertical || style == juce::Slider::LinearBarVertical) {
+        // The throttle: a fader. A recessed slot ruled every 10 %, filled
+        // from the bottom in a neutral grey, and a light cap wider than the
+        // slot at the opening. Colour stays for data.
+        // The travel (x, y, width, height) is inset by the thumb radius: the cap fits inside.
+        const auto bounds = area.withX(static_cast<float>(slider.getLocalBounds().getX()))
+            .withWidth(static_cast<float>(slider.getWidth()));
+        const auto capOverhang = 5.0F;
+        const auto frame = bounds.reduced(capOverhang, 0.0F).reduced(0.5F);
         g.setColour(colours::well);
         g.fillRoundedRectangle(frame, cornerRadius);
-        const auto fillTop = std::clamp(sliderPos, frame.getY(), frame.getBottom());
-        const auto fill = frame.reduced(1.0F, 0.0F).withTop(fillTop).withTrimmedBottom(1.0F);
+        g.setColour(colours::line);
+        for (int step = 1; step < 10; ++step) {
+            const auto rule = frame.getBottom() - frame.getHeight() * static_cast<float>(step) * 0.1F;
+            g.fillRect(frame.getX() + 1.0F, std::round(rule), frame.getWidth() - 2.0F, 1.0F);
+        }
+        const auto level = std::clamp(sliderPos, frame.getY(), frame.getBottom());
+        const auto fill = frame.reduced(1.0F, 0.0F).withTop(level).withTrimmedBottom(1.0F);
         if (fill.getHeight() > 0.5F) {
-            g.setColour(colours::selection.withMultipliedAlpha(alpha));
+            g.setColour(colours::text.withAlpha(0.14F * alpha));
             g.fillRect(fill);
-            g.setColour(colours::text.withMultipliedAlpha(alpha));
-            g.fillRect(fill.withHeight(2.0F));
         }
         g.setColour(slider.isMouseOverOrDragging() ? colours::lineHover : colours::lineStrong);
         g.drawRoundedRectangle(frame, cornerRadius, 1.0F);
+        const auto cap = juce::Rectangle<float>(bounds.getX(), level - 6.0F, bounds.getWidth(), 12.0F);
+        g.setColour(juce::Colours::black.withAlpha(0.45F));
+        g.fillRoundedRectangle(cap.translated(0.0F, 2.0F), 1.0F);
+        g.setColour((slider.isMouseOverOrDragging() ? juce::Colours::white : colours::text).withMultipliedAlpha(alpha));
+        g.fillRoundedRectangle(cap, 1.0F);
+        g.setColour(colours::ink);
+        g.fillRect(cap.reduced(6.0F, 0.0F).withSizeKeepingCentre(cap.getWidth() - 12.0F, 2.0F));
         return;
     }
     if (!slider.isHorizontal()) {
@@ -414,6 +429,8 @@ juce::Typeface::Ptr LookAndFeel::getTypefaceForFont(const juce::Font& font) {
 }
 
 int LookAndFeel::getSliderThumbRadius(juce::Slider& slider) {
+    // A vertical fader's cap is 12 px tall: its travel stops 6 px short of each end.
+    if (slider.getSliderStyle() == juce::Slider::LinearVertical) return 6;
     return slider.getSliderStyle() == juce::Slider::LinearBarVertical ? 0 : 7;
 }
 

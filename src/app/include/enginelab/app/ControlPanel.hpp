@@ -4,6 +4,7 @@
 #include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/Widgets.hpp>
 #include <functional>
+#include <vector>
 
 namespace enginelab::ui {
 
@@ -51,8 +52,8 @@ public:
     /** Called when the anti-lag switch is clicked. */
     std::function<void()> onAntiLagToggle;
 
-    ActionButton ignition { "Ignition" };
-    ActionButton starter { "Starter" };
+    ActionButton ignition { "Ignition", ActionButton::Style::toggleSwitch };
+    ActionButton starter { "Starter", ActionButton::Style::momentary };
     ActionButton dyno { "Start dyno", ActionButton::Style::primary };
     juce::Slider throttle;
     ActionButton throttleIdle { percentLabel(1), ActionButton::Style::compact };
@@ -112,6 +113,8 @@ private:
     juce::String driveDetail_;
     juce::String tripDetail_;
     juce::Rectangle<float> trimsHeader_;
+    /** The hairlines between the groups (Engine, Throttle, Drive, trims). */
+    std::vector<float> groupRules_;
     bool trimsOpen_ { false };
     std::uint32_t engineBrakeStages_ { 0 };
     std::uint32_t engineBrakeStage_ { 0 };

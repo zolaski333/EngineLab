@@ -13,6 +13,8 @@ namespace {
 [[nodiscard]] juce::Font buttonFont(ActionButton::Style style) {
     switch (style) {
     case ActionButton::Style::standard:
+    case ActionButton::Style::toggleSwitch:
+    case ActionButton::Style::momentary:
     case ActionButton::Style::primary: return uiMediumFont(15.5F);
     case ActionButton::Style::tool: return uiMediumFont(15.0F);
     case ActionButton::Style::compact: return uiMediumFont(14.5F);
@@ -26,6 +28,28 @@ namespace {
 
 constexpr float lampSize = 7.0F;
 constexpr float lampGap = 8.0F;
+constexpr float trackWidth = 26.0F;
+constexpr float trackGap = 10.0F;
+
+/** The lamp on the left of a button that carries a state; a switch and a
+    momentary key show their state otherwise. */
+[[nodiscard]] bool showsLamp(ActionButton::Style style) {
+    return style != ActionButton::Style::primary && style != ActionButton::Style::toggleSwitch
+        && style != ActionButton::Style::momentary;
+}
+
+/** A toggle switch's track and knob: the knob right and the track lit when on. */
+void drawSwitch(juce::Graphics& g, juce::Rectangle<float> area, bool on) {
+    const auto track = area.withSizeKeepingCentre(trackWidth, 14.0F);
+    g.setColour(on ? colours::text : colours::well);
+    g.fillRoundedRectangle(track, 7.0F);
+    g.setColour(on ? colours::text : colours::lineHover);
+    g.drawRoundedRectangle(track.reduced(0.5F), 6.5F, 1.0F);
+    const auto knob = juce::Rectangle<float>(8.0F, 8.0F)
+        .withCentre({ on ? track.getRight() - 7.0F : track.getX() + 7.0F, track.getCentreY() });
+    g.setColour(on ? colours::ink : colours::label);
+    g.fillEllipse(knob);
+}
 } // namespace
 
 void drawLamp(juce::Graphics& g, juce::Rectangle<float> area, bool lit, juce::Colour colour) {
@@ -76,7 +100,8 @@ void ActionButton::setEngaged(bool engaged) {
 
 int ActionButton::idealWidth() const {
     auto width = textWidth(buttonFont(style_), getButtonText()) + 24.0F;
-    if ((stateful_ || isToggleable()) && style_ != Style::primary) width += lampSize + lampGap;
+    if ((stateful_ || isToggleable()) && showsLamp(style_)) width += lampSize + lampGap;
+    if (style_ == Style::toggleSwitch) width += trackWidth + trackGap;
     if (!icon_.isEmpty()) width += getButtonText().isEmpty() ? 15.0F : 22.0F;
     if (keyCap_.isNotEmpty()) width += keyCapWidth(keyCap_) + 10.0F;
     return static_cast<int>(std::ceil(width));
@@ -107,6 +132,12 @@ void ActionButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
         g.setColour(colours::warn.withMultipliedAlpha(highlighted ? alpha : alpha * 0.75F));
         g.drawRoundedRectangle(bounds, radius, 1.0F);
         textColour = colours::warn;
+    } else if (style_ == Style::momentary && (on || down)) {
+        // Held: the key is pressed in, inverted like a lit key.
+        g.setColour(colours::text.withMultipliedAlpha(alpha));
+        g.fillRoundedRectangle(bounds, radius);
+        textColour = colours::ink;
+        onAccent = true;
     } else {
         auto fill = on ? colours::panelRaised : colours::panel;
         if (highlighted || down) fill = colours::selection;
@@ -116,15 +147,21 @@ void ActionButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
         g.setColour((highlighted ? colours::lineHover : (on ? colours::lineHover : colours::lineStrong))
             .withMultipliedAlpha(alpha));
         g.drawRoundedRectangle(bounds, radius, 1.0F);
-        if (!on) textColour = colours::muted;
+        if (!on && style_ != Style::momentary) textColour = colours::muted;
     }
 
     auto content = bounds.reduced(style_ == Style::compact ? 8.0F : 12.0F, 0.0F);
-    if ((stateful_ || isToggleable()) && style_ != Style::primary) {
+    if ((stateful_ || isToggleable()) && showsLamp(style_)) {
         juce::Graphics::ScopedSaveState state(g);
         g.setOpacity(alpha);
         drawLamp(g, content.removeFromLeft(lampSize), on, colours::ok);
         content.removeFromLeft(lampGap);
+    }
+    if (style_ == Style::toggleSwitch) {
+        juce::Graphics::ScopedSaveState state(g);
+        g.setOpacity(alpha);
+        drawSwitch(g, content.removeFromLeft(trackWidth), on);
+        content.removeFromLeft(trackGap);
     }
     if (keyCap_.isNotEmpty()) {
         const auto capWidth = keyCapWidth(keyCap_);
