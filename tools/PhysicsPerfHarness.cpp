@@ -202,7 +202,7 @@ StepMetrics measurePoint(
  * changes the solver substep structure, so read trends and ratios from it and
  * take absolute figures from the swept CSV.
  */
-void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
+bool traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                  double throttle, bool freeIdle, bool watchSettle,
                  double exhaustCellMm, double settleSeconds) {
     auto config = baseConfig;
@@ -251,6 +251,18 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
     if (watchSettle)
         std::cout << "t_s,rpm,map_kpa,throttle,afr,fuel_mg,misfire,irt_c,net_nm,cylp_bar,"
                      "boost,wastegate,shaft_krpm,turbine_kw,back_kpa,cycle_nm,compressor_kw\n";
+    // A dyno trace starts as DynoSweepHarness starts every engine: 1.5 s of
+    // starter at 55 % throttle, then 0.5 s on its own, before the hold. A
+    // start at full throttle never caught a V3 with a 23 mm tail pipe (974
+    // rpm; audit 2026-11-24, O-2) that the sweep runs at every speed, and the
+    // trace dumped that stalled engine's cycle as if it were the point asked.
+    if (!freeIdle) {
+        for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
+            const auto time = static_cast<double>(step) * dt;
+            (void)simulator.step(dt, { true, time < 1.5, 0.55, 0.0 });
+        }
+        absorber.reset(simulator.state().rpm, simulator.state().torqueNm);
+    }
     // `--settle S` holds longer before the cycle is dumped: a turbo diesel's
     // boost is still rising after the default 4 s.
     const auto holdSeconds = settleSeconds > 0.0 ? settleSeconds : freeIdle ? 12.0 : 4.0;
@@ -274,6 +286,13 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                       << ',' << frame.state.cycleAveragedTorqueNm
                       << ',' << frame.state.compressorPowerKw << '\n';
         }
+    }
+    // A dyno trace of an engine that is not at the speed asked is not that
+    // point: say so and dump nothing.
+    if (!freeIdle && std::abs(simulator.state().rpm - targetRpm) > 0.1 * targetRpm) {
+        std::cerr << "trace: the engine runs at " << simulator.state().rpm
+                  << " rpm after the hold, not the " << targetRpm << " asked; no cycle dumped\n";
+        return false;
     }
     for (std::size_t index = 0;
          index < simulator.state().cylinderStateCount; ++index) {
@@ -335,6 +354,7 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                   << ',' << c.directDispersingFuelMg
                   << ',' << c.injectorCapacityRatio << '\n';
     }
+    return true;
 }
 
 /**
@@ -741,9 +761,9 @@ int main(int argc, char** argv) {
     std::cout << std::fixed << std::setprecision(3);
     // --trace is a single-engine instrument: pair it with --filter.
     if (traceRpm > 0.0) {
-        traceEngine(engines.front(), traceRpm, traceThrottle, traceFreeIdle, traceWatch,
-                    traceExhaustCellMm, settleGiven ? freeRevSettleSeconds : 0.0);
-        return EXIT_SUCCESS;
+        return traceEngine(engines.front(), traceRpm, traceThrottle, traceFreeIdle, traceWatch,
+                   traceExhaustCellMm, settleGiven ? freeRevSettleSeconds : 0.0)
+            ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (freeRevThrottle >= 0.0) {
         traceFreeRev(engines.front(), freeRevThrottle, freeRevSeconds,

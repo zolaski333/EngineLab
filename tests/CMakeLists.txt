@@ -653,6 +653,16 @@ if(TARGET EngineLabDynoSweepHarness)
         FIXTURES_REQUIRED SavedEcuEngine
         PASS_REGULAR_EXPRESSION "-4 deg on the saved ECU's [0-9]+ spark cells")
 endif()
+if(TARGET EngineLabPhysicsPerfHarness)
+    # A trace whose engine is not at the speed asked dumps nothing and says
+    # so: one that never caught was dumped as the point (audit 2026-11-24,
+    # O-2). 20,000 rpm is past the RD350's limiter.
+    add_test(NAME EngineLab.ToolArguments.TraceOffTarget
+        COMMAND EngineLabPhysicsPerfHarness --catalog-root "${CMAKE_SOURCE_DIR}"
+            --filter RD350LC --trace 20000 --settle 1)
+    set_tests_properties(EngineLab.ToolArguments.TraceOffTarget PROPERTIES
+        PASS_REGULAR_EXPRESSION "not the 20000 asked. no cycle dumped")
+endif()
 if(TARGET EngineLabSceneExport)
     # An index that cannot be written (a folder in its place) fails the
     # export (audit RT-06).
