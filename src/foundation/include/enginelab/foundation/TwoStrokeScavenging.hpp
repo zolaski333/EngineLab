@@ -159,29 +159,7 @@ inline void closeScavengeWindow(TwoStrokeScavengeState& state) noexcept {
     return 1.0 - std::exp(-deliveryRatio);
 }
 
-/** Densities (any consistent unit) of the four species at the exhaust port,
- * biased towards burned gas by a scavenging window's `mixedFraction`.
- *
- * Only the composition is biased, never the total: the sum of the four is
- * preserved exactly, and the caller presents the cell's own energy density
- * unchanged. That is deliberate. The pressure and temperature at the boundary
- * drive the flow; this model says what the gas leaving *is*, not how much of
- * it leaves. Biasing the energy density too would change the mass flow the
- * orifice produces, which is a different claim and one this measurement cannot
- * support.
- *
- * `fuel` and `oxygen` are the only unambiguous markers of fresh charge --
- * `inert` is nitrogen, which fresh air and burned gas both carry, so it cannot
- * be attributed to either. So the bias keeps back fresh charge in proportion to
- * `mixedFraction` and makes the missing mass up from inert and burned in the
- * ratio the cylinder already holds them.
- *
- * The guard matters for cranking and the first cycles: if the cylinder holds
- * less burned gas than the fresh charge being held back, there is nothing to
- * displace *with*, and the bias is reduced to what the burned gas can cover
- * rather than inventing mass. Without it the inventory delta would be rejected
- * and `solverResolutionLimited` would latch on every start.
- */
+/** Four species in one consistent unit: mass fractions at the exhaust port. */
 struct ScavengeOutflowDensities final {
     double oxygen { 0.0 };
     double inert { 0.0 };
@@ -189,26 +167,102 @@ struct ScavengeOutflowDensities final {
     double burned { 0.0 };
 };
 
-[[nodiscard]] inline ScavengeOutflowDensities biasedOutflowDensities(
-    double oxygen, double inert, double fuel, double burned,
-    double mixedFraction) noexcept {
-    const ScavengeOutflowDensities unbiased { oxygen, inert, fuel, burned };
-    const auto mixed = std::clamp(mixedFraction, 0.0, 1.0);
-    if (mixed >= 1.0) return unbiased;
-    const auto fresh = oxygen + fuel;
-    const auto residual = inert + burned;
-    if (!(fresh > 0.0) || !(residual > 0.0)) return unbiased;
-    // What the fresh charge gives up, capped at what the burned gas can
-    // replace: a displacement needs something to displace with.
-    const auto shortfall = std::min((1.0 - mixed) * fresh, residual);
-    const auto keptShare = 1.0 - shortfall / fresh;
-    const auto residualScale = 1.0 + shortfall / residual;
+/** The gas the cylinder held when its transfer ports opened, tracked as its
+ * own inventory through the window (Benson-Brandham's "original contents").
+ *
+ * Displacement is a claim about WHICH gas leaves: the cylinder's previous
+ * contents before the delivered charge. A single well-mixed cell cannot say
+ * which molecules those are -- nitrogen in particular belongs to fresh air and
+ * to residual alike -- so the zone is carried explicitly: its species masses
+ * are set from the cylinder when the window opens, drawn down by whatever
+ * leaves through either port, and topped up by exhaust gas the pipe pushes
+ * back in. Its composition is therefore the residual's own, measured, with no
+ * stoichiometric ratio assumed: a lean residual keeps its oxygen, a rich one
+ * its fuel.
+ *
+ * The delivered charge is everything else in the cylinder. Backflow from the
+ * crankcase is part of the delivery stream even if it carries burned gas
+ * pushed into the transfers earlier, which is how the two-zone models count
+ * it (Blair 1996, ch. 3; Benson & Brandham 1969).
+ */
+struct ScavengeResidualZone final {
+    double oxygenKg { 0.0 };
+    double inertKg { 0.0 };
+    double fuelKg { 0.0 };
+    double burnedKg { 0.0 };
+
+    [[nodiscard]] constexpr double massKg() const noexcept {
+        return oxygenKg + inertKg + fuelKg + burnedKg;
+    }
+};
+
+/** Scale the zone by `keep` in [0, 1]: a draw at its own composition. */
+inline void scaleResidualZone(ScavengeResidualZone& zone, double keep) noexcept {
+    const auto k = std::clamp(keep, 0.0, 1.0);
+    zone.oxygenKg *= k;
+    zone.inertKg *= k;
+    zone.fuelKg *= k;
+    zone.burnedKg *= k;
+}
+
+/** Share of the exhaust outflow drawn from the residual zone rather than from
+ * the mixed cylinder, in [0, 1].
+ *
+ * `1 - mixedFraction` is the model's claim; the second factor only keeps the
+ * claim within what the zone can supply over one coupling interval. If
+ * `maximumOutflowKg` bounds the mass the port can pass in that interval, then
+ * a share w with
+ *
+ *     w <= (M_res / dm_max) (1 - dm_max / M)
+ *
+ * can never draw any species below zero, whatever the two compositions: the
+ * zone gives at most w dm <= M_res of its own gas and the mixed part at most
+ * the fraction dm/M of each species. Above that bound the share falls
+ * linearly to zero as the zone empties, which is the end of displacement:
+ * nothing of the original contents is left to push out.
+ */
+[[nodiscard]] inline double residualOutflowShare(double mixedFraction,
+    double residualMassKg, double cylinderMassKg,
+    double maximumOutflowKg) noexcept {
+    const auto claim = 1.0 - std::clamp(mixedFraction, 0.0, 1.0);
+    if (!(claim > 0.0) || !(residualMassKg > 0.0) || !(cylinderMassKg > 0.0))
+        return 0.0;
+    if (!(maximumOutflowKg > 0.0)) return claim;
+    const auto capacity = residualMassKg / maximumOutflowKg
+        * std::max(0.0, 1.0 - maximumOutflowKg / cylinderMassKg);
+    return claim * std::clamp(capacity, 0.0, 1.0);
+}
+
+/** Mass fractions of the gas leaving through the exhaust port: the share
+ * `residualShare` at the zone's composition, the rest at the cylinder's mean.
+ * Returns the cylinder's own fractions when the share is zero. */
+[[nodiscard]] inline ScavengeOutflowDensities scavengedOutflowFractions(
+    const ScavengeOutflowDensities& cylinderFractions,
+    const ScavengeResidualZone& zone, double residualShare) noexcept {
+    const auto w = std::clamp(residualShare, 0.0, 1.0);
+    const auto zoneMass = zone.massKg();
+    if (!(w > 0.0) || !(zoneMass > 0.0)) return cylinderFractions;
+    const auto inverse = 1.0 / zoneMass;
     return {
-        oxygen * keptShare,
-        inert * residualScale,
-        fuel * keptShare,
-        burned * residualScale,
+        (1.0 - w) * cylinderFractions.oxygen + w * zone.oxygenKg * inverse,
+        (1.0 - w) * cylinderFractions.inert + w * zone.inertKg * inverse,
+        (1.0 - w) * cylinderFractions.fuel + w * zone.fuelKg * inverse,
+        (1.0 - w) * cylinderFractions.burned + w * zone.burnedKg * inverse,
     };
+}
+
+/** Account for `outflowKg` (> 0) that left through the exhaust port with the
+ * time-averaged residual share `residualShare`, from a cylinder of mass
+ * `cylinderMassKg` before the draw: the zone gives w dm of its own gas and its
+ * proportion M_res/M of the mixed rest. */
+inline void drawResidualZoneThroughExhaust(ScavengeResidualZone& zone,
+    double outflowKg, double residualShare, double cylinderMassKg) noexcept {
+    const auto zoneMass = zone.massKg();
+    if (!(outflowKg > 0.0) || !(zoneMass > 0.0) || !(cylinderMassKg > 0.0)) return;
+    const auto w = std::clamp(residualShare, 0.0, 1.0);
+    const auto drawn = w * outflowKg
+        + (1.0 - w) * outflowKg * zoneMass / cylinderMassKg;
+    scaleResidualZone(zone, 1.0 - drawn / zoneMass);
 }
 
 } // namespace enginelab

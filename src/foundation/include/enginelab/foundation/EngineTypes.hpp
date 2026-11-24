@@ -1841,6 +1841,18 @@ struct CylinderState final {
      *  only; zero on a diesel. */
     double endGasPeakTemperatureK { 0.0 };
     double knockPressureRiseBar { 0.0 };
+    /** Inert (nitrogen) moles in the chamber, beside `oxygenMoles`,
+     *  `fuelMoles` and `burnedMoles` above: with them it closes the element
+     *  balance a regression test holds the scavenged cylinder to. */
+    double inertMoles { 0.0 };
+    /** Two-stroke: the trapped charge's scavenging efficiency (Blair's SE),
+     *  delivered charge kept over trapped mass, latched when the exhaust port
+     *  shut; the residual is what the tracked residual zone still held then.
+     *  Zero on a four-stroke. */
+    double trappedScavengingEfficiency { 0.0 };
+    /** Two-stroke: mass of the previous cycle's gas still in the cylinder
+     *  while the zone is tracked (transfers open to exhaust shut), else 0. */
+    double residualZoneMassMg { 0.0 };
 };
 
 enum class DynoMode : std::uint8_t {

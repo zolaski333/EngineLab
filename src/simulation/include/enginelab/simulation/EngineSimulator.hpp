@@ -915,6 +915,20 @@ private:
      *  step shrinks. Untouched on a four-stroke, where every window reports a
      *  mixed fraction of one and the exhaust boundary is bit-exact unchanged. */
     std::array<TwoStrokeScavengeState, 32> scavengeStates_ {};
+    /** The gas each two-stroke cylinder held when its transfers opened, drawn
+     *  down by what leaves it and topped up by exhaust gas pushed back, until
+     *  the next window (TwoStrokeScavenging.hpp, ScavengeResidualZone). It is
+     *  what the exhaust port displaces, and what the trapped charge's
+     *  scavenging efficiency is measured against at exhaust closure. */
+    std::array<ScavengeResidualZone, 32> scavengeResidualZones_ {};
+    std::array<bool, 32> scavengeResidualZoneTracked_ {};
+    std::array<bool, 32> scavengeExhaustPortWasOpen_ {};
+    /** Time integral of the residual share presented at the exhaust port over
+     *  the current coupling interval, so the zone is drawn by the share the
+     *  network actually saw. */
+    std::array<double, 32> scavengeResidualShareTimeIntegralSeconds_ {};
+    /** Latched at exhaust closure: delivered charge over trapped mass. */
+    std::array<double, 32> trappedScavengingEfficiency_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     /** Unburnt charge a cylinder exhausted at its EVO, emitted as a pocket
      *  once the per-cylinder pass is done (it may run in parallel). */

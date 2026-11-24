@@ -66,42 +66,124 @@ namespace {
     return result;
 }
 
-/** The cylinder's composition as the exhaust port sees it during a scavenging
- * window, biased towards burned gas by `mixedFraction`.
+/** The gas the exhaust port sees during a scavenging window: the share
+ * `residualOutflowShare` gives of the residual zone's own composition, the rest
+ * at the cylinder's mean, and all of it at the cylinder's pressure and
+ * temperature.
  *
  * Conservation is free here, and that is the whole reason the model goes in at
  * this point rather than at the port areas. The network removes exactly the
- * species masses this state offers, reports them back in a
+ * species masses and energy this state offers, reports them back in a
  * `CylinderGasExchange`, and `cylinderDeltaForExchange` negates those same
- * masses onto the cylinder. Species, mass and energy therefore balance for any
- * composition presented here; the only way to break it is to offer more of a
- * species than the cylinder holds, which `biasedOutflowDensities` caps against.
+ * amounts onto the cylinder. The share is capped so that no species can be
+ * drawn below zero within one coupling interval (`residualOutflowShare`).
  *
- * A `mixedFraction` of one -- every four-stroke, and any two-stroke whose loop
- * length is zero -- returns `networkStateForGasCell` bit for bit.
+ * The state is built from pressure and temperature, not by re-apportioning
+ * the cell's densities at its own energy density. The two differ because the
+ * species' molar masses and heat capacities differ: burned products presented
+ * at the mean energy density read as a colder, lower-pressure gas than the
+ * cylinder holds, and every kilogram of residual expelled that way carried the
+ * mean's specific energy instead of its own, leaving the rest of the charge at
+ * the wrong temperature. Gas leaving a single-temperature cylinder leaves at
+ * that temperature and pressure, whatever it is made of.
+ *
+ * A share of zero -- every four-stroke, a closed window, a two-stroke whose
+ * loop length is zero -- returns `networkStateForGasCell` bit for bit.
  */
-[[nodiscard]] gasdynamics::ConservativeState scavengedNetworkStateForGasCell(
-    const GasCell& cell, double mixedFraction) noexcept {
-    auto result = networkStateForGasCell(cell);
-    if (mixedFraction >= 1.0) return result;
+struct ScavengedPortState final {
+    gasdynamics::ConservativeState state {};
+    double residualShare { 0.0 };
+};
+
+[[nodiscard]] ScavengedPortState scavengedNetworkStateForGasCell(
+    const GasCell& cell, double mixedFraction, const ScavengeResidualZone* zone,
+    double maximumOutflowKg,
+    const gasdynamics::EulerMixtureModel& mixture) noexcept {
+    ScavengedPortState result { networkStateForGasCell(cell), 0.0 };
+    if (zone == nullptr || mixedFraction >= 1.0) return result;
+    const auto share = residualOutflowShare(mixedFraction, zone->massKg(),
+        cell.massKg(), maximumOutflowKg);
+    if (!(share > 0.0)) return result;
     const auto oxygen = static_cast<std::size_t>(gasdynamics::GasSpecies::oxygen);
     const auto inert = static_cast<std::size_t>(gasdynamics::GasSpecies::inert);
     const auto fuel = static_cast<std::size_t>(gasdynamics::GasSpecies::fuel);
     const auto burned = static_cast<std::size_t>(gasdynamics::GasSpecies::burned);
-    const auto biased = biasedOutflowDensities(
-        result.speciesMassDensityKgPerM3[oxygen],
-        result.speciesMassDensityKgPerM3[inert],
-        result.speciesMassDensityKgPerM3[fuel],
-        result.speciesMassDensityKgPerM3[burned],
-        mixedFraction);
-    result.speciesMassDensityKgPerM3[oxygen] = biased.oxygen;
-    result.speciesMassDensityKgPerM3[inert] = biased.inert;
-    result.speciesMassDensityKgPerM3[fuel] = biased.fuel;
-    result.speciesMassDensityKgPerM3[burned] = biased.burned;
-    // The energy density is deliberately left alone. Pressure and temperature
-    // at the boundary drive the flow; this model says what the gas leaving IS,
-    // not how much of it leaves.
-    return result;
+    const auto& densities = result.state.speciesMassDensityKgPerM3;
+    const auto density = result.state.densityKgPerM3();
+    if (!(density > 0.0)) return result;
+    const ScavengeOutflowDensities mean {
+        densities[oxygen] / density, densities[inert] / density,
+        densities[fuel] / density, densities[burned] / density,
+    };
+    const auto leaving = scavengedOutflowFractions(mean, *zone, share);
+    gasdynamics::GasComposition composition;
+    composition.massFractions[oxygen] = leaving.oxygen;
+    composition.massFractions[inert] = leaving.inert;
+    composition.massFractions[fuel] = leaving.fuel;
+    composition.massFractions[burned] = leaving.burned;
+    const auto state = mixture.conservativeFromPressureTemperature(
+        cell.pressureKpa() * 1'000.0, cell.temperatureK(), 0.0, composition);
+    if (!state) return result;
+    return { *state, share };
+}
+
+/** Upper bound on the mass a port of effective area `conductanceM2` can pass
+ * out of `cell` in `seconds`: the stagnation mass flux rho*a exceeds the
+ * choked one (0.58-0.60 rho*a for gamma 1.25-1.4), so this never under-states
+ * the draw `residualOutflowShare` guards against. */
+[[nodiscard]] double maximumPortOutflowKg(const GasCell& cell,
+    double conductanceM2, double seconds) noexcept {
+    const auto volume = cell.volumeM3();
+    if (!(volume > 0.0) || !(conductanceM2 > 0.0) || !(seconds > 0.0)) return 0.0;
+    return cell.massKg() / volume * cell.speedOfSoundMps() * conductanceM2 * seconds;
+}
+
+/** The residual zone's species masses as the cylinder holds them now. */
+[[nodiscard]] ScavengeResidualZone residualZoneFromCell(const GasCell& cell) noexcept {
+    const auto& mixture = cell.mixture();
+    return {
+        mixture.oxygenMoles * GasCell::oxygenMolarMassKg,
+        mixture.inertMoles * GasCell::inertMolarMassKg,
+        mixture.fuelMoles * cell.configuredFuelMolarMassKg(),
+        mixture.burnedMoles * cell.configuredBurnedGasMolarMassKg(),
+    };
+}
+
+/** Hold the zone within what the cylinder holds, by scaling it whole.
+ *
+ * The zone's accounting is approximate over a coupling interval (its share is
+ * time-averaged while the port's flux varies), so a species of the zone can
+ * drift a little past the cylinder's own holding. Clipping each species alone
+ * would change the zone's composition and break its element balance -- the
+ * nitrogen that came with its oxygen and products -- and that error then leaves
+ * through the port into the cylinder's remaining charge. A uniform scale keeps
+ * the composition, so the balance the zone started with is kept. */
+void clampResidualZoneToCell(ScavengeResidualZone& zone, const GasCell& cell) noexcept {
+    const auto held = residualZoneFromCell(cell);
+    auto keep = 1.0;
+    const auto limit = [&keep](double zoneKg, double heldKg) {
+        if (zoneKg > heldKg && zoneKg > 0.0) keep = std::min(keep, std::max(0.0, heldKg) / zoneKg);
+    };
+    limit(zone.oxygenKg, held.oxygenKg);
+    limit(zone.inertKg, held.inertKg);
+    limit(zone.fuelKg, held.fuelKg);
+    limit(zone.burnedKg, held.burnedKg);
+    if (keep < 1.0) scaleResidualZone(zone, keep);
+}
+
+/** Exhaust gas the pipe pushed back into the cylinder joins the residual zone:
+ * it is not delivered charge. The zone is then held within the cylinder's
+ * holding as a whole (`clampResidualZoneToCell`). */
+void addExhaustBackflowToResidualZone(ScavengeResidualZone& zone,
+    const gasdynamics::CylinderGasExchange& exchange, const GasCell& cell) noexcept {
+    const auto species = [&](gasdynamics::GasSpecies which) {
+        return std::max(0.0, -exchange.speciesMassKg[static_cast<std::size_t>(which)]);
+    };
+    zone.oxygenKg += species(gasdynamics::GasSpecies::oxygen);
+    zone.inertKg += species(gasdynamics::GasSpecies::inert);
+    zone.fuelKg += species(gasdynamics::GasSpecies::fuel);
+    zone.burnedKg += species(gasdynamics::GasSpecies::burned);
+    clampResidualZoneToCell(zone, cell);
 }
 
 [[nodiscard]] GasInventoryDelta cylinderDeltaForExchange(
@@ -4425,14 +4507,34 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             if (twoStroke) {
                 auto& scavenge = scavengeStates_[cylinderIndex];
                 const auto transferOpen = intakeArea > 0.0;
+                // The charge is trapped when the exhaust port shuts: what is
+                // left of the residual zone then is the residual, the rest the
+                // delivered charge kept (scavenging efficiency, Blair's SE).
+                const auto exhaustOpen = exhaustArea > 0.0;
+                if (scavengeExhaustPortWasOpen_[cylinderIndex] && !exhaustOpen
+                        && scavengeResidualZoneTracked_[cylinderIndex]) {
+                    const auto trappedKg = cylinderGas_[cylinderIndex].massKg();
+                    trappedScavengingEfficiency_[cylinderIndex] = trappedKg > 0.0
+                        ? std::clamp(1.0 - scavengeResidualZones_[cylinderIndex].massKg()
+                              / trappedKg, 0.0, 1.0)
+                        : 0.0;
+                    scavengeResidualZoneTracked_[cylinderIndex] = false;
+                }
+                scavengeExhaustPortWasOpen_[cylinderIndex] = exhaustOpen;
                 if (!transferOpen) {
                     closeScavengeWindow(scavenge);
                 } else {
-                    if (!scavenge.open)
+                    if (!scavenge.open) {
                         openScavengeWindow(scavenge,
                             std::max(0.0,
                                 config_.twoStroke.scavengeLoopLengthRatio)
                                 * cylinder.boreMm * 0.001);
+                        // Everything in the cylinder now is the previous
+                        // cycle's: the zone the delivered charge displaces.
+                        scavengeResidualZones_[cylinderIndex] =
+                            residualZoneFromCell(cylinderGas_[cylinderIndex]);
+                        scavengeResidualZoneTracked_[cylinderIndex] = true;
+                    }
                     // Jet velocity from the pressure the crankcase pump has
                     // built -- never from the port mass flow, which is the flow
                     // this bias goes on to shape. It is read every sub-step and
@@ -4963,10 +5065,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto nonzeroExchange = exchange.totalEnergyJ != 0.0
                     || std::any_of(exchange.speciesMassKg.begin(), exchange.speciesMassKg.end(),
                         [](double mass) { return mass != 0.0; });
+                const auto massBeforeIntakeExchangeKg = cylinderGas_[index].massKg();
                 if (nonzeroExchange && !cylinderGas_[index].tryApplyInventoryDelta(
                         cylinderDeltaForExchange(exchange, cylinderGas_[index]))) {
                     intakePhaseFailed[index] = 1;
                     ++intakeCylinderTransferFailures[index];
+                } else if (nonzeroExchange && scavengeResidualZoneTracked_[index]
+                        && exchange.totalMassKg() > 0.0
+                        && massBeforeIntakeExchangeKg > 0.0) {
+                    // Cylinder gas pushed back into the transfers leaves at the
+                    // mean composition, so the zone loses its own share of it.
+                    scaleResidualZone(scavengeResidualZones_[index],
+                        1.0 - exchange.totalMassKg() / massBeforeIntakeExchangeKg);
+                    clampResidualZoneToCell(scavengeResidualZones_[index],
+                        cylinderGas_[index]);
                 }
                 // The exchange is positive from the cylinder into the runner,
                 // so the intake mass the cylinder gained is its negation.
@@ -5552,9 +5664,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
             exhaustValveConductanceTimeIntegralM2S_[index] +=
                 exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index] * subDt;
-            const auto boundaryState = scavengedNetworkStateForGasCell(
+            const auto scavengedPort = scavengedNetworkStateForGasCell(
                 cylinderGas_[index],
-                scavengeMixedFraction(scavengeStates_[index]));
+                scavengeMixedFraction(scavengeStates_[index]),
+                scavengeResidualZoneTracked_[index]
+                    ? &scavengeResidualZones_[index] : nullptr,
+                maximumPortOutflowKg(cylinderGas_[index],
+                    exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index],
+                    productionExhaustCouplingSeconds + subDt),
+                physicalExhaustNetwork.mixtureModel());
+            const auto& boundaryState = scavengedPort.state;
+            scavengeResidualShareTimeIntegralSeconds_[index] +=
+                scavengedPort.residualShare * subDt;
             auto& stateIntegral = exhaustBoundaryStateTimeIntegral_[index];
             for (std::size_t species = 0; species < gasdynamics::gasSpeciesCount; ++species) {
                 stateIntegral.speciesMassDensityKgPerM3[species] +=
@@ -5847,10 +5968,29 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                  exchangeIndex < cylinderExchanges.size(); ++exchangeIndex) {
                 const auto& exchange = cylinderExchanges[exchangeIndex];
                 const auto index = exhaustNetworkCylinderIndex_[exchangeIndex];
+                const auto massBeforeExchangeKg = cylinderGas_[index].massKg();
                 const auto applied = cylinderGas_[index].tryApplyInventoryDelta(
                     cylinderDeltaForExchange(exchange, cylinderGas_[index]));
                 exhaustExchangeApplied[index] = static_cast<std::uint8_t>(applied);
                 if (!applied) state_.solverResolutionLimited = true;
+                if (applied && scavengeResidualZoneTracked_[index]) {
+                    // The zone follows what actually crossed the port, at the
+                    // residual share the network was shown on average.
+                    auto& zone = scavengeResidualZones_[index];
+                    const auto outflowKg = exchange.totalMassKg();
+                    if (outflowKg > 0.0) {
+                        drawResidualZoneThroughExhaust(zone, outflowKg,
+                            exhaustCouplingDurationSeconds_ > 0.0
+                                ? scavengeResidualShareTimeIntegralSeconds_[index]
+                                    / exhaustCouplingDurationSeconds_
+                                : 0.0,
+                            massBeforeExchangeKg);
+                    } else if (outflowKg < 0.0) {
+                        addExhaustBackflowToResidualZone(zone, exchange,
+                            cylinderGas_[index]);
+                    }
+                    clampResidualZoneToCell(zone, cylinderGas_[index]);
+                }
                 if (applied && networkAdvance.advancedTimeSeconds > 0.0
                         && flushIntakeNetworks && multirateIntake && !valvesSealed
                         && intakeAveragedValveConductanceM2[index] > 0.0) {
@@ -5927,6 +6067,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
 
             exhaustValveConductanceTimeIntegralM2S_.fill(0.0);
             exhaustBoundaryStateTimeIntegral_.fill({});
+            scavengeResidualShareTimeIntegralSeconds_.fill(0.0);
             exhaustBoundaryVolumeTimeIntegralM3S_.fill(0.0);
             exhaustCouplingDurationSeconds_ = 0.0;
             outletOpeningScaleTimeIntegralSeconds_ = 0.0;
@@ -6010,7 +6151,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             instantaneousBoundaries[portIndex] = {
                 cylinderPorts[portIndex].cylinderId,
                 scavengedNetworkStateForGasCell(cylinderGas_[index],
-                    scavengeMixedFraction(scavengeStates_[index])),
+                    scavengeMixedFraction(scavengeStates_[index]),
+                    scavengeResidualZoneTracked_[index]
+                        ? &scavengeResidualZones_[index] : nullptr,
+                    maximumPortOutflowKg(cylinderGas_[index],
+                        exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index],
+                        productionExhaustCouplingSeconds + subDt),
+                    physicalExhaustNetwork.mixtureModel()).state,
                 cylinderGas_[index].volumeM3(),
                 exhaustValveAreaM2[index],
                 exhaustValveDischargeCoefficient[index],
@@ -6647,6 +6794,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 highLoadClosedLoopFuelTrim_[index],
                 highLoadTrimBlend);
             cylinderState.residualGasFractionAtSpark = residualGasFractionAtSpark_[index];
+            cylinderState.inertMoles = cylinderGas_[index].mixture().inertMoles;
+            cylinderState.trappedScavengingEfficiency = trappedScavengingEfficiency_[index];
+            cylinderState.residualZoneMassMg = scavengeResidualZoneTracked_[index]
+                ? scavengeResidualZones_[index].massKg() * 1.0e6 : 0.0;
             cylinderState.diluentFractionAtSpark = diluentFractionAtSpark_[index];
             cylinderState.equivalenceRatioAtSpark = equivalenceRatioAtSpark_[index];
             cylinderState.endGasPeakTemperatureK = compressionIgnition
@@ -7418,6 +7569,11 @@ void EngineSimulator::reset() noexcept {
     valveFlowHistoryWrite_ = 0;
     exhaustValveConductanceTimeIntegralM2S_.fill(0.0);
     exhaustBoundaryStateTimeIntegral_.fill({});
+    scavengeResidualShareTimeIntegralSeconds_.fill(0.0);
+    scavengeResidualZones_.fill({});
+    scavengeResidualZoneTracked_.fill(false);
+    scavengeExhaustPortWasOpen_.fill(false);
+    trappedScavengingEfficiency_.fill(0.0);
     exhaustBoundaryVolumeTimeIntegralM3S_.fill(0.0);
     exhaustCouplingDurationSeconds_ = 0.0;
     outletOpeningScaleTimeIntegralSeconds_ = 0.0;

@@ -8,6 +8,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/foundation/TwoStrokeScavenging.hpp>
+#include <enginelab/gasdynamics/FiniteVolumeDuct.hpp>
 #include <enginelab/physics/CarburettorModel.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
@@ -695,76 +696,220 @@ void scavengingLawBracketsTheClassicalBounds() {
               << slow << "  9000 rpm mixed=" << fast << '\n';
 }
 
-// The apportionment that turns a mixed fraction into a port composition. These
-// are invariants rather than values: whatever the bias does to the mixture, it
-// may not create or destroy mass, and it must vanish exactly where the model
-// says it has no claim to make.
-void outflowBiasMovesCompositionWithoutMovingMass() {
-    // A plausible mid-scavenge cylinder: fresh air and fuel over a residual.
-    constexpr auto oxygen = 0.21;
-    constexpr auto inert = 0.79;
-    constexpr auto fuel = 0.014;
-    constexpr auto burned = 0.25;
-    constexpr auto total = oxygen + inert + fuel + burned;
+// The residual zone and the port composition it gives. These are checked
+// against the two classical laws, which hold exactly under their own
+// assumptions: a constant-volume, constant-mass cylinder full of residual,
+// through which fresh air flows at a steady rate (Blair 1996 ch. 3; Benson &
+// Brandham 1969). Delivery ratio here is delivered mass over the cylinder's
+// mass, scavenging efficiency the delivered charge kept over the mass held.
+//
+//     perfect displacement: SE = min(DR, 1)
+//     perfect mixing:       SE = 1 - exp(-DR)
+//
+// The element balance is held all the way: nitrogen enters only with air, so
+// N2 = 3.762 x (O2 + (12.5/17) x burned) at every step.
+struct ZeroDimensionalScavenge final {
+    double deliveryRatio { 0.0 };
+    double scavengingEfficiency { 0.0 };
+    double worstNitrogenError { 0.0 };
+    double leastSpecies { 0.0 };
+};
 
-    const auto identity = biasedOutflowDensities(oxygen, inert, fuel, burned, 1.0);
-    require(identity.oxygen == oxygen && identity.inert == inert
-            && identity.fuel == fuel && identity.burned == burned,
-        "perfect mixing is bit-exact identity, so a four-stroke cannot move");
-
-    for (const auto mixed : { 0.0, 0.25, 0.5, 0.75, 1.0 }) {
-        const auto biased =
-            biasedOutflowDensities(oxygen, inert, fuel, burned, mixed);
-        const auto biasedTotal =
-            biased.oxygen + biased.inert + biased.fuel + biased.burned;
-        require(std::abs(biasedTotal - total) < 1.0e-12 * total,
-            "the bias preserves total mass density");
-        require(biased.oxygen >= 0.0 && biased.inert >= 0.0
-                && biased.fuel >= 0.0 && biased.burned >= 0.0,
-            "no species is driven negative");
-        require(biased.oxygen <= oxygen * (1.0 + 1.0e-12)
-                && biased.fuel <= fuel * (1.0 + 1.0e-12),
-            "the bias only ever holds fresh charge back, never adds it");
-        require(biased.inert >= inert * (1.0 - 1.0e-12)
-                && biased.burned >= burned * (1.0 - 1.0e-12),
-            "the mass held back is replaced by residual, not lost");
+[[nodiscard]] ZeroDimensionalScavenge scavengeConstantVolume(
+    double mixedFraction, double finalDeliveryRatio, int steps) {
+    constexpr double mO2 = 0.032, mN2 = 0.028;
+    constexpr double mBurned = (8 * 0.044 + 9 * 0.018) / 17.0;
+    constexpr double inertPerOxygen = 0.79 / 0.21;
+    constexpr double oxygenPerBurned = 12.5 / 17.0;
+    // Stoichiometric residual: 1 mol of products and the nitrogen of its air.
+    double o2 = 0.0, n2 = inertPerOxygen * oxygenPerBurned, burned = 1.0;
+    const auto massKg = [&] { return o2 * mO2 + n2 * mN2 + burned * mBurned; };
+    const auto startKg = massKg();
+    ScavengeResidualZone zone { 0.0, n2 * mN2, 0.0, burned * mBurned };
+    const auto dm = finalDeliveryRatio * startKg / steps;
+    ZeroDimensionalScavenge result;
+    result.leastSpecies = 1.0;
+    for (auto step = 0; step < steps; ++step) {
+        // Fresh air in.
+        const auto airMoles = dm / (0.21 * mO2 + 0.79 * mN2);
+        o2 += 0.21 * airMoles;
+        n2 += 0.79 * airMoles;
+        // The same mass out, at the composition the port is shown.
+        const auto total = massKg();
+        const ScavengeOutflowDensities mean {
+            o2 * mO2 / total, n2 * mN2 / total, 0.0, burned * mBurned / total };
+        const auto share = residualOutflowShare(mixedFraction, zone.massKg(), total, dm);
+        const auto leaving = scavengedOutflowFractions(mean, zone, share);
+        o2 -= leaving.oxygen * dm / mO2;
+        n2 -= leaving.inert * dm / mN2;
+        burned -= leaving.burned * dm / mBurned;
+        drawResidualZoneThroughExhaust(zone, dm, share, total);
+        result.leastSpecies = std::min({ result.leastSpecies, o2, n2, burned });
+        const auto required = inertPerOxygen * (o2 + oxygenPerBurned * burned);
+        result.worstNitrogenError =
+            std::max(result.worstNitrogenError, std::abs(n2 / required - 1.0));
     }
+    result.deliveryRatio = finalDeliveryRatio;
+    result.scavengingEfficiency = 1.0 - zone.massKg() / massKg();
+    return result;
+}
 
-    // Displacement is monotone in the window's progress: more mixing lets more
-    // fresh charge out of the port, never less.
-    auto previousFuel = -1.0;
-    for (const auto mixed : { 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 }) {
-        const auto biased =
-            biasedOutflowDensities(oxygen, inert, fuel, burned, mixed);
-        require(biased.fuel > previousFuel - 1.0e-15,
-            "fuel at the port rises with the mixed fraction");
-        previousFuel = biased.fuel;
+void theResidualZoneGivesTheClassicalLaws() {
+    // Identity where the model has no claim: bit-exact, so a four-stroke, a
+    // closed window and a perfectly mixed cylinder cannot move.
+    const ScavengeOutflowDensities mean { 0.20, 0.70, 0.01, 0.09 };
+    const ScavengeResidualZone zone { 0.0, 0.7, 0.0, 0.3 };
+    const auto identity = scavengedOutflowFractions(mean, zone, 0.0);
+    require(identity.oxygen == mean.oxygen && identity.inert == mean.inert
+            && identity.fuel == mean.fuel && identity.burned == mean.burned,
+        "a zero residual share is bit-exact identity");
+    require(residualOutflowShare(1.0, 1.0, 2.0, 0.01) == 0.0,
+        "perfect mixing gives the residual zone no share");
+    require(residualOutflowShare(0.0, 0.0, 2.0, 0.01) == 0.0,
+        "an empty residual zone gives no share");
+    for (const auto share : { 0.0, 0.3, 0.7, 1.0 }) {
+        const auto f = scavengedOutflowFractions(mean, zone, share);
+        require(std::abs(f.oxygen + f.inert + f.fuel + f.burned - 1.0) < 1.0e-12,
+            "the port's mass fractions sum to one");
     }
+    // The share's cap: it never lets the zone give more than it has.
+    require(residualOutflowShare(0.0, 0.001, 1.0, 0.01) <= 0.1 + 1.0e-12,
+        "a nearly empty zone gives at most its own mass");
 
-    // Cranking: almost no burned gas to displace with. The bias must reduce
-    // itself to what the residual can cover instead of inventing mass.
-    const auto cranking = biasedOutflowDensities(0.21, 0.79, 0.014, 0.0, 0.0);
-    const auto crankingTotal =
-        cranking.oxygen + cranking.inert + cranking.fuel + cranking.burned;
-    require(std::abs(crankingTotal - (0.21 + 0.79 + 0.014)) < 1.0e-14,
-        "a cylinder with no burned gas still conserves mass");
-    require(cranking.oxygen >= 0.0 && cranking.fuel >= 0.0,
-        "a cylinder with no burned gas is not driven negative");
+    for (const auto deliveryRatio : { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0 }) {
+        const auto displaced = scavengeConstantVolume(0.0, deliveryRatio, 4'000);
+        const auto mixed = scavengeConstantVolume(1.0, deliveryRatio, 4'000);
+        std::cout << "  DR " << deliveryRatio << ": displacement SE "
+                  << displaced.scavengingEfficiency << " (law "
+                  << perfectDisplacementEfficiency(deliveryRatio) << "), mixing SE "
+                  << mixed.scavengingEfficiency << " (law "
+                  << perfectMixingEfficiency(deliveryRatio) << "), worst N2 error "
+                  << std::max(displaced.worstNitrogenError, mixed.worstNitrogenError)
+                  << '\n';
+        require(std::abs(displaced.scavengingEfficiency
+                    - perfectDisplacementEfficiency(deliveryRatio)) < 1.0e-3,
+            "perfect displacement gives SE = min(DR, 1)");
+        require(std::abs(mixed.scavengingEfficiency
+                    - perfectMixingEfficiency(deliveryRatio)) < 1.0e-3,
+            "perfect mixing gives SE = 1 - exp(-DR)");
+        require(displaced.worstNitrogenError < 1.0e-9 && mixed.worstNitrogenError < 1.0e-9,
+            "the scavenged cylinder keeps the element balance");
+        require(displaced.leastSpecies > -1.0e-12 && mixed.leastSpecies > -1.0e-12,
+            "no species is drawn below zero");
+    }
+}
 
-    // Nothing at all to present: the bias has no claim and must stand aside.
-    const auto empty = biasedOutflowDensities(0.0, 0.0, 0.0, 0.0, 0.0);
-    require(empty.oxygen == 0.0 && empty.inert == 0.0 && empty.fuel == 0.0
-            && empty.burned == 0.0,
-        "an empty cell biases to nothing");
+/** Nitrogen is never made or destroyed, and the only nitrogen a two-stroke's
+ *  cylinder ever receives came in with air (0.79/0.21 per oxygen molecule).
+ *  Fuel burns as 1 fuel + a O2 -> p products (`FuelConfig`), so a mole of
+ *  burned products stands for a/p moles of the air's oxygen. Whatever the
+ *  cylinder holds -- fresh charge, residual, short-circuited charge the pipe
+ *  pushes back -- must therefore satisfy
+ *
+ *      N2 = (0.79/0.21) x (O2 + (a/p) x burned)
+ *
+ *  up to rounding. This is an element balance, not a model: it holds for
+ *  perfect mixing, perfect displacement and anything between. The scavenging
+ *  bias broke it by expelling nitrogen in the ratio the cylinder held it --
+ *  mostly the fresh air's -- instead of the residual's own: a V3's trapped
+ *  charge read 3.2 inert per oxygen (audit 2026-11-24). */
+[[nodiscard]] double worstNitrogenBalanceError(EngineConfig config, double rpm) {
+    normaliseEngineConfig(config);
+    const auto inertPerOxygen = 0.79 / 0.21;
+    const auto oxygenPerBurned = config.fuelProperties.oxygenMolesPerFuelMole
+        / config.fuelProperties.productMolesPerFuelMole;
+    auto rig = std::make_unique<Rig>(config);
+    constexpr int frames = 6 * 240;
+    auto speed = 0.0;
+    auto worst = 0.0;
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = t < 1.5;
+        controls.throttle = t < 2.0 ? 0.0 : 1.0;
+        if (t >= 2.0) controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (speed - rpm));
+        const auto& result = rig->simulator->step(frameSeconds, controls);
+        speed = result.state.rpm;
+        if (t < 4.0) continue;
+        for (const auto& cylinder : result.state.cylinderStates) {
+            const auto required = inertPerOxygen
+                * (cylinder.oxygenMoles + oxygenPerBurned * cylinder.burnedMoles);
+            if (!(required > 0.0)) continue;
+            worst = std::max(worst, std::abs(cylinder.inertMoles / required - 1.0));
+        }
+        if (frame + 1 == frames) {
+            const auto efficiency = result.state.cylinderStates.front().trappedScavengingEfficiency;
+            std::cout << "  trapped scavenging efficiency at " << speed << " rpm: "
+                      << efficiency << '\n';
+            require(efficiency > 0.0 && efficiency <= 1.0,
+                "the latched scavenging efficiency is a fraction");
+        }
+    }
+    return worst;
+}
 
-    const auto pureResidual = biasedOutflowDensities(0.0, 0.79, 0.0, 0.25, 0.0);
-    require(pureResidual.inert == 0.79 && pureResidual.burned == 0.25,
-        "with no fresh charge to hold back the bias is identity");
+void theScavengedCylinderKeepsItsNitrogenBalance() {
+    auto mixing = catalogueTwoStroke();
+    mixing.twoStroke.scavengeLoopLengthRatio = 0.0;
+    const auto mixed = worstNitrogenBalanceError(mixing, 7'000.0);
+    const auto scavenged = worstNitrogenBalanceError(catalogueTwoStroke(), 7'000.0);
+    std::cout << "worst nitrogen balance error at 7,000 rpm WOT: perfect mixing "
+              << mixed << ", loop scavenging " << scavenged << '\n';
+    require(mixed < 1.0e-3,
+        "a perfectly mixed cylinder keeps the air's nitrogen with its oxygen");
+    require(scavenged < 1.0e-3,
+        "a loop-scavenged cylinder keeps the air's nitrogen with its oxygen");
+}
 
-    std::cout << "port fuel density, mixed=0 vs mixed=1: "
-              << biasedOutflowDensities(oxygen, inert, fuel, burned, 0.0).fuel
-              << "  " << biasedOutflowDensities(oxygen, inert, fuel, burned, 1.0).fuel
-              << '\n';
+/** Gas leaving a single-temperature cylinder leaves at that temperature and
+ *  pressure, whatever it is made of. The scavenging bias used to present the
+ *  biased composition at the cylinder's own density and energy density; with
+ *  species whose heat capacities differ, that is a different gas -- colder or
+ *  hotter, at another pressure -- and every kilogram expelled carried the
+ *  mean's specific energy instead of its own (audit 2026-11-24). The port state
+ *  is now built from the cylinder's pressure and temperature. */
+void theExpelledResidualLeavesAtTheCylindersState() {
+    const gasdynamics::EulerMixtureModel model;
+    constexpr double pressurePa = 400'000.0;
+    constexpr double temperatureK = 1'300.0;
+    // A cylinder half-way through its window: fresh charge with its fuel, and
+    // the stoichiometric residual (47.0 mol N2 a 17 mol of products).
+    gasdynamics::GasComposition cylinder;
+    cylinder.massFractions = { 0.110, 0.725, 0.005, 0.160 };
+    gasdynamics::GasComposition residual;
+    residual.massFractions = { 0.0, 0.7193, 0.0, 0.2807 };
+    constexpr double share = 0.6;
+    gasdynamics::GasComposition leaving;
+    for (std::size_t i = 0; i < leaving.massFractions.size(); ++i)
+        leaving.massFractions[i] = (1.0 - share) * cylinder.massFractions[i]
+            + share * residual.massFractions[i];
+
+    const auto held = model.conservativeFromPressureTemperature(
+        pressurePa, temperatureK, 0.0, cylinder);
+    require(held.has_value(), "the cylinder's state is physical");
+    // The old way: the cylinder's density and energy density, re-apportioned.
+    auto reapportioned = *held;
+    const auto density = held->densityKgPerM3();
+    for (std::size_t i = 0; i < leaving.massFractions.size(); ++i)
+        reapportioned.speciesMassDensityKgPerM3[i] = density * leaving.massFractions[i];
+    const auto old = model.primitiveFromConservative(reapportioned);
+    // The new way: the cylinder's pressure and temperature, the port's gas.
+    const auto port = model.conservativeFromPressureTemperature(
+        pressurePa, temperatureK, 0.0, leaving);
+    require(old.has_value() && port.has_value(), "both port states are physical");
+    const auto now = model.primitiveFromConservative(*port);
+    require(now.has_value(), "the port state recovers");
+    std::cout << "  residual-biased port gas at the cylinder's energy density reads "
+              << old->temperatureK << " K, " << old->pressurePa / 1'000.0
+              << " kPa; built from p and T it reads " << now->temperatureK << " K, "
+              << now->pressurePa / 1'000.0 << " kPa (cylinder " << temperatureK
+              << " K, " << pressurePa / 1'000.0 << " kPa)\n";
+    require(std::abs(old->temperatureK - temperatureK) > 1.0,
+        "the re-apportioned state is a different gas (the original issue)");
+    require(std::abs(now->temperatureK - temperatureK) < 1.0e-6
+            && std::abs(now->pressurePa / pressurePa - 1.0) < 1.0e-9,
+        "the port gas leaves at the cylinder's temperature and pressure");
 }
 
 // A carburettor is checked against the convention its jets are stamped with
@@ -1103,6 +1248,12 @@ int main(int argc, char** argv) {
         }
         return trace(std::stod(argv[2]), single, exhaustCellM, cylinderPortBtdc);
     }
+    if (argc >= 2 && std::string_view(argv[1]) == "--nitrogen") {
+        theResidualZoneGivesTheClassicalLaws();
+        theScavengedCylinderKeepsItsNitrogenBalance();
+        theExpelledResidualLeavesAtTheCylindersState();
+        return EXIT_SUCCESS;
+    }
     portsFollowThePiston();
     configurationIsChecked();
     missingCrankOffsetsFollowTheCycle();
@@ -1115,7 +1266,9 @@ int main(int argc, char** argv) {
     theScavengingLoopIsASwitch();
     portDurationIsNotTheOpeningAngle();
     scavengingLawBracketsTheClassicalBounds();
-    outflowBiasMovesCompositionWithoutMovingMass();
+    theResidualZoneGivesTheClassicalLaws();
+    theScavengedCylinderKeepsItsNitrogenBalance();
+    theExpelledResidualLeavesAtTheCylindersState();
     aJetPassesItsStampedNumber();
     theTwoCircuitsHandOverWithoutBeingBlended();
     theDefaultJetsGiveTheRealEngineItsMixture();
