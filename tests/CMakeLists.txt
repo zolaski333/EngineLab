@@ -653,6 +653,17 @@ if(TARGET EngineLabDynoSweepHarness)
         FIXTURES_REQUIRED SavedEcuEngine
         PASS_REGULAR_EXPRESSION "-4 deg on the saved ECU's [0-9]+ spark cells")
 endif()
+if(TARGET EngineLabPressureProbeHarness AND TARGET EngineLabDynoSweepHarness)
+    # The pressure probe reads a saved engine on its ECU tables: it read only
+    # the catalogue (audit 2026-11-24, O-3).
+    add_test(NAME EngineLab.ToolArguments.ProbeSavedEngine
+        COMMAND EngineLabPressureProbeHarness
+            --saved-engine "${CMAKE_BINARY_DIR}/tool-arguments/saved-ecu/rd350.json" --saved-ecu
+            --component 104 --position-mm 65 --rpm 6000 --settle 0.5 --sample 0.25 --harmonics 4)
+    set_tests_properties(EngineLab.ToolArguments.ProbeSavedEngine PROPERTIES
+        FIXTURES_REQUIRED SavedEcuEngine
+        PASS_REGULAR_EXPRESSION "probe: saved engine [^\n]+ on its saved ECU tables")
+endif()
 if(TARGET EngineLabPhysicsPerfHarness)
     # A trace whose engine is not at the speed asked dumps nothing and says
     # so: one that never caught was dumped as the point (audit 2026-11-24,
