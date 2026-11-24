@@ -636,6 +636,22 @@ if(TARGET EngineLabDynoSweepHarness)
             --filter no-engine-matches-this)
     set_tests_properties(EngineLab.ToolArguments.DynoReferenceNoMatch PROPERTIES
         WILL_FAIL TRUE)
+    # A saved engine on its own ECU tables takes --advance-offset on its spark
+    # table: the harness used to shift only the configuration's curve, which
+    # the saved tables override, and measured the unchanged map (audit
+    # 2026-11-24, O-1).
+    add_test(NAME EngineLab.ToolArguments.SavedEcuAdvanceSetup
+        COMMAND EngineLabSavedEngineTests --write RD350LC
+            "${CMAKE_BINARY_DIR}/tool-arguments/saved-ecu/rd350.json")
+    set_tests_properties(EngineLab.ToolArguments.SavedEcuAdvanceSetup PROPERTIES
+        FIXTURES_SETUP SavedEcuEngine)
+    add_test(NAME EngineLab.ToolArguments.SavedEcuAdvance
+        COMMAND EngineLabDynoSweepHarness
+            --saved-engine "${CMAKE_BINARY_DIR}/tool-arguments/saved-ecu/rd350.json"
+            --saved-ecu --advance-offset -4 --step 50000 --settle 0.5 --sample 0.25)
+    set_tests_properties(EngineLab.ToolArguments.SavedEcuAdvance PROPERTIES
+        FIXTURES_REQUIRED SavedEcuEngine
+        PASS_REGULAR_EXPRESSION "-4 deg on the saved ECU's [0-9]+ spark cells")
 endif()
 if(TARGET EngineLabSceneExport)
     # An index that cannot be written (a folder in its place) fails the

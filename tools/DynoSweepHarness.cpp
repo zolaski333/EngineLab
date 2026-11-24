@@ -12,7 +12,9 @@
 // settle time can be shorter than a cold measurePoint. Absolutes still come
 // from here, not from the --trace instrument, which changes substep structure.
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/calibration/CalibrationEditing.hpp>
 #include <enginelab/calibration/CalibrationStore.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -32,6 +34,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <numbers>
 #include <optional>
 #include <sstream>
@@ -864,6 +867,27 @@ int main(int argc, char** argv) {
             if (!engine.forcedInduction.enabled) engine = enginelab::withTurbocharger(engine);
     for (auto& engine : engines)
         for (auto& sample : engine.ignition.timingCurve) sample.advanceDegrees += advanceOffset;
+    // A saved engine on its own ECU tables sparks from the tables, not from
+    // the configuration's curve, so the offset goes on the spark table too:
+    // without it --advance-offset measured the unchanged map (audit
+    // 2026-11-24, finding O-1).
+    if (savedCalibration && advanceOffset != 0.0) {
+        namespace calibration = enginelab::calibration;
+        const auto* found = savedCalibration->find(calibration::keys::ignitionAdvance);
+        if (found == nullptr) {
+            std::cerr << "--advance-offset: the saved ECU has no spark table\n";
+            return EXIT_FAILURE;
+        }
+        auto entry = *found;
+        const auto* table = std::get_if<calibration::CalibrationTable2D>(&entry);
+        std::vector<std::size_t> cells(table != nullptr ? table->values.size() : 1);
+        std::iota(cells.begin(), cells.end(), std::size_t { 0 });
+        (void)calibration::applyCellOperation(entry, cells,
+            calibration::CellOperation::add, advanceOffset);
+        savedCalibration->set(std::move(entry));
+        std::cerr << "--advance-offset: " << advanceOffset << " deg on the saved ECU's "
+                  << cells.size() << " spark cells\n";
+    }
     if (octaneRating > 0.0)
         for (auto& engine : engines) engine.octaneRating = octaneRating;
 
