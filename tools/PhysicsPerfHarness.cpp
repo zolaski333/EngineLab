@@ -313,7 +313,13 @@ bool traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                  "burned_fraction,combustion_efficiency,phi_at_spark,"
                  "residual_at_spark,"
                  "compression_ignition,soc_deg,burn_ms,sharpness,"
-                 "liquid_spray_mg,dispersing_spray_mg,injector_capacity\n";
+                 "liquid_spray_mg,dispersing_spray_mg,injector_capacity,"
+                 // The runner's port state (intake_v_mps, irt_c, irp_kpa,
+                 // col_mps) is set when the intake network is flushed, every
+                 // 400 us in production: finer than that a row holds the last
+                 // flush's values. intake_flushes says which rows are fresh
+                 // (audit 2026-11-24, O-4: read as a staircase).
+                 "intake_flushes,scavenging_efficiency,residual_zone_mg\n";
     const auto fineDt = dt / 48.0;
     const auto cycleSeconds = 120.0 / std::max(1.0, simulator.state().rpm);
     const auto fineSteps = static_cast<int>(1.2 * cycleSeconds / fineDt);
@@ -352,7 +358,10 @@ bool traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                   << ',' << c.combustionSharpness
                   << ',' << c.directLiquidSprayFuelMg
                   << ',' << c.directDispersingFuelMg
-                  << ',' << c.injectorCapacityRatio << '\n';
+                  << ',' << c.injectorCapacityRatio
+                  << ',' << frame.state.intakeCouplingFlushCount
+                  << ',' << c.trappedScavengingEfficiency
+                  << ',' << c.residualZoneMassMg << '\n';
     }
     return true;
 }

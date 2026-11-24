@@ -673,6 +673,14 @@ if(TARGET EngineLabPhysicsPerfHarness)
             --filter RD350LC --trace 20000 --settle 1)
     set_tests_properties(EngineLab.ToolArguments.TraceOffTarget PROPERTIES
         PASS_REGULAR_EXPRESSION "not the 20000 asked. no cycle dumped")
+    # The trace marks the rows on which the intake network was flushed: the
+    # runner columns between two flushes are held values (audit 2026-11-24,
+    # O-4), and a 2 deg-resolved runner wave read off them was a staircase.
+    add_test(NAME EngineLab.ToolArguments.TraceIntakeFlushes
+        COMMAND EngineLabPhysicsPerfHarness --catalog-root "${CMAKE_SOURCE_DIR}"
+            --filter RD350LC --trace 7000 --settle 1)
+    set_tests_properties(EngineLab.ToolArguments.TraceIntakeFlushes PROPERTIES
+        PASS_REGULAR_EXPRESSION "injector_capacity,intake_flushes,scavenging_efficiency")
 endif()
 if(TARGET EngineLabSceneExport)
     # An index that cannot be written (a folder in its place) fails the
