@@ -135,7 +135,10 @@ the buttons, segmented controls and slider rows the panels are built from.
 (`ExhaustNetworkEditor::fitSilencerBypass` puts a valved bypass around the
 muffler nearest a tailpipe; the actuator through `applyEngineEdit`), VTEC and
 launch control (their calibration scalars, published at once with
-`EquipmentWindow::publishScalar`). Each section's status line reads the
+`EquipmentWindow::publishScalar`), the throttles (one body, one per cylinder
+on the plenum, or one in each runner: `withThrottleLayout`, the plates'
+total area kept) and, on a four-stroke, a compression-release engine brake
+(`EngineBrakeConfig`, fitted, set and removed through `applyEngineEdit`). Each section's status line reads the
 engine state of the last tick (`nitrousBlockers`, `exhaustValveOpening`,
 `vtecHighCylinderMask`, the launch-control limit bit).
 
@@ -291,9 +294,10 @@ a centrifugal one on an aircraft -- or a centrifugal supercharger). *Intake & fu
 injection, or a carburettor, on either cycle; a diesel injects directly),
 the intake (`intake_style`: an airbox, a pod filter, or open velocity stacks
 with a bellmouth 1.5 times the throttle's combined bore), the throttles
-(`throttles`: the family's, one body for the engine, or one plate in each
-cylinder's runner -- a four-stroke spark engine's, wide open the runner's
-plain face), runners, plenum and, as they apply, the injection window or the jets, the
+(`throttles`: the family's, one body for the engine, one body per cylinder
+on the plenum's mouth (`plenum_bodies`, as on a V4 superbike's airbox), or
+one plate in each cylinder's runner -- a four-stroke spark engine's, wide
+open the runner's plain face), runners, plenum and, as they apply, the injection window or the jets, the
 venturi, the accelerator pump and the starter jet. A petrol four injecting
 directly injects on its intake stroke (420-600 deg, for a homogeneous
 charge), a direct-injected two-stroke from its exhaust port's closing for
@@ -933,7 +937,7 @@ only the values edited are applied, so a chamber-geometry engine's ratio
 still follows its bore and stroke), with a choice between a 3 s ramp (the default) and
 the next cycle (a live bore and stroke change, see above). The view shows the target
 size at once. A connecting rod offers the rods' length the same way (5 mm,
-0.5 mm with Shift).
+0.5 mm with Shift), and the rod and piston masses (every cylinder's).
 
 The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 (see *Which edits are live*):
@@ -993,11 +997,30 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   edits wait for *Apply*, and a field not edited keeps the fuel's exact
   value;
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
-  distance to it, and the turbine flow area; a supercharger: its pressure
+  distance to it, the turbine flow area, the rotor's inertia (g cm2) and
+  its design shaft speed (each written only when moved); a supercharger: its pressure
   and drive ratios. A turbo and every exhaust component also offer a
   `choice` between *No turbo* and *Turbo*: it fits `sizedTurbocharger()` or
   takes the turbo off, which restarts the engine; the view then selects the
   new turbo (`Reselect::role`), since the parts have changed;
+- the crankshaft (heading *Crank*): the flywheel's inertia and bearing
+  friction, the redline, a two-bank V's bank angle (`setVBankAngle`,
+  foundation `CrankTiming`: the banks open about their centre and each
+  cylinder's TDC moves with its bank, the pins staying) and each
+  cylinder's TDC in the cycle (`retimeCrank`: pins that still point
+  together stay shared, the firing order is redrawn by `firingOrderFor`;
+  refused on a rotary or a radial); its rows show the firing order;
+- the spark plugs: plugs per cylinder (`ignitionSiteCount`, 1-4) and the
+  hard limiter's cut (`ignition.limiterDurationSeconds`);
+- an intake or exhaust valve, below its cam: the valve count and diameter
+  for that side, every cylinder (a diameter left as shown stays derived from
+  the bore); the cylinder heads, on an engine of two banks or more, each
+  bank's own centrelines; the camshaft a cam phaser (`continuousControl`):
+  a `choice` that fits it at no advance, then its response and the intake
+  and exhaust advance at idle, 60 % of the redline and the redline, written
+  at every load on every camshaft once one is typed;
+- the airbox (volume) and the inlet duct (length, diameter: the throttle's
+  bore until set), through `resizeIntakePart` like the other intake parts;
 - the cylinder block: the air around the engine, as an altitude (the
   standard atmosphere's pressure there) and a temperature, the cooling
   airflow (`coolingEfficiency`, a restart), and a switch
@@ -1006,6 +1029,7 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   temperature and, realistic, when the radiator fan is on);
 - the gearbox (`PartRole::gearbox`, drawn on every engine with two gears or
   more): the clutch shift time and the quickshifter's ignition cut in ms,
+  the automatic driver's upshift and downshift speeds (0 places them),
   and the shift style as a `choice` (manual, quickshifter, quickshifter and
   blipper, dual clutch, CVT, automated manual; see *Shift styles* in
   `simulation-model.md`). Its

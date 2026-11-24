@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-24 — Settings in the app instead of the JSON (V4D3 report)
+
+- Owner's V4D3 (saved, 4 bodies on the plenum): ITB -> one body lost power. `DynoSweepHarness --saved-engine --saved-ecu`: original 88.7 / 139.2 / 157.0 kW at 6,500 / 9,500 / 11,000 rpm; ITB about the same; one 90 mm body (area kept) 87.6 / 135.6 / 151.6 (-1 to -3.4 %); one 45 mm body -9 % at 9,000. The loss is real (one bore, no runner plates); the look changed because "one body" is not what was fitted. Fixed by a third layout, `plenum_bodies` (count = cylinders on the plenum), which `throttleLayoutOf` now reads back.
+- Idle not settable: tables saved before the idle target (V4D3, F1, V10, I4 2S CrossPlane) had none; `syncEquipmentSettings` adds the default (test fails without it).
+- Lot B (inventory, owner go 2026-11-24): crank (redline, V angle, TDC per cylinder, firing order), ignition (plugs, limiter cut), rods (masses), valves (count, diameter), turbo (rotor inertia, design speed), auto shift points, airbox and inlet duct, per-bank cams, cam phaser, engine brake (Equipment). Every field writes nothing until moved.
+- Tests: `EngineDesign` (crank retiming against the kinematics' TDCs, V angle keeps the pins), `LiveIntake`, `Calibration`; whole project rebuilt, full `ctest -j 4` 115/115 (29 min). Not measured: the new fields driven on screen; physics code untouched (no harness run).
+
 ## 2026-11-23 — The "Test cell" interface against the build before it
 
 - Physics and sound: `AudioRenderHarness` output identical from its line 13 on (the lines before are the real-time wiring), `IntakeDuctBench` checksums identical (6 rows).

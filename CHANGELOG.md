@@ -7,6 +7,29 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **More of an engine set in the app, no JSON needed.** In the 3-D view's
+  inspector: the crankshaft takes the redline, a V's bank angle and each
+  cylinder's top dead centre (the crank pins and firing order follow); the
+  spark plugs their count per cylinder and the rev limiter's cut; the rods
+  the rod and piston masses; each valve side its count and diameter; the
+  turbo its rotor inertia and design shaft speed; the gearbox the automatic
+  driver's shift points; the airbox its volume and the inlet duct its length
+  and bore; the heads each bank's own cam centrelines; the camshaft a cam
+  phaser (fitted at no advance, then set at idle, midrange and redline).
+  Equipment fits, sets and removes an engine brake on a four-stroke.
+- **Throttle bodies on the plenum**: a third throttle layout, one body per
+  cylinder on the plenum's mouth (Equipment and New engine), the one a
+  V4 superbike's airbox has. Switching to individual throttles and back now
+  returns to it instead of to a single body.
+
+### Fixed
+
+- The idle could not be set on an engine whose ECU tables were saved before
+  the idle target existed: the missing target is now added from the
+  engine's defaults.
+
 ## [0.14.1] — 2026-11-23
 
 The first published release of 0.14: the v0.14.0 tag did not compile on
