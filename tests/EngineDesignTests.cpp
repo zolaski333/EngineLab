@@ -10,6 +10,8 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
+#include <enginelab/foundation/CrankTiming.hpp>
+#include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/RealtimeCapacityProbe.hpp>
@@ -1144,12 +1146,30 @@ void throttleLayouts() {
     require(individual.config->intake.individualThrottles
             && individual.config->intake.throttleCount == individual.config->cylinders.size(),
         "one plate in each cylinder's runner");
-    for (const auto layout : { ThrottleLayout::individual, ThrottleLayout::single }) {
+    for (const auto layout : { ThrottleLayout::individual, ThrottleLayout::single, ThrottleLayout::plenumBodies }) {
         const auto refit = withThrottleLayout(*automatic.config, layout);
         require(refit.config.has_value() && throttleLayoutOf(*refit.config) == layout, refit.error);
         require(std::abs(plateArea(refit.config->intake) / plateArea(automatic.config->intake) - 1.0) < 1.0e-9,
             "the plates' total area is kept");
     }
+    // A sport four's bodies ahead of the plenum, left for one body, come back
+    // as they were (owner report 2026-11-24: the V4D3 could not return).
+    const auto bodies = withThrottleLayout(*automatic.config, ThrottleLayout::plenumBodies);
+    require(bodies.config->intake.throttleCount == bodies.config->cylinders.size()
+            && !bodies.config->intake.individualThrottles,
+        "one body a cylinder ahead of the plenum");
+    const auto one = withThrottleLayout(*bodies.config, ThrottleLayout::single);
+    const auto back = withThrottleLayout(*one.config, ThrottleLayout::plenumBodies);
+    require(back.config.has_value() && throttleLayoutOf(*back.config) == ThrottleLayout::plenumBodies
+            && back.config->intake.throttleCount == bodies.config->intake.throttleCount
+            && std::abs(back.config->intake.throttleDiameterMm - bodies.config->intake.throttleDiameterMm) < 1.0e-9,
+        "one body and back gives the same bodies");
+    spec.throttles = ThrottleLayout::plenumBodies;
+    const auto plenum = designed(spec);
+    require(plenum.config->intake.throttleCount == plenum.config->cylinders.size()
+            && !plenum.config->intake.individualThrottles,
+        "New engine fits one body a cylinder ahead of the plenum");
+    spec.throttles = ThrottleLayout::individual;
     spec.fuelSystem = FuelSystem::carburettor;
     const auto carburetted = designed(spec);
     require(carburetted.config->intake.carburettor.enabled && carburetted.config->intake.individualThrottles,
@@ -1377,7 +1397,56 @@ void rotaryIsDesigned() {
     require(rotaryH.config.has_value(), "a twin-rotor takes an H-pipe after its split collector: " + rotaryH.error);
 }
 
+/** The crank edited on an existing engine (owner 2026-11-24): each piston
+ *  still tops out where its cylinder's cycle says, the pins that pointed
+ *  together and still do stay shared, the firing order follows. */
+void crankEditsOnAnExistingEngine() {
+    const auto pistonsAgree = [](const EngineConfig& config) {
+        const auto reference = buildEngineKinematicsReference(config);
+        for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+            const auto apart = std::remainder(reference.topDeadCentreAngleDegrees[index]
+                - config.cylinders[index].crankOffsetDegrees, 360.0);
+            if (std::abs(apart) > 0.5) return false;
+        }
+        return true;
+    };
+    EngineSpec vFour;
+    vFour.name = "V four";
+    vFour.use = EngineUse::sportMotorcycle;
+    vFour.layout = EngineLayout::vLayout;
+    vFour.cylinderCount = 4;
+    vFour.displacementLitres = 1.0;
+    auto config = *designed(vFour).config;
+    require(pistonsAgree(config), "a designed V four's pistons top out where they fire");
+    const auto journals = config.crankJournals.size();
+    require(setVBankAngle(config, 60.0).empty() && !validateEngineConfig(config), "a V four closes to 60 deg");
+    require(std::abs(config.bankAngleDegrees - 60.0) < 1.0e-9
+            && std::abs(config.banks[1].angleDegrees - config.banks[0].angleDegrees - 60.0) < 1.0e-9,
+        "its banks stand 60 deg apart");
+    require(config.crankJournals.size() == journals && pistonsAgree(config),
+        "on the same crank, each piston's TDC moved with its bank");
+    std::vector<double> evenly;
+    for (std::size_t index = 0; index < config.cylinders.size(); ++index)
+        evenly.push_back(static_cast<double>(index) * 180.0);
+    require(retimeCrank(config, evenly).empty() && !validateEngineConfig(config), "and fires every 180 deg");
+    require(pistonsAgree(config), "the pistons follow the new crank");
+    require(config.firingOrder == std::vector<std::uint32_t>({ 1, 2, 3, 4 }), "in the cylinders' order");
+    auto four = *designed(sportFour()).config;
+    const auto pins = four.crankJournals.size();
+    std::vector<double> same;
+    for (const auto& cylinder : four.cylinders) same.push_back(cylinder.crankOffsetDegrees);
+    require(retimeCrank(four, same).empty() && four.crankJournals.size() == pins && pistonsAgree(four),
+        "the same timing keeps the same crank");
+    std::vector<double> bigBang { 0.0, 0.0, 360.0, 360.0 };
+    require(retimeCrank(four, bigBang).empty() && !validateEngineConfig(four) && pistonsAgree(four),
+        "an inline four retimed as a big bang");
+    require(!retimeCrank(four, { 0.0, 180.0 }).empty(), "a timing for two of four cylinders is refused");
+    require(!retimeCrank(four, { 0.0, 180.0, 360.0, 720.0 }).empty(), "a TDC past the cycle is refused");
+    require(!setVBankAngle(four, 60.0).empty(), "an inline four has no V to open");
+}
+
 int main() {
+    crankEditsOnAnExistingEngine();
     crankBalanceMatchesTheTextbook();
     firingOrdersAreRanked();
     inlineSevenFromNothing();

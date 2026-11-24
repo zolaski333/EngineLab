@@ -377,7 +377,38 @@ void testFittedTurboBringsItsSettings() {
     require(tables.find(keys::antiLagEnabled) == nullptr, "a turbo diesel gets no anti-lag");
 }
 
+/** Tables saved without an idle target (the V4D3's, owner report
+ *  2026-11-24) left the idle unsettable: the sync adds it at the
+ *  configuration's idle speed, so the governor holds what it held. */
+void testSavedTablesTakeAnIdleTarget() {
+    auto config = enginelab::makeDefaultInlineFour();
+    config.fuel = enginelab::FuelType::gasoline;
+    config.idleRpm = 1'350.0;
+    auto tables = makeDefaultEcuCalibration(config);
+    require(tables.erase(keys::idleTarget), "the generated tables hold an idle target");
+    const auto inStep = [&tables, &config] {
+        CalibrationStore store;
+        require(store.publish(tables, { std::nullopt, "test" }).published, "the tables publish");
+        return equipmentSettingsInStep(*store.snapshot(), config);
+    };
+    require(!inStep(), "tables without an idle target are out of step");
+    require(syncEquipmentSettings(tables, config), "the sync adds it");
+    const auto* idle = tables.find(keys::idleTarget);
+    const auto* target = idle != nullptr ? std::get_if<ScalarCalibration>(idle) : nullptr;
+    require(target != nullptr && target->value == 1'350.0,
+        ("at the configuration's idle speed, not " + (target != nullptr ? std::to_string(target->value)
+                                                                         : std::string("none"))).c_str());
+    require(inStep() && !syncEquipmentSettings(tables, config), "and the tables are in step after it");
+    config.intake.carburettor.enabled = true;
+    for (auto& path : config.intakePaths) path.geometry.carburettor.enabled = true;
+    auto carburetted = makeDefaultEcuCalibration(config);
+    require(carburetted.find(keys::idleTarget) == nullptr, "a carburettor's idle is its stop screw's");
+    (void)syncEquipmentSettings(carburetted, config);
+    require(carburetted.find(keys::idleTarget) == nullptr, "the sync adds no idle target to a carburettor");
+}
+
 int main() {
+    testSavedTablesTakeAnIdleTarget();
     testFittedTurboBringsItsSettings();
     testSavedAfrLimitIsWidened();
     testAxisValidationAndInterpolation();

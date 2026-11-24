@@ -847,7 +847,8 @@ DesignedEngine withIntakeStyle(const EngineConfig& config, IntakeStyle style) {
 
 ThrottleLayout throttleLayoutOf(const EngineConfig& config) noexcept {
     const auto& intake = config.intakePaths.empty() ? config.intake : config.intakePaths.front().geometry;
-    return intake.individualThrottles ? ThrottleLayout::individual : ThrottleLayout::single;
+    if (intake.individualThrottles) return ThrottleLayout::individual;
+    return intake.throttleCount > 1U ? ThrottleLayout::plenumBodies : ThrottleLayout::single;
 }
 
 DesignedEngine withThrottleLayout(const EngineConfig& config, ThrottleLayout layout) {
@@ -865,6 +866,9 @@ DesignedEngine withThrottleLayout(const EngineConfig& config, ThrottleLayout lay
                 : "Individual throttles are a piston engine's: a rotary keeps its throttle body");
         if (twoStroke)
             throw std::invalid_argument("A two-stroke's carburettor feeds its own cylinder's crankcase: one each");
+        if (layout == ThrottleLayout::plenumBodies && (diesel || rotary))
+            throw std::invalid_argument(diesel ? "A diesel is unthrottled: no throttle bodies to multiply"
+                                               : "A rotary's bodies go one a rotor: New engine fits them");
         auto edited = config;
         const std::map<std::string, double> none;
         const auto stoichiometric = config.fuelProperties.stoichiometricAirFuelRatio;
@@ -877,7 +881,8 @@ DesignedEngine withThrottleLayout(const EngineConfig& config, ThrottleLayout lay
         // The plates' total area is kept: the engine breathes as it did at
         // full throttle, through one bore or one a runner.
         const auto refit = [&](IntakeConfig& intake, std::size_t cylinders, Derivation& settle) {
-            const auto bores = individual ? static_cast<std::uint32_t>(std::max<std::size_t>(1, cylinders)) : 1U;
+            const auto bores = individual || layout == ThrottleLayout::plenumBodies
+                ? static_cast<std::uint32_t>(std::max<std::size_t>(1, cylinders)) : 1U;
             const auto before = static_cast<double>(std::max(1U, intake.throttleCount));
             intake.throttleDiameterMm *= std::sqrt(before / static_cast<double>(bores));
             intake.throttleCount = bores;
@@ -908,12 +913,14 @@ const char* throttleLayoutName(ThrottleLayout layout) noexcept {
     case ThrottleLayout::automatic: return "automatic";
     case ThrottleLayout::single: return "single";
     case ThrottleLayout::individual: return "individual";
+    case ThrottleLayout::plenumBodies: return "plenum_bodies";
     }
     return "automatic";
 }
 
 std::optional<ThrottleLayout> parseThrottleLayout(std::string_view name) noexcept {
-    for (const auto layout : { ThrottleLayout::automatic, ThrottleLayout::single, ThrottleLayout::individual })
+    for (const auto layout : { ThrottleLayout::automatic, ThrottleLayout::single, ThrottleLayout::individual,
+                               ThrottleLayout::plenumBodies })
         if (name == throttleLayoutName(layout)) return layout;
     return std::nullopt;
 }
@@ -1474,6 +1481,7 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                 : diesel ? "A diesel is unthrottled: no individual throttles"
                 : "Individual throttles are a piston engine's: a rotary keeps its throttle body");
         const auto perCylinderThrottles = spec.throttles == ThrottleLayout::individual
+            || spec.throttles == ThrottleLayout::plenumBodies
             || (spec.throttles == ThrottleLayout::automatic
                 && profile.throttlePerCylinder && !diesel && !twoStroke && count <= 16);
         intake.individualThrottles = spec.throttles == ThrottleLayout::individual;

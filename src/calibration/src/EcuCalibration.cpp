@@ -348,6 +348,16 @@ void addMissingDefaultSettings(CalibrationDraft& draft, const EngineConfig& conf
 
 bool syncEquipmentSettings(CalibrationDraft& draft, const EngineConfig& config) {
     auto changed = syncVtecSettings(draft, config);
+    // Tables saved before the idle target existed had no way to set the idle
+    // (owner report 2026-11-24): they take it at the configuration's speed,
+    // which is the speed the governor already held without it.
+    if (idleCarburettor(config) == nullptr && draft.find(keys::idleTarget) == nullptr) {
+        const auto defaults = makeDefaultEcuCalibration(config);
+        if (const auto* setting = defaults.find(keys::idleTarget)) {
+            draft.set(*setting);
+            changed = true;
+        }
+    }
     if (turbocharged(config)) {
         const auto defaults = makeDefaultEcuCalibration(config);
         for (const auto key : { keys::boostTargetGauge, keys::overboostCut }) {
@@ -372,6 +382,7 @@ bool syncEquipmentSettings(CalibrationDraft& draft, const EngineConfig& config) 
 
 bool equipmentSettingsInStep(const CalibrationSnapshot& snapshot, const EngineConfig& config) {
     if (vtecCamsFitted(config) != snapshot.scalar(keys::vtecEnabled).has_value()) return false;
+    if (idleCarburettor(config) == nullptr && snapshot.find(keys::idleTarget) == nullptr) return false;
     if (turbocharged(config)
         && (snapshot.find(keys::boostTargetGauge) == nullptr || snapshot.find(keys::overboostCut) == nullptr))
         return false;

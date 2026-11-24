@@ -1,4 +1,4 @@
-add_library(EngineLabFoundation STATIC src/EngineTypes.cpp src/CylinderResize.cpp src/IntakeResize.cpp
+add_library(EngineLabFoundation STATIC src/EngineTypes.cpp src/CylinderResize.cpp src/CrankTiming.cpp src/IntakeResize.cpp
     src/TurboSizing.cpp src/Units.cpp src/CrankBalance.cpp src/ThreadScheduling.cpp)
 add_library(EngineLab::Foundation ALIAS EngineLabFoundation)
 target_include_directories(EngineLabFoundation PUBLIC include)
