@@ -118,6 +118,73 @@ void missingCrankOffsetsFollowTheCycle() {
     }
 }
 
+/** Every two-stroke field a file holds comes back as written, in both
+ *  formats, and a width left at zero stays zero in the file -- the derived
+ *  width (0.65 / 1.30 / 0.70 x bore) is computed at run time, never frozen
+ *  into the file, so a bore change still moves it (audit 2026-11-24). */
+void everyTwoStrokeFieldSurvivesAFile() {
+    auto config = catalogueTwoStroke();
+    auto& t = config.twoStroke;
+    t.intake = TwoStrokeIntake::cylinderPort;
+    t.intakePortOpenDegreesBtdc = 71.5;
+    t.intakePortWidthMm = 38.25;
+    t.intakePortReed = false;
+    t.exhaustPortOpenDegrees = 94.5;
+    t.transferPortOpenDegrees = 121.25;
+    t.exhaustPortWidthMm = 44.5;
+    t.transferPortWidthMm = 81.75;
+    t.portDischargeCoefficient = 0.685;
+    t.crankcaseCompressionRatio = 1.4125;
+    t.scavengeLoopLengthRatio = 1.65;
+    t.powerValveClosedExhaustPortOpenDegrees = 101.0;
+    t.powerValveOpeningStartRpm = 6'250.0;
+    t.powerValveFullyOpenRpm = 8'125.0;
+    require(!validateEngineConfig(config), "the edited two-stroke is valid");
+    const JsonEngineSerializer json;
+    const YamlEngineSerializer yaml;
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        const auto decoded = serializer->decode(serializer->encode(config));
+        require(static_cast<bool>(decoded), "the edited two-stroke decodes");
+        const auto& d = decoded.config->twoStroke;
+        require(d.intake == t.intake && d.intakePortOpenDegreesBtdc == t.intakePortOpenDegreesBtdc
+                && d.intakePortWidthMm == t.intakePortWidthMm && d.intakePortReed == t.intakePortReed
+                && d.exhaustPortOpenDegrees == t.exhaustPortOpenDegrees
+                && d.transferPortOpenDegrees == t.transferPortOpenDegrees
+                && d.exhaustPortWidthMm == t.exhaustPortWidthMm
+                && d.transferPortWidthMm == t.transferPortWidthMm
+                && d.portDischargeCoefficient == t.portDischargeCoefficient
+                && d.crankcaseCompressionRatio == t.crankcaseCompressionRatio
+                && d.scavengeLoopLengthRatio == t.scavengeLoopLengthRatio
+                && d.powerValveClosedExhaustPortOpenDegrees == t.powerValveClosedExhaustPortOpenDegrees
+                && d.powerValveOpeningStartRpm == t.powerValveOpeningStartRpm
+                && d.powerValveFullyOpenRpm == t.powerValveFullyOpenRpm,
+            "every two-stroke field comes back as written");
+    }
+
+    auto derived = catalogueTwoStroke();
+    derived.twoStroke.exhaustPortWidthMm = 0.0;
+    derived.twoStroke.transferPortWidthMm = 0.0;
+    derived.twoStroke.intakePortWidthMm = 0.0;
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        auto decoded = serializer->decode(serializer->encode(derived));
+        require(static_cast<bool>(decoded)
+                && decoded.config->twoStroke.exhaustPortWidthMm == 0.0
+                && decoded.config->twoStroke.transferPortWidthMm == 0.0
+                && decoded.config->twoStroke.intakePortWidthMm == 0.0,
+            "a width left at zero stays zero in the file");
+        auto& cylinder = decoded.config->cylinders.front();
+        const auto bore = cylinder.boreMm;
+        require(std::abs(exhaustPortWidthMm(decoded.config->twoStroke, cylinder) - 0.65 * bore) < 1.0e-12
+                && std::abs(transferPortWidthMm(decoded.config->twoStroke, cylinder) - 1.30 * bore) < 1.0e-12,
+            "and is derived from the bore when the engine runs");
+        cylinder.boreMm = bore + 4.0;
+        require(std::abs(exhaustPortWidthMm(decoded.config->twoStroke, cylinder) - 0.65 * (bore + 4.0)) < 1.0e-12,
+            "so a bore change still moves it");
+    }
+}
+
 /** A power valve lowers the exhaust port's roof at low speed, so the port
  *  opens later and is lower, and lifts as the speed rises. Off, a file and
  *  the port are what they were. */
@@ -1285,6 +1352,7 @@ int main(int argc, char** argv) {
     configurationIsChecked();
     missingCrankOffsetsFollowTheCycle();
     thePowerValveLowersThePortAtLowSpeed();
+    everyTwoStrokeFieldSurvivesAFile();
     aCylinderPortOnlyBreathesAroundTopDeadCentre();
     loadIsTheDeliveredCharge();
     catalogueTwinIdles();
