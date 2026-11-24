@@ -149,26 +149,9 @@ struct ScavengedPortState final {
     };
 }
 
-/** Hold the zone within what the cylinder holds, by scaling it whole.
- *
- * The zone's accounting is approximate over a coupling interval (its share is
- * time-averaged while the port's flux varies), so a species of the zone can
- * drift a little past the cylinder's own holding. Clipping each species alone
- * would change the zone's composition and break its element balance -- the
- * nitrogen that came with its oxygen and products -- and that error then leaves
- * through the port into the cylinder's remaining charge. A uniform scale keeps
- * the composition, so the balance the zone started with is kept. */
+/** Hold the zone within what the cylinder holds (`holdResidualZoneWithin`). */
 void clampResidualZoneToCell(ScavengeResidualZone& zone, const GasCell& cell) noexcept {
-    const auto held = residualZoneFromCell(cell);
-    auto keep = 1.0;
-    const auto limit = [&keep](double zoneKg, double heldKg) {
-        if (zoneKg > heldKg && zoneKg > 0.0) keep = std::min(keep, std::max(0.0, heldKg) / zoneKg);
-    };
-    limit(zone.oxygenKg, held.oxygenKg);
-    limit(zone.inertKg, held.inertKg);
-    limit(zone.fuelKg, held.fuelKg);
-    limit(zone.burnedKg, held.burnedKg);
-    if (keep < 1.0) scaleResidualZone(zone, keep);
+    holdResidualZoneWithin(zone, residualZoneFromCell(cell));
 }
 
 /** Exhaust gas the pipe pushed back into the cylinder joins the residual zone:

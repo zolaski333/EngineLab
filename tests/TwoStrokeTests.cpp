@@ -776,6 +776,33 @@ void theResidualZoneGivesTheClassicalLaws() {
     require(residualOutflowShare(0.0, 0.001, 1.0, 0.01) <= 0.1 + 1.0e-12,
         "a nearly empty zone gives at most its own mass");
 
+    // Held within the cylinder, the zone keeps its own element balance. Its
+    // burned gas has drifted 3 % past the cylinder's (the RD350 at 7,000 rpm
+    // showed 4.38 against 4.24 mg); clipping that species alone left the
+    // zone's nitrogen without its products and broke the cylinder's balance
+    // by 0.45 % (measured before this hold).
+    {
+        constexpr double mN2 = 0.028;
+        constexpr double mBurned = (8 * 0.044 + 9 * 0.018) / 17.0;
+        constexpr double inertPerBurned = 0.79 / 0.21 * 12.5 / 17.0;
+        const auto balance = [&](const ScavengeResidualZone& z) {
+            return (z.inertKg / mN2) / (inertPerBurned * z.burnedKg / mBurned) - 1.0;
+        };
+        const ScavengeResidualZone drifted { 0.0, 1.03 * inertPerBurned * mN2, 0.0, 1.03 * mBurned };
+        const ScavengeResidualZone holding { 0.10, 2.0, 0.0, mBurned };
+        auto clipped = drifted;
+        clipped.burnedKg = std::min(clipped.burnedKg, holding.burnedKg);
+        auto held = drifted;
+        holdResidualZoneWithin(held, holding);
+        std::cout << "  zone N2 balance after holding: per species " << balance(clipped)
+                  << ", whole " << balance(held) << " (drifted " << balance(drifted) << ")\n";
+        require(std::abs(balance(clipped) - balance(drifted)) > 1.0e-2,
+            "clipping one species changes the zone's composition (the original issue)");
+        require(std::abs(balance(held) - balance(drifted)) < 1.0e-12
+                && held.burnedKg <= holding.burnedKg * (1.0 + 1.0e-12),
+            "holding the zone whole keeps its composition within the cylinder");
+    }
+
     for (const auto deliveryRatio : { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0 }) {
         const auto displaced = scavengeConstantVolume(0.0, deliveryRatio, 4'000);
         const auto mixed = scavengeConstantVolume(1.0, deliveryRatio, 4'000);

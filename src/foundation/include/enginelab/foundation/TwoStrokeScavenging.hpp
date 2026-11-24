@@ -205,6 +205,30 @@ inline void scaleResidualZone(ScavengeResidualZone& zone, double keep) noexcept 
     zone.burnedKg *= k;
 }
 
+/** Hold the zone within `held`, the cylinder's own species masses, by scaling
+ * it whole.
+ *
+ * The zone's accounting is approximate over a coupling interval (its share is
+ * time-averaged while the port's flux varies), so a species of the zone can
+ * drift a little past the cylinder's holding. Clipping each species alone
+ * would change the zone's composition and break its element balance -- the
+ * nitrogen that came with its oxygen and products -- and that error then
+ * leaves through the port into the charge that stays. A uniform scale keeps
+ * the composition, so the balance the zone started with is kept. */
+inline void holdResidualZoneWithin(ScavengeResidualZone& zone,
+    const ScavengeResidualZone& held) noexcept {
+    auto keep = 1.0;
+    const auto limit = [&keep](double zoneKg, double heldKg) {
+        if (zoneKg > heldKg && zoneKg > 0.0)
+            keep = std::min(keep, std::max(0.0, heldKg) / zoneKg);
+    };
+    limit(zone.oxygenKg, held.oxygenKg);
+    limit(zone.inertKg, held.inertKg);
+    limit(zone.fuelKg, held.fuelKg);
+    limit(zone.burnedKg, held.burnedKg);
+    if (keep < 1.0) scaleResidualZone(zone, keep);
+}
+
 /** Share of the exhaust outflow drawn from the residual zone rather than from
  * the mixed cylinder, in [0, 1].
  *
