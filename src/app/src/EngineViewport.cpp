@@ -2086,21 +2086,45 @@ void EngineViewport::updateInspector() {
                          160.0);
             timing.value("Compression ratio", config.cylinders.front().compressionRatio, utf8(" : 1"), 1, 0.5, 0.1,
                          5.0, 20.0);
+            // Each bank's own camshafts, set apart from the others (two banks
+            // or more): a typed centreline is that bank's alone.
+            std::vector<double> bankCentrelinesNow;
+            if (config.banks.size() > 1U) {
+                for (const auto& bank : config.banks) {
+                    const auto name = "Bank " + juce::String(static_cast<int>(bank.id));
+                    timing.value(name + " intake", bank.camshafts.intakeCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0, 1.0,
+                                 60.0, 160.0);
+                    timing.value(name + " exhaust", bank.camshafts.exhaustCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0,
+                                 1.0, 60.0, 160.0);
+                    bankCentrelinesNow.push_back(bank.camshafts.intakeCenterlineDegrees);
+                    bankCentrelinesNow.push_back(bank.camshafts.exhaustCenterlineDegrees);
+                }
+            }
             timing.offersRamp = true;
-            timing.note = "Degrees after TDC for the intake, before it for the exhaust: smaller centrelines, more "
-                          "overlap. Every camshaft moves by as much, every cylinder takes the ratio (a higher one "
-                          "gives more torque, and knocks sooner). The running engine takes them.";
+            timing.note = juce::String("Degrees after TDC for the intake, before it for the exhaust: smaller "
+                                       "centrelines, more overlap. Every camshaft moves by as much, every cylinder "
+                                       "takes the ratio (a higher one gives more torque, and knocks sooner). ")
+                + (bankCentrelinesNow.empty() ? "" : "A bank's own centreline moves that bank's camshafts alone. ")
+                + "The running engine takes them.";
             edit = timing;
             const auto intakeNow = cams.intakeCenterlineDegrees;
             const auto exhaustNow = cams.exhaustCenterlineDegrees;
             const auto ratioNow = config.cylinders.front().compressionRatio;
             partEditor_ = [=](EngineConfig& edited, const std::vector<double>& values) {
-                if (values.size() < 3U) return std::string("The head changed meanwhile.");
+                if (values.size() != 3U + bankCentrelinesNow.size()) return std::string("The head changed meanwhile.");
                 const auto intakeCentreline = values[0];
                 const auto exhaustCentreline = values[1];
                 shiftCamshafts(edited, &CamshaftConfig::intakeCenterlineDegrees, nullptr, intakeCentreline - intakeNow);
                 shiftCamshafts(edited, &CamshaftConfig::exhaustCenterlineDegrees, nullptr,
                                exhaustCentreline - exhaustNow);
+                for (std::size_t bank = 0; bank < edited.banks.size() && 2U * bank + 1U < bankCentrelinesNow.size();
+                     ++bank) {
+                    auto& own = edited.banks[bank].camshafts;
+                    if (values[3U + 2U * bank] != bankCentrelinesNow[2U * bank])
+                        own.intakeCenterlineDegrees = values[3U + 2U * bank];
+                    if (values[4U + 2U * bank] != bankCentrelinesNow[2U * bank + 1U])
+                        own.exhaustCenterlineDegrees = values[4U + 2U * bank];
+                }
                 return values[2] != ratioNow ? setCompressionRatio(edited, values[2]) : std::string();
             };
         }
@@ -2867,6 +2891,77 @@ void EngineViewport::updateInspector() {
             add("Exhaust cam advance", juce::String(live->exhaustValveAdvanceDegrees, 1) + utf8("° crank"));
         }
         if (vtecCamsFitted(config)) add("VTEC high cam", state.vtecHighCylinderMask != 0U ? "engaged" : "off");
+        // A cam phaser: the advance it turns the cams to, at idle, in the
+        // midrange and at the redline, every camshaft alike. Fitted, it
+        // starts at no advance, so nothing changes until a figure is typed.
+        if (configEditor_ && config.cycle == EngineCycle::fourStroke) {
+            const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
+            const auto& control = cams.continuousControl;
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 10 } << 60U;
+            edit->heading = "CAM PHASER";
+            const std::array<double, 3> speeds { config.idleRpm, std::round(0.6 * config.redlineRpm / 50.0) * 50.0,
+                                                 config.redlineRpm };
+            std::array<double, 6> shown {};
+            if (control.enabled) {
+                edit->value("Response", control.responseFrequencyHz, " Hz", 1, 1.0, 0.5, 0.1, 100.0);
+                for (std::size_t at = 0; at < speeds.size(); ++at) {
+                    const auto sample = interpolateValveControl(control, speeds[at], 1.0);
+                    shown[at] = std::round(sample.intakeAdvanceDegrees * 10.0) / 10.0;
+                    shown[at + 3U] = std::round(sample.exhaustAdvanceDegrees * 10.0) / 10.0;
+                }
+                for (std::size_t at = 0; at < 6U; ++at)
+                    edit->value(juce::String(at < 3U ? "Intake at " : "Exhaust at ")
+                                    + juce::String(juce::roundToInt(speeds[at % 3U])) + " rpm",
+                                shown[at], utf8("\xc2\xb0"), 1, 2.0, 0.5, -90.0, 90.0);
+            }
+            edit->note = control.enabled
+                ? juce::String("Crank degrees the phaser turns each cam ahead of its centreline (negative: "
+                               "retarded), read at full load; between the speeds it follows a straight line. The "
+                               "response is how fast it gets there. A figure typed in replaces the phaser's map "
+                               "with these three speeds, at every load, on every camshaft. The running engine "
+                               "takes it.")
+                : juce::String("No phaser: the cams stay at their centrelines.");
+            edit->choice = PartInspector::Edit::Choice {
+                { "No cam phaser", "Cam phaser" },
+                "A hydraulic phaser on the intake and exhaust camshafts, turning them ahead or behind with the speed "
+                "(VVT). Fitted at no advance, so the engine is unchanged until its figures are set.",
+                control.enabled ? 1 : 0 };
+            partChoice_ = [speeds](EngineConfig& edited, int index) {
+                const auto fit = [&](CamshaftConfig& cam) {
+                    auto& own = cam.continuousControl;
+                    own.enabled = index == 1;
+                    if (own.enabled && own.samples.empty())
+                        for (const auto rpm : speeds) own.samples.push_back({ rpm, 1.0, 0.0, 0.0, 1.0 });
+                };
+                fit(edited.camshafts);
+                for (auto& bank : edited.banks) fit(bank.camshafts);
+            };
+            if (control.enabled) {
+                partEditor_ = [speeds, shown, hzNow = control.responseFrequencyHz](EngineConfig& edited,
+                                                                                    const std::vector<double>& values) {
+                    if (values.size() != 7U) return std::string("The phaser changed meanwhile.");
+                    auto typed = false;
+                    for (std::size_t at = 0; at < 6U; ++at) typed = typed || values[1U + at] != shown[at];
+                    if (std::isnan(values[0]) || values[0] < 0.1 || values[0] > 100.0)
+                        return std::string("A phaser answers at 0.1 to 100 Hz.");
+                    if (!(speeds[0] < speeds[1] && speeds[1] < speeds[2]))
+                        return std::string("The idle, midrange and redline speeds must rise.");
+                    const auto write = [&](CamshaftConfig& cam) {
+                        auto& own = cam.continuousControl;
+                        if (values[0] != hzNow) own.responseFrequencyHz = values[0];
+                        if (!typed) return;
+                        own.samples.clear();
+                        for (const auto load : { 0.0, 1.0 })
+                            for (std::size_t at = 0; at < speeds.size(); ++at)
+                                own.samples.push_back({ speeds[at], load, values[1U + at], values[4U + at], 1.0 });
+                    };
+                    write(edited.camshafts);
+                    for (auto& bank : edited.banks) write(bank.camshafts);
+                    return std::string();
+                };
+            }
+        }
         break;
     case render::PartRole::sparkPlug:
         title = "Spark plugs";
@@ -3048,6 +3143,34 @@ void EngineViewport::updateInspector() {
             edit->heading = "INTAKE";
             edit->restarts = true;
             edit->choice = intakeStyleChoice(false);
+            // Its size: the airbox's volume, the inlet duct's length and bore.
+            const auto pathId = duct.pathId;
+            const auto box = duct.kind == render::DuctKind::intakeAirbox;
+            if (const auto size = intakePartSize(config, pathId, box ? IntakePart::airbox : IntakePart::inletDuct);
+                size && size->first > 0.0) {
+                if (box) {
+                    edit->value("Volume", size->first, " L", 2, 0.5, 0.05, 0.05, 12'000.0);
+                } else {
+                    edit->length("Length", size->first, 10.0, 1.0, 10.0, 25'000.0);
+                    edit->length("Diameter", size->second, 2.0, 0.5, 5.0, 2'500.0);
+                }
+                edit->note = box ? "The airbox's volume: with the inlet duct, a Helmholtz resonator ahead of the "
+                                   "throttle, which sets the intake's low note and a hump in the torque. The engine "
+                                   "restarts to take it."
+                                 : "The duct the air comes in by, ahead of the airbox or the throttle; its diameter "
+                                   "is the throttle's bore until set. The engine restarts to take it.";
+                const auto part = box ? IntakePart::airbox : IntakePart::inletDuct;
+                const auto shown = *size;
+                partEditor_ = [pathId, part, shown](EngineConfig& edited, const std::vector<double>& values) {
+                    if (values.size() < (part == IntakePart::airbox ? 1U : 2U))
+                        return std::string("The intake changed meanwhile.");
+                    // Left as shown, a field stays as it was.
+                    const auto first = std::abs(values[0] - shown.first) < 1.0e-6 ? shown.first : values[0];
+                    const auto second = part == IntakePart::airbox ? 0.0
+                        : std::abs(values[1] - shown.second) < 1.0e-6 ? shown.second : values[1];
+                    return resizeIntakePart(edited, pathId, part, 0, first, second);
+                };
+            }
         }
         subtitle = (exhaust ? "Exhaust path " : "Intake path ") + juce::String(duct.pathId);
         if (duct.kind == render::DuctKind::intakeRunner) subtitle = cylinderName;

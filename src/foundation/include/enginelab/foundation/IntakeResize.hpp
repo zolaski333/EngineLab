@@ -17,12 +17,18 @@ enum class IntakePart : std::uint8_t {
     plenum,
     /** A throttle body: its bore, in millimetres. */
     throttle,
+    /** An airbox: its volume, in litres. */
+    airbox,
+    /** The inlet duct ahead of the airbox or the throttle: its length and its
+     *  diameter, in millimetres (the throttle's bore when not authored). */
+    inletDuct,
 };
 
 struct IntakePartSize final {
-    /** Runner length (mm), plenum volume (L) or throttle bore (mm). */
+    /** Runner or inlet duct length (mm), plenum or airbox volume (L), or
+     *  throttle bore (mm). */
     double first { 0.0 };
-    /** Runner diameter (mm); zero for the other parts. */
+    /** Runner or inlet duct diameter (mm); zero for the other parts. */
     double second { 0.0 };
     /** The runner size belongs to the path: every runner on it changes. */
     bool sharedByRunners { false };

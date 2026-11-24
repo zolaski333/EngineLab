@@ -503,7 +503,28 @@ void intakePartsResize() {
     require(resizeIntakePart(throttle, pathId, IntakePart::throttle, 0, 52.0).empty()
                 && throttle.throttleDiameterMm == 52.0,
             "a throttle takes a bore, the legacy field too");
+    // The airbox and the inlet duct: an inherited diameter left as read
+    // stays inherited.
+    auto airbox = config;
+    require(resizeIntakePart(airbox, pathId, IntakePart::airbox, 0, 4.5).empty()
+                && airbox.intake.airboxVolumeLitres == 4.5
+                && intakePartSize(airbox, pathId, IntakePart::airbox)->first == 4.5,
+            "an airbox takes a volume, mirrored");
+    auto inlet = config;
+    inlet.intakePaths.front().geometry.inletDuctDiameterMm = 0.0;
+    const auto inletSize = intakePartSize(inlet, pathId, IntakePart::inletDuct);
+    require(inletSize && inletSize->second == inlet.intakePaths.front().geometry.throttleDiameterMm,
+            "an inlet duct without a diameter reads the throttle's");
+    require(resizeIntakePart(inlet, pathId, IntakePart::inletDuct, 0, 250.0, inletSize->second).empty()
+                && inlet.intake.inletDuctLengthMm == 250.0 && inlet.intake.inletDuctDiameterMm == 0.0,
+            "a new length keeps an inherited diameter inherited");
+    require(resizeIntakePart(inlet, pathId, IntakePart::inletDuct, 0, 250.0, 70.0).empty()
+                && inlet.intake.inletDuctDiameterMm == 70.0,
+            "a new diameter is authored");
     auto refused = config;
+    require(!resizeIntakePart(refused, pathId, IntakePart::airbox, 0, 0.0).empty()
+                && !resizeIntakePart(refused, pathId, IntakePart::inletDuct, 0, 250.0, 1.0).empty(),
+            "an empty airbox or a pinhole duct is refused");
     require(!resizeIntakePart(refused, pathId, IntakePart::plenum, 0, 0.01).empty()
                 && !resizeIntakePart(refused, pathId, IntakePart::runner, 0, 10.0, 40.0).empty()
                 && !resizeIntakePart(refused, pathId + 7, IntakePart::throttle, 0, 40.0).empty(),

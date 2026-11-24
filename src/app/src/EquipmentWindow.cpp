@@ -451,6 +451,119 @@ private:
 
 // --------------------------------------------------------------------------
 
+/** A compression-release engine brake (a truck's "jake brake"): fitted, its
+ *  stages are picked on Drive; here it is fitted, removed and set. */
+class EngineBrakeSection final : public Section {
+public:
+    explicit EngineBrakeSection(EquipmentWindow::Callbacks& callbacks)
+        : Section(utf8("ENGINE BRAKE")), callbacks_(callbacks),
+          fields_(*this, {
+            { "Valve lift", " mm", 0.0, 10.0, 0.1, 1,
+              "The brake event's peak lift on the one exhaust valve it opens: about 1 to 2 mm on a production "
+              "brake." },
+            { "Peak", " deg after TDC", -90.0, 90.0, 1.0, 0,
+              "Where the event peaks, crank degrees after the firing top dead centre (negative: before). Near "
+              "TDC the compressed charge is let out before it can push the piston back down." },
+            { "Duration", " deg", 5.0, 180.0, 1.0, 0, "The brake event's whole duration, crank degrees." },
+            { "Lets go below", " rpm", 0.0, 50000.0, 50.0, 0,
+              "Below this speed the brake releases, so it never stalls the engine." },
+            { "Stages", "", 1.0, 8.0, 1.0, 0,
+              "The driver's switch: stage k of N brakes k / N of the cylinders." },
+          }) {
+        fitButton_.setTooltip(utf8("Fits a compression-release brake: 2 mm at TDC over 80 deg, three stages, "
+                                   "released below 1,000 rpm. It is off until a stage is picked on Drive."));
+        fitButton_.onClick = [this] {
+            auto edited = config_;
+            edited.engineBrake = EngineBrakeConfig {};
+            edited.engineBrake.fitted = true;
+            commit(edited);
+        };
+        removeButton_.setTooltip(utf8("Takes the engine brake off."));
+        removeButton_.onClick = [this] {
+            auto edited = config_;
+            edited.engineBrake.fitted = false;
+            commit(edited);
+        };
+        fields_.onEdited = [this](std::size_t) { fieldsEdited(); };
+        addChildComponent(fitButton_);
+        addChildComponent(removeButton_);
+    }
+
+    [[nodiscard]] int preferredHeight() const override {
+        return headerHeight + 34 + (fitted_ ? rowGap + fields_.height() : 0);
+    }
+
+    void setEngine(const EngineConfig& config, const std::shared_ptr<calibration::CalibrationStore>&) override {
+        config_ = config;
+        // It opens an exhaust valve near TDC: a four-stroke's.
+        setVisible(config.cycle == EngineCycle::fourStroke);
+        const auto& brake = config.engineBrake;
+        fields_.setValues({ brake.valveLiftMm, brake.peakAfterTdcDegrees, brake.durationDegrees, brake.minimumRpm,
+                            static_cast<double>(brake.stageCount) });
+        if (brake.fitted == fitted_ && shown_) return;
+        shown_ = true;
+        fitted_ = brake.fitted;
+        fitButton_.setVisible(!fitted_);
+        removeButton_.setVisible(fitted_);
+        fields_.setVisible(fitted_);
+        if (!fitted_) setStatus(utf8("No engine brake fitted."));
+        layoutChanged();
+    }
+
+    void setLocked(bool locked) override {
+        Section::setLocked(locked);
+        fitButton_.setEnabled(!locked);
+        removeButton_.setEnabled(!locked);
+        fields_.setEnabled(!locked);
+    }
+
+    void setState(const EngineState& state) override {
+        if (!fitted_) return;
+        setStatus(state.engineBrakeCylinders > 0U
+            ? utf8("Braking on ") + juce::String(static_cast<int>(state.engineBrakeCylinders)) + utf8(" cylinders.")
+            : utf8("Off: the Engine brake button on Drive picks a stage."));
+    }
+
+    void resized() override {
+        auto area = body();
+        auto row = area.removeFromTop(34);
+        if (fitted_) removeButton_.setBounds(row.removeFromRight(removeButton_.idealWidth()));
+        else fitButton_.setBounds(row.removeFromLeft(fitButton_.idealWidth()));
+        area.removeFromTop(rowGap);
+        if (fitted_) fields_.layout(area);
+    }
+
+private:
+    void fieldsEdited() {
+        auto edited = config_;
+        auto& brake = edited.engineBrake;
+        brake.valveLiftMm = fields_.value(0);
+        brake.peakAfterTdcDegrees = fields_.value(1);
+        brake.durationDegrees = fields_.value(2);
+        brake.minimumRpm = fields_.value(3);
+        brake.stageCount = static_cast<std::uint32_t>(std::lround(fields_.value(4)));
+        commit(edited);
+    }
+
+    /** A brake the engine refuses is shown back as it was. */
+    void commit(const EngineConfig& edited) {
+        if (locked_ || !callbacks_.applyEngine || !callbacks_.applyEngine(edited)) {
+            shown_ = false;
+            setEngine(config_, {});
+        }
+    }
+
+    EquipmentWindow::Callbacks& callbacks_;
+    EngineConfig config_ {};
+    bool fitted_ { false };
+    bool shown_ { false };
+    FieldGrid fields_;
+    ui::ActionButton fitButton_ { utf8("Fit an engine brake"), ui::ActionButton::Style::standard };
+    ui::ActionButton removeButton_ { utf8("Remove brake"), ui::ActionButton::Style::compact };
+};
+
+// --------------------------------------------------------------------------
+
 /** One throttle body for the engine, or one plate in each cylinder's runner
  *  (withThrottleLayout): a four-stroke spark engine's, and a restart. */
 class ThrottleSection final : public Section {
@@ -876,7 +989,7 @@ class EquipmentWindow::Content final : public juce::Component {
 public:
     Content(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store, Callbacks callbacks)
         : callbacks_(std::move(callbacks)), throttles_(callbacks_), nitrous_(callbacks_), valve_(callbacks_),
-          vtec_(callbacks_) {
+          vtec_(callbacks_), brake_(callbacks_) {
         setOpaque(true);
         for (auto* section : sections()) {
             section->onLayoutChanged = [this] { layoutSections(); };
@@ -888,8 +1001,8 @@ public:
         setEngine(config, std::move(store));
     }
 
-    [[nodiscard]] std::array<Section*, 6> sections() noexcept {
-        return { &throttles_, &nitrous_, &antiLag_, &valve_, &vtec_, &launch_ };
+    [[nodiscard]] std::array<Section*, 7> sections() noexcept {
+        return { &throttles_, &nitrous_, &antiLag_, &valve_, &vtec_, &launch_, &brake_ };
     }
 
     void setEngine(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store) {
@@ -933,6 +1046,7 @@ private:
     VtecSection vtec_;
     AntiLagSection antiLag_;
     LaunchSection launch_;
+    EngineBrakeSection brake_;
 };
 
 EquipmentWindow::EquipmentWindow(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store,
