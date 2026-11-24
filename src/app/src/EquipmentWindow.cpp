@@ -458,7 +458,9 @@ public:
     explicit ThrottleSection(EquipmentWindow::Callbacks& callbacks)
         : Section(utf8("THROTTLES")), callbacks_(callbacks) {
         layout_.setOptionTooltip(0, utf8("One throttle body ahead of the plenum, the plates' area kept."));
-        layout_.setOptionTooltip(1, utf8("A plate in each cylinder's runner (individual throttle bodies): the "
+        layout_.setOptionTooltip(1, utf8("One body a cylinder, side by side ahead of the plenum (a sport "
+                                         "motorcycle's), the plates' area kept."));
+        layout_.setOptionTooltip(2, utf8("A plate in each cylinder's runner (individual throttle bodies): the "
                                          "sharpest response. Wide open each runner is as if it had no plate."));
         layout_.onChange = [this](int index) { choose(index); };
         addAndMakeVisible(layout_);
@@ -470,8 +472,9 @@ public:
         config_ = config;
         setVisible(config.cycle == EngineCycle::fourStroke && config.fuel != FuelType::diesel);
         const auto& intake = config.intakePaths.empty() ? config.intake : config.intakePaths.front().geometry;
-        const auto individual = throttleLayoutOf(config) == ThrottleLayout::individual;
-        layout_.setSelected(individual ? 1 : 0);
+        const auto layout = throttleLayoutOf(config);
+        const auto individual = layout == ThrottleLayout::individual;
+        layout_.setSelected(indexOf(layout));
         const auto bore = juce::String(intake.throttleDiameterMm, 0) + utf8(" mm");
         setStatus(individual ? juce::String(intake.throttleCount) + utf8(" plates of ") + bore
                                    + utf8(", one in each runner. The engine restarts on a change.")
@@ -492,7 +495,8 @@ public:
 
 private:
     void choose(int index) {
-        const auto wanted = index == 1 ? ThrottleLayout::individual : ThrottleLayout::single;
+        const auto wanted = index == 2 ? ThrottleLayout::individual
+            : index == 1 ? ThrottleLayout::plenumBodies : ThrottleLayout::single;
         if (locked_ || !callbacks_.applyEngine || wanted == throttleLayoutOf(config_)) return;
         auto refit = withThrottleLayout(config_, wanted);
         if (!refit.config) {
@@ -506,9 +510,14 @@ private:
         }
     }
 
+    [[nodiscard]] static int indexOf(ThrottleLayout layout) noexcept {
+        return layout == ThrottleLayout::individual ? 2 : layout == ThrottleLayout::plenumBodies ? 1 : 0;
+    }
+
     EquipmentWindow::Callbacks& callbacks_;
     EngineConfig config_ {};
-    ui::SegmentedControl layout_ { juce::StringArray { "One for the engine", "One per cylinder" } };
+    ui::SegmentedControl layout_ {
+        juce::StringArray { "One for the engine", "One per cylinder, plenum", "One in each runner" } };
 };
 
 /** A section over scalar settings of the ECU's tables (VTEC, launch
