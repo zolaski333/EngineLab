@@ -7,6 +7,23 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two-stroke scavenging kept oxygen the cylinder could not hold.** The
+  exhaust port was offered the residual's composition at a fixed
+  nitrogen ratio, so the fresh air's nitrogen left with the burned gas and
+  the trapped charge kept extra oxygen; and that biased gas was offered at
+  the cylinder's own energy density, about 40 K colder than the cylinder.
+  The cylinder's contents at transfer opening are now tracked as their own
+  zone and leave at the cylinder's pressure and temperature. Two-strokes
+  make 3-7 % less peak power (the RD350-like twin 34.7 -> 32.9 kW); every
+  four-stroke is unchanged, bit for bit.
+- Tools: `DynoSweepHarness --advance-offset` now shifts a saved engine's
+  own spark table with `--saved-ecu`; `PhysicsPerfHarness --trace` starts
+  an engine as the dyno sweep does and refuses to dump a point the engine
+  did not reach, and marks the rows its intake network was flushed on;
+  `PressureProbeHarness` takes `--saved-engine file [--saved-ecu]`.
+
 ## [0.14.1] — 2026-11-23
 
 The first published release of 0.14: the v0.14.0 tag did not compile on

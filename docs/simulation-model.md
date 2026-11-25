@@ -193,26 +193,50 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   around a 25.6 N.m mean at 5,999 rpm against 6 % spread with the model off
   (journal 2026-10-21). A front does not travel at one instant's orifice
   velocity in any case.
-  The bias is applied to the *composition* the exhaust port offers the 1-D
-  network, not to the port areas: the network reports back exactly the species
-  masses it took and the cylinder is debited those same masses, so species,
-  mass and energy conserve for any composition presented. Only the composition
-  moves -- the energy density is passed through untouched, because pressure and
-  temperature drive the flow and this model says what the gas leaving is, not
-  how much of it leaves. A cylinder holding less burned gas than the fresh
-  charge being held back (cranking, the first cycles) has nothing to displace
-  with, and the bias reduces itself to what the residual can cover. A loop
-  length of zero restores the perfectly mixed cylinder exactly, and a
+  The model says *what* gas leaves, never how much: it acts on the
+  composition the exhaust port offers the 1-D network, not on the port areas.
+  The cylinder's contents when the transfers open are carried as a **residual
+  zone** of species masses (`ScavengeResidualZone`), Benson and Brandham's
+  "original contents": drawn down by gas leaving through either port (its
+  share of the exhaust outflow at its own composition, plus its proportion of
+  the mixed rest; its proportion of any gas pushed back into the transfers),
+  topped up by exhaust gas the pipe pushes back in, and held within the
+  cylinder's own holding by a uniform scale. The port is offered the share
+  `1 - mixedFraction` at the zone's composition and the rest at the mean,
+  built from the cylinder's pressure and temperature
+  (`conservativeFromPressureTemperature`). The network reports back the
+  species masses and energy it took and the cylinder is debited exactly
+  those, so mass, species and energy conserve for any composition offered.
+  The share is capped so that no species can be drawn below zero within one
+  coupling interval (`residualOutflowShare`): that cap, and nothing else, is
+  the end of displacement once the zone is empty. The trapped scavenging
+  efficiency, `1 - zone / cylinder` when the exhaust port shuts, is published
+  as `CylinderState::trappedScavengingEfficiency`.
+  Two errors this replaced (audit 2026-11-24, fixed together, measured
+  apart): the bias re-apportioned the species at a fixed nitrogen ratio, so
+  it expelled the fresh air's nitrogen with the burned gas and trapped oxygen
+  the element balance forbids (the loop-scavenged RD350 at 7,000 rpm broke
+  `N2 = 3.76 (O2 + 12.5/17 burned)` by 17.6 %, now 0.05 %); and it kept the
+  cylinder's energy density for the biased composition, a gas 41 K colder
+  and 2.6 % lower in pressure than the cylinder holds (at 1,300 K, 400 kPa).
+  The composition fix lowered peak power 2.9-6.6 % on the catalogue
+  two-strokes and the V3 designs; the energy fix moved it -1.7 to +2.5 %.
+  What is checked: the zone's functions give perfect displacement and
+  perfect mixing within 1e-3 on a constant-volume cylinder, with the element
+  balance to 1e-13 (`EngineLab.TwoStroke`); the simulated cylinder keeps it
+  within 1e-3 in production. What is assumed: one temperature for the whole
+  cylinder (the zone has no temperature of its own); backflow into the
+  transfers leaves at the mean composition; the share between displacement
+  and mixing comes from the front race above, an approximation with no
+  measured coefficient (Blair's SE-SR curves are not used). A loop length of
+  zero gives the perfectly mixed cylinder (the share is zero), and a
   four-stroke never opens a window, so its exhaust boundary is bit-for-bit
-  unchanged.
-  Measured, one binary with only the loop length changed: the curve moves
-  +2.2 % in the mean and +26 % at 5,752 rpm, where it fills an antiresonance
-  (23.1 -> 29.1 N.m), and less than 1 % below 3,250 or above 7,000. The band is
-  not a tuning. Below it the displacing share is a tenth of the window, so
-  there is almost no bias; above it trapping is already 0.83 and the cap on
-  what the residual can cover binds. It therefore does **not** address torque
-  climbing to the rev limiter: that is trapping which never falls, and the
-  displacing share is monotonic in engine speed by construction.
+  unchanged (2JZ and LS3 sweeps, `IntakeDuctBench` checksums).
+  Measured before the zone, one binary with only the loop length changed:
+  +2.2 % in the mean and +26 % at 5,752 rpm, where it fills an antiresonance,
+  less than 1 % below 3,250 or above 7,000. It does **not** address torque
+  climbing to the rev limiter: the displacing share is monotonic in engine
+  speed by construction.
 - **Carburettor**: the fuel system a two-stroke actually has, what the
   designer fits to every two-stroke it builds, and a choice for a
   four-stroke

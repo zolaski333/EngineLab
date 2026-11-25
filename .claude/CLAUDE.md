@@ -17,6 +17,17 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
+**The two-stroke physics roadmap, owner request 2026-11-24**
+(`feat/two-stroke-physics`, worktree off `main` 0.14.1), phases in order,
+each only once the one before is verified: (1) correctness -- the
+scavenging composition, conservation, instruments, serialization; (2)
+accuracy profiles and convergence (mesh, step, coupling, each apart); (3) a
+1-D intake with a reed; (4) individual ports and ducts; (5) multi-zone
+scavenging and combustion; (6) a two-stroke editor; (7) validation against
+the IAME X30 and the KZ of Ortenzi & Bossaglia 2023 where data allow. No
+horsepower target, no correction factor; a blocker is written, never
+invented around. Phase 1 done 2026-11-25 (journal), unpushed, unmerged.
+
 **The "Test cell" interface, owner go 2026-11-23 for the whole plan**
 (`feat/test-cell-ui`, off `main`; the web mockup is `ui-mockup/`, untracked):
 step 0 a before-reference (key map and command inventory as tests, window
@@ -321,7 +332,10 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   residual is too low" (a unit error); "the pipe gas is too hot" (418-553 C,
   under a real pipe); the designer's redline from real piston speeds (road
   14.8, sport 17.8 m/s: torque falls as the pipe follows the rpm). A holding band locked to crank speed is
-  first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it.
+  first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it. A
+  multi-cylinder two-stroke below N x its single is not an aggregation error
+  until its pipes are checked identical (a V3's -4 to -6 % was its three
+  different pipes, journal 2026-11-25).
 - **Intake**: four inertance formulations (unstable or out of phase); the charge
   bias as the MUSCL limiter, the finite plenum, wall heat or valve linearisation
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or

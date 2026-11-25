@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 1: the scavenging composition, conservation, instruments
+
+- Bug (audit 2026-11-24): the scavenging bias offered the residual at a fixed N2 ratio and at the cylinder's energy density. RD350 at 7,000 rpm WOT broke `N2 = 3.76 (O2 + 12.5/17 burned)` by 17.6 % (perfect mixing: 1.7e-4, pre-existing, not traced); the biased port gas read 41 K and 2.6 % low (1,300 K, 400 kPa).
+- Fix: an explicit residual zone, held within the cylinder by a uniform scale (a per-species clip left 0.45 %), port state from p and T. N2 balance 4.9e-4; the zone's laws: displacement and mixing within 1e-3 (`EngineLab.TwoStroke`). Trapped SE 0.80-0.83 at 7,000 rpm.
+- Effect, `DynoSweepHarness --step 500`, peak power: RD350 -5.1 %, TS125 x3 -3.0 to -3.5 %, T8 -5.3 %, V3 designs -4.2 / -7.4 %; the composition alone -2.9 to -6.6 %, the p-T state -1.7 to +2.5 % (one temporary binary each). 2JZ, LS3 sweeps and `IntakeDuctBench` bit-identical. RD350 idle and 8,000 rpm gates pass (32.3 N.m, maker 37-40.2).
+- Aggregation: V3 / (3 x cylinder 1) 0.94-0.96 above 8,000 rpm is the design's three different pipes (291/125 mm, 310/185 vs 200/200): with three copies of pipe 1 it is within 2 % from 2,500 to 12,000 rpm (+4.6 % at 12,500, not traced). `--exhaust-whole` moves it < 0.5 %.
+- Found, not fixed (phase 2): the 125 us exhaust coupling costs the V3 up to 8 % of torque at 10,000 rpm against `--coupling-us 20` (single cylinder 9 %, RD350 4 % at 9,000, TS125 < 2 %).
+- Instruments: `--advance-offset` with `--saved-ecu` (16.99 deg with and without -4, now 12.99); trace start (the V3 dumped at 722 rpm for 9,000), off-target refusal, `intake_flushes`; probe `--saved-engine`. Each with a ctest that fails without it.
+- Cost, `RealtimeBudgetHarness --free-run --seconds 8`, 0.14.1 against the branch, 4 alternating rounds, round 0 discarded, minimum: RD350 at 8,000 rpm 1.546 -> 1.525, V3 hi at 10,000 rpm 1.205 -> 1.212, 2JZ control 1.534 -> 1.472 (physics bit-identical: the run-to-run spread is ~4 %). No cost shown within that spread. `ctest -j 4` 118/120; AudioRender and LoadedAccelerationCatalogDfcoResume timed out there and pass alone (134 s, 161 s).
+
 ## 2026-11-23 — The "Test cell" interface against the build before it
 
 - Physics and sound: `AudioRenderHarness` output identical from its line 13 on (the lines before are the real-time wiring), `IntakeDuctBench` checksums identical (6 rows).
