@@ -7,6 +7,7 @@
 #include <numbers>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace enginelab {
 
@@ -20,12 +21,34 @@ namespace enginelab {
     return radius * (1.0 - std::cos(angle)) + rod - std::sqrt(rod * rod - radius * radius * sine * sine);
 }
 
-/** A port's total width: the authored one, else its share of the bore. */
+[[nodiscard]] inline double portWindowsWidthMm(const std::vector<TwoStrokePortWindow>& windows) noexcept {
+    auto sum = 0.0;
+    for (const auto& window : windows) sum += window.widthMm;
+    return sum;
+}
+
+/** A port's total width: its windows', else the authored one, else its
+ *  share of the bore. */
 [[nodiscard]] inline double exhaustPortWidthMm(const TwoStrokeConfig& ports, const CylinderConfig& cylinder) noexcept {
+    if (!ports.exhaustWindows.empty()) return portWindowsWidthMm(ports.exhaustWindows);
     return ports.exhaustPortWidthMm > 0.0 ? ports.exhaustPortWidthMm : 0.65 * cylinder.boreMm;
 }
 [[nodiscard]] inline double transferPortWidthMm(const TwoStrokeConfig& ports, const CylinderConfig& cylinder) noexcept {
+    if (!ports.transferWindows.empty()) return portWindowsWidthMm(ports.transferWindows);
     return ports.transferPortWidthMm > 0.0 ? ports.transferPortWidthMm : 1.30 * cylinder.boreMm;
+}
+
+/** Sets each group's opening angle to its earliest window's, as validation
+ *  asks; a group without windows keeps its own. */
+inline void synchronisePortWindowTimings(TwoStrokeConfig& ports) noexcept {
+    const auto earliest = [](const std::vector<TwoStrokePortWindow>& windows, double fallback) noexcept {
+        if (windows.empty()) return fallback;
+        auto angle = windows.front().openDegrees;
+        for (const auto& window : windows) angle = std::min(angle, window.openDegrees);
+        return angle;
+    };
+    ports.exhaustPortOpenDegrees = earliest(ports.exhaustWindows, ports.exhaustPortOpenDegrees);
+    ports.transferPortOpenDegrees = earliest(ports.transferWindows, ports.transferPortOpenDegrees);
 }
 
 [[nodiscard]] inline bool hasPowerValve(const TwoStrokeConfig& ports) noexcept {
@@ -61,6 +84,126 @@ namespace enginelab {
     const auto now = pistonTravelMm(cylinder.strokeMm, cylinder.connectingRodMm, phaseDegrees);
     const auto height = std::clamp(now - top, 0.0, std::max(0.0, cylinder.strokeMm - top));
     return widthMm * height * dischargeCoefficient;
+}
+
+/** The area, mm^2, of a window `widthMm` wide and `heightMm` high whose
+ *  top corners are rounded to `topRadiusMm` and bottom ones to
+ *  `bottomRadiusMm`, uncovered to `depthMm` below its top edge. Exact: each
+ *  quarter circle's deficit against the rectangle is integrated in closed
+ *  form, so the fully open window is w h - (1 - pi/4)(2 r_top^2 +
+ *  2 r_bottom^2). The radii are held within the window. */
+[[nodiscard]] inline double roundedWindowAreaMm2(double widthMm, double heightMm, double topRadiusMm,
+                                                 double bottomRadiusMm, double depthMm) noexcept {
+    const auto height = std::max(0.0, heightMm);
+    const auto depth = std::clamp(depthMm, 0.0, height);
+    const auto halfWidth = 0.5 * std::max(0.0, widthMm);
+    auto top = std::clamp(topRadiusMm, 0.0, halfWidth);
+    auto bottom = std::clamp(bottomRadiusMm, 0.0, halfWidth);
+    if (top + bottom > height) {
+        const auto scale = height / (top + bottom);
+        top *= scale;
+        bottom *= scale;
+    }
+    // F(u) = integral of sqrt(r^2 - u^2) du from 0 to u.
+    const auto circle = [](double u, double r) noexcept {
+        if (!(r > 0.0)) return 0.0;
+        const auto x = std::clamp(u / r, -1.0, 1.0);
+        return 0.5 * (u * std::sqrt(std::max(0.0, r * r - u * u)) + r * r * std::asin(x));
+    };
+    const auto topDepth = std::min(depth, top);
+    const auto topDeficit = top > 0.0
+        ? 2.0 * (top * topDepth - 0.25 * std::numbers::pi * top * top + circle(top - topDepth, top)) : 0.0;
+    const auto bottomDepth = std::clamp(depth - (height - bottom), 0.0, bottom);
+    const auto bottomDeficit = bottom > 0.0
+        ? 2.0 * (bottom * bottomDepth - circle(bottomDepth, bottom)) : 0.0;
+    return std::max(0.0, 2.0 * halfWidth * depth - topDeficit - bottomDeficit);
+}
+
+/** Which way gas crosses a port, and the static pressure ratio across it
+ *  (upstream over downstream, 1 or more). Forward is the way the port is
+ *  built for. */
+struct PortFlowCondition final {
+    double pressureRatio { 1.0 };
+    bool forward { true };
+};
+
+/** Bilinear interpolation of a map's coefficients, held at its edges. */
+[[nodiscard]] inline double portDischargeMapCd(const PortDischargeMap& map, double areaRatio,
+                                               PortFlowCondition flow) noexcept {
+    const auto& table = !flow.forward && !map.reverseCd.empty() ? map.reverseCd : map.forwardCd;
+    const auto rows = map.areaRatios.size();
+    const auto columns = map.pressureRatios.size();
+    if (rows == 0 || columns == 0 || table.size() != rows * columns) return 0.0;
+    const auto bracket = [](const std::vector<double>& axis, double x, std::size_t& lower) noexcept {
+        if (axis.size() == 1 || x <= axis.front()) { lower = 0; return 0.0; }
+        if (x >= axis.back()) { lower = axis.size() - 2; return 1.0; }
+        lower = static_cast<std::size_t>(std::upper_bound(axis.begin(), axis.end(), x) - axis.begin()) - 1;
+        return (x - axis[lower]) / (axis[lower + 1] - axis[lower]);
+    };
+    std::size_t row = 0;
+    std::size_t column = 0;
+    const auto u = bracket(map.areaRatios, areaRatio, row);
+    const auto v = bracket(map.pressureRatios, flow.pressureRatio, column);
+    const auto at = [&](std::size_t r, std::size_t c) noexcept {
+        return table[std::min(r, rows - 1) * columns + std::min(c, columns - 1)];
+    };
+    const auto low = at(row, column) * (1.0 - v) + at(row, column + 1) * v;
+    const auto high = at(row + 1, column) * (1.0 - v) + at(row + 1, column + 1) * v;
+    return low * (1.0 - u) + high * u;
+}
+
+/** The effective open area, mm^2, of one window whose top edge the crown
+ *  uncovers `topOpenDegrees` after top dead centre, at `phaseDegrees`: its
+ *  uncovered area times its discharge coefficient, the map's at that area
+ *  ratio and flow when it has one. */
+[[nodiscard]] inline double portWindowEffectiveAreaMm2(const CylinderConfig& cylinder,
+                                                       const TwoStrokePortWindow& window, double topOpenDegrees,
+                                                       double defaultDischargeCoefficient, double phaseDegrees,
+                                                       PortFlowCondition flow) noexcept {
+    const auto top = pistonTravelMm(cylinder.strokeMm, cylinder.connectingRodMm, topOpenDegrees);
+    const auto now = pistonTravelMm(cylinder.strokeMm, cylinder.connectingRodMm, phaseDegrees);
+    const auto height = std::max(0.0, cylinder.strokeMm - top);
+    const auto open = roundedWindowAreaMm2(window.widthMm, height, window.topCornerRadiusMm,
+        window.bottomCornerRadiusMm, now - top);
+    if (!(open > 0.0)) return 0.0;
+    if (!window.dischargeMap.empty()) {
+        const auto full = roundedWindowAreaMm2(window.widthMm, height, window.topCornerRadiusMm,
+            window.bottomCornerRadiusMm, height);
+        return open * portDischargeMapCd(window.dischargeMap, full > 0.0 ? open / full : 1.0, flow);
+    }
+    return open * (window.dischargeCoefficient > 0.0 ? window.dischargeCoefficient : defaultDischargeCoefficient);
+}
+
+/** The transfer ports' effective open area, mm^2, at `phaseDegrees`: the
+ *  sum of their windows', or the one rectangle of `portOpenAreaMm2`. */
+[[nodiscard]] inline double transferPortsAreaMm2(const TwoStrokeConfig& ports, const CylinderConfig& cylinder,
+                                                 double phaseDegrees, PortFlowCondition flow = {}) noexcept {
+    if (ports.transferWindows.empty())
+        return portOpenAreaMm2(cylinder, ports.transferPortOpenDegrees, transferPortWidthMm(ports, cylinder),
+            ports.portDischargeCoefficient, phaseDegrees);
+    auto sum = 0.0;
+    for (const auto& window : ports.transferWindows)
+        sum += portWindowEffectiveAreaMm2(cylinder, window, window.openDegrees, ports.portDischargeCoefficient,
+            phaseDegrees, flow);
+    return sum;
+}
+
+/** The exhaust ports' effective open area, mm^2, at `phaseDegrees`, the
+ *  power valve's roof at `exhaustOpenDegrees` (`exhaustPortOpenDegreesAt`):
+ *  a window under the valve opens at the later of its own edge and the
+ *  roof. */
+[[nodiscard]] inline double exhaustPortsAreaMm2(const TwoStrokeConfig& ports, const CylinderConfig& cylinder,
+                                                double exhaustOpenDegrees, double phaseDegrees,
+                                                PortFlowCondition flow = {}) noexcept {
+    if (ports.exhaustWindows.empty())
+        return portOpenAreaMm2(cylinder, exhaustOpenDegrees, exhaustPortWidthMm(ports, cylinder),
+            ports.portDischargeCoefficient, phaseDegrees);
+    auto sum = 0.0;
+    for (const auto& window : ports.exhaustWindows)
+        sum += portWindowEffectiveAreaMm2(cylinder, window,
+            window.powerValve ? std::max(window.openDegrees, exhaustOpenDegrees) : window.openDegrees,
+            ports.portDischargeCoefficient, phaseDegrees, flow);
+    return sum;
 }
 
 /** A two-stroke intake's name in engine files. */

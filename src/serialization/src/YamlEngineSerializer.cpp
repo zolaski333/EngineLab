@@ -918,6 +918,33 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                 << YAML::Key << "diameter_mm" << YAML::Value << config.twoStroke.inletTractDiameterMm
                 << YAML::Key << "slide_from_reed_mm" << YAML::Value << config.twoStroke.inletTractSlideFromReedMm
                 << YAML::EndMap;
+        // Only authored windows: a file with one rectangle per port is unchanged.
+        const auto emitWindows = [&out](const char* key, const std::vector<TwoStrokePortWindow>& windows) {
+            if (windows.empty()) return;
+            out << YAML::Key << key << YAML::Value << YAML::BeginSeq;
+            for (const auto& window : windows) {
+                out << YAML::BeginMap
+                    << YAML::Key << "open_deg" << YAML::Value << window.openDegrees
+                    << YAML::Key << "width_mm" << YAML::Value << window.widthMm
+                    << YAML::Key << "top_corner_radius_mm" << YAML::Value << window.topCornerRadiusMm
+                    << YAML::Key << "bottom_corner_radius_mm" << YAML::Value << window.bottomCornerRadiusMm
+                    << YAML::Key << "power_valve" << YAML::Value << window.powerValve
+                    << YAML::Key << "discharge_coefficient" << YAML::Value << window.dischargeCoefficient;
+                if (!window.dischargeMap.empty()) {
+                    const auto& map = window.dischargeMap;
+                    out << YAML::Key << "discharge_map" << YAML::Value << YAML::BeginMap
+                        << YAML::Key << "area_ratios" << YAML::Value << YAML::Flow << map.areaRatios
+                        << YAML::Key << "pressure_ratios" << YAML::Value << YAML::Flow << map.pressureRatios
+                        << YAML::Key << "forward_cd" << YAML::Value << YAML::Flow << map.forwardCd
+                        << YAML::Key << "reverse_cd" << YAML::Value << YAML::Flow << map.reverseCd
+                        << YAML::EndMap;
+                }
+                out << YAML::EndMap;
+            }
+            out << YAML::EndSeq;
+        };
+        emitWindows("exhaust_windows", config.twoStroke.exhaustWindows);
+        emitWindows("transfer_windows", config.twoStroke.transferWindows);
         out << YAML::EndMap;
     }
     out << YAML::EndMap << YAML::EndMap;
@@ -1077,6 +1104,32 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text,
                 config.twoStroke.inletTractDiameterMm = node["diameter_mm"].as<double>(config.twoStroke.inletTractDiameterMm);
                 config.twoStroke.inletTractSlideFromReedMm = node["slide_from_reed_mm"].as<double>(config.twoStroke.inletTractSlideFromReedMm);
             }
+            const auto readWindows = [&ports](const char* key, std::vector<TwoStrokePortWindow>& windows) {
+                const auto list = ports[key];
+                if (!list) return;
+                windows.clear();
+                for (const auto& node : list) {
+                    TwoStrokePortWindow window;
+                    window.openDegrees = node["open_deg"].as<double>(window.openDegrees);
+                    window.widthMm = node["width_mm"].as<double>(window.widthMm);
+                    window.topCornerRadiusMm = node["top_corner_radius_mm"].as<double>(window.topCornerRadiusMm);
+                    window.bottomCornerRadiusMm = node["bottom_corner_radius_mm"].as<double>(window.bottomCornerRadiusMm);
+                    window.powerValve = node["power_valve"].as<bool>(window.powerValve);
+                    window.dischargeCoefficient = node["discharge_coefficient"].as<double>(window.dischargeCoefficient);
+                    if (const auto map = node["discharge_map"]) {
+                        const auto vector = [&map](const char* name) {
+                            return map[name] ? map[name].as<std::vector<double>>() : std::vector<double> {};
+                        };
+                        window.dischargeMap.areaRatios = vector("area_ratios");
+                        window.dischargeMap.pressureRatios = vector("pressure_ratios");
+                        window.dischargeMap.forwardCd = vector("forward_cd");
+                        window.dischargeMap.reverseCd = vector("reverse_cd");
+                    }
+                    windows.push_back(std::move(window));
+                }
+            };
+            readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
+            readWindows("transfer_windows", config.twoStroke.transferWindows);
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

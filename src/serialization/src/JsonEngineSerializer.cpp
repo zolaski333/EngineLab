@@ -812,6 +812,27 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         // Only an authored inlet tract: an orifice carburettor's file is unchanged.
         if (config.twoStroke.inletTractLengthMm > 0.0)
             document["engine"]["two_stroke"]["inlet_tract"] = { {"length_mm", config.twoStroke.inletTractLengthMm}, {"diameter_mm", config.twoStroke.inletTractDiameterMm}, {"slide_from_reed_mm", config.twoStroke.inletTractSlideFromReedMm} };
+        // Only authored windows: a file with one rectangle per port is unchanged.
+        const auto windowsJson = [](const std::vector<TwoStrokePortWindow>& windows) {
+            Json list = Json::array();
+            for (const auto& window : windows) {
+                Json node = { {"open_deg", window.openDegrees}, {"width_mm", window.widthMm},
+                    {"top_corner_radius_mm", window.topCornerRadiusMm},
+                    {"bottom_corner_radius_mm", window.bottomCornerRadiusMm},
+                    {"power_valve", window.powerValve}, {"discharge_coefficient", window.dischargeCoefficient} };
+                if (!window.dischargeMap.empty()) {
+                    const auto& map = window.dischargeMap;
+                    node["discharge_map"] = { {"area_ratios", map.areaRatios}, {"pressure_ratios", map.pressureRatios},
+                        {"forward_cd", map.forwardCd}, {"reverse_cd", map.reverseCd} };
+                }
+                list.push_back(std::move(node));
+            }
+            return list;
+        };
+        if (!config.twoStroke.exhaustWindows.empty())
+            document["engine"]["two_stroke"]["exhaust_windows"] = windowsJson(config.twoStroke.exhaustWindows);
+        if (!config.twoStroke.transferWindows.empty())
+            document["engine"]["two_stroke"]["transfer_windows"] = windowsJson(config.twoStroke.transferWindows);
     }
     // Only a measured limit: an uncalibrated file is unchanged.
     if (!config.ignition.knockLimitCurve.empty()) {
@@ -1027,6 +1048,29 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
                 config.twoStroke.inletTractDiameterMm = node.value("diameter_mm", config.twoStroke.inletTractDiameterMm);
                 config.twoStroke.inletTractSlideFromReedMm = node.value("slide_from_reed_mm", config.twoStroke.inletTractSlideFromReedMm);
             }
+            const auto readWindows = [&ports](const char* key, std::vector<TwoStrokePortWindow>& windows) {
+                if (!ports.contains(key)) return;
+                windows.clear();
+                for (const auto& node : ports.at(key)) {
+                    TwoStrokePortWindow window;
+                    window.openDegrees = node.value("open_deg", window.openDegrees);
+                    window.widthMm = node.value("width_mm", window.widthMm);
+                    window.topCornerRadiusMm = node.value("top_corner_radius_mm", window.topCornerRadiusMm);
+                    window.bottomCornerRadiusMm = node.value("bottom_corner_radius_mm", window.bottomCornerRadiusMm);
+                    window.powerValve = node.value("power_valve", window.powerValve);
+                    window.dischargeCoefficient = node.value("discharge_coefficient", window.dischargeCoefficient);
+                    if (node.contains("discharge_map")) {
+                        const auto& map = node.at("discharge_map");
+                        window.dischargeMap.areaRatios = map.value("area_ratios", std::vector<double> {});
+                        window.dischargeMap.pressureRatios = map.value("pressure_ratios", std::vector<double> {});
+                        window.dischargeMap.forwardCd = map.value("forward_cd", std::vector<double> {});
+                        window.dischargeMap.reverseCd = map.value("reverse_cd", std::vector<double> {});
+                    }
+                    windows.push_back(std::move(window));
+                }
+            };
+            readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
+            readWindows("transfer_windows", config.twoStroke.transferWindows);
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");

@@ -1100,6 +1100,32 @@ void applyCrankOffsets(EngineConfig& config) {
             assignIfPresent(node, "diameter_mm", config.twoStroke.inletTractDiameterMm);
             assignIfPresent(node, "slide_from_reed_mm", config.twoStroke.inletTractSlideFromReedMm);
         }
+        const auto readWindows = [&ports](const char* key, std::vector<TwoStrokePortWindow>& windows) {
+            const auto list = ports[key];
+            if (!list) return;
+            windows.clear();
+            for (const auto& node : list) {
+                TwoStrokePortWindow window;
+                assignIfPresent(node, "open_deg", window.openDegrees);
+                assignIfPresent(node, "width_mm", window.widthMm);
+                assignIfPresent(node, "top_corner_radius_mm", window.topCornerRadiusMm);
+                assignIfPresent(node, "bottom_corner_radius_mm", window.bottomCornerRadiusMm);
+                assignIfPresent(node, "power_valve", window.powerValve);
+                assignIfPresent(node, "discharge_coefficient", window.dischargeCoefficient);
+                if (const auto map = node["discharge_map"]) {
+                    const auto vector = [&map](const char* name) {
+                        return map[name] ? map[name].as<std::vector<double>>() : std::vector<double> {};
+                    };
+                    window.dischargeMap.areaRatios = vector("area_ratios");
+                    window.dischargeMap.pressureRatios = vector("pressure_ratios");
+                    window.dischargeMap.forwardCd = vector("forward_cd");
+                    window.dischargeMap.reverseCd = vector("reverse_cd");
+                }
+                windows.push_back(std::move(window));
+            }
+        };
+        readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
+        readWindows("transfer_windows", config.twoStroke.transferWindows);
     }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);

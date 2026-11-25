@@ -1003,6 +1003,18 @@ endif()
 enginelab_set_warnings(EngineLabInletTractTests)
 add_test(NAME EngineLab.InletTract COMMAND EngineLabInletTractTests)
 
+add_executable(EngineLabTwoStrokePortWindowTests TwoStrokePortWindowTests.cpp)
+target_link_libraries(EngineLabTwoStrokePortWindowTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Serialization)
+target_compile_definitions(EngineLabTwoStrokePortWindowTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabTwoStrokePortWindowTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabTwoStrokePortWindowTests)
+add_test(NAME EngineLab.TwoStrokePortWindows COMMAND EngineLabTwoStrokePortWindowTests)
+
 add_executable(EngineLabCatalogRoundTripTests CatalogRoundTripTests.cpp)
 target_link_libraries(EngineLabCatalogRoundTripTests PRIVATE
     EngineLab::Foundation EngineLab::Serialization EngineLab::Catalog)

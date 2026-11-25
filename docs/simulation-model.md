@@ -167,6 +167,27 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   dead centre) and are fully open at bottom dead centre. The open area is
   width x uncovered height x `port_discharge_coefficient`; widths default to
   0.65 and 1.30 x bore. No cam, no valve lift (published lifts are zero).
+- **Port windows** (optional, `two_stroke.exhaust_windows`,
+  `transfer_windows`): each window its own opening angle, chord (the wall's
+  arc, Fleck et al.'s wall area, SAE 2003-32-0029), top and bottom corner
+  radii, constant coefficient or discharge map; the group's area is the sum
+  of its windows'. Exact geometry: the rounded window's uncovered area is
+  the closed-form integral of its outline (an independent quadrature agrees
+  within 1e-6, `EngineLab.TwoStrokePortWindows`). One sharp window per group
+  is the rectangle above, bit for bit on the running engine. A power valve
+  lowers only the windows marked under it. The group's angle in the file
+  must be its earliest window's (scavenging window, fine coupling, crankcase
+  fill and the cycle's events read it). Assumptions: every window's bottom
+  is at bottom dead centre; no bridge flow interaction (Fleck et al. measured
+  two adjacent transfers together, not modelled); no jet direction (phase 5).
+- **Port discharge maps** (optional, per window): Cd against the area ratio
+  (open over fully open) and the static pressure ratio, one table each way,
+  bilinear and held at the edges. The pressure ratio is the last exchange's
+  (cylinder against the duct's port cell), one substep behind. **No map is
+  shipped**: the measured maps (Fleck et al., SAE 2003-32-0029; Blair,
+  Callender & Mackey, SAE 2001-01-1798; Fleck & Cartwright, SAE 962534) are
+  paywalled, so a map is the user's measurement, and without one the
+  window's constant coefficient (default 0.72, not sourced) holds.
 - **Crankcase pumping**: each cylinder has its own intake path (validation
   enforces one cylinder per path). That path's plenum is the crankcase: its
   volume follows the piston's underside every substep, adiabatically, between

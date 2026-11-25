@@ -4686,12 +4686,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // The end gas exists from the moment the cylinder seals: both
                 // valves shut, or a two-stroke's transfer and exhaust ports.
                 const auto cylinderSealed = twoStroke
-                    ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
-                          transferPortWidthMm(config_.twoStroke, cylinder),
-                          config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
-                        && portOpenAreaMm2(cylinder, exhaustPortOpenDegrees,
-                          exhaustPortWidthMm(config_.twoStroke, cylinder),
-                          config_.twoStroke.portDischargeCoefficient, cyclePhase) <= 0.0
+                    ? transferPortsAreaMm2(config_.twoStroke, cylinder, cyclePhase) <= 0.0
+                        && exhaustPortsAreaMm2(config_.twoStroke, cylinder, exhaustPortOpenDegrees,
+                          cyclePhase) <= 0.0
                     : intakeLift <= 0.0 && exhaustLift <= 0.0;
                 const auto& chamberMixture = cylinderGas_[cylinderIndex].mixture();
                 const auto chamberMoles = std::max(1.0e-15, chamberMixture.totalMoles());
@@ -4778,17 +4775,26 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // A two-stroke has ports instead: the piston uncovers them, the
             // transfer ports standing in for the intake valves (their duct is
             // the intake runner, the crankcase its plenum).
+            // A port's discharge map reads the flow across it from the last
+            // exchange's port-side pressures (one substep behind).
+            const auto portFlow = [](double upstreamKpa, double downstreamKpa) noexcept {
+                if (!(upstreamKpa > 0.0) || !(downstreamKpa > 0.0)) return PortFlowCondition {};
+                return upstreamKpa >= downstreamKpa
+                    ? PortFlowCondition { upstreamKpa / downstreamKpa, true }
+                    : PortFlowCondition { downstreamKpa / upstreamKpa, false };
+            };
+            const auto transferFlow = twoStroke
+                ? portFlow(intakeRunnerPressureKpa_[cylinderIndex], chamberKpa) : PortFlowCondition {};
+            const auto exhaustFlow = twoStroke
+                ? portFlow(chamberKpa, exhaustRunnerPressureKpa_[cylinderIndex]) : PortFlowCondition {};
             const auto intakeArea = twoStroke
-                ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
-                    transferPortWidthMm(config_.twoStroke, cylinder),
-                    config_.twoStroke.portDischargeCoefficient, cyclePhase)
+                ? transferPortsAreaMm2(config_.twoStroke, cylinder, cyclePhase, transferFlow)
                 : effectiveValveAreaMm2(cylinder.boreMm, intakeLift,
                     cylinder.intakeValveCount, cylinder.intakeValveDiameterMm,
                     valveTrain.intakeDischargeCoefficient, 0.40, 0.50, 0.58);
             const auto exhaustArea = twoStroke
-                ? portOpenAreaMm2(cylinder, exhaustPortOpenDegrees,
-                    exhaustPortWidthMm(config_.twoStroke, cylinder),
-                    config_.twoStroke.portDischargeCoefficient, cyclePhase)
+                ? exhaustPortsAreaMm2(config_.twoStroke, cylinder, exhaustPortOpenDegrees, cyclePhase,
+                    exhaustFlow)
                 : effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
                     cylinder.exhaustValveCount, cylinder.exhaustValveDiameterMm,
                     valveTrain.exhaustDischargeCoefficient, 0.34, 0.41,
@@ -5011,10 +5017,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     aheadValveTrainState, std::fmod(cyclePhase + aheadDegrees, valveCycleDegrees),
                     state_.rpm, state_.load, 0.0, valveCycleDegrees);
                 intakeValveAreaAheadM2[cylinderIndex] = (twoStroke
-                    ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
-                        transferPortWidthMm(config_.twoStroke, cylinder),
-                        config_.twoStroke.portDischargeCoefficient,
-                        std::fmod(cyclePhase + aheadDegrees, cycleDegrees))
+                    ? transferPortsAreaMm2(config_.twoStroke, cylinder,
+                        std::fmod(cyclePhase + aheadDegrees, cycleDegrees), transferFlow)
                     : effectiveValveAreaMm2(
                         cylinder.boreMm, ahead.intakeLiftMm, cylinder.intakeValveCount,
                         cylinder.intakeValveDiameterMm, ahead.intakeDischargeCoefficient,
@@ -7382,9 +7386,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto& ported = config_.cylinders[index];
                 pressureSample.exhaustValveOpening[index] = static_cast<float>(std::clamp(
                     twoStroke
-                        ? exhaustValveAreaM2[index] * 1.0e6 / std::max(1.0e-9, portOpenAreaMm2(ported,
-                            exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, ported),
-                            config_.twoStroke.portDischargeCoefficient, 180.0))
+                        ? exhaustValveAreaM2[index] * 1.0e6 / std::max(1.0e-9, exhaustPortsAreaMm2(
+                            config_.twoStroke, ported, exhaustPortOpenDegrees, 180.0))
                         : valveTrainResults_[index].exhaustLiftMm / maximumExhaustLiftMm, 0.0, 1.0));
                 pressureSample.exhaustPathIndex[index] =
                     static_cast<std::uint8_t>(

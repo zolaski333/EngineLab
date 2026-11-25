@@ -34,6 +34,13 @@ file formats, always with an in-memory migration).
   that wave instead of a carburettor stuck to it. It costs real time: an
   RD350 with one runs about 1.1 x real time at 8,000 rpm. Without a tract
   nothing changes.
+- **Two-stroke port windows (optional).** An engine file can list its
+  exhaust and transfer ports window by window (`exhaust_windows`,
+  `transfer_windows`): each its own opening angle, width, rounded corners,
+  discharge coefficient, and if you have measured one, a discharge map
+  against how far it is open and the pressure across it. A boost port that
+  opens a few degrees later, or rounded corners, now change the engine. No
+  measured map ships with EngineLab. Without windows, nothing changes.
 
 ### Fixed
 

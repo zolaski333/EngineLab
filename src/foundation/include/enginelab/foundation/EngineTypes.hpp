@@ -1351,6 +1351,47 @@ struct AudioVoicingConfig final {
  * transfer duct and its "intake valve" the transfer ports. The exhaust port
  * takes the exhaust valve's place on the exhaust network.
  */
+/** A port's measured discharge coefficient as a function of how far it is
+ *  open and of the pressure ratio across it, each way (Blair's convention:
+ *  the coefficient against the port's geometric wall area, the area ratio
+ *  that area over the fully open one, the pressure ratio upstream over
+ *  downstream static). Bilinear between the rows, held at the edges. Empty:
+ *  the window's constant coefficient. No map is shipped: the measured maps
+ *  (Fleck et al., SAE 2003-32-0029; Blair, Callender & Mackey, SAE
+ *  2001-01-1798) are not public. */
+struct PortDischargeMap final {
+    /** Ascending, within [0, 1]. */
+    std::vector<double> areaRatios;
+    /** Ascending, from 1. */
+    std::vector<double> pressureRatios;
+    /** areaRatios.size() rows of pressureRatios.size(): the flow the port is
+     *  built for (into the cylinder through a transfer, out of it through an
+     *  exhaust). */
+    std::vector<double> forwardCd;
+    /** The other way (back into a transfer duct, back into the cylinder from
+     *  the exhaust); empty: the forward map both ways. */
+    std::vector<double> reverseCd;
+    [[nodiscard]] bool empty() const noexcept { return areaRatios.empty(); }
+    [[nodiscard]] bool operator==(const PortDischargeMap&) const = default;
+};
+
+/** One window of a two-stroke's exhaust or transfer ports, its bottom at
+ *  bottom dead centre: a rectangle of `widthMm` (the wall's arc) whose top
+ *  edge the piston crown uncovers `openDegrees` after top dead centre, with
+ *  its top and bottom corners rounded. */
+struct TwoStrokePortWindow final {
+    double openDegrees { 0.0 };
+    double widthMm { 0.0 };
+    double topCornerRadiusMm { 0.0 };
+    double bottomCornerRadiusMm { 0.0 };
+    /** An exhaust window whose roof the power valve lowers. */
+    bool powerValve { false };
+    /** Zero: the engine's `portDischargeCoefficient`. */
+    double dischargeCoefficient { 0.0 };
+    PortDischargeMap dischargeMap {};
+    [[nodiscard]] bool operator==(const TwoStrokePortWindow&) const = default;
+};
+
 /** Where a two-stroke's carburettor delivers. */
 enum class TwoStrokeIntake : std::uint8_t {
     /** A reed block on the crankcase (Rotax, Aprilia, most scooters): the
@@ -1394,6 +1435,12 @@ struct TwoStrokeConfig final {
     /** Zero: 1.30 x bore (the transfer windows together). */
     double transferPortWidthMm { 0.0 };
     double portDischargeCoefficient { 0.72 };
+    /** The ports window by window. Empty: one rectangle per group, the
+     *  widths above and the opening angles above. Given, they replace the
+     *  widths (which must then be 0), and the group's opening angle above
+     *  must be its earliest window's (`synchronisePortWindowTimings`). */
+    std::vector<TwoStrokePortWindow> exhaustWindows;
+    std::vector<TwoStrokePortWindow> transferWindows;
     /** Crankcase volume at top dead centre over that at bottom dead centre:
      *  1.25-1.5 on a road or race engine. */
     double crankcaseCompressionRatio { 1.35 };

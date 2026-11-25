@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 4a-b: port windows, corner radii, discharge maps
+
+- Model (simulation-model.md, *Port windows*): each window its angle, chord, top and bottom radii, Cd or map (area ratio x pressure ratio, each way). Rounded area against an independent 200,000-strip quadrature: within 1e-6. One sharp window per group: area and the RD350 held at 8,000 rpm bit-identical to the rectangles (32.3391 N.m, 34.1877 g/s).
+- RD350 at 8,000 rpm, same total chord, one factor each: a boost window (25 % of the chord) 4 deg later, delivered VE 0.843 -> 0.836, torque 32.34 -> 31.97; 5 / 8 mm top radii on transfer / exhaust 0.832, 32.81 N.m; a map halving Cd below 30 % open +0.5 % air (less early backflow into the transfers: not separated).
+- 6 mm radii cut 19 % of a 40 mm window's first millimetre: the early opening the rectangle overstated.
+- No measured map found free: Fleck et al. SAE 2003-32-0029 (3-D maps for each of five transfers and a bridged exhaust, 54 x 54.5 mm), Blair et al. 2001-01-1798, Fleck & Cartwright 962534 paywalled; Kutlar & Malkaz (Energies 2019) cites a regression but MDPI refused the download. No default map ships.
+- Production: RD350, 2JZ and the petals RD350 `--step 1000` byte-identical to phase 3b. No catalogue engine has windows.
+
 ## 2026-11-25 — Two-stroke phase 3b: a 1-D inlet tract upstream of the reed
 
 - Model (simulation-model.md, *Inlet tract*): two 1-D ducts reed -> slide -> bellmouth, the slide a restriction, the reed the duct's valve onto the crankcase. Reed-shut ringing, RD350 cranked ignition off, 48 kHz DFT: 429 Hz against c/4L 429 (200 mm), 214 against 214.5 (400 mm); no end correction (a bellmouth: 2-4 % lower).
