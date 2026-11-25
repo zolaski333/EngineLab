@@ -35,6 +35,7 @@
 #include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/runtime/RealtimeCapacityProbe.hpp>
+#include <enginelab/simulation/SimulationAccuracy.hpp>
 
 #include <algorithm>
 #include <array>
@@ -72,6 +73,29 @@ std::optional<bool> parallelCylinderPassOverride;
 std::optional<bool> parallelCylinderPublishOverride;
 /** --serial-intake-paths: flush the joint intake paths one after another (A/B). */
 std::optional<bool> parallelIntakePathsOverride;
+/** --accuracy: the run's numerical resolution (SimulationAccuracy.hpp), under
+ * every single-knob flag above, which overrides it one knob at a time. */
+enginelab::AccuracyProfile accuracyProfile = enginelab::AccuracyProfile::realtime;
+
+/** Each knob a flag left unset takes the profile's value. */
+void takeProfileWhereUnset(enginelab::EngineSimulatorOptions& options,
+                           const enginelab::EngineSimulatorOptions& profile) {
+    const auto keep = [](auto& field, const auto& fromProfile) {
+        if (!field) field = fromProfile;
+    };
+    keep(options.exhaustTargetCellLengthM, profile.exhaustTargetCellLengthM);
+    keep(options.exhaustMaximumCellsPerDuct, profile.exhaustMaximumCellsPerDuct);
+    keep(options.exhaustMaximumTotalCells, profile.exhaustMaximumTotalCells);
+    keep(options.maximumLowSpeedExhaustCouplingSeconds, profile.maximumLowSpeedExhaustCouplingSeconds);
+    if (!options.maximumLowSpeedExhaustCouplingSeconds.has_value()
+        || options.maximumLowSpeedExhaustCouplingSeconds == profile.maximumLowSpeedExhaustCouplingSeconds)
+        keep(options.exhaustCouplingEverySubstep, profile.exhaustCouplingEverySubstep);
+    keep(options.exhaustMaximumCourantNumber, profile.exhaustMaximumCourantNumber);
+    keep(options.intakeTargetCellLengthM, profile.intakeTargetCellLengthM);
+    keep(options.intakeMaximumCellsPerRunner, profile.intakeMaximumCellsPerRunner);
+    keep(options.intakeCouplingIntervalSeconds, profile.intakeCouplingIntervalSeconds);
+    keep(options.intakeMaximumCourantNumber, profile.intakeMaximumCourantNumber);
+}
 
 using Clock = std::chrono::steady_clock;
 
@@ -589,8 +613,16 @@ private:
         intakeWallHeatUpdateSeconds;
     simulatorOptions.evolveExhaustJunctionAxialMomentum =
         !useWellMixedExhaustJunctions;
+    auto runConfig = config;
+    enginelab::EngineSimulatorOptions profileOptions;
+    const auto resolution =
+        enginelab::applyAccuracyProfile(accuracyProfile, runConfig, profileOptions);
+    takeProfileWhereUnset(simulatorOptions, profileOptions);
     auto runtime = std::make_unique<enginelab::EngineRuntime>(
-        config, nullptr, simulatorOptions);
+        runConfig, nullptr, simulatorOptions);
+    std::cerr << runConfig.name << ": "
+              << enginelab::accuracyReport(resolution, simulatorOptions, runConfig,
+                                           runtime->exhaustLayout()) << '\n';
     std::unique_ptr<RealtimeAudioProbe> audioProbe;
     Measurement result;
     result.intakeWorkers = runtime->intakeWorkerCount();
@@ -996,6 +1028,14 @@ int main(int argc, char** argv) {
             intakeTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
         else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
             exhaustTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
+        else if (argument == "--accuracy" && index + 1 < argc) {
+            const auto profile = enginelab::accuracyProfileFromName(argv[++index]);
+            if (!profile) {
+                std::cerr << "--accuracy: realtime, balanced, engineering or high-precision\n";
+                return EXIT_FAILURE;
+            }
+            accuracyProfile = *profile;
+        }
         else if (argument == "--exhaust-cfl" && index + 1 < argc)
             exhaustCourantOverride = std::stod(argv[++index]);
         else if (argument == "--exhaust-rk2")
@@ -1057,7 +1097,7 @@ int main(int argc, char** argv) {
                          "[--intake-max-cells N] [--intake-staircase-rounds N] "
                          "[--intake-coupling-us N] [--intake-forward] [--intake-cfl C] [--intake-nozzle-valve] [--intake-per-runner] "
                          "[--intake-cell-mm N] "
-                         "[--exhaust-cell-mm N] "
+                         "[--exhaust-cell-mm N] [--accuracy PROFILE] "
                          "[--exhaust-coupling-us N] [--exhaust-cfl C] [--exhaust-rk2|--exhaust-euler|--exhaust-hancock] "
                          "[--exhaust-interface-first-order] [--exhaust-coarse-scavenging] [--exhaust-whole] "
                          "[--inline-cylinders] [--serial-publish] [--serial-intake-paths] "

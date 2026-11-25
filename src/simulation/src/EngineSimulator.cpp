@@ -815,6 +815,7 @@ EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsMo
     normaliseEngineConfig(config_);
     if (const auto error = validateEngineConfig(config_)) throw std::invalid_argument(*error);
     eventGenerator_.configure(config_);
+    exhaustCouplingEverySubstep_ = options_.exhaustCouplingEverySubstep.value_or(false);
     setIntakeWallHeatUpdateIntervalSeconds(
         options_.intakeWallHeatUpdateIntervalSeconds.value_or(
             ductWallHeatUpdateIntervalSeconds));
@@ -1127,12 +1128,14 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeRunn
             duct.outletConnectionAreaM2 = ductOutletAreaM2;
             duct.hydraulicDiameterM = 2.0 * std::sqrt(meanAreaM2 / std::numbers::pi);
             duct.volumeM3 = meanAreaM2 * duct.lengthM;
+            const auto cellCeiling = std::max(minimumCellCount,
+                options_.intakeMaximumCellsPerRunner.value_or(12));
             duct.cellCount = std::clamp<std::size_t>(
                 static_cast<std::size_t>(std::llround(duct.lengthM / targetCellLengthM)),
-                minimumCellCount, 12);
+                minimumCellCount, cellCeiling);
             if (options_.intakeMaximumCellCount.has_value())
                 duct.cellCount = std::min(duct.cellCount, std::clamp<std::size_t>(
-                    *options_.intakeMaximumCellCount, minimumCellCount, 12));
+                    *options_.intakeMaximumCellCount, minimumCellCount, cellCeiling));
             return duct;
         };
 
@@ -1315,7 +1318,17 @@ std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> EngineSimulator::buildPh
     // every exhaust cell to run at more than 100 kHz. This is an explicit
     // physical scale separation: no
     // authored component, volume, area or loss is removed from either model.
-    feedbackMesh.targetCellLengthM = std::clamp(targetCellLengthM, 0.025, 0.600);
+    // The floor was 25 mm until 2026-11-25, and a finer request ran the
+    // 25 mm mesh without a word (`--exhaust-cell-mm 12` was bit-identical to
+    // 25): the convergence it was asked for could not be measured.
+    feedbackMesh.targetCellLengthM = std::clamp(
+        targetCellLengthM, finestExhaustCellLengthM, 0.600);
+    if (options_.exhaustMaximumCellsPerDuct)
+        feedbackMesh.maximumCellsPerDuct = std::max(
+            feedbackMesh.minimumCellsPerDuct, *options_.exhaustMaximumCellsPerDuct);
+    if (options_.exhaustMaximumTotalCells)
+        feedbackMesh.maximumTotalCells = std::max(
+            feedbackMesh.maximumCellsPerDuct, *options_.exhaustMaximumTotalCells);
     // Components shorter than the feedback scale remain one conservative
     // finite volume with their exact volume, ports and loss. Their propagation
     // delay is owned by the characteristic network, so duplicating a second FV
@@ -2024,6 +2037,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     // substep count per second is unchanged), and the low-speed regime where
     // this cap binds is far below the redline load case that sets the budget.
     // Measured before committing: see docs/thermoacoustic-architecture.md.
+    // The 25 us floor binds only on substeps shorter than 25 us (a crank step
+    // under 0.9 deg at 6,000 rpm): there it couples every second substep or
+    // so. `exhaustCouplingEverySubstep` is the request that is finer still.
     const auto maximumLowSpeedCouplingSeconds = std::clamp(
         options_.maximumLowSpeedExhaustCouplingSeconds.value_or(125.0e-6),
         25.0e-6, 500.0e-6);
@@ -5744,11 +5760,30 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     face.interfaceIndex, wheelShare,
                     config_.forcedInduction.turbineEfficiency));
             }
+            const auto keepMassLedger = options_.exhaustMassLedger.value_or(false);
+            const auto networkMassKg = [&physicalExhaustNetwork]() noexcept {
+                auto totalKg = 0.0;
+                for (const auto speciesKg : physicalExhaustNetwork.inventory().speciesMassKg)
+                    totalKg += speciesKg;
+                return totalKg;
+            };
+            const auto ledgerMassBeforeKg = keepMassLedger ? networkMassKg() : 0.0;
             const auto networkAdvance = physicalExhaustNetwork.advance(
                 exhaustCouplingDurationSeconds_,
                 std::span<const gasdynamics::CylinderValveBoundary>(
                     averagedBoundaries.data(), cylinderPorts.size()),
                 ambient);
+            if (keepMassLedger) {
+                auto inKg = 0.0;
+                auto outKg = 0.0;
+                for (const auto& exchange : physicalExhaustNetwork.cylinderExchanges())
+                    inKg += exchange.totalMassKg();
+                for (const auto& outlet : physicalExhaustNetwork.outletSamples())
+                    for (const auto speciesKg : outlet.speciesMassKg) outKg += speciesKg;
+                state_.exhaustLedgerErrorKg += std::abs(
+                    networkMassKg() - ledgerMassBeforeKg - (inKg - outKg));
+                state_.exhaustLedgerThroughputKg += std::abs(inKg) + std::abs(outKg);
+            }
             exhaustNetworkCompleted = networkAdvance.completed;
             if (networkAdvance.completed) ++completedExhaustCouplingAdvances;
             if (!exhaustTurbineFaces_.empty() && networkAdvance.advancedTimeSeconds > 0.0) {
@@ -5955,7 +5990,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto applied = cylinderGas_[index].tryApplyInventoryDelta(
                     cylinderDeltaForExchange(exchange, cylinderGas_[index]));
                 exhaustExchangeApplied[index] = static_cast<std::uint8_t>(applied);
-                if (!applied) state_.solverResolutionLimited = true;
+                if (!applied) {
+                    state_.solverResolutionLimited = true;
+                    state_.exhaustRejectedExchangeKg += std::abs(exchange.totalMassKg());
+                }
                 if (applied && scavengeResidualZoneTracked_[index]) {
                     // The zone follows what actually crossed the port, at the
                     // residual share the network was shown on average.

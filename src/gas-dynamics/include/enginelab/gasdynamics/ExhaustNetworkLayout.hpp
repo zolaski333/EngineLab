@@ -257,6 +257,16 @@ public:
     [[nodiscard]] const ExhaustNetworkDiscretisation& discretisation() const noexcept {
         return discretisation_;
     }
+    /** The cell length the ducts were actually cut to: the discretisation's
+     * target, or the coarser one `compile` fell back to when the target
+     * would have passed `maximumTotalCells`. A run that asked for a mesh
+     * reads here whether it got it. */
+    [[nodiscard]] double effectiveTargetCellLengthM() const noexcept {
+        return effectiveTargetCellLengthM_;
+    }
+    /** Whether any duct was held at `maximumCellsPerDuct`, i.e. is coarser
+     * than the effective target. */
+    [[nodiscard]] bool ductCellCapReached() const noexcept { return ductCellCapReached_; }
     /** Same elements, connected the same way, whatever their sizes and cell
      * counts: every duct, junction, interface, cylinder port and outlet has
      * the same identity, type and endpoints in the same order. Two such
@@ -279,6 +289,8 @@ private:
     std::vector<CompiledExhaustOutlet> outlets_;
     std::vector<ExhaustNetworkLayoutDiagnostic> diagnostics_;
     std::size_t totalCellCount_ { 0 };
+    double effectiveTargetCellLengthM_ { 0.0 };
+    bool ductCellCapReached_ { false };
     bool valid_ { false };
 };
 

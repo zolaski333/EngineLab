@@ -108,6 +108,23 @@ struct EngineSimulatorOptions final {
      * 360 mm, 100 mm on a two-stroke). This is a diagnostic/convergence knob:
      * the characteristic audio network still owns audio-band propagation. */
     std::optional<double> exhaustTargetCellLengthM;
+    /** Ceilings of the exhaust mesh: cells in one duct and in the whole
+     * network (ExhaustNetworkDiscretisation). Absent keeps the realtime 64
+     * and 1,024; a finer accuracy profile raises them so that its mesh is
+     * the one it asks for (ExhaustNetworkLayout::effectiveTargetCellLengthM
+     * says whether it was). */
+    std::optional<std::size_t> exhaustMaximumCellsPerDuct;
+    std::optional<std::size_t> exhaustMaximumTotalCells;
+    /** Couple the exhaust every mechanical substep from the first step
+     * (setExhaustCouplingEverySubstep). Absent: off. */
+    std::optional<bool> exhaustCouplingEverySubstep;
+    /** Ceiling of the cells in one intake runner. Absent keeps the realtime
+     * 12. */
+    std::optional<std::size_t> intakeMaximumCellsPerRunner;
+    /** Keep the exhaust network's mass ledger (EngineState::
+     * exhaustLedgerErrorKg): two inventory sums per coupling advance.
+     * Absent: off. A diagnostic; it reads the network and changes nothing. */
+    std::optional<bool> exhaustMassLedger;
     /** Diagnostic exhaust Courant number. Absent keeps the production 0.8. */
     std::optional<double> exhaustMaximumCourantNumber;
     /** Diagnostic exhaust time integration: true takes one forward-Euler
@@ -248,6 +265,13 @@ public:
      * expansion chamber needs the finer mesh for its suction and plugging
      * waves (RD350 at 8,000 rpm: 9.8 N.m at 360 mm, 12.3 at 100). */
     [[nodiscard]] static double productionExhaustCellLengthM(const EngineConfig& config) noexcept;
+    /** The finest exhaust cell the simulator cuts, metres: a request below
+     * it is held there (and reads so in exhaustLayout()). */
+    static constexpr double finestExhaustCellLengthM = 0.010;
+    /** The exhaust network's mesh as construction compiled it. */
+    [[nodiscard]] const gasdynamics::ExhaustNetworkLayout& exhaustLayout() const noexcept {
+        return constructionExhaustLayout_;
+    }
     /** The nonlinear exhaust network of `config` built as the simulator builds
      * its own, at `targetCellLengthM` (absent: the construction mesh), for
      * replaceExhaustNetwork(). Null when it does not compile or does not have

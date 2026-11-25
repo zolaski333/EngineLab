@@ -2037,6 +2037,18 @@ struct EngineState final {
      * above half this frequency cannot be physical.
      */
     double exhaustCouplingFrequencyHz { 0.0 };
+    /** The exhaust network's mass ledger since construction, kept only with
+     * EngineSimulatorOptions::exhaustMassLedger: the sum over coupling
+     * advances of |change of the network's mass - (mass the cylinders put
+     * in - mass the outlets took)|, and of the mass that crossed (in plus
+     * out). Their ratio is the network's conservation error. */
+    double exhaustLedgerErrorKg { 0.0 };
+    double exhaustLedgerThroughputKg { 0.0 };
+    /** Mass of the exhaust exchanges a cylinder refused since construction
+     * (the network moved it, the cylinder could not give or take it, and
+     * `solverResolutionLimited` was raised): mass the coupling did not
+     * conserve. Kept always. */
+    double exhaustRejectedExchangeKg { 0.0 };
     /** Actual intake advances in the last frame, summed across runner networks.
      * Rates use advanced simulation time, rather than the requested cadence. */
     std::uint64_t intakeNetworkAcceptedSubsteps { 0 };

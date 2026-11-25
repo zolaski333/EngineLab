@@ -1,7 +1,8 @@
 add_library(EngineLabSimulation STATIC
     src/DynoAbsorberController.cpp
     src/EngineThermalModel.cpp
-    src/EngineSimulator.cpp)
+    src/EngineSimulator.cpp
+    src/SimulationAccuracy.cpp)
 add_library(EngineLab::Simulation ALIAS EngineLabSimulation)
 target_include_directories(EngineLabSimulation PUBLIC include)
 target_link_libraries(EngineLabSimulation PUBLIC

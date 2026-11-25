@@ -24,6 +24,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/simulation/SimulationAccuracy.hpp>
 
 #include <algorithm>
 #include <array>
@@ -58,6 +59,14 @@ std::optional<enginelab::calibration::CalibrationDraft> savedCalibration;
 // moves with the speed of sound in it, so this says how hot the gas is where a
 // tuned length is read.
 bool pipeTemperatureReport = false;
+// --accuracy: the numerical resolution of every point (SimulationAccuracy.hpp),
+// applied before --exhaust-cell-mm, --crank-degrees and --coupling-us, which
+// then override one knob each. What each engine ran is said on stderr.
+enginelab::AccuracyProfile accuracyProfile = enginelab::AccuracyProfile::realtime;
+// --mass-ledger: keep the exhaust network's mass ledger and say, after each
+// point, its conservation error and the mass of the exchanges a cylinder
+// refused, both over the mass that crossed the network during the point.
+bool massLedgerReport = false;
 // --exhaust-port-plateau: the exhaust port's effective area as a fraction of
 // the valve head area (production 0.51), to read a measured flow bench against.
 std::optional<double> exhaustPortPlateauOverride;
@@ -491,6 +500,9 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
         !useWellMixedExhaustJunctions;
     simulatorOptions.partitionExhaustNetwork = partitionExhaustNetworkOverride;
     simulatorOptions.exhaustMaximumHeadAreaFraction = exhaustPortPlateauOverride;
+    const auto resolution =
+        enginelab::applyAccuracyProfile(accuracyProfile, config, simulatorOptions);
+    if (massLedgerReport) simulatorOptions.exhaustMassLedger = true;
     // A convergence knob, not a setting: an expansion chamber's cones are two
     // or three cells at the production two-stroke mesh, and the shortest
     // element sets the whole network's time step, so a finer mesh costs both
@@ -515,11 +527,16 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
             std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0 / crankDegreesPerStep * 1.01,
             config.solver.maximumMechanicalFrequencyHz, 100'000.0);
     }
-    if (couplingMicroseconds > 0.0)
+    if (couplingMicroseconds > 0.0) {
         simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
             couplingMicroseconds * 1.0e-6;
+        simulatorOptions.exhaustCouplingEverySubstep = false;
+    }
     enginelab::EngineSimulator simulator(
         config, ecu, physics, events, exhaust, simulatorOptions);
+    std::cerr << config.name << ": "
+              << enginelab::accuracyReport(resolution, simulatorOptions, config,
+                                           simulator.exhaustLayout()) << '\n';
 
     const double dt = frameSeconds;
     // Cold start and idle briefly before the first hold point.
@@ -550,10 +567,24 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
         // state: `--settle` is the only knob that separates a curve's real
         // shape from the memory each point carries. `--step` cannot do it,
         // because it moves the grid, the first point and the path at once.
+        const auto ledgerBefore = simulator.state();
         const auto sample = holdPoint(simulator, config, target,
             first ? settleSeconds + 3.0 : settleSeconds, sampleSeconds);
         first = false;
         writeRow(std::cout, config, target, sample);
+        if (massLedgerReport) {
+            const auto& after = simulator.state();
+            const auto throughputKg =
+                after.exhaustLedgerThroughputKg - ledgerBefore.exhaustLedgerThroughputKg;
+            std::cerr << "mass ledger at " << target << " rpm: exhaust network error "
+                      << std::setprecision(3) << std::scientific
+                      << (throughputKg > 0.0 ? (after.exhaustLedgerErrorKg
+                              - ledgerBefore.exhaustLedgerErrorKg) / throughputKg : 0.0)
+                      << " of the mass crossing it, refused exchanges "
+                      << (throughputKg > 0.0 ? (after.exhaustRejectedExchangeKg
+                              - ledgerBefore.exhaustRejectedExchangeKg) / throughputKg : 0.0)
+                      << std::fixed << '\n';
+        }
         summary.highestBoostPressureRatio = std::max(
             summary.highestBoostPressureRatio, sample.boostPressureRatio);
         summary.highestTurboSpeedRatio = std::max(
@@ -772,6 +803,15 @@ int main(int argc, char** argv) {
             couplingMicroseconds = std::stod(argv[++index]);
         else if (argument == "--frame-hz" && index + 1 < argc)
             frameSeconds = 1.0 / std::clamp(std::stod(argv[++index]), 30.0, 4'000.0);
+        else if (argument == "--accuracy" && index + 1 < argc) {
+            const auto profile = enginelab::accuracyProfileFromName(argv[++index]);
+            if (!profile) {
+                std::cerr << "--accuracy: realtime, balanced, engineering or high-precision\n";
+                return EXIT_FAILURE;
+            }
+            accuracyProfile = *profile;
+        }
+        else if (argument == "--mass-ledger") massLedgerReport = true;
         else if (argument == "--exhaust-whole")
             partitionExhaustNetworkOverride = false;
         else if (argument == "--pipe-temperature")
@@ -785,7 +825,7 @@ int main(int argc, char** argv) {
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
-                         " [--exhaust-cell-mm mm]"
+                         " [--exhaust-cell-mm mm] [--accuracy profile] [--mass-ledger]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
                          " [--exhaust-whole] [--pipe-temperature]"
                          " [--exhaust-port-plateau fraction]\n";
@@ -808,6 +848,10 @@ int main(int argc, char** argv) {
     if (schemaOnly) {
         writeHeader(std::cout);
         return EXIT_SUCCESS;
+    }
+    if (!referenceFile.empty() && accuracyProfile != enginelab::AccuracyProfile::realtime) {
+        std::cerr << "--accuracy is a sweep option: --reference-file runs production\n";
+        return EXIT_FAILURE;
     }
     if (!referenceFile.empty())
         return validateReferencePoints(

@@ -26,6 +26,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/simulation/SimulationAccuracy.hpp>
 
 #include <algorithm>
 #include <array>
@@ -64,6 +65,9 @@ struct Settings final {
     // simulator's oracle) and the mechanical step's crank angle.
     bool couplingEverySubstep { false };
     double crankDegreesPerStep { 0.0 };
+    // --accuracy: the run's resolution (SimulationAccuracy.hpp), under the
+    // single-knob flags above.
+    enginelab::AccuracyProfile accuracy { enginelab::AccuracyProfile::realtime };
 };
 
 [[noreturn]] void usage() {
@@ -71,7 +75,8 @@ struct Settings final {
                  " [--saved-ecu]) --component id"
                  " --position-mm mm [--catalog-root dir] [--rpm rpm] [--throttle 0..1]"
                  " [--exhaust-cell-mm mm] [--settle s] [--sample s] [--harmonics n] [--observer-m m]"
-                 " [--coupling-every-substep] [--crank-degrees deg]\n";
+                 " [--coupling-every-substep] [--crank-degrees deg]"
+                 " [--accuracy realtime|balanced|engineering|high-precision]\n";
     std::exit(EXIT_FAILURE);
 }
 
@@ -98,6 +103,11 @@ Settings parse(int argc, char** argv) {
         else if (arg == "--observer-m") s.observerM = std::stod(next());
         else if (arg == "--coupling-every-substep") s.couplingEverySubstep = true;
         else if (arg == "--crank-degrees") s.crankDegreesPerStep = std::stod(next());
+        else if (arg == "--accuracy") {
+            const auto profile = enginelab::accuracyProfileFromName(next());
+            if (!profile) usage();
+            s.accuracy = *profile;
+        }
         else usage();
     }
     if (s.filter.empty() == s.savedEngine.empty() || (s.savedEcu && s.savedEngine.empty())
@@ -150,6 +160,9 @@ int main(int argc, char** argv) {
             config = selection.entry->config;
         }
         enginelab::normaliseEngineConfig(config);
+        enginelab::EngineSimulatorOptions options;
+        const auto resolution =
+            enginelab::applyAccuracyProfile(settings.accuracy, config, options);
         // As DynoSweepHarness --crank-degrees: a finer step raises the
         // solver's frequency ceiling with it.
         if (settings.crankDegreesPerStep > 0.0) {
@@ -169,12 +182,13 @@ int main(int argc, char** argv) {
         enginelab::SimplifiedGasolinePhysics physics;
         enginelab::FourStrokeEventGenerator events;
         auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-        enginelab::EngineSimulatorOptions options;
         if (settings.exhaustCellMm > 0.0) options.exhaustTargetCellLengthM = settings.exhaustCellMm * 1.0e-3;
+        if (settings.couplingEverySubstep) options.exhaustCouplingEverySubstep = true;
         // EngineRuntime-sized: never on the stack.
         auto simulator = std::make_unique<enginelab::EngineSimulator>(
             config, ecu, physics, events, exhaust, options);
-        simulator->setExhaustCouplingEverySubstep(settings.couplingEverySubstep);
+        std::cerr << "probe: " << enginelab::accuracyReport(resolution, options, config,
+                                                           simulator->exhaustLayout()) << '\n';
 
         constexpr double dt = 1.0 / 240.0;
         for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {

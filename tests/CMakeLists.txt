@@ -960,6 +960,18 @@ endif()
 enginelab_set_warnings(EngineLabTwoStrokeTests)
 add_test(NAME EngineLab.TwoStroke COMMAND EngineLabTwoStrokeTests)
 
+add_executable(EngineLabSimulationAccuracyTests SimulationAccuracyTests.cpp)
+target_link_libraries(EngineLabSimulationAccuracyTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabSimulationAccuracyTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabSimulationAccuracyTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabSimulationAccuracyTests)
+add_test(NAME EngineLab.SimulationAccuracy COMMAND EngineLabSimulationAccuracyTests)
+
 add_executable(EngineLabCatalogRoundTripTests CatalogRoundTripTests.cpp)
 target_link_libraries(EngineLabCatalogRoundTripTests PRIVATE
     EngineLab::Foundation EngineLab::Serialization EngineLab::Catalog)
