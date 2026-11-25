@@ -158,10 +158,12 @@ public:
             "on the throttle. An open trumpet is the bare bellmouth, no filter at all: the loudest intake."));
         addChoice(twoStrokeIntake_, "Two-stroke intake",
             { "Reed on the crankcase", "Cylinder port with a reed", "Cylinder port (piston port)" });
-        addChoice(throttles_, "Throttles", { "Automatic", "One for the engine", "One per cylinder" });
+        addChoice(throttles_, "Throttles",
+            { "Automatic", "One for the engine", "One per cylinder", "One per cylinder, on the plenum" });
         throttles_.combo.setTooltip(utf8("Automatic is the family's: one body on a car, one per cylinder ahead of "
             "the plenum on a sport motorcycle. One per cylinder puts a plate in each cylinder's runner "
-            "(individual throttle bodies), the sharpest response. A two-stroke's carburettor already feeds "
+            "(individual throttle bodies), the sharpest response; on the plenum, the bodies stand side by side "
+            "ahead of it. A two-stroke's carburettor already feeds "
             "its own cylinder; a diesel has no throttle."));
         addKeyed(throttleCount_, "Throttle bodies", "throttle_count", intakePage);
         addKeyed(throttleDiameter_, "Throttle bore (mm)", "throttle_diameter_mm", intakePage);

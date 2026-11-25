@@ -2,6 +2,7 @@
 #include <enginelab/app/FuelEditing.hpp>
 #include <enginelab/catalog/EngineDesign.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
+#include <enginelab/foundation/CrankTiming.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
@@ -1244,9 +1245,10 @@ void EngineViewport::applyEdit(const std::vector<double>& values, bool gradual) 
         applyExhaustEdit(first, second);
     else if (role == render::PartRole::liner || role == render::PartRole::piston)
         applyCylinderEdit(values, gradual);
-    else if (role == render::PartRole::rod)
+    else if (role == render::PartRole::rod && !partEditor_)
         applyRodEdit(first, gradual);
-    else if (partEditor_ && (role == render::PartRole::head || role == render::PartRole::intakeValve
+    else if (partEditor_ && (role == render::PartRole::head || role == render::PartRole::rod
+                             || role == render::PartRole::intakeValve
                              || role == render::PartRole::exhaustValve))
         applyCamshaftEdit(values, gradual);
     else if (partEditor_)
@@ -2084,21 +2086,45 @@ void EngineViewport::updateInspector() {
                          160.0);
             timing.value("Compression ratio", config.cylinders.front().compressionRatio, utf8(" : 1"), 1, 0.5, 0.1,
                          5.0, 20.0);
+            // Each bank's own camshafts, set apart from the others (two banks
+            // or more): a typed centreline is that bank's alone.
+            std::vector<double> bankCentrelinesNow;
+            if (config.banks.size() > 1U) {
+                for (const auto& bank : config.banks) {
+                    const auto name = "Bank " + juce::String(static_cast<int>(bank.id));
+                    timing.value(name + " intake", bank.camshafts.intakeCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0, 1.0,
+                                 60.0, 160.0);
+                    timing.value(name + " exhaust", bank.camshafts.exhaustCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0,
+                                 1.0, 60.0, 160.0);
+                    bankCentrelinesNow.push_back(bank.camshafts.intakeCenterlineDegrees);
+                    bankCentrelinesNow.push_back(bank.camshafts.exhaustCenterlineDegrees);
+                }
+            }
             timing.offersRamp = true;
-            timing.note = "Degrees after TDC for the intake, before it for the exhaust: smaller centrelines, more "
-                          "overlap. Every camshaft moves by as much, every cylinder takes the ratio (a higher one "
-                          "gives more torque, and knocks sooner). The running engine takes them.";
+            timing.note = juce::String("Degrees after TDC for the intake, before it for the exhaust: smaller "
+                                       "centrelines, more overlap. Every camshaft moves by as much, every cylinder "
+                                       "takes the ratio (a higher one gives more torque, and knocks sooner). ")
+                + (bankCentrelinesNow.empty() ? "" : "A bank's own centreline moves that bank's camshafts alone. ")
+                + "The running engine takes them.";
             edit = timing;
             const auto intakeNow = cams.intakeCenterlineDegrees;
             const auto exhaustNow = cams.exhaustCenterlineDegrees;
             const auto ratioNow = config.cylinders.front().compressionRatio;
             partEditor_ = [=](EngineConfig& edited, const std::vector<double>& values) {
-                if (values.size() < 3U) return std::string("The head changed meanwhile.");
+                if (values.size() != 3U + bankCentrelinesNow.size()) return std::string("The head changed meanwhile.");
                 const auto intakeCentreline = values[0];
                 const auto exhaustCentreline = values[1];
                 shiftCamshafts(edited, &CamshaftConfig::intakeCenterlineDegrees, nullptr, intakeCentreline - intakeNow);
                 shiftCamshafts(edited, &CamshaftConfig::exhaustCenterlineDegrees, nullptr,
                                exhaustCentreline - exhaustNow);
+                for (std::size_t bank = 0; bank < edited.banks.size() && 2U * bank + 1U < bankCentrelinesNow.size();
+                     ++bank) {
+                    auto& own = edited.banks[bank].camshafts;
+                    if (values[3U + 2U * bank] != bankCentrelinesNow[2U * bank])
+                        own.intakeCenterlineDegrees = values[3U + 2U * bank];
+                    if (values[4U + 2U * bank] != bankCentrelinesNow[2U * bank + 1U])
+                        own.exhaustCenterlineDegrees = values[4U + 2U * bank];
+                }
                 return values[2] != ratioNow ? setCompressionRatio(edited, values[2]) : std::string();
             };
         }
@@ -2120,21 +2146,81 @@ void EngineViewport::updateInspector() {
         add("Crank angle", juce::String(juce::roundToInt(displayedAngle_.load())) + utf8("°"));
         add("Crank + flywheel", juce::String(config.rotatingInertiaKgM2, 3) + utf8(" kg·m²"));
         add("With the rods", juce::String(effectiveRotatingInertiaKgM2(config), 3) + utf8(" kg·m²"));
-        if (configEditor_ && config.rotatingInertiaKgM2 > 0.0) {
+        if (!config.firingOrder.empty()) {
+            juce::String order;
+            for (const auto id : config.firingOrder) order << (order.isEmpty() ? "" : "-") << static_cast<int>(id);
+            add("Firing order", order);
+        }
+        if (configEditor_) {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 6 } << 60U;
-            edit->heading = "FLYWHEEL";
-            edit->value("Inertia", config.rotatingInertiaKgM2, utf8(" kg\xc2\xb7m\xc2\xb2"), 3, 0.01, 0.001, 0.01, 5.0);
-            edit->value("Bearing friction", config.frictionCoefficient, "", 3, 0.01, 0.002, 0.0, 1.0);
-            edit->note = "The crankshaft and its flywheel, every shaft scaled alike. A lighter flywheel revs up and "
-                         "down faster. The running engine takes it. The bearing friction adds 10 x its value N.m "
-                         "per litre to the bearings' drag (the pistons' is apart); it restarts the engine.";
-            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
-                const auto inertia = values[0];
-                const auto scale = inertia / std::max(1.0e-6, edited.rotatingInertiaKgM2);
-                for (auto& crankshaft : edited.crankshafts) crankshaft.momentOfInertiaKgM2 *= scale;
-                edited.rotatingInertiaKgM2 = inertia;
-                if (values.size() > 1U) edited.frictionCoefficient = values[1];
+            edit->heading = "CRANK";
+            const auto flywheel = config.rotatingInertiaKgM2 > 0.0;
+            if (flywheel) {
+                edit->value("Inertia", config.rotatingInertiaKgM2, utf8(" kg\xc2\xb7m\xc2\xb2"), 3, 0.01, 0.001, 0.01,
+                            5.0);
+                edit->value("Bearing friction", config.frictionCoefficient, "", 3, 0.01, 0.002, 0.0, 1.0);
+            }
+            edit->value("Redline", config.redlineRpm, " rpm", 0, 250.0, 50.0, config.idleRpm + 100.0, 20'000.0);
+            // A V's two banks open about their centre line; each cylinder's
+            // top dead centre then moves with its bank (the pins stay).
+            const auto twoBankV = config.layout == EngineLayout::vLayout && config.banks.size() == 2U;
+            const auto bankAngleNow = twoBankV
+                ? std::abs(config.banks[1].angleDegrees - config.banks[0].angleDegrees) : 0.0;
+            if (twoBankV) edit->value("Bank angle", bankAngleNow, utf8("\xc2\xb0"), 1, 5.0, 0.5, 1.0, 180.0);
+            // Each cylinder's top dead centre in the cycle: the crank's
+            // throws and the firing order. A rotary's rotors and a radial's
+            // one throw set theirs.
+            const auto cycle = cycleDegreesOf(config.cycle);
+            const auto retimes = config.cycle != EngineCycle::rotary && config.layout != EngineLayout::radial
+                && std::all_of(config.cylinders.begin(), config.cylinders.end(), [](const CylinderConfig& each) {
+                       return each.connectingRodType == ConnectingRodType::conventional;
+                   });
+            std::vector<double> tdcNow;
+            if (retimes) {
+                for (const auto& each : config.cylinders) {
+                    tdcNow.push_back(each.crankOffsetDegrees);
+                    edit->value("Cylinder " + juce::String(static_cast<int>(each.id)) + " TDC", each.crankOffsetDegrees,
+                                utf8("\xc2\xb0"), 1, 10.0, 0.5, 0.0, cycle - 0.1);
+                }
+            }
+            edit->note = juce::String(flywheel
+                    ? "Inertia: the crankshaft and its flywheel, every shaft scaled alike; a lighter flywheel revs "
+                      "up and down faster, and the running engine takes it. The bearing friction adds 10 x its "
+                      "value N.m per litre to the bearings' drag (the pistons' is apart). "
+                    : "")
+                + "Redline: where the tachometer turns red and the driver changes up; the rev limiter is the "
+                  "ECU tuner's. "
+                + (twoBankV ? "Bank angle: the banks open about their centre, each cylinder's TDC moving with its "
+                              "bank, so the firing intervals change as on a block of that angle. "
+                            : "")
+                + (retimes ? "TDC: where each cylinder fires in the " + juce::String(juce::roundToInt(cycle))
+                                 + utf8("\xc2\xb0 cycle; the crank pins follow and the firing order is redrawn "
+                                        "from them. ")
+                           : "")
+                + "Anything but the inertia restarts the engine.";
+            partEditor_ = [flywheel, twoBankV, bankAngleNow, retimes, tdcNow](EngineConfig& edited,
+                                                                               const std::vector<double>& values) {
+                const auto expected = (flywheel ? 2U : 0U) + 1U + (twoBankV ? 1U : 0U) + tdcNow.size();
+                if (values.size() != expected) return std::string("The crank changed meanwhile.");
+                std::size_t at = 0;
+                if (flywheel) {
+                    const auto inertia = values[at++];
+                    const auto scale = inertia / std::max(1.0e-6, edited.rotatingInertiaKgM2);
+                    for (auto& crankshaft : edited.crankshafts) crankshaft.momentOfInertiaKgM2 *= scale;
+                    edited.rotatingInertiaKgM2 = inertia;
+                    edited.frictionCoefficient = values[at++];
+                }
+                edited.redlineRpm = values[at++];
+                if (twoBankV) {
+                    const auto angle = values[at++];
+                    if (std::abs(angle - bankAngleNow) > 1.0e-9)
+                        if (auto error = setVBankAngle(edited, angle); !error.empty()) return error;
+                }
+                if (retimes) {
+                    std::vector<double> tdc(values.begin() + static_cast<std::ptrdiff_t>(at), values.end());
+                    if (tdc != tdcNow) return retimeCrank(edited, tdc);
+                }
                 return std::string();
             };
         }
@@ -2172,10 +2258,27 @@ void EngineViewport::updateInspector() {
             PartInspector::Edit rodEdit;
             rodEdit.key = std::uint64_t { 3 } << 60U;
             rodEdit.length("Length", *rodMm, 5.0, 0.5, std::ceil(12.0 * cylinder->strokeMm) / 10.0, 500.0);
+            // The reciprocating masses: what shakes the block and the crank's
+            // ripple, and the inertia the rods add.
+            const auto rodMassNow = std::round(cylinder->connectingRodMassGrams);
+            const auto pistonMassNow = std::round(cylinder->pistonMassGrams);
+            rodEdit.value("Rod mass", rodMassNow, " g", 0, 10.0, 1.0, 1.0, 5'000'000.0);
+            rodEdit.value("Piston mass", pistonMassNow, " g", 0, 10.0, 1.0, minimumPistonMassGrams, 2'500'000.0);
             rodEdit.offersRamp = true;
             rodEdit.note = "Every rod changes, each crank throw at its gas-exchange TDC. "
-                           "The compression ratio stays.";
+                           "The compression ratio stays. A mass typed in is every cylinder's.";
             edit = rodEdit;
+            partEditor_ = [rodNow = *rodMm, rodMassNow, pistonMassNow](EngineConfig& edited,
+                                                                       const std::vector<double>& values) {
+                if (values.size() < 3U) return std::string("The rods changed meanwhile.");
+                if (values[0] != rodNow)
+                    if (auto error = resizeConnectingRods(edited, values[0]); !error.empty()) return error;
+                for (auto& each : edited.cylinders) {
+                    if (values[1] != rodMassNow) each.connectingRodMassGrams = values[1];
+                    if (values[2] != pistonMassNow) each.pistonMassGrams = values[2];
+                }
+                return std::string();
+            };
         }
         if (cylinder != nullptr) {
             add("Length", millimetres(model_.units, cylinder->connectingRodMm));
@@ -2319,6 +2422,17 @@ void EngineViewport::updateInspector() {
                 camEdit.length("VTEC lift", intake ? cams.highIntakeLiftMm : cams.highExhaustLiftMm, 0.5, 0.1, 1.0,
                                20.0).decimals = 1;
             }
+            // The valves themselves, every cylinder's on this side. A
+            // diameter left as shown stays derived from the bore (and
+            // follows the count: one valve is larger).
+            const auto* valved = cylinder != nullptr ? cylinder : &config.cylinders.front();
+            const auto valveCountNow = static_cast<double>(intake ? valved->intakeValveCount : valved->exhaustValveCount);
+            const auto authoredDiameter = intake ? valved->intakeValveDiameterMm : valved->exhaustValveDiameterMm;
+            const auto derivedRatio = intake ? (valveCountNow == 1.0 ? 0.50 : 0.40) : (valveCountNow == 1.0 ? 0.41 : 0.34);
+            const auto valveDiameterNow = authoredDiameter > 0.0
+                ? authoredDiameter : std::clamp(valved->boreMm * derivedRatio, 12.0, 80.0);
+            camEdit.value("Valves", valveCountNow, "", 0, 1.0, 1.0, 1.0, 4.0);
+            camEdit.length("Valve diameter", valveDiameterNow, 1.0, 0.1, 2.5, 400.0).decimals = 1;
             camEdit.secondChoice = PartInspector::Edit::Choice {
                 { "No VTEC cams", "VTEC cams" },
                 "A second, wilder cam the valves switch to at speed. Fitted as the K20A's (intake +24 deg and "
@@ -2331,6 +2445,8 @@ void EngineViewport::updateInspector() {
             camEdit.note = vtec ? "Every camshaft moves by as much, its VTEC cam too; the VTEC figures move the VTEC "
                                   "cam alone. The running engine takes it."
                                 : "Every camshaft moves by as much, its high profile too. The running engine takes it.";
+            camEdit.note += " Valves and their diameter: every cylinder's on this side; a diameter left as shown "
+                            "stays the bore's share. Either restarts the engine.";
             edit = camEdit;
             const auto durationField = intake ? &CamshaftConfig::intakeDurationDegrees
                                               : &CamshaftConfig::exhaustDurationDegrees;
@@ -2347,9 +2463,21 @@ void EngineViewport::updateInspector() {
                 const auto lift = values[1];
                 shiftCamshafts(edited, durationField, highDurationField, duration - durationNow);
                 shiftCamshafts(edited, liftField, highLiftField, lift - liftNow);
-                if (vtec && values.size() >= 4U) {
+                if (values.size() < (vtec ? 6U : 4U)) return std::string("The valves changed meanwhile.");
+                if (vtec) {
                     shiftCamshafts(edited, highDurationField, nullptr, values[2] - highDurationNow);
                     shiftCamshafts(edited, highLiftField, nullptr, values[3] - highLiftNow);
+                }
+                const auto count = values[values.size() - 2U];
+                const auto diameter = values[values.size() - 1U];
+                if (!std::isfinite(count) || count < 1.0 || count > 4.0 || count != std::floor(count))
+                    return std::string("A cylinder has one to four valves a side.");
+                for (auto& each : edited.cylinders) {
+                    if (count != valveCountNow)
+                        (intake ? each.intakeValveCount : each.exhaustValveCount) = static_cast<std::uint32_t>(count);
+                    // Shown to 0.1 mm: a diameter left alone is not authored.
+                    if (std::abs(diameter - valveDiameterNow) >= 0.05)
+                        (intake ? each.intakeValveDiameterMm : each.exhaustValveDiameterMm) = diameter;
                 }
                 return std::string();
             };
@@ -2516,6 +2644,14 @@ void EngineViewport::updateInspector() {
                         static_cast<double>(maximumTurbochargers));
             const auto shownTopKrpm = turboMaximumShaftSpeedRpm(forced) / 1'000.0;
             edit->value("Top speed line", shownTopKrpm, " krpm", 0, 5.0, 1.0, 1.0, 1'000'000.0);
+            // How fast the wheel spools: the rotor's inertia (g cm2, a
+            // whole number for a car's turbo) and the shaft speed its map
+            // is drawn for. Each unit's, after a count share.
+            const auto shownInertia = std::round(forced.shaftInertiaKgM2 * 1.0e7);
+            const auto shownDesignKrpm = std::round(forced.designShaftSpeedRpm / 1'000.0);
+            edit->value(forced.turbochargerCount > 1U ? "Rotor inertia, each" : "Rotor inertia", shownInertia,
+                        utf8(" g\xc2\xb7" "cm\xc2\xb2"), 0, 100.0, 10.0, 1.0, 3.0e9);
+            edit->value("Design shaft speed", shownDesignKrpm, " krpm", 0, 5.0, 1.0, 1.0, 2'000.0);
             // Which turbocharger this path's turbine drives, when there is a choice.
             const auto pathId = clicked.pathId;
             const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
@@ -2536,8 +2672,11 @@ void EngineViewport::updateInspector() {
                               "shares the same total turbo out between identical units, and a path given another "
                               "turbo: both restart the engine. Past its top speed line (1.3 x the design speed "
                               "unless set) the wheel loses its efficiency fast and is damaged until it bursts; "
-                              "the ECU's overboost cut (ECU tuner) cuts the fuel first unless it is off.");
-            partEditor_ = [choosesUnit, pathIndex, shownTopKrpm](EngineConfig& edited, const std::vector<double>& values) {
+                              "the ECU's overboost cut (ECU tuner) cuts the fuel first unless it is off. Rotor "
+                              "inertia: a lighter rotor spools sooner (lag); design shaft speed: the speed its "
+                              "efficiency map peaks at, which also sets the default top speed line.");
+            partEditor_ = [choosesUnit, pathIndex, shownTopKrpm, shownInertia, shownDesignKrpm](
+                              EngineConfig& edited, const std::vector<double>& values) {
                 const auto wastegate = values[0];
                 const auto turbineAreaMm2 = values[1];
                 const auto intercoolerPercent = values[2];
@@ -2555,14 +2694,19 @@ void EngineViewport::updateInspector() {
                 // Written only when moved: the line shown is rounded to a krpm.
                 if (values.size() > 6U && std::abs(values[6] - shownTopKrpm) >= 0.5)
                     turbo.maximumShaftSpeedRpm = values[6] * 1'000.0;
-                if (choosesUnit && values.size() > 7U && pathIndex < edited.exhaustPaths.size()
+                // Written only when moved: both are shown rounded.
+                if (values.size() > 8U) {
+                    if (std::abs(values[7] - shownInertia) >= 0.5) turbo.shaftInertiaKgM2 = values[7] * 1.0e-7;
+                    if (std::abs(values[8] - shownDesignKrpm) >= 0.5) turbo.designShaftSpeedRpm = values[8] * 1'000.0;
+                }
+                if (choosesUnit && values.size() > 9U && pathIndex < edited.exhaustPaths.size()
                     && count == turbo.turbochargerCount) {
                     // Written only when it changes: an authored index equal to
                     // the default is still another config, and a restart.
                     auto& editedPath = edited.exhaustPaths[pathIndex];
                     const auto now = editedPath.turbocharger >= 0
                         ? editedPath.turbocharger : static_cast<std::int32_t>(pathIndex % turbo.turbochargerCount);
-                    const auto wanted = static_cast<std::int32_t>(std::lround(values[7])) - 1;
+                    const auto wanted = static_cast<std::int32_t>(std::lround(values[9])) - 1;
                     if (wanted != now) editedPath.turbocharger = wanted;
                 }
                 if (count != turbo.turbochargerCount) edited = withTurbochargerCount(std::move(edited), count);
@@ -2657,7 +2801,15 @@ void EngineViewport::updateInspector() {
                 edit->value("Gear " + juce::String(index + 1),
                             transmission.gearRatios[static_cast<std::size_t>(index)], utf8(" : 1"), 3, 0.05, 0.005,
                             0.05, 25.0);
-            edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over, an "
+            // The automatic driver's shift points (0: placed from the power
+            // curve and the redline, as before).
+            edit->value("Auto upshift", std::round(transmission.automaticUpshiftRpm), " rpm", 0, 100.0, 10.0, 0.0,
+                        50'000.0);
+            edit->value("Auto downshift", std::round(transmission.automaticDownshiftRpm), " rpm", 0, 100.0, 10.0, 0.0,
+                        30'000.0);
+            edit->note = "Auto upshift and downshift: where the automatic driver changes up flat out and down on a "
+                         "coast; 0 places them from the power curve and the redline. "
+                         "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over, an "
                          "automated manual's torque gap). "
                          "Ignition cut: the quickshifter's, on the way up. Ratios: input over output, the final "
                          "drive multiplies each; the next gear must be taller (a smaller ratio). Clutch capacity: "
@@ -2698,9 +2850,14 @@ void EngineViewport::updateInspector() {
                 box.shiftDurationSeconds = shiftMs / 1'000.0;
                 box.quickshifterCutSeconds = cutMs / 1'000.0;
                 const std::size_t first = counted ? 5U : 4U;
-                if (values.size() != first + box.gearRatios.size()) return std::string("The gearbox changed meanwhile.");
+                if (values.size() != first + box.gearRatios.size() + 2U)
+                    return std::string("The gearbox changed meanwhile.");
                 box.finalDriveRatio = values[2];
                 box.maxClutchTorqueNm = values[3];
+                box.automaticUpshiftRpm = values[values.size() - 2U];
+                box.automaticDownshiftRpm = values[values.size() - 1U];
+                if (box.automaticUpshiftRpm > 0.0 && box.automaticDownshiftRpm >= box.automaticUpshiftRpm)
+                    return std::string("The automatic driver must change down below where it changes up.");
                 if (counted) {
                     const auto typed = values[4];
                     if (!std::isfinite(typed) || typed < 1.0 || typed != std::floor(typed))
@@ -2734,12 +2891,106 @@ void EngineViewport::updateInspector() {
             add("Exhaust cam advance", juce::String(live->exhaustValveAdvanceDegrees, 1) + utf8("° crank"));
         }
         if (vtecCamsFitted(config)) add("VTEC high cam", state.vtecHighCylinderMask != 0U ? "engaged" : "off");
+        // A cam phaser: the advance it turns the cams to, at idle, in the
+        // midrange and at the redline, every camshaft alike. Fitted, it
+        // starts at no advance, so nothing changes until a figure is typed.
+        if (configEditor_ && config.cycle == EngineCycle::fourStroke) {
+            const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
+            const auto& control = cams.continuousControl;
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 10 } << 60U;
+            edit->heading = "CAM PHASER";
+            const std::array<double, 3> speeds { config.idleRpm, std::round(0.6 * config.redlineRpm / 50.0) * 50.0,
+                                                 config.redlineRpm };
+            std::array<double, 6> shown {};
+            if (control.enabled) {
+                edit->value("Response", control.responseFrequencyHz, " Hz", 1, 1.0, 0.5, 0.1, 100.0);
+                for (std::size_t at = 0; at < speeds.size(); ++at) {
+                    const auto sample = interpolateValveControl(control, speeds[at], 1.0);
+                    shown[at] = std::round(sample.intakeAdvanceDegrees * 10.0) / 10.0;
+                    shown[at + 3U] = std::round(sample.exhaustAdvanceDegrees * 10.0) / 10.0;
+                }
+                for (std::size_t at = 0; at < 6U; ++at)
+                    edit->value(juce::String(at < 3U ? "Intake at " : "Exhaust at ")
+                                    + juce::String(juce::roundToInt(speeds[at % 3U])) + " rpm",
+                                shown[at], utf8("\xc2\xb0"), 1, 2.0, 0.5, -90.0, 90.0);
+            }
+            edit->note = control.enabled
+                ? juce::String("Crank degrees the phaser turns each cam ahead of its centreline (negative: "
+                               "retarded), read at full load; between the speeds it follows a straight line. The "
+                               "response is how fast it gets there. A figure typed in replaces the phaser's map "
+                               "with these three speeds, at every load, on every camshaft. The running engine "
+                               "takes it.")
+                : juce::String("No phaser: the cams stay at their centrelines.");
+            edit->choice = PartInspector::Edit::Choice {
+                { "No cam phaser", "Cam phaser" },
+                "A hydraulic phaser on the intake and exhaust camshafts, turning them ahead or behind with the speed "
+                "(VVT). Fitted at no advance, so the engine is unchanged until its figures are set.",
+                control.enabled ? 1 : 0 };
+            partChoice_ = [speeds](EngineConfig& edited, int index) {
+                const auto fit = [&](CamshaftConfig& cam) {
+                    auto& own = cam.continuousControl;
+                    own.enabled = index == 1;
+                    if (own.enabled && own.samples.empty())
+                        for (const auto rpm : speeds) own.samples.push_back({ rpm, 1.0, 0.0, 0.0, 1.0 });
+                };
+                fit(edited.camshafts);
+                for (auto& bank : edited.banks) fit(bank.camshafts);
+            };
+            if (control.enabled) {
+                partEditor_ = [speeds, shown, hzNow = control.responseFrequencyHz](EngineConfig& edited,
+                                                                                    const std::vector<double>& values) {
+                    if (values.size() != 7U) return std::string("The phaser changed meanwhile.");
+                    auto typed = false;
+                    for (std::size_t at = 0; at < 6U; ++at) typed = typed || values[1U + at] != shown[at];
+                    if (std::isnan(values[0]) || values[0] < 0.1 || values[0] > 100.0)
+                        return std::string("A phaser answers at 0.1 to 100 Hz.");
+                    if (!(speeds[0] < speeds[1] && speeds[1] < speeds[2]))
+                        return std::string("The idle, midrange and redline speeds must rise.");
+                    const auto write = [&](CamshaftConfig& cam) {
+                        auto& own = cam.continuousControl;
+                        if (values[0] != hzNow) own.responseFrequencyHz = values[0];
+                        if (!typed) return;
+                        own.samples.clear();
+                        for (const auto load : { 0.0, 1.0 })
+                            for (std::size_t at = 0; at < speeds.size(); ++at)
+                                own.samples.push_back({ speeds[at], load, values[1U + at], values[4U + at], 1.0 });
+                    };
+                    write(edited.camshafts);
+                    for (auto& bank : edited.banks) write(bank.camshafts);
+                    return std::string();
+                };
+            }
+        }
         break;
     case render::PartRole::sparkPlug:
         title = "Spark plugs";
         subtitle = "The spark shows under the strobe";
         add("Spark advance", juce::String(state.ignitionAdvanceDegrees, 1) + utf8("° before TDC"));
         add("Spark", state.ecuSparkEnabled ? "on" : "cut");
+        add("Plugs per cylinder", juce::String(static_cast<int>(config.combustionCalibration.ignitionSiteCount)));
+        if (configEditor_) {
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 15 } << 60U;
+            edit->heading = "IGNITION";
+            edit->value("Plugs per cylinder", static_cast<double>(config.combustionCalibration.ignitionSiteCount), "",
+                        0, 1.0, 1.0, 1.0, 4.0);
+            edit->value("Limiter cut", std::round(config.ignition.limiterDurationSeconds * 1'000.0), " ms", 0, 10.0,
+                        1.0, 5.0, 2'000.0);
+            edit->note = "Plugs per cylinder: each lights its own flame kernel, so the charge burns sooner (twin "
+                         "spark: a big bore or a slow chamber). Limiter cut: how long the hard rev limiter cuts once "
+                         "it trips; where it trips is the ECU tuner's, and whether the fuel is cut with the spark "
+                         "is the Audio workshop's. Both restart the engine.";
+            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+                if (values.size() < 2U) return std::string("The ignition changed meanwhile.");
+                const auto plugs = values[0];
+                if (!std::isfinite(plugs) || plugs < 1.0 || plugs > 4.0 || plugs != std::floor(plugs))
+                    return std::string("A cylinder has one to four spark plugs.");
+                edited.combustionCalibration.ignitionSiteCount = static_cast<std::uint32_t>(plugs);
+                edited.ignition.limiterDurationSeconds = values[1] / 1'000.0;
+                return std::string();
+            };
+        }
         break;
     case render::PartRole::throttlePlate:
         title = "Throttle";
@@ -2892,6 +3143,34 @@ void EngineViewport::updateInspector() {
             edit->heading = "INTAKE";
             edit->restarts = true;
             edit->choice = intakeStyleChoice(false);
+            // Its size: the airbox's volume, the inlet duct's length and bore.
+            const auto pathId = duct.pathId;
+            const auto box = duct.kind == render::DuctKind::intakeAirbox;
+            if (const auto size = intakePartSize(config, pathId, box ? IntakePart::airbox : IntakePart::inletDuct);
+                size && size->first > 0.0) {
+                if (box) {
+                    edit->value("Volume", size->first, " L", 2, 0.5, 0.05, 0.05, 12'000.0);
+                } else {
+                    edit->length("Length", size->first, 10.0, 1.0, 10.0, 25'000.0);
+                    edit->length("Diameter", size->second, 2.0, 0.5, 5.0, 2'500.0);
+                }
+                edit->note = box ? "The airbox's volume: with the inlet duct, a Helmholtz resonator ahead of the "
+                                   "throttle, which sets the intake's low note and a hump in the torque. The engine "
+                                   "restarts to take it."
+                                 : "The duct the air comes in by, ahead of the airbox or the throttle; its diameter "
+                                   "is the throttle's bore until set. The engine restarts to take it.";
+                const auto part = box ? IntakePart::airbox : IntakePart::inletDuct;
+                const auto shown = *size;
+                partEditor_ = [pathId, part, shown](EngineConfig& edited, const std::vector<double>& values) {
+                    if (values.size() < (part == IntakePart::airbox ? 1U : 2U))
+                        return std::string("The intake changed meanwhile.");
+                    // Left as shown, a field stays as it was.
+                    const auto first = std::abs(values[0] - shown.first) < 1.0e-6 ? shown.first : values[0];
+                    const auto second = part == IntakePart::airbox ? 0.0
+                        : std::abs(values[1] - shown.second) < 1.0e-6 ? shown.second : values[1];
+                    return resizeIntakePart(edited, pathId, part, 0, first, second);
+                };
+            }
         }
         subtitle = (exhaust ? "Exhaust path " : "Intake path ") + juce::String(duct.pathId);
         if (duct.kind == render::DuctKind::intakeRunner) subtitle = cylinderName;

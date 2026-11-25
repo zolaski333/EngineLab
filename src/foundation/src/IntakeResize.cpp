@@ -67,6 +67,11 @@ std::optional<IntakePartSize> intakePartSize(const EngineConfig& config, std::ui
     }
     case IntakePart::plenum: size.first = geometry.plenumVolumeLitres; break;
     case IntakePart::throttle: size.first = geometry.throttleDiameterMm; break;
+    case IntakePart::airbox: size.first = geometry.airboxVolumeLitres; break;
+    case IntakePart::inletDuct:
+        size.first = geometry.inletDuctLengthMm;
+        size.second = geometry.inletDuctDiameterMm > 0.0 ? geometry.inletDuctDiameterMm : geometry.throttleDiameterMm;
+        break;
     }
     return size;
 }
@@ -103,6 +108,18 @@ std::string resizeIntakePart(EngineConfig& config, std::uint32_t pathId, IntakeP
         geometry.throttleDiameterMm = first;
         break;
     }
+    case IntakePart::airbox:
+        if (!within(first, 0.05, 12'000.0)) return "An airbox holds 0.05 to 12,000 litres.";
+        geometry.airboxVolumeLitres = first;
+        break;
+    case IntakePart::inletDuct:
+        if (!within(first, 10.0, 25'000.0)) return "An inlet duct is 10 to 25,000 mm long.";
+        if (!within(second, 5.0, 2'500.0)) return "An inlet duct is 5 to 2,500 mm across.";
+        geometry.inletDuctLengthMm = first;
+        // The throttle's bore, unchanged, stays inherited.
+        if (!(geometry.inletDuctDiameterMm == 0.0 && second == geometry.throttleDiameterMm))
+            geometry.inletDuctDiameterMm = second;
+        break;
     }
     mirrorSinglePath(config);
     return {};

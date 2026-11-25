@@ -108,6 +108,10 @@ enum class ThrottleLayout : std::uint8_t {
     /** One plate in each cylinder's runner (individual throttle bodies), a
      *  four-stroke spark engine's. */
     individual,
+    /** One throttle body per cylinder (per rotor) side by side ahead of the
+     *  plenum, as a sport motorcycle's: the plates' area of individual
+     *  throttles, the plenum's response. */
+    plenumBodies,
 };
 
 /**
@@ -230,11 +234,12 @@ struct DesignedEngine final {
  */
 [[nodiscard]] DesignedEngine withIntakeStyle(const EngineConfig& config, IntakeStyle style);
 
-/** single or individual: what `config` has (one body for a single body). */
+/** single, plenumBodies or individual: what `config` has (a single body, or
+ *  several ahead of the plenum). */
 [[nodiscard]] ThrottleLayout throttleLayoutOf(const EngineConfig& config) noexcept;
 /**
- * `config` with one throttle body for the engine or one plate a cylinder in
- * each runner, on every intake path: the plates' total area kept, a
+ * `config` with one throttle body for the engine, one body a cylinder ahead
+ * of the plenum, or one plate a cylinder in each runner, on every intake path: the plates' total area kept, a
  * carburettor resized for its bores. A two-stroke, a diesel or a rotary is
  * refused individual throttles. Never throws; a refusal is in `error`.
  */

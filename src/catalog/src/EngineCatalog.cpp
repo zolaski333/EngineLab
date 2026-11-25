@@ -939,7 +939,7 @@ void applyCrankOffsets(EngineConfig& config) {
         "automatic, port_injection, direct_injection or carburettor");
     choice("intake_style", parseIntakeStyle, spec.intakeStyle,
         "automatic, airbox, pod_filter or velocity_stacks");
-    choice("throttles", parseThrottleLayout, spec.throttles, "automatic, single or individual");
+    choice("throttles", parseThrottleLayout, spec.throttles, "automatic, single, individual or plenum_bodies");
     if (const auto overrides = node["overrides"])
         for (const auto& item : overrides) spec.overrides[item.first.as<std::string>()] = item.second.as<double>();
     return spec;
