@@ -911,6 +911,13 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                 << YAML::Key << "discharge_coefficient" << YAML::Value << reed.dischargeCoefficient
                 << YAML::EndMap;
         }
+        // Only an authored inlet tract: an orifice carburettor's file is unchanged.
+        if (config.twoStroke.inletTractLengthMm > 0.0)
+            out << YAML::Key << "inlet_tract" << YAML::Value << YAML::BeginMap
+                << YAML::Key << "length_mm" << YAML::Value << config.twoStroke.inletTractLengthMm
+                << YAML::Key << "diameter_mm" << YAML::Value << config.twoStroke.inletTractDiameterMm
+                << YAML::Key << "slide_from_reed_mm" << YAML::Value << config.twoStroke.inletTractSlideFromReedMm
+                << YAML::EndMap;
         out << YAML::EndMap;
     }
     out << YAML::EndMap << YAML::EndMap;
@@ -1064,6 +1071,11 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text,
                 reed.stopLiftMm = node["stop_lift_mm"].as<double>(reed.stopLiftMm);
                 reed.windowAreaMm2 = node["window_area_mm2"].as<double>(reed.windowAreaMm2);
                 reed.dischargeCoefficient = node["discharge_coefficient"].as<double>(reed.dischargeCoefficient);
+            }
+            if (const auto node = ports["inlet_tract"]) {
+                config.twoStroke.inletTractLengthMm = node["length_mm"].as<double>(config.twoStroke.inletTractLengthMm);
+                config.twoStroke.inletTractDiameterMm = node["diameter_mm"].as<double>(config.twoStroke.inletTractDiameterMm);
+                config.twoStroke.inletTractSlideFromReedMm = node["slide_from_reed_mm"].as<double>(config.twoStroke.inletTractSlideFromReedMm);
             }
         }
         if (const auto calibration = engine["combustion_calibration"]) {

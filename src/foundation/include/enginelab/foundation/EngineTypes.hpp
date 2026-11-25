@@ -1377,6 +1377,16 @@ struct TwoStrokeConfig final {
     bool intakePortReed { true };
     /** The reed's petals (`ReedValve.hpp`); none: a perfect check valve. */
     ReedValveConfig reed {};
+    /** The inlet tract, carburettor included, from its bellmouth to the reed
+     *  (or the cylinder port): a 1-D duct whose waves the reed sees. Zero
+     *  length: none, the carburettor an orifice straight into the crankcase.
+     *  It needs reed petals where a reed is fitted (a perfect check valve has
+     *  no area to give the duct). */
+    double inletTractLengthMm { 0.0 };
+    /** Its bore; zero: the carburettor's. */
+    double inletTractDiameterMm { 0.0 };
+    /** Where the carburettor's slide sits, from the reed end; zero: half way. */
+    double inletTractSlideFromReedMm { 0.0 };
     double exhaustPortOpenDegrees { 92.0 };
     double transferPortOpenDegrees { 118.0 };
     /** Zero: 0.65 x bore (one wide window). */
@@ -2058,6 +2068,9 @@ struct EngineState final {
      * crankcase since construction. Both 0 with the check valve. */
     double reedTipLiftMm { 0.0 };
     double reedBackflowKg { 0.0 };
+    /** A two-stroke with an inlet tract: the static pressure in the tract's
+     * cell at the first crankcase's reed (or port), kPa. 0 without a tract. */
+    double inletTractReedPressureKpa { 0.0 };
     /** Actual intake advances in the last frame, summed across runner networks.
      * Rates use advanced simulation time, rather than the requested cadence. */
     std::uint64_t intakeNetworkAcceptedSubsteps { 0 };

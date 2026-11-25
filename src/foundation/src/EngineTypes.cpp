@@ -841,6 +841,17 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
         if (hasDynamicReed(ports.reed) && ports.intake == TwoStrokeIntake::cylinderPort
                 && !ports.intakePortReed)
             return "Reed petals need a reed: a cylinder port without one has no petals";
+        if (ports.inletTractLengthMm != 0.0) {
+            const auto slideMm = ports.inletTractSlideFromReedMm;
+            if (!inRange(ports.inletTractLengthMm, 40.0, 2'000.0)
+                    || !(ports.inletTractDiameterMm == 0.0 || inRange(ports.inletTractDiameterMm, 5.0, 200.0))
+                    || !(slideMm == 0.0 || inRange(slideMm, 15.0, ports.inletTractLengthMm - 15.0)))
+                return "A two-stroke inlet tract is 40-2,000 mm long and 5-200 mm in bore (0: the carburettor's), "
+                       "its slide at least 15 mm from either end (0: half way)";
+            const auto reedFitted = ports.intake == TwoStrokeIntake::crankcaseReed || ports.intakePortReed;
+            if (reedFitted && !hasDynamicReed(ports.reed))
+                return "A two-stroke inlet tract needs reed petals: a perfect check valve gives its duct no area";
+        }
         for (const auto& path : config.intakePaths) {
             if (path.cylinderIds.size() != 1)
                 return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";

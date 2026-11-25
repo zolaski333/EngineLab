@@ -27,6 +27,13 @@ file formats, always with an in-memory migration).
   cantilever does, and lets gas back out of the crankcase while it is open.
   Without petals the reed is the perfect check valve it always was, and
   every engine, catalogue and saved, behaves exactly as before.
+- **Two-stroke inlet tract (optional).** With reed petals, an engine file
+  can describe the tract from the reed to the bellmouth
+  (`two_stroke.inlet_tract`: length, diameter, slide position). Its gas then
+  moves and rings as a pipe does (a quarter wave at c/4L), and the reed sees
+  that wave instead of a carburettor stuck to it. It costs real time: an
+  RD350 with one runs about 1.1 x real time at 8,000 rpm. Without a tract
+  nothing changes.
 
 ### Fixed
 

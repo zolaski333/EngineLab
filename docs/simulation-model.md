@@ -172,7 +172,9 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   volume follows the piston's underside every substep, adiabatically, between
   `crankcase_compression_ratio` x its bottom-dead-centre volume and that
   volume. The throttle is the carburettor bore with a reed check valve (no
-  flow out of the crankcase, unless reed petals are authored: below), and the runner is the transfer duct. The piston's
+  flow out of the crankcase, unless reed petals are authored: below; a 1-D
+  inlet tract between them is optional, below), and the runner is the
+  transfer duct. The piston's
   underside sees the crankcase pressure, not the ambient.
 - **Intake** (`two_stroke.intake`): `crankcase_reed`, the default, feeds the
   crankcase through the reed whenever it is below the carburettor. A
@@ -209,6 +211,27 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   paywalls, and Ortenzi & Bossaglia's (Energies 2023, a two-mode beam with a
   stop plate) are "unavailable due to restrictions". No catalogue engine has
   petals: none of their makers' petal dimensions is sourced.
+- **Inlet tract** (optional, `two_stroke.inlet_tract`: `length_mm`,
+  `diameter_mm`, `slide_from_reed_mm`): without it the carburettor is an
+  orifice straight onto the reed, no volume between. With it the tract from
+  the reed to the bellmouth is a 1-D gas network of two ducts (the intake
+  runner's solver, mesh and wall), the slide a restriction between them
+  (bore x its discharge coefficient; open with a bore at least the tract's,
+  it is the plain face), the bellmouth an open end on the airbox or the
+  atmosphere. The reed (petals required: a perfect check valve gives the
+  duct no area) is the duct's valve onto the crankcase, driven by the whole
+  drop from the tract's last cell; a cylinder port sits in series with it.
+  Validated: the reed-shut tract rings at c/4L within 5 % (429 against
+  429 Hz at 200 mm, 214 against 214.5 at 400 mm, `EngineLab.InletTract`).
+  Assumptions: no end correction at the bellmouth (a real one rings 2-4 %
+  lower at these lengths); the slide's metering reads the air across it and
+  the pressure in the tract's reed-side duct; fuel is a species injected at
+  the slide and moves with the gas; fuel spat out of the bellmouth returns
+  through the airbox slug. The tract and petal step at most 20 us inside a
+  mechanical substep: at the 2 deg crank step a single step lost 27 % of the
+  tract's torque at 4,000 rpm against 0.6 deg. Cost: the RD350 with petals
+  runs 1.74 x real time at 8,000 rpm, 1.09 with a tract. No catalogue
+  engine has one (no sourced tract dimensions).
 - **Power valve** (optional): a valve in the exhaust port's roof, Yamaha's
   YPVS and its kind. Shut, it lowers the roof, so the port opens
   `power_valve_closed_exhaust_port_open_deg` after top dead centre instead of

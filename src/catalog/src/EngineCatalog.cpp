@@ -1095,6 +1095,11 @@ void applyCrankOffsets(EngineConfig& config) {
             assignIfPresent(node, "window_area_mm2", reed.windowAreaMm2);
             assignIfPresent(node, "discharge_coefficient", reed.dischargeCoefficient);
         }
+        if (const auto node = ports["inlet_tract"]) {
+            assignIfPresent(node, "length_mm", config.twoStroke.inletTractLengthMm);
+            assignIfPresent(node, "diameter_mm", config.twoStroke.inletTractDiameterMm);
+            assignIfPresent(node, "slide_from_reed_mm", config.twoStroke.inletTractSlideFromReedMm);
+        }
     }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);

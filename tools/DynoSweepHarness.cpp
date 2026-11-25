@@ -72,6 +72,9 @@ bool massLedgerReport = false;
 // experiments only; absent leaves the uniform mesh).
 std::optional<double> taperedDuctRefinement;
 std::optional<std::size_t> minimumCellsPerDuct;
+// --intake-cell-mm: the intake ducts' target cell (transfer ducts, runners and a
+// two-stroke's inlet tract), applied after --accuracy (one factor alone).
+std::optional<double> intakeCellMillimetres;
 // --exhaust-port-plateau: the exhaust port's effective area as a fraction of
 // the valve head area (production 0.51), to read a measured flow bench against.
 std::optional<double> exhaustPortPlateauOverride;
@@ -510,6 +513,7 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     if (massLedgerReport) simulatorOptions.exhaustMassLedger = true;
     if (taperedDuctRefinement) simulatorOptions.exhaustTaperedDuctRefinement = taperedDuctRefinement;
     if (minimumCellsPerDuct) simulatorOptions.exhaustMinimumCellsPerDuct = minimumCellsPerDuct;
+    if (intakeCellMillimetres) simulatorOptions.intakeTargetCellLengthM = *intakeCellMillimetres * 0.001;
     // A convergence knob, not a setting: an expansion chamber's cones are two
     // or three cells at the production two-stroke mesh, and the shortest
     // element sets the whole network's time step, so a finer mesh costs both
@@ -833,6 +837,8 @@ int main(int argc, char** argv) {
             taperedDuctRefinement = std::stod(argv[++index]);
         else if (argument == "--min-duct-cells" && index + 1 < argc)
             minimumCellsPerDuct = static_cast<std::size_t>(std::stoul(argv[++index]));
+        else if (argument == "--intake-cell-mm" && index + 1 < argc)
+            intakeCellMillimetres = std::stod(argv[++index]);
         else if (argument == "--exhaust-whole")
             partitionExhaustNetworkOverride = false;
         else if (argument == "--pipe-temperature")
@@ -847,7 +853,7 @@ int main(int argc, char** argv) {
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm] [--accuracy profile] [--mass-ledger]"
-                         " [--taper-refine k] [--min-duct-cells n]"
+                         " [--taper-refine k] [--min-duct-cells n] [--intake-cell-mm mm]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
                          " [--exhaust-whole] [--pipe-temperature]"
                          " [--exhaust-port-plateau fraction]\n";

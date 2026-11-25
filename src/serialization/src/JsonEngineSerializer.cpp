@@ -809,6 +809,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             const auto& reed = config.twoStroke.reed;
             document["engine"]["two_stroke"]["reed"] = { {"petals", reed.petalCount}, {"free_length_mm", reed.freeLengthMm}, {"width_mm", reed.widthMm}, {"thickness_mm", reed.thicknessMm}, {"youngs_modulus_gpa", reed.youngsModulusGpa}, {"density_kg_m3", reed.densityKgPerM3}, {"damping_ratio", reed.dampingRatio}, {"stop_lift_mm", reed.stopLiftMm}, {"window_area_mm2", reed.windowAreaMm2}, {"discharge_coefficient", reed.dischargeCoefficient} };
         }
+        // Only an authored inlet tract: an orifice carburettor's file is unchanged.
+        if (config.twoStroke.inletTractLengthMm > 0.0)
+            document["engine"]["two_stroke"]["inlet_tract"] = { {"length_mm", config.twoStroke.inletTractLengthMm}, {"diameter_mm", config.twoStroke.inletTractDiameterMm}, {"slide_from_reed_mm", config.twoStroke.inletTractSlideFromReedMm} };
     }
     // Only a measured limit: an uncalibrated file is unchanged.
     if (!config.ignition.knockLimitCurve.empty()) {
@@ -1017,6 +1020,12 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
                 reed.stopLiftMm = node.value("stop_lift_mm", reed.stopLiftMm);
                 reed.windowAreaMm2 = node.value("window_area_mm2", reed.windowAreaMm2);
                 reed.dischargeCoefficient = node.value("discharge_coefficient", reed.dischargeCoefficient);
+            }
+            if (ports.contains("inlet_tract")) {
+                const auto& node = ports.at("inlet_tract");
+                config.twoStroke.inletTractLengthMm = node.value("length_mm", config.twoStroke.inletTractLengthMm);
+                config.twoStroke.inletTractDiameterMm = node.value("diameter_mm", config.twoStroke.inletTractDiameterMm);
+                config.twoStroke.inletTractSlideFromReedMm = node.value("slide_from_reed_mm", config.twoStroke.inletTractSlideFromReedMm);
             }
         }
         if (engine.contains("combustion_calibration")) {

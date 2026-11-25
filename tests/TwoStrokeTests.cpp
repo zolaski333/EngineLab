@@ -178,6 +178,20 @@ void everyTwoStrokeFieldSurvivesAFile() {
                 && r.dischargeCoefficient == t.reed.dischargeCoefficient,
             "every reed petal field comes back as written");
     }
+    // The inlet tract, on those petals.
+    t.inletTractLengthMm = 137.5;
+    t.inletTractDiameterMm = 28.25;
+    t.inletTractSlideFromReedMm = 61.5;
+    require(!validateEngineConfig(config), "the two-stroke with an inlet tract is valid");
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        const auto decoded = serializer->decode(serializer->encode(config));
+        require(static_cast<bool>(decoded), "the two-stroke with an inlet tract decodes");
+        const auto& d = decoded.config->twoStroke;
+        require(d.inletTractLengthMm == t.inletTractLengthMm && d.inletTractDiameterMm == t.inletTractDiameterMm
+                && d.inletTractSlideFromReedMm == t.inletTractSlideFromReedMm,
+            "every inlet tract field comes back as written");
+    }
 
     auto derived = catalogueTwoStroke();
     derived.twoStroke.exhaustPortWidthMm = 0.0;

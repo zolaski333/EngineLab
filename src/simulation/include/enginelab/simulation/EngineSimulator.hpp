@@ -437,6 +437,12 @@ private:
                                                                double subDt) noexcept;
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeRunnerNetwork(
         const EngineConfig& config, std::size_t cylinderIndex) const;
+    /** A two-stroke's inlet tract on one crankcase path (TwoStrokeConfig::
+     *  inletTractLengthMm): duct 0 from the reed (its port) to the slide (a
+     *  restriction, interface 0), duct 1 from the slide to the bellmouth (its
+     *  mouth). Null without a tract. */
+    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildInletTractNetwork(
+        const EngineConfig& config, std::size_t pathIndex) const;
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeManifoldNetwork(
         const EngineConfig& config, std::size_t pathIndex,
         std::array<std::size_t, 32>& runnerDuctIndex,
@@ -684,6 +690,8 @@ private:
      *  the crankcase since construction. */
     std::array<ReedValveState, 32> reedState_ {};
     std::array<double, 32> reedBackflowKg_ {};
+    /** Two-stroke inlet tracts, one a crankcase path (buildInletTractNetwork). */
+    std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> inletTractNetworks_;
     std::array<bool, 32> cylinderFlowCycleStarted_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
     /** Time each chamber's ring blow-by has not yet been applied for; see

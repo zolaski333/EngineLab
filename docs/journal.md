@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 3b: a 1-D inlet tract upstream of the reed
+
+- Model (simulation-model.md, *Inlet tract*): two 1-D ducts reed -> slide -> bellmouth, the slide a restriction, the reed the duct's valve onto the crankcase. Reed-shut ringing, RD350 cranked ignition off, 48 kHz DFT: 429 Hz against c/4L 429 (200 mm), 214 against 214.5 (400 mm); no end correction (a bellmouth: 2-4 % lower).
+- Crank step: one tract step per 2 deg substep lost 27 % of the tract's torque at 4,000 rpm against 0.6 deg; the intake mesh (20 mm), the exhaust mesh (25 mm) and a 31 us coupling did not. Subcycled at <= 20 us (40 us: 15.9 against 22.1 N.m at 4,000 rpm).
+- Illustrative 130 x 26 mm tract, slide at 60 mm, on the petals RD350, `--step 1000`: torque +10.5 to +19 % from 4,000 rpm up (19.99 -> 22.09 at 4,000, 27.26 -> 32.47 at 8,000), the 0.6 deg run within 0.7 points; 2,000-3,000 rpm is inside the crank-step noise (petals alone 22.1 against 17.7 at 2,000 between steps).
+- Cost, `RealtimeBudgetHarness --free-run`, interleaved, round 0 discarded, minimum: 8,000 rpm 1.74 -> 1.09, 4,000 rpm 2.61 -> 1.45 (2JZ control 1.69-1.73). About 2.4 us per network advance.
+- Production: RD350, 2JZ and petals RD350 `--step 1000` byte-identical to phase 3a. No catalogue engine has a tract.
+- Not validated against a measured inlet pressure (none found with its geometry).
+
 ## 2026-11-25 — Two-stroke phase 3a: reed petals as one mass-spring-damper
 
 - Before: every reed a perfect check valve (no lift, inertia or backflow). Now optional petals (`two_stroke.reed`, ReedValve.hpp, simulation-model.md): the low-order model Dave et al. (SAE 2004-01-1455) judged adequate; stiffness and mass from Euler-Bernoulli, an exact oscillator step, inelastic seat and stop, curtain area, two-way flow. Damping and Cd are empirical inputs.
