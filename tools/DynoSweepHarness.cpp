@@ -59,6 +59,12 @@ std::optional<enginelab::calibration::CalibrationDraft> savedCalibration;
 // moves with the speed of sound in it, so this says how hot the gas is where a
 // tuned length is read.
 bool pipeTemperatureReport = false;
+// --scavenging: a two-stroke's gas exchange after each point, on stderr: the
+// trapped scavenging efficiency (Blair's SE), the trapping efficiency (fresh
+// air trapped over fresh air delivered, per cylinder and cycle) and the
+// delivery ratio (delivered_ve), cylinder and frame means over the sample, so
+// a sweep reads as an SE-DR curve against a measured one.
+bool scavengingReport = false;
 // --accuracy: the numerical resolution of every point (SimulationAccuracy.hpp),
 // applied before --exhaust-cell-mm, --crank-degrees and --coupling-us, which
 // then override one knob each. What each engine ran is said on stderr.
@@ -298,6 +304,9 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     std::vector<double> pipeTemperatureSumK;
     std::vector<std::uint32_t> pipeComponentIds;
     auto pipeTemperatureFrames = 0.0;
+    auto scavengingSeAcc = 0.0;
+    auto scavengingTeAcc = 0.0;
+    auto scavengingTeFrames = 0.0;
     // A four-stroke's carburettor meters nothing at full throttle and
     // cranking speed: the venturi's depression is under the jet's lift and the
     // manifold sits at ambient, so it is started shut, as one is in the world.
@@ -392,6 +401,24 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             // The simulator's per-sub-step cycle peak: a per-frame sample of
             // the chamber pressure misses the firing peak.
             peak = std::max(peak, frame.state.peakCylinderPressureBar);
+            if (scavengingReport && frame.state.cylinderStateCount > 0) {
+                auto se = 0.0;
+                auto te = 0.0;
+                auto teCount = 0.0;
+                for (std::size_t c = 0; c < frame.state.cylinderStateCount; ++c) {
+                    const auto& cylinder = frame.state.cylinderStates[c];
+                    se += cylinder.trappedScavengingEfficiency;
+                    if (cylinder.deliveredFreshAirMassMgPerCycle > 0.0) {
+                        te += cylinder.trappedFreshAirMassMg / cylinder.deliveredFreshAirMassMgPerCycle;
+                        teCount += 1.0;
+                    }
+                }
+                scavengingSeAcc += se / static_cast<double>(frame.state.cylinderStateCount);
+                if (teCount > 0.0) {
+                    scavengingTeAcc += te / teCount;
+                    scavengingTeFrames += 1.0;
+                }
+            }
             if (pipeTemperatureReport) {
                 simulator.captureGasFieldNow();
                 std::size_t index = 0;
@@ -411,6 +438,10 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             }
         }
     }
+    if (scavengingReport && n > 0.0)
+        std::cerr << "scavenging " << targetRpm << " se=" << scavengingSeAcc / n
+                  << " te=" << (scavengingTeFrames > 0.0 ? scavengingTeAcc / scavengingTeFrames : 0.0)
+                  << " dr=" << deliveredVeAcc / n << '\n';
     if (pipeTemperatureReport && pipeTemperatureFrames > 0.0) {
         std::cerr << "pipe_temperature_c " << targetRpm;
         for (std::size_t index = 0; index < pipeTemperatureSumK.size(); ++index)
@@ -841,6 +872,8 @@ int main(int argc, char** argv) {
             intakeCellMillimetres = std::stod(argv[++index]);
         else if (argument == "--exhaust-whole")
             partitionExhaustNetworkOverride = false;
+        else if (argument == "--scavenging")
+            scavengingReport = true;
         else if (argument == "--pipe-temperature")
             pipeTemperatureReport = true;
         else if (argument == "--exhaust-port-plateau" && index + 1 < argc)
@@ -855,7 +888,7 @@ int main(int argc, char** argv) {
                          " [--exhaust-cell-mm mm] [--accuracy profile] [--mass-ledger]"
                          " [--taper-refine k] [--min-duct-cells n] [--intake-cell-mm mm]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
-                         " [--exhaust-whole] [--pipe-temperature]"
+                         " [--exhaust-whole] [--pipe-temperature] [--scavenging]"
                          " [--exhaust-port-plateau fraction]\n";
             return EXIT_FAILURE;
         }

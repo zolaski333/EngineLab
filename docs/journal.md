@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 5: multi-zone scavenging and combustion blocked on references; the SE-DR instrument
+
+- What sets them today: the front race's loop length `scavenge_loop_length_ratio` 1.8 x bore (no measured coefficient) and the flame's `chamber_turbulence_intensity_ratio`, 2.0 on the RD350 (calibrated to CA50 9 deg ATDC on the maker's timing, assumed MBT; journal 2026-10-16) and copied by the designer to every two-stroke. Neither is changed: a two-zone short-circuit model or a scavenging-jet turbulence needs coefficients of its own, and fitting them to nothing would be the arbitrary combustion speed the plan forbids.
+- References looked for, none free with a geometry: SE-DR from a single-cycle rig (Sweeney's QUB thesis, OSTI abstract only; Blair's books, sold; Wisconsin DI two-stroke tracer thesis, host refused the connection); a measured two-stroke burn duration (Ortenzi-Bossaglia 2023 use 22 deg BTDC and a Wiebe of their own; "Preliminary heat release analysis in a single-cylinder two-stroke", abstract only).
+- Instrument added: `DynoSweepHarness --scavenging` (SE, TE, DR per point). RD350 `--step 1000`: SE 0.82-0.91, TE 0.45 (2,000 rpm) to 0.77 (9,000), DR 0.73-1.35; at 8,000 rpm TE x DR 0.606 against the trapped VE 0.607 (consistent). Burn angles per cycle: `PhysicsPerfHarness --trace`.
+- Not measured: either curve against a real cylinder.
+
 ## 2026-11-25 — Two-stroke phase 4c: transfer ducts, each its own 1-D pipe
 
 - Model (simulation-model.md, *Transfer ducts*): each duct a 1-D pipe crankcase -> its windows, a valve of its own onto the cylinder, the cylinder's volume shared out by open area for the advance (exact for identical ducts, assumed otherwise). Opt-in; the joint intake manifold (every engine's default) carries every duct.
