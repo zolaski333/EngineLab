@@ -166,11 +166,19 @@ int main(int argc, char** argv) {
         // As DynoSweepHarness --crank-degrees: a finer step raises the
         // solver's frequency ceiling with it.
         if (settings.crankDegreesPerStep > 0.0) {
+            const auto limitRpm = std::max(config.redlineRpm, config.ignition.revLimitRpm);
+            const auto finestDegrees = limitRpm * 6.0 / enginelab::solverFrequencyCeilingHz;
+            if (settings.crankDegreesPerStep < finestDegrees) {
+                std::cerr << "--crank-degrees " << settings.crankDegreesPerStep << ": "
+                          << config.name << " limits at " << limitRpm << " rpm, where the"
+                             " solver's 100 kHz ceiling allows " << finestDegrees
+                          << " deg at the finest\n";
+                return EXIT_FAILURE;
+            }
             config.solver.maximumCrankDegreesPerStep = settings.crankDegreesPerStep;
             config.solver.maximumMechanicalFrequencyHz = std::clamp(
-                std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0
-                    / settings.crankDegreesPerStep * 1.01,
-                config.solver.maximumMechanicalFrequencyHz, 100'000.0);
+                limitRpm * 6.0 / settings.crankDegreesPerStep * 1.01,
+                config.solver.maximumMechanicalFrequencyHz, enginelab::solverFrequencyCeilingHz);
         }
         const auto lengthMm = componentLengthMm(config, settings.componentId);
         if (!lengthMm || !(*lengthMm > 0.0)) {

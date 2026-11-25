@@ -67,6 +67,11 @@ enginelab::AccuracyProfile accuracyProfile = enginelab::AccuracyProfile::realtim
 // point, its conservation error and the mass of the exchanges a cylinder
 // refused, both over the mass that crossed the network during the point.
 bool massLedgerReport = false;
+// --taper-refine k, --min-duct-cells n: a non-uniform exhaust mesh, the
+// cones k times finer than the rest, no duct under n cells (convergence
+// experiments only; absent leaves the uniform mesh).
+std::optional<double> taperedDuctRefinement;
+std::optional<std::size_t> minimumCellsPerDuct;
 // --exhaust-port-plateau: the exhaust port's effective area as a fraction of
 // the valve head area (production 0.51), to read a measured flow bench against.
 std::optional<double> exhaustPortPlateauOverride;
@@ -503,6 +508,8 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     const auto resolution =
         enginelab::applyAccuracyProfile(accuracyProfile, config, simulatorOptions);
     if (massLedgerReport) simulatorOptions.exhaustMassLedger = true;
+    if (taperedDuctRefinement) simulatorOptions.exhaustTaperedDuctRefinement = taperedDuctRefinement;
+    if (minimumCellsPerDuct) simulatorOptions.exhaustMinimumCellsPerDuct = minimumCellsPerDuct;
     // A convergence knob, not a setting: an expansion chamber's cones are two
     // or three cells at the production two-stroke mesh, and the shortest
     // element sets the whole network's time step, so a finer mesh costs both
@@ -521,11 +528,21 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     // A finer step needs the solver's frequency ceiling raised with it: at
     // 1 deg a 10,000 rpm limiter asks 60 kHz, and the refused config aborted
     // the harness.
+    // Past the solver's 100 kHz ceiling the config is refused, and the throw
+    // ended the harness with no word (exit 127, an empty stderr).
     if (crankDegreesPerStep > 0.0) {
+        const auto limitRpm = std::max(config.redlineRpm, config.ignition.revLimitRpm);
+        const auto finestDegrees = limitRpm * 6.0 / enginelab::solverFrequencyCeilingHz;
+        if (crankDegreesPerStep < finestDegrees) {
+            std::cerr << "--crank-degrees " << crankDegreesPerStep << ": " << config.name
+                      << " limits at " << limitRpm << " rpm, where the solver's 100 kHz"
+                         " ceiling allows " << finestDegrees << " deg at the finest\n";
+            std::exit(EXIT_FAILURE);
+        }
         config.solver.maximumCrankDegreesPerStep = crankDegreesPerStep;
         config.solver.maximumMechanicalFrequencyHz = std::clamp(
-            std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0 / crankDegreesPerStep * 1.01,
-            config.solver.maximumMechanicalFrequencyHz, 100'000.0);
+            limitRpm * 6.0 / crankDegreesPerStep * 1.01,
+            config.solver.maximumMechanicalFrequencyHz, enginelab::solverFrequencyCeilingHz);
     }
     if (couplingMicroseconds > 0.0) {
         simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
@@ -812,6 +829,10 @@ int main(int argc, char** argv) {
             accuracyProfile = *profile;
         }
         else if (argument == "--mass-ledger") massLedgerReport = true;
+        else if (argument == "--taper-refine" && index + 1 < argc)
+            taperedDuctRefinement = std::stod(argv[++index]);
+        else if (argument == "--min-duct-cells" && index + 1 < argc)
+            minimumCellsPerDuct = static_cast<std::size_t>(std::stoul(argv[++index]));
         else if (argument == "--exhaust-whole")
             partitionExhaustNetworkOverride = false;
         else if (argument == "--pipe-temperature")
@@ -826,6 +847,7 @@ int main(int argc, char** argv) {
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
                          " [--exhaust-cell-mm mm] [--accuracy profile] [--mass-ledger]"
+                         " [--taper-refine k] [--min-duct-cells n]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
                          " [--exhaust-whole] [--pipe-temperature]"
                          " [--exhaust-port-plateau fraction]\n";

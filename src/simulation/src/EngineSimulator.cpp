@@ -1329,6 +1329,11 @@ std::unique_ptr<gasdynamics::PartitionedExhaustNetwork> EngineSimulator::buildPh
     if (options_.exhaustMaximumTotalCells)
         feedbackMesh.maximumTotalCells = std::max(
             feedbackMesh.maximumCellsPerDuct, *options_.exhaustMaximumTotalCells);
+    if (options_.exhaustTaperedDuctRefinement)
+        feedbackMesh.taperedDuctRefinement = std::max(1.0, *options_.exhaustTaperedDuctRefinement);
+    if (options_.exhaustMinimumCellsPerDuct)
+        feedbackMesh.minimumCellsPerDuct = std::clamp<std::size_t>(
+            *options_.exhaustMinimumCellsPerDuct, 1, feedbackMesh.maximumCellsPerDuct);
     // Components shorter than the feedback scale remain one conservative
     // finite volume with their exact volume, ports and loss. Their propagation
     // delay is owned by the characteristic network, so duplicating a second FV

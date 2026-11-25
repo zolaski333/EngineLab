@@ -95,6 +95,10 @@ std::string accuracyReport(const AccuracyResolution& asked, const EngineSimulato
     if (layout.effectiveTargetCellLengthM() > askedCellM * (1.0 + 1.0e-9))
         line << " COARSENED by the network's cell ceiling";
     if (layout.ductCellCapReached()) line << ", a duct held at its cell ceiling";
+    if (options.exhaustTaperedDuctRefinement.value_or(1.0) > 1.0)
+        line << ", cones " << *options.exhaustTaperedDuctRefinement << " x finer";
+    if (options.exhaustMinimumCellsPerDuct)
+        line << ", at least " << *options.exhaustMinimumCellsPerDuct << " cells a duct";
     line << ", shortest " << layout.minimumCellLengthM() * 1'000.0 << " mm; coupling ";
     if (options.exhaustCouplingEverySubstep.value_or(false)) line << "every substep";
     else

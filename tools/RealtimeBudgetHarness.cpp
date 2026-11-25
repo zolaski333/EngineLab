@@ -76,6 +76,8 @@ std::optional<bool> parallelIntakePathsOverride;
 /** --accuracy: the run's numerical resolution (SimulationAccuracy.hpp), under
  * every single-knob flag above, which overrides it one knob at a time. */
 enginelab::AccuracyProfile accuracyProfile = enginelab::AccuracyProfile::realtime;
+/** --taper-refine k: the exhaust's cones k times finer than its other ducts. */
+std::optional<double> taperedDuctRefinement;
 
 /** Each knob a flag left unset takes the profile's value. */
 void takeProfileWhereUnset(enginelab::EngineSimulatorOptions& options,
@@ -618,6 +620,7 @@ private:
     const auto resolution =
         enginelab::applyAccuracyProfile(accuracyProfile, runConfig, profileOptions);
     takeProfileWhereUnset(simulatorOptions, profileOptions);
+    simulatorOptions.exhaustTaperedDuctRefinement = taperedDuctRefinement;
     auto runtime = std::make_unique<enginelab::EngineRuntime>(
         runConfig, nullptr, simulatorOptions);
     std::cerr << runConfig.name << ": "
@@ -1028,6 +1031,8 @@ int main(int argc, char** argv) {
             intakeTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
         else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
             exhaustTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
+        else if (argument == "--taper-refine" && index + 1 < argc)
+            taperedDuctRefinement = std::stod(argv[++index]);
         else if (argument == "--accuracy" && index + 1 < argc) {
             const auto profile = enginelab::accuracyProfileFromName(argv[++index]);
             if (!profile) {
@@ -1097,7 +1102,7 @@ int main(int argc, char** argv) {
                          "[--intake-max-cells N] [--intake-staircase-rounds N] "
                          "[--intake-coupling-us N] [--intake-forward] [--intake-cfl C] [--intake-nozzle-valve] [--intake-per-runner] "
                          "[--intake-cell-mm N] "
-                         "[--exhaust-cell-mm N] [--accuracy PROFILE] "
+                         "[--exhaust-cell-mm N] [--accuracy PROFILE] [--taper-refine K] "
                          "[--exhaust-coupling-us N] [--exhaust-cfl C] [--exhaust-rk2|--exhaust-euler|--exhaust-hancock] "
                          "[--exhaust-interface-first-order] [--exhaust-coarse-scavenging] [--exhaust-whole] "
                          "[--inline-cylinders] [--serial-publish] [--serial-intake-paths] "

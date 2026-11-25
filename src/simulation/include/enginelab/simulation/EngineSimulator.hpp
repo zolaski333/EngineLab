@@ -115,6 +115,12 @@ struct EngineSimulatorOptions final {
      * says whether it was). */
     std::optional<std::size_t> exhaustMaximumCellsPerDuct;
     std::optional<std::size_t> exhaustMaximumTotalCells;
+    /** Convergence experiments on a non-uniform mesh
+     * (ExhaustNetworkDiscretisation::taperedDuctRefinement): cones cut this
+     * many times finer, and a floor on the cells of any duct. Absent: 1 and
+     * the realtime 1. */
+    std::optional<double> exhaustTaperedDuctRefinement;
+    std::optional<std::size_t> exhaustMinimumCellsPerDuct;
     /** Couple the exhaust every mechanical substep from the first step
      * (setExhaustCouplingEverySubstep). Absent: off. */
     std::optional<bool> exhaustCouplingEverySubstep;

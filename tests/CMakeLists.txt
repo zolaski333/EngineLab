@@ -652,6 +652,13 @@ if(TARGET EngineLabDynoSweepHarness)
     set_tests_properties(EngineLab.ToolArguments.SavedEcuAdvance PROPERTIES
         FIXTURES_REQUIRED SavedEcuEngine
         PASS_REGULAR_EXPRESSION "-4 deg on the saved ECU's [0-9]+ spark cells")
+    # A crank step past the solver's 100 kHz ceiling: the refused config
+    # ended the harness with exit 127 and nothing on stderr (2026-11-25).
+    add_test(NAME EngineLab.ToolArguments.SweepCrankCeiling
+        COMMAND EngineLabDynoSweepHarness --catalog-root "${CMAKE_SOURCE_DIR}"
+            --filter RD350LC --crank-degrees 0.5 --step 50000)
+    set_tests_properties(EngineLab.ToolArguments.SweepCrankCeiling PROPERTIES
+        PASS_REGULAR_EXPRESSION "100 kHz ceiling allows 0.6 deg at the finest")
 endif()
 if(TARGET EngineLabPressureProbeHarness AND TARGET EngineLabDynoSweepHarness)
     # The pressure probe reads a saved engine on its ECU tables: it read only
