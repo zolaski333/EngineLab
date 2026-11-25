@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 6: the designer offers the two-stroke options
+
+- New engine (two-stroke only, each off at zero): `port_corner_radius_mm`, `transfer_duct_count` (2-6, equal ducts of the runner's length and area over N), `reed_petal_count` (petal size from the carburettor bore, stop 0.3 x the free length; damping ratio and Cd must be set by hand, no default, refused otherwise), `inlet_tract_length_mm` (diameter, slide distance). Each shown with its rule; an override of an option left off is refused, not ignored.
+- Nonfunctional labels found and corrected: the snorkel length and diameter were described as intake physics on every engine, they shape the intake's sound only (rule text now says so); the Fine waves menu claimed a finer mesh on two-strokes, where the clamp makes it bit-identical (journal 2026-11-24): label says four-strokes only.
+- The port part editor moves and scales a group's windows (angle, width, power valve) instead of writing a scalar the windows mask.
+- `EngineLab.EngineDesign` covers the options; catalogue engines are not designed, so untouched.
+- Not done: the 3-D render still draws rectangles; the script compiler's port widths beside windows; audio and telemetry flow samples read duct 0 only. Not seen on screen.
+
 ## 2026-11-25 — Two-stroke phase 5: multi-zone scavenging and combustion blocked on references; the SE-DR instrument
 
 - What sets them today: the front race's loop length `scavenge_loop_length_ratio` 1.8 x bore (no measured coefficient) and the flame's `chamber_turbulence_intensity_ratio`, 2.0 on the RD350 (calibrated to CA50 9 deg ATDC on the maker's timing, assumed MBT; journal 2026-10-16) and copied by the designer to every two-stroke. Neither is changed: a two-zone short-circuit model or a scavenging-jet turbulence needs coefficients of its own, and fitting them to nothing would be the arbitrary combustion speed the plan forbids.

@@ -47,6 +47,18 @@ file formats, always with an in-memory migration).
   says which duct feeds it. A boost port's short duct and the main ports'
   long ones are then separate pipes with their own waves. Without ducts,
   nothing changes.
+- **New engine offers the two-stroke options.** A designed two-stroke's
+  table now lists port corner radius, transfer ducts, reed petals and, with
+  petals, an inlet tract, each off at zero. Reed petals ask for their
+  damping and discharge coefficient by hand: no measured default exists.
+  Editing a port's timing or width on the engine moves or scales its
+  windows, and fitting a power valve marks them.
+
+### Changed
+
+- The airbox snorkel's rule in New engine says what it is: it shapes the
+  intake's sound only. The "Fine" exhaust waves option says it applies to
+  four-strokes only.
 
 ### Fixed
 
