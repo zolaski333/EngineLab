@@ -929,7 +929,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << YAML::Key << "top_corner_radius_mm" << YAML::Value << window.topCornerRadiusMm
                     << YAML::Key << "bottom_corner_radius_mm" << YAML::Value << window.bottomCornerRadiusMm
                     << YAML::Key << "power_valve" << YAML::Value << window.powerValve
-                    << YAML::Key << "discharge_coefficient" << YAML::Value << window.dischargeCoefficient;
+                    << YAML::Key << "discharge_coefficient" << YAML::Value << window.dischargeCoefficient
+                    << YAML::Key << "duct" << YAML::Value << window.duct;
                 if (!window.dischargeMap.empty()) {
                     const auto& map = window.dischargeMap;
                     out << YAML::Key << "discharge_map" << YAML::Value << YAML::BeginMap
@@ -945,6 +946,16 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         };
         emitWindows("exhaust_windows", config.twoStroke.exhaustWindows);
         emitWindows("transfer_windows", config.twoStroke.transferWindows);
+        if (!config.twoStroke.transferDucts.empty()) {
+            out << YAML::Key << "transfer_ducts" << YAML::Value << YAML::BeginSeq;
+            for (const auto& duct : config.twoStroke.transferDucts)
+                out << YAML::BeginMap
+                    << YAML::Key << "length_mm" << YAML::Value << duct.lengthMm
+                    << YAML::Key << "crankcase_area_mm2" << YAML::Value << duct.crankcaseAreaMm2
+                    << YAML::Key << "port_area_mm2" << YAML::Value << duct.portAreaMm2
+                    << YAML::EndMap;
+            out << YAML::EndSeq;
+        }
         out << YAML::EndMap;
     }
     out << YAML::EndMap << YAML::EndMap;
@@ -1116,6 +1127,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text,
                     window.bottomCornerRadiusMm = node["bottom_corner_radius_mm"].as<double>(window.bottomCornerRadiusMm);
                     window.powerValve = node["power_valve"].as<bool>(window.powerValve);
                     window.dischargeCoefficient = node["discharge_coefficient"].as<double>(window.dischargeCoefficient);
+                    window.duct = node["duct"].as<std::uint32_t>(window.duct);
                     if (const auto map = node["discharge_map"]) {
                         const auto vector = [&map](const char* name) {
                             return map[name] ? map[name].as<std::vector<double>>() : std::vector<double> {};
@@ -1130,6 +1142,16 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text,
             };
             readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
             readWindows("transfer_windows", config.twoStroke.transferWindows);
+            if (const auto ducts = ports["transfer_ducts"]) {
+                config.twoStroke.transferDucts.clear();
+                for (const auto& node : ducts) {
+                    TwoStrokeTransferDuct duct;
+                    duct.lengthMm = node["length_mm"].as<double>(duct.lengthMm);
+                    duct.crankcaseAreaMm2 = node["crankcase_area_mm2"].as<double>(duct.crankcaseAreaMm2);
+                    duct.portAreaMm2 = node["port_area_mm2"].as<double>(duct.portAreaMm2);
+                    config.twoStroke.transferDucts.push_back(duct);
+                }
+            }
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

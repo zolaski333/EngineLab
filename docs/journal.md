@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 4c: transfer ducts, each its own 1-D pipe
+
+- Model (simulation-model.md, *Transfer ducts*): each duct a 1-D pipe crankcase -> its windows, a valve of its own onto the cylinder, the cylinder's volume shared out by open area for the advance (exact for identical ducts, assumed otherwise). Opt-in; the joint intake manifold (every engine's default) carries every duct.
+- First attempt wired only the per-cylinder runner path, which no default engine runs: the test (two half ducts against one whole duct) caught it, delivered over metered 1.324 against 1.368, and a second duct twice as long moved nothing, bit for bit.
+- RD350 at 8,000 rpm: one duct the runner's size 32.54 N.m / 34.183 g/s against the runner's 32.34 / 34.188 (the areas round differently, mm2 -> m2: the held mean's sensitivity, not chased); two half ducts 32.46 / 34.168, delivered over metered 1.3654 against 1.3682; the second duct twice as long 31.62 / 33.72.
+- A whole cylinder volume per duct would let each duct fill a cylinder the others never reach: rejected by construction, not measured.
+- Cost, `RealtimeBudgetHarness --free-run` at 8,000 rpm, interleaved, round 0 discarded, minimum: one window each 1.684, two ducts 1.534 (the 2JZ control 1.66-1.70 just before).
+- Production: RD350, 2JZ and petals RD350 `--step 1000` byte-identical to phase 4a-b. No catalogue engine has ducts.
+
 ## 2026-11-25 — Two-stroke phase 4a-b: port windows, corner radii, discharge maps
 
 - Model (simulation-model.md, *Port windows*): each window its angle, chord, top and bottom radii, Cd or map (area ratio x pressure ratio, each way). Rounded area against an independent 200,000-strip quadrature: within 1e-6. One sharp window per group: area and the RD350 held at 8,000 rpm bit-identical to the rectangles (32.3391 N.m, 34.1877 g/s).

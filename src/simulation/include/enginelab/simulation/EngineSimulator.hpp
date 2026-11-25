@@ -743,6 +743,13 @@ private:
         intakeBoundaryStateTimeIntegral_ {};
     std::array<double, 32> intakeBoundaryVolumeTimeIntegralM3S_ {};
     std::array<double, 32> intakeValveConductanceTimeIntegralM2S_ {};
+    /** A two-stroke with its own transfer ducts: each duct's windows'
+     *  conductance integral (the total is the one above), its duct count (1
+     *  without them) and the pressure behind each duct's windows at the last
+     *  exchange, which a window's discharge map reads. */
+    std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> transferDuctConductanceTimeIntegralM2S_ {};
+    std::array<std::size_t, 32> transferDuctCount_ {};
+    std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> transferDuctPortKpa_ {};
     double intakeCouplingDurationSeconds_ { 0.0 };
     /** Periodic deadline phase, independent of forced valve-closing flushes.
      * Retaining the rounding residual avoids RPM-dependent cadence jumps. */

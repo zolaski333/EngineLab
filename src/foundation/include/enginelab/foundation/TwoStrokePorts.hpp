@@ -188,6 +188,20 @@ struct PortFlowCondition final {
     return sum;
 }
 
+/** The effective open area, mm^2, of the transfer windows one duct feeds
+ *  (`TwoStrokePortWindow::duct`); without ducts, duct 0 is every window. */
+[[nodiscard]] inline double transferDuctAreaMm2(const TwoStrokeConfig& ports, const CylinderConfig& cylinder,
+                                                std::size_t duct, double phaseDegrees,
+                                                PortFlowCondition flow = {}) noexcept {
+    if (ports.transferDucts.empty()) return duct == 0 ? transferPortsAreaMm2(ports, cylinder, phaseDegrees, flow) : 0.0;
+    auto sum = 0.0;
+    for (const auto& window : ports.transferWindows)
+        if (window.duct == duct)
+            sum += portWindowEffectiveAreaMm2(cylinder, window, window.openDegrees, ports.portDischargeCoefficient,
+                phaseDegrees, flow);
+    return sum;
+}
+
 /** The exhaust ports' effective open area, mm^2, at `phaseDegrees`, the
  *  power valve's roof at `exhaustOpenDegrees` (`exhaustPortOpenDegreesAt`):
  *  a window under the valve opens at the later of its own edge and the

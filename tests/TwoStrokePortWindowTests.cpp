@@ -342,6 +342,95 @@ void inconsistentWindowsAreRefused() {
     require(validateEngineConfig(config).has_value(), "and one whose area ratios descend");
 }
 
+// The transfer duct the runner made, as one authored duct.
+[[nodiscard]] TwoStrokeTransferDuct runnerAsDuct(const EngineConfig& config) {
+    const auto& cylinder = config.cylinders.front();
+    const auto& geometry = config.intakePaths.empty() ? config.intake : config.intakePaths.front().geometry;
+    const auto length = cylinder.intakeRunnerLengthMm > 0.0 ? cylinder.intakeRunnerLengthMm : geometry.runnerLengthMm;
+    const auto port = cylinder.intakeRunnerDiameterMm > 0.0 ? cylinder.intakeRunnerDiameterMm : geometry.runnerDiameterMm;
+    const auto crankcase = geometry.runnerPlenumDiameterMm > 0.0 ? geometry.runnerPlenumDiameterMm : port;
+    TwoStrokeTransferDuct duct;
+    duct.lengthMm = length;
+    duct.portAreaMm2 = std::numbers::pi * 0.25 * port * port;
+    duct.crankcaseAreaMm2 = std::numbers::pi * 0.25 * crankcase * crankcase;
+    return duct;
+}
+
+// Fresh air the transfers delivered over what the carburettor metered: a
+// lost or double-counted duct exchange moves it.
+[[nodiscard]] double deliveredOverMetered(const EngineConfig& config, const Held& held) {
+    const auto& cylinder = config.cylinders.front();
+    const auto sweptM3 = std::numbers::pi * 0.25 * cylinder.boreMm * cylinder.boreMm * cylinder.strokeMm * 1.0e-9;
+    const auto ambientDensity = config.ambientPressureKpa * 1'000.0 / (287.05 * (config.ambientTemperatureC + 273.15));
+    const auto deliveredGps = held.deliveredVolumetricEfficiency * ambientDensity * sweptM3 * 1'000.0
+        * held.rpm / 60.0 * static_cast<double>(config.cylinders.size());
+    return deliveredGps / held.airGps;
+}
+
+void eachTransferDuctIsItsOwnPipe() {
+    const auto windowed = asOneWindowEach(rd350());
+    auto oneDuct = windowed;
+    oneDuct.twoStroke.transferDucts = { runnerAsDuct(windowed) };
+    require(!validateEngineConfig(oneDuct).has_value(), "the runner as one authored duct validates");
+    const auto runner = heldFullLoad(windowed, 8'000.0);
+    const auto authored = heldFullLoad(oneDuct, 8'000.0);
+    // Two ducts, each with half the chord and half the duct's area: the same
+    // total, now two pipes onto the cylinder.
+    auto twoDucts = oneDuct;
+    const auto open = windowed.twoStroke.transferPortOpenDegrees;
+    const auto chord = windowed.twoStroke.transferWindows.front().widthMm;
+    auto half = runnerAsDuct(windowed);
+    half.portAreaMm2 *= 0.5;
+    half.crankcaseAreaMm2 *= 0.5;
+    twoDucts.twoStroke.transferDucts = { half, half };
+    twoDucts.twoStroke.transferWindows = { window(open, 0.5 * chord), window(open, 0.5 * chord) };
+    twoDucts.twoStroke.transferWindows.back().duct = 1;
+    require(!validateEngineConfig(twoDucts).has_value(), "two ducts, a window each, validate");
+    const auto& cylinder = windowed.cylinders.front();
+    for (double phase = open; phase <= 180.0; phase += 7.0)
+        require(std::abs(transferDuctAreaMm2(twoDucts.twoStroke, cylinder, 0, phase)
+                         + transferDuctAreaMm2(twoDucts.twoStroke, cylinder, 1, phase)
+                         - transferPortsAreaMm2(windowed.twoStroke, cylinder, phase)) < 1.0e-9,
+            "the two ducts' windows add up to the one window's area");
+    const auto split = heldFullLoad(twoDucts, 8'000.0);
+    // Then the second duct alone made longer: only a duct of its own can.
+    auto longer = twoDucts;
+    longer.twoStroke.transferDucts.back().lengthMm *= 2.0;
+    const auto lengthened = heldFullLoad(longer, 8'000.0);
+    std::cout << "RD350LC at 8,000 rpm, torque / air / delivered over metered: runner " << runner.torqueNm << " / "
+              << runner.airGps << " / " << deliveredOverMetered(windowed, runner) << "; one authored duct "
+              << authored.torqueNm << " / " << authored.airGps << " / " << deliveredOverMetered(oneDuct, authored)
+              << "; two half ducts " << split.torqueNm << " / " << split.airGps << " / "
+              << deliveredOverMetered(twoDucts, split) << "; the second twice as long " << lengthened.torqueNm
+              << " / " << lengthened.airGps << " / " << deliveredOverMetered(longer, lengthened) << '\n';
+    require(std::abs(authored.airGps / runner.airGps - 1.0) < 0.01
+            && std::abs(authored.torqueNm / runner.torqueNm - 1.0) < 0.01,
+        "the runner authored as one duct runs as the runner, within 1 %");
+    require(std::abs(split.airGps / authored.airGps - 1.0) < 0.03,
+        "two half ducts side by side carry about what one duct of their total area does");
+    require(std::abs(deliveredOverMetered(twoDucts, split) / deliveredOverMetered(oneDuct, authored) - 1.0) < 0.02,
+        "and every duct's exchange reaches the cylinder once: delivered over metered within 2 % of one duct's");
+    require(std::abs(lengthened.airGps / split.airGps - 1.0) > 0.003,
+        "one duct's length moves the air, which a single runner for every window could not say");
+    auto orphan = twoDucts;
+    orphan.twoStroke.transferWindows.back().duct = 0;
+    require(validateEngineConfig(orphan).has_value(), "a duct feeding no window is refused");
+    orphan.twoStroke.transferWindows.back().duct = 2;
+    require(validateEngineConfig(orphan).has_value(), "a window naming a missing duct is refused");
+    auto noWindows = rd350();
+    noWindows.twoStroke.transferDucts = { half };
+    require(validateEngineConfig(noWindows).has_value(), "ducts without windows are refused");
+    const JsonEngineSerializer json;
+    const YamlEngineSerializer yaml;
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        const auto decoded = serializer->decode(serializer->encode(twoDucts));
+        require(decoded && decoded.config->twoStroke.transferDucts == twoDucts.twoStroke.transferDucts
+                && decoded.config->twoStroke.transferWindows == twoDucts.twoStroke.transferWindows,
+            "JSON and YAML keep the ducts and which window each feeds");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -352,6 +441,7 @@ int main() {
     inconsistentWindowsAreRefused();
     oneSharpWindowIsTheOldRectangle();
     theWindowsGeometryMovesTheAir();
+    eachTransferDuctIsItsOwnPipe();
     std::cout << "two-stroke port windows: all checks passed\n";
     return EXIT_SUCCESS;
 }

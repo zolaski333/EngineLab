@@ -1112,6 +1112,7 @@ void applyCrankOffsets(EngineConfig& config) {
                 assignIfPresent(node, "bottom_corner_radius_mm", window.bottomCornerRadiusMm);
                 assignIfPresent(node, "power_valve", window.powerValve);
                 assignIfPresent(node, "discharge_coefficient", window.dischargeCoefficient);
+                assignIfPresent(node, "duct", window.duct);
                 if (const auto map = node["discharge_map"]) {
                     const auto vector = [&map](const char* name) {
                         return map[name] ? map[name].as<std::vector<double>>() : std::vector<double> {};
@@ -1126,6 +1127,16 @@ void applyCrankOffsets(EngineConfig& config) {
         };
         readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
         readWindows("transfer_windows", config.twoStroke.transferWindows);
+        if (const auto ducts = ports["transfer_ducts"]) {
+            config.twoStroke.transferDucts.clear();
+            for (const auto& node : ducts) {
+                TwoStrokeTransferDuct duct;
+                assignIfPresent(node, "length_mm", duct.lengthMm);
+                assignIfPresent(node, "crankcase_area_mm2", duct.crankcaseAreaMm2);
+                assignIfPresent(node, "port_area_mm2", duct.portAreaMm2);
+                config.twoStroke.transferDucts.push_back(duct);
+            }
+        }
     }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);

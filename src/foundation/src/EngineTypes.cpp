@@ -836,6 +836,33 @@ const char* twoStrokePortWindowsError(const EngineConfig& config) {
     if ((!ports.exhaustWindows.empty() && ports.exhaustPortWidthMm != 0.0)
             || (!ports.transferWindows.empty() && ports.transferPortWidthMm != 0.0))
         return "A two-stroke port group with windows takes its width from them: its own width must be 0";
+    for (const auto& window : ports.exhaustWindows)
+        if (window.duct != 0) return "An exhaust window has no transfer duct: its duct is 0";
+    if (ports.transferDucts.empty()) {
+        for (const auto& window : ports.transferWindows)
+            if (window.duct != 0) return "A transfer window names a duct the engine does not have";
+    } else {
+        if (ports.transferWindows.empty())
+            return "Two-stroke transfer ducts need transfer windows to feed";
+        if (ports.transferDucts.size() > maximumTwoStrokeTransferDucts)
+            return "A two-stroke cylinder has at most 6 transfer ducts";
+        for (const auto& duct : ports.transferDucts)
+            if (!std::isfinite(duct.lengthMm) || duct.lengthMm < 10.0 || duct.lengthMm > 500.0
+                    || !std::isfinite(duct.crankcaseAreaMm2) || duct.crankcaseAreaMm2 < 20.0
+                    || duct.crankcaseAreaMm2 > 20'000.0
+                    || !std::isfinite(duct.portAreaMm2) || duct.portAreaMm2 < 20.0 || duct.portAreaMm2 > 20'000.0)
+                return "A two-stroke transfer duct is 10-500 mm long, its areas at the crankcase and behind its "
+                       "windows 20-20,000 mm2";
+        for (std::size_t duct = 0; duct < ports.transferDucts.size(); ++duct) {
+            auto fed = false;
+            for (const auto& window : ports.transferWindows) {
+                if (window.duct >= ports.transferDucts.size())
+                    return "A transfer window names a duct the engine does not have";
+                fed = fed || window.duct == duct;
+            }
+            if (!fed) return "Every two-stroke transfer duct feeds at least one window";
+        }
+    }
     if (hasPowerValve(ports) && !ports.exhaustWindows.empty()) {
         auto valved = false;
         for (const auto& window : ports.exhaustWindows) valved = valved || window.powerValve;

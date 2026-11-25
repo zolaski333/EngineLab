@@ -819,7 +819,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                 Json node = { {"open_deg", window.openDegrees}, {"width_mm", window.widthMm},
                     {"top_corner_radius_mm", window.topCornerRadiusMm},
                     {"bottom_corner_radius_mm", window.bottomCornerRadiusMm},
-                    {"power_valve", window.powerValve}, {"discharge_coefficient", window.dischargeCoefficient} };
+                    {"power_valve", window.powerValve}, {"discharge_coefficient", window.dischargeCoefficient},
+                    {"duct", window.duct} };
                 if (!window.dischargeMap.empty()) {
                     const auto& map = window.dischargeMap;
                     node["discharge_map"] = { {"area_ratios", map.areaRatios}, {"pressure_ratios", map.pressureRatios},
@@ -833,6 +834,13 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             document["engine"]["two_stroke"]["exhaust_windows"] = windowsJson(config.twoStroke.exhaustWindows);
         if (!config.twoStroke.transferWindows.empty())
             document["engine"]["two_stroke"]["transfer_windows"] = windowsJson(config.twoStroke.transferWindows);
+        if (!config.twoStroke.transferDucts.empty()) {
+            Json ducts = Json::array();
+            for (const auto& duct : config.twoStroke.transferDucts)
+                ducts.push_back({ {"length_mm", duct.lengthMm}, {"crankcase_area_mm2", duct.crankcaseAreaMm2},
+                                  {"port_area_mm2", duct.portAreaMm2} });
+            document["engine"]["two_stroke"]["transfer_ducts"] = ducts;
+        }
     }
     // Only a measured limit: an uncalibrated file is unchanged.
     if (!config.ignition.knockLimitCurve.empty()) {
@@ -1059,6 +1067,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
                     window.bottomCornerRadiusMm = node.value("bottom_corner_radius_mm", window.bottomCornerRadiusMm);
                     window.powerValve = node.value("power_valve", window.powerValve);
                     window.dischargeCoefficient = node.value("discharge_coefficient", window.dischargeCoefficient);
+                    window.duct = node.value("duct", window.duct);
                     if (node.contains("discharge_map")) {
                         const auto& map = node.at("discharge_map");
                         window.dischargeMap.areaRatios = map.value("area_ratios", std::vector<double> {});
@@ -1071,6 +1080,16 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
             };
             readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
             readWindows("transfer_windows", config.twoStroke.transferWindows);
+            if (ports.contains("transfer_ducts")) {
+                config.twoStroke.transferDucts.clear();
+                for (const auto& node : ports.at("transfer_ducts")) {
+                    TwoStrokeTransferDuct duct;
+                    duct.lengthMm = node.value("length_mm", duct.lengthMm);
+                    duct.crankcaseAreaMm2 = node.value("crankcase_area_mm2", duct.crankcaseAreaMm2);
+                    duct.portAreaMm2 = node.value("port_area_mm2", duct.portAreaMm2);
+                    config.twoStroke.transferDucts.push_back(duct);
+                }
+            }
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");

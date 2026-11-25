@@ -204,6 +204,23 @@ void addExhaustBackflowToResidualZone(ScavengeResidualZone& zone,
         && mixture.primitiveFromConservative(reservoir).has_value();
 }
 
+/** The id a two-stroke's transfer duct `duct` gives its valve onto the
+ *  cylinder in the transfer network: the cylinder's own for the first, so an
+ *  engine with one duct is the one-port network it always was. */
+[[nodiscard]] constexpr std::uint32_t transferDuctPortId(std::uint32_t cylinderId, std::size_t duct) noexcept {
+    return cylinderId + static_cast<std::uint32_t>(duct) * 10'000U;
+}
+
+void accumulateInventoryDelta(GasInventoryDelta& sum, const GasInventoryDelta& delta) noexcept {
+    sum.mixture.oxygenMoles += delta.mixture.oxygenMoles;
+    sum.mixture.inertMoles += delta.mixture.inertMoles;
+    sum.mixture.fuelMoles += delta.mixture.fuelMoles;
+    sum.mixture.burnedMoles += delta.mixture.burnedMoles;
+    sum.internalEnergyJ += delta.internalEnergyJ;
+    sum.momentumXKgMps += delta.momentumXKgMps;
+    sum.momentumYKgMps += delta.momentumYKgMps;
+}
+
 /** Inventory delta a runner-mouth sample applies to the plenum cell.
  *
  * The runner mouth is compiled as the network's "outlet" whose ambient
@@ -937,6 +954,9 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
             intakeRunnerNetworks_[index] = buildIntakeRunnerNetwork(config_, index);
     }
+    transferDuctCount_.fill(1);
+    if (config_.cycle == EngineCycle::twoStroke && !config_.twoStroke.transferDucts.empty())
+        transferDuctCount_.fill(config_.twoStroke.transferDucts.size());
     for (std::size_t path = 0; path < intakePlenumCount_; ++path)
         inletTractNetworks_[path] = buildInletTractNetwork(config_, path);
 }
@@ -1019,6 +1039,24 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeMani
         if (rotary && index % 3 != 0) continue;
         const auto runner = buildIntakeRunnerNetwork(config, index);
         networkConfig = runner->config();
+        if (runner->layout().cylinderPorts().size() > 1) {
+            // A two-stroke's own transfer ducts (no plate: refused with
+            // individual throttles): every duct, valve and mouth, in duct
+            // order, so the cylinder's ports run on from its first.
+            runnerDuctIndex[index] = ducts.size();
+            runnerPortIndex[index] = ports.size();
+            const auto base = ducts.size();
+            for (const auto& duct : runner->layout().ducts()) ducts.push_back(duct);
+            for (auto ductPort : runner->layout().cylinderPorts()) {
+                ductPort.networkEndpoint.elementIndex += base;
+                ports.push_back(ductPort);
+            }
+            for (auto ductMouth : runner->layout().outlets()) {
+                ductMouth.networkEndpoint.elementIndex += base;
+                mouths.push_back(ductMouth);
+            }
+            continue;
+        }
         auto port = runner->layout().cylinderPorts().front();
         auto mouth = runner->layout().outlets().front();
         runnerDuctIndex[index] = ducts.size();
@@ -1162,27 +1200,60 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeRunn
                 gasdynamics::ExhaustEndpointType::ductInlet, 1, cylinder.id + 1'000U };
             plate.restriction = true;
             plates.push_back(plate);
-        } else {
+        } else if (config.cycle != EngineCycle::twoStroke || config.twoStroke.transferDucts.empty()) {
             ducts.push_back(makeDuct(cylinder.id, runnerLengthM, inletAreaM2, outletAreaM2, 3));
         }
 
-        gasdynamics::CompiledCylinderPort port;
-        port.cylinderId = cylinder.id;
-        port.pathIndex = ducts.front().pathIndex;
-        port.networkEndpoint = {
-            gasdynamics::ExhaustEndpointType::ductInlet, 0, cylinder.id };
-        port.runnerConnectionAreaM2 = inletAreaM2;
-        port.dischargeCoefficient = 1.0; // the valve Cd arrives per advance
-        gasdynamics::CompiledExhaustOutlet mouth;
-        mouth.outletNodeId = cylinder.id;
-        mouth.pathIndex = ducts.front().pathIndex;
-        mouth.networkEndpoint = { gasdynamics::ExhaustEndpointType::ductOutlet,
-            ducts.size() - 1, ducts.back().nodeId };
-        mouth.openingAreaM2 = outletAreaM2;
-        mouth.dischargeCoefficient = 1.0; // a runner mouth is a bellmouth
+        std::vector<gasdynamics::CompiledCylinderPort> ports;
+        std::vector<gasdynamics::CompiledExhaustOutlet> mouths;
+        if (config.cycle == EngineCycle::twoStroke && !config.twoStroke.transferDucts.empty()) {
+            // A two-stroke's own transfer ducts, side by side: each its valve
+            // (its windows) onto the cylinder and its mouth in the crankcase.
+            // The valves carry pseudo cylinder ids, one a duct, so that the
+            // network takes one boundary each (transferDuctPortId).
+            const auto& transfers = config.twoStroke.transferDucts;
+            for (std::size_t duct = 0; duct < transfers.size(); ++duct) {
+                const auto id = transferDuctPortId(cylinder.id, duct);
+                const auto portAreaM2 = transfers[duct].portAreaMm2 * 1.0e-6;
+                const auto crankcaseAreaM2 = transfers[duct].crankcaseAreaMm2 * 1.0e-6;
+                ducts.push_back(makeDuct(id, std::max(0.01, transfers[duct].lengthMm * 0.001),
+                    portAreaM2, crankcaseAreaM2, 3));
+                gasdynamics::CompiledCylinderPort port;
+                port.cylinderId = id;
+                port.pathIndex = ducts.back().pathIndex;
+                port.networkEndpoint = { gasdynamics::ExhaustEndpointType::ductInlet, duct, id };
+                port.runnerConnectionAreaM2 = portAreaM2;
+                port.dischargeCoefficient = 1.0; // the windows' Cd arrives per advance
+                ports.push_back(port);
+                gasdynamics::CompiledExhaustOutlet mouth;
+                mouth.outletNodeId = id;
+                mouth.pathIndex = ducts.back().pathIndex;
+                mouth.networkEndpoint = { gasdynamics::ExhaustEndpointType::ductOutlet, duct, id };
+                mouth.openingAreaM2 = crankcaseAreaM2;
+                mouth.dischargeCoefficient = 1.0;
+                mouths.push_back(mouth);
+            }
+        } else {
+            gasdynamics::CompiledCylinderPort port;
+            port.cylinderId = cylinder.id;
+            port.pathIndex = ducts.front().pathIndex;
+            port.networkEndpoint = {
+                gasdynamics::ExhaustEndpointType::ductInlet, 0, cylinder.id };
+            port.runnerConnectionAreaM2 = inletAreaM2;
+            port.dischargeCoefficient = 1.0; // the valve Cd arrives per advance
+            ports.push_back(port);
+            gasdynamics::CompiledExhaustOutlet mouth;
+            mouth.outletNodeId = cylinder.id;
+            mouth.pathIndex = ducts.front().pathIndex;
+            mouth.networkEndpoint = { gasdynamics::ExhaustEndpointType::ductOutlet,
+                ducts.size() - 1, ducts.back().nodeId };
+            mouth.openingAreaM2 = outletAreaM2;
+            mouth.dischargeCoefficient = 1.0; // a runner mouth is a bellmouth
+            mouths.push_back(mouth);
+        }
 
         const auto layout = gasdynamics::ExhaustNetworkLayout::assemble(
-            std::move(ducts), {}, std::move(plates), { port }, { mouth });
+            std::move(ducts), {}, std::move(plates), std::move(ports), std::move(mouths));
         if (!layout.valid())
             throw std::runtime_error("failed to assemble intake runner layout");
         auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(
@@ -3276,6 +3347,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<double, 32> exhaustValveDischargeCoefficient {};
         std::array<double, 32> intakeValveAreaM2 {};
         std::array<double, 32> intakeValveDischargeCoefficient {};
+        // A two-stroke's transfer ducts, each its own windows' area (their sum
+        // is intakeValveAreaM2); only read with more than one duct.
+        std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> transferDuctValveAreaM2 {};
         std::array<double, 32> pistonAreaM2ForSplit {};
         std::array<double, 32> chamberVolumeLitresForWork {};
         std::array<double, 32> chamberPressureBeforeNetworkKpa {};
@@ -3325,6 +3399,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<double, 32> chamberVolumeAheadM3 {};
         std::array<double, 32> secondsToIntakeOpen {};
         std::array<double, 32> secondsToIntakeClose {};
+        // A two-stroke's transfer ducts, each its own windows' timing.
+        std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> transferDuctAreaAheadM2 {};
+        std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> secondsToTransferDuctOpen {};
+        std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> secondsToTransferDuctClose {};
 
         // Small engines retain Gauss-Seidel shared-volume updates and a shared
         // PRNG sequence; from this cylinder count up, the sub-step switches to a
@@ -4875,6 +4953,21 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             intakeValveAreaM2[cylinderIndex] = intakeArea * valveAreaScale
                 * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0),
                     0.05, 8.0);
+            if (twoStroke && transferDuctCount_[cylinderIndex] > 1) {
+                // Each duct's windows, their discharge maps reading the
+                // pressure behind them; the total is their sum.
+                auto totalM2 = 0.0;
+                for (std::size_t duct = 0; duct < transferDuctCount_[cylinderIndex]; ++duct) {
+                    const auto behindKpa = transferDuctPortKpa_[cylinderIndex][duct] > 0.0
+                        ? transferDuctPortKpa_[cylinderIndex][duct] : intakeRunnerPressureKpa_[cylinderIndex];
+                    const auto areaM2 = transferDuctAreaMm2(config_.twoStroke, cylinder, duct, cyclePhase,
+                            portFlow(behindKpa, chamberKpa)) * valveAreaScale
+                        * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0), 0.05, 8.0);
+                    transferDuctValveAreaM2[cylinderIndex][duct] = areaM2;
+                    totalM2 += areaM2;
+                }
+                intakeValveAreaM2[cylinderIndex] = totalM2;
+            }
             intakeValveDischargeCoefficient[cylinderIndex] = 1.0;
             pistonAreaM2ForSplit[cylinderIndex] = pistonAreaM2;
             chamberVolumeLitresForWork[cylinderIndex] = chamberVolume;
@@ -5025,6 +5118,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         0.40, 0.50, 0.58)) * valveAreaScale
                     * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0),
                         0.05, 8.0);
+                if (twoStroke && transferDuctCount_[cylinderIndex] > 1) {
+                    // Each duct opens at its earliest window and closes at its
+                    // mirror about bottom dead centre.
+                    for (std::size_t duct = 0; duct < transferDuctCount_[cylinderIndex]; ++duct) {
+                        auto openDegrees = 180.0;
+                        for (const auto& window : config_.twoStroke.transferWindows)
+                            if (window.duct == duct) openDegrees = std::min(openDegrees, window.openDegrees);
+                        secondsToTransferDuctOpen[cylinderIndex][duct] = std::fmod(
+                            openDegrees - cyclePhase + cycleDegrees, cycleDegrees) / degreesPerSecond;
+                        secondsToTransferDuctClose[cylinderIndex][duct] = std::fmod(
+                            cycleDegrees - openDegrees - cyclePhase + cycleDegrees, cycleDegrees) / degreesPerSecond;
+                        const auto behindKpa = transferDuctPortKpa_[cylinderIndex][duct] > 0.0
+                            ? transferDuctPortKpa_[cylinderIndex][duct] : intakeRunnerPressureKpa_[cylinderIndex];
+                        transferDuctAreaAheadM2[cylinderIndex][duct] = transferDuctAreaMm2(config_.twoStroke,
+                                cylinder, duct, std::fmod(cyclePhase + aheadDegrees, cycleDegrees),
+                                portFlow(behindKpa, chamberKpa)) * valveAreaScale
+                            * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0), 0.05, 8.0);
+                    }
+                }
                 const auto aheadKinematics = evaluateCylinderKinematics(config_,
                     kinematicsReference_, cylinderIndex,
                     state_.crankAngleDegrees + aheadDegrees,
@@ -5160,6 +5272,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             intakeAveragedBoundaryState {};
         std::array<double, 32> intakeAveragedBoundaryVolumeM3 {};
         std::array<double, 32> intakeAveragedValveConductanceM2 {};
+        std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> transferDuctAveragedConductanceM2 {};
         if (multirateIntake) {
             intakeCouplingDurationSeconds_ += subDt;
             for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
@@ -5179,6 +5292,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakeValveConductanceTimeIntegralM2S_[index] +=
                     intakeValveAreaM2[index]
                     * intakeValveDischargeCoefficient[index] * subDt;
+                if (transferDuctCount_[index] > 1)
+                    for (std::size_t duct = 0; duct < transferDuctCount_[index]; ++duct)
+                        transferDuctConductanceTimeIntegralM2S_[index][duct] +=
+                            transferDuctValveAreaM2[index][duct] * subDt;
             }
         }
         const auto intakeValveClosing = std::any_of(
@@ -5223,6 +5340,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     intakeAveragedValveConductanceM2[index] =
                         intakeValveConductanceTimeIntegralM2S_[index]
                         / intakeCouplingDurationSeconds_;
+                    if (transferDuctCount_[index] > 1)
+                        for (std::size_t duct = 0; duct < transferDuctCount_[index]; ++duct)
+                            transferDuctAveragedConductanceM2[index][duct] =
+                                transferDuctConductanceTimeIntegralM2S_[index][duct]
+                                / intakeCouplingDurationSeconds_;
                 }
             }
         }
@@ -5289,6 +5411,34 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             intakeExpectedSecondHalfReservoir;
         if (intakeSplitReservoirDiagnosticsEnabled_)
             intakeExpectedSecondHalfReservoir.emplace();
+        // A two-stroke's transfer ducts each see the cylinder as their own
+        // reservoir, each valve its own boundary. Each takes a share of the
+        // cylinder's volume (and, ahead, of its piston and exhaust rates) in
+        // proportion to its open area, so that every duct's reservoir rises as
+        // the one cylinder does while the ducts flow in proportion to their
+        // area: exact for identical ducts, an assumption otherwise. A whole
+        // volume each would let every duct fill a cylinder the others never
+        // reach.
+        const auto splitAcrossTransferDucts = [&](std::size_t index,
+                const gasdynamics::CylinderValveBoundary& whole, const double* areasM2,
+                const double* weightsM2, gasdynamics::CylinderValveBoundary* ductBoundaries) noexcept {
+            const auto count = transferDuctCount_[index];
+            auto totalM2 = 0.0;
+            for (std::size_t duct = 0; duct < count; ++duct) totalM2 += weightsM2[duct];
+            for (std::size_t duct = 0; duct < count; ++duct) {
+                const auto share = totalM2 > 0.0
+                    ? std::max(1.0e-3, weightsM2[duct] / totalM2) : 1.0 / static_cast<double>(count);
+                auto& boundary = ductBoundaries[duct];
+                boundary = whole;
+                boundary.cylinderId = transferDuctPortId(config_.cylinders[index].id, duct);
+                boundary.cylinderVolumeM3 = whole.cylinderVolumeM3 * share;
+                boundary.cylinderVolumeRateM3PerS = whole.cylinderVolumeRateM3PerS * share;
+                for (auto& kgPerS : boundary.otherOutflowSpeciesKgPerS) kgPerS *= share;
+                boundary.otherOutflowEnergyW = whole.otherOutflowEnergyW * share;
+                boundary.effectiveValveAreaM2 = areasM2[duct];
+                boundary.dischargeCoefficient = 1.0;
+            }
+        };
         const auto observeIntakeSplitReservoir = [&](std::size_t index,
             const gasdynamics::CylinderValveBoundary& boundary, bool firstHalf, bool openIntakeValve) noexcept {
                 if (intakeSplitReservoirDiagnosticsEnabled_ && multirateIntake
@@ -5435,9 +5585,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const gasdynamics::ExhaustAmbientBoundary plenumReservoir {
                     plenumBoundaryState[index], 1.0,
                     intakePlenumGas_[intakePathIndex].volumeM3() };
+                // A two-stroke's own transfer ducts: one valve each onto the
+                // same cylinder, its volume shared out by open area
+                // (splitAcrossTransferDucts); the cylinder takes every
+                // exchange after.
+                const auto ductCount = transferDuctCount_[index];
+                std::array<gasdynamics::CylinderValveBoundary, maximumTwoStrokeTransferDucts> ductBoundaries {};
+                if (ductCount > 1) {
+                    const auto& ductAreasM2 = multirateIntake
+                        ? transferDuctAveragedConductanceM2[index] : transferDuctValveAreaM2[index];
+                    splitAcrossTransferDucts(index, boundary, ductAreasM2.data(), ductAreasM2.data(),
+                        ductBoundaries.data());
+                }
                 observeIntakeSplitReservoir(index, boundary, firstHalf, openIntakeValve);
-                const auto advance = network.advance(durationSeconds,
-                    std::span<const gasdynamics::CylinderValveBoundary>(&boundary, 1),
+                const auto advance = network.advance(durationSeconds, ductCount > 1
+                        ? std::span<const gasdynamics::CylinderValveBoundary>(ductBoundaries.data(), ductCount)
+                        : std::span<const gasdynamics::CylinderValveBoundary>(&boundary, 1),
                     plenumReservoir);
                 intakeNetworkAcceptedSubsteps[index] += advance.acceptedSubsteps;
                 intakeNetworkRejectedSubsteps[index] += advance.rejectedSubsteps;
@@ -5453,6 +5616,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     diagnostic.maximumAcceptedDuctCourantPredictor,
                     advance.maximumAcceptedDuctCourantPredictor);
                 if (!advance.completed) intakePhaseFailed[index] = 1;
+                if (ductCount > 1) {
+                    // The last duct first, so the first duct's port state is
+                    // what the runner telemetry keeps.
+                    const auto exchanges = network.cylinderExchanges();
+                    for (std::size_t duct = ductCount; duct-- > 0;) {
+                        recordIntakeCylinderExchange(index, boundary, exchanges[duct],
+                            network.mixtureModel(), firstHalf, openIntakeValve, advance.completed);
+                        transferDuctPortKpa_[index][duct] = exchanges[duct].networkPressurePa * 0.001;
+                    }
+                    GasInventoryDelta plenumDelta {};
+                    for (const auto& mouth : network.outletSamples())
+                        accumulateInventoryDelta(plenumDelta,
+                            plenumDeltaForMouthSample(mouth, intakePlenumGas_[intakePathIndex]));
+                    pendingPlenumDelta[index] = plenumDelta;
+                    intakePhaseProducedDelta[index] = 1;
+                    return;
+                }
                 const auto& exchange = network.cylinderExchanges().front();
                 recordIntakeCylinderExchange(index, boundary, exchange,
                     network.mixtureModel(), firstHalf, openIntakeValve, advance.completed);
@@ -5568,6 +5748,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     auto& network = *pointer;
                     std::array<gasdynamics::CylinderValveBoundary, 32> boundaries {};
                     std::array<std::size_t, 32> cylinderIndices {};
+                    gasdynamics::CylinderValveBoundary ductWholeBoundary {};
                     const auto portCount = network.layout().cylinderPorts().size();
                     for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
                         if (intakePathIndexByCylinder_[index] != path) continue;
@@ -5585,6 +5766,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         };
                         observeIntakeSplitReservoir(index, boundaries[port], firstHalf,
                             boundaries[port].effectiveValveAreaM2 > 0.0);
+                        if (transferDuctCount_[index] > 1) {
+                            // A two-stroke's transfer ducts, its ports from its
+                            // first on (its path has no other cylinder).
+                            ductWholeBoundary = boundaries[port];
+                            const auto& ductAreasM2 = multirateIntake
+                                ? transferDuctAveragedConductanceM2[index] : transferDuctValveAreaM2[index];
+                            splitAcrossTransferDucts(index, ductWholeBoundary, ductAreasM2.data(),
+                                ductAreasM2.data(), &boundaries[port]);
+                            for (std::size_t duct = 1; duct < transferDuctCount_[index]; ++duct)
+                                cylinderIndices[port + duct] = index;
+                        }
                     }
                     const auto advance = network.advance(halfStepSeconds,
                         std::span<const gasdynamics::CylinderValveBoundary>(boundaries.data(), portCount),
@@ -5604,6 +5796,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     if (!advance.completed) pathResolutionLimited[path] = 1;
                     const auto exchanges = network.cylinderExchanges();
                     for (std::size_t port = 0; port < portCount; ++port) {
+                        const auto index = cylinderIndices[port];
+                        if (transferDuctCount_[index] > 1) {
+                            // The last duct first, so the first duct's port
+                            // state is what the runner telemetry keeps.
+                            if (port != intakeRunnerPortIndex_[index]) continue;
+                            for (std::size_t duct = transferDuctCount_[index]; duct-- > 0;) {
+                                recordIntakeCylinderExchange(index, ductWholeBoundary, exchanges[port + duct],
+                                    network.mixtureModel(), firstHalf,
+                                    ductWholeBoundary.effectiveValveAreaM2 > 0.0, advance.completed);
+                                transferDuctPortKpa_[index][duct] = exchanges[port + duct].networkPressurePa * 0.001;
+                            }
+                            if (intakePhaseFailed[index] != 0) pathResolutionLimited[path] = 1;
+                            continue;
+                        }
                         recordIntakeCylinderExchange(cylinderIndices[port], boundaries[port], exchanges[port],
                             network.mixtureModel(), firstHalf, boundaries[port].effectiveValveAreaM2 > 0.0,
                             advance.completed);
@@ -5690,10 +5896,19 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             ? halfStepSeconds
                             : (firstHalf ? 0.0 : halfStepSeconds * 2.0);
                         if (!(durationSeconds > 0.0)) return;
-                        const auto predicted =
+                        auto predicted =
                             intakeRunnerNetworks_[index]->predictOutletTransfer(0,
                                 { plenumBoundaryState[index], 1.0 }, durationSeconds);
                         if (!predicted) return;
+                        // A two-stroke's transfer ducts each draw on the crankcase.
+                        for (std::size_t duct = 1; duct < transferDuctCount_[index]; ++duct) {
+                            const auto more = intakeRunnerNetworks_[index]->predictOutletTransfer(duct,
+                                { plenumBoundaryState[index], 1.0 }, durationSeconds);
+                            if (!more) return;
+                            for (std::size_t species = 0; species < gasdynamics::gasSpeciesCount; ++species)
+                                predicted->speciesMassKg[species] += more->speciesMassKg[species];
+                            predicted->transferredEnergyJ += more->transferredEnergyJ;
+                        }
                         predictedPlenumDraw[index] = *predicted;
                         predictedPlenumDrawValid[index] = 1;
                     });
@@ -5816,6 +6031,44 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                 / std::max(1.0e-9, forwardIntervalSeconds
                                     - secondsToIntakeOpen[index]);
                         }
+                        // The valve over the interval: shut until it opens,
+                        // then linear in area until it closes.
+                        const auto aheadValve = [&](gasdynamics::CylinderValveBoundary& valve,
+                                double areaNow, double areaAhead, double toOpen, double toClose) noexcept {
+                            valve.effectiveValveAreaM2 = areaNow;
+                            if (areaNow > 0.0 && toClose < forwardIntervalSeconds) {
+                                valve.valveClosesAfterSeconds = toClose;
+                                valve.effectiveValveAreaRateM2PerS = -areaNow / std::max(1.0e-9, toClose);
+                            } else if (areaNow > 0.0) {
+                                valve.effectiveValveAreaRateM2PerS = (areaAhead - areaNow) / forwardIntervalSeconds;
+                            } else if (areaAhead > 0.0 && toOpen < forwardIntervalSeconds) {
+                                valve.valveOpensAfterSeconds = toOpen;
+                                valve.effectiveValveAreaRateM2PerS = areaAhead
+                                    / std::max(1.0e-9, forwardIntervalSeconds - toOpen);
+                            }
+                        };
+                        if (transferDuctCount_[index] > 1) {
+                            // A two-stroke's transfer ducts, its ports from its
+                            // first on (its path has no other cylinder), each
+                            // its own windows' timing.
+                            const auto whole = boundary;
+                            std::array<double, maximumTwoStrokeTransferDucts> weightsM2 {};
+                            for (std::size_t duct = 0; duct < transferDuctCount_[index]; ++duct)
+                                weightsM2[duct] = std::max(transferDuctValveAreaM2[index][duct],
+                                    transferDuctAreaAheadM2[index][duct]);
+                            splitAcrossTransferDucts(index, whole, transferDuctValveAreaM2[index].data(),
+                                weightsM2.data(), &boundaries[port]);
+                            for (std::size_t duct = 0; duct < transferDuctCount_[index]; ++duct) {
+                                auto& valve = boundaries[port + duct];
+                                valve.effectiveValveAreaRateM2PerS = 0.0;
+                                valve.valveOpensAfterSeconds = 0.0;
+                                valve.valveClosesAfterSeconds = std::numeric_limits<double>::infinity();
+                                aheadValve(valve, transferDuctValveAreaM2[index][duct],
+                                    transferDuctAreaAheadM2[index][duct], secondsToTransferDuctOpen[index][duct],
+                                    secondsToTransferDuctClose[index][duct]);
+                                if (duct > 0) cylinderIndices[port + duct] = index;
+                            }
+                        }
                     }
                     const auto advance = network.advance(forwardNetworkSeconds,
                         std::span<const gasdynamics::CylinderValveBoundary>(boundaries.data(), portCount),
@@ -5834,8 +6087,26 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         diagnostic.maximumAcceptedDuctCourantPredictor, advance.maximumAcceptedDuctCourantPredictor);
                     if (!advance.completed) pathResolutionLimited[path] = 1;
                     const auto exchanges = network.cylinderExchanges();
-                    for (std::size_t port = 0; port < portCount; ++port)
-                        intakeForwardPendingExchange_[cylinderIndices[port]] = exchanges[port];
+                    for (std::size_t port = 0; port < portCount; ++port) {
+                        const auto index = cylinderIndices[port];
+                        if (transferDuctCount_[index] <= 1) {
+                            intakeForwardPendingExchange_[index] = exchanges[port];
+                            continue;
+                        }
+                        // A transfer duct's exchange joins its cylinder's: the
+                        // first duct's port state, every duct's gas.
+                        const auto duct = port - intakeRunnerPortIndex_[index];
+                        transferDuctPortKpa_[index][duct] = exchanges[port].networkPressurePa * 0.001;
+                        auto& pending = intakeForwardPendingExchange_[index];
+                        if (duct == 0) {
+                            pending = exchanges[port];
+                            continue;
+                        }
+                        for (std::size_t species = 0; species < gasdynamics::gasSpeciesCount; ++species)
+                            pending.speciesMassKg[species] += exchanges[port].speciesMassKg[species];
+                        pending.totalEnergyJ += exchanges[port].totalEnergyJ;
+                        pending.axialMomentumImpulseNs += exchanges[port].axialMomentumImpulseNs;
+                    }
                     GasInventoryDelta plenumDelta {};
                     for (const auto& mouth : network.outletSamples()) {
                         const auto delta = plenumDeltaForMouthSample(mouth, intakePlenumGas_[path]);
@@ -6408,6 +6679,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakeBoundaryStateTimeIntegral_.fill({});
                 intakeBoundaryVolumeTimeIntegralM3S_.fill(0.0);
                 intakeValveConductanceTimeIntegralM2S_.fill(0.0);
+                transferDuctConductanceTimeIntegralM2S_.fill({});
                 intakeCouplingDurationSeconds_ = 0.0;
             }
         }
@@ -7877,6 +8149,8 @@ void EngineSimulator::reset() noexcept {
     intakeBoundaryStateTimeIntegral_.fill({});
     intakeBoundaryVolumeTimeIntegralM3S_.fill(0.0);
     intakeValveConductanceTimeIntegralM2S_.fill(0.0);
+    transferDuctConductanceTimeIntegralM2S_.fill({});
+    transferDuctPortKpa_ = {};
     intakeCouplingDurationSeconds_ = 0.0;
     intakeSchedulingPhaseSeconds_ = 0.0;
     intakeForwardPendingExchange_.fill({});

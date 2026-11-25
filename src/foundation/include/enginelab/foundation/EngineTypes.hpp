@@ -1389,8 +1389,23 @@ struct TwoStrokePortWindow final {
     /** Zero: the engine's `portDischargeCoefficient`. */
     double dischargeCoefficient { 0.0 };
     PortDischargeMap dischargeMap {};
+    /** A transfer window's duct: its index in `TwoStrokeConfig::
+     *  transferDucts` (0 without them). An exhaust window's is 0. */
+    std::uint32_t duct { 0 };
     [[nodiscard]] bool operator==(const TwoStrokePortWindow&) const = default;
 };
+
+/** One transfer duct from the crankcase to its windows: a 1-D duct of its
+ *  own, `lengthMm` long along its centreline, its flow area going from
+ *  `crankcaseAreaMm2` at the crankcase mouth to `portAreaMm2` behind its
+ *  windows. */
+struct TwoStrokeTransferDuct final {
+    double lengthMm { 0.0 };
+    double crankcaseAreaMm2 { 0.0 };
+    double portAreaMm2 { 0.0 };
+    [[nodiscard]] bool operator==(const TwoStrokeTransferDuct&) const = default;
+};
+inline constexpr std::size_t maximumTwoStrokeTransferDucts = 6;
 
 /** Where a two-stroke's carburettor delivers. */
 enum class TwoStrokeIntake : std::uint8_t {
@@ -1441,6 +1456,11 @@ struct TwoStrokeConfig final {
      *  must be its earliest window's (`synchronisePortWindowTimings`). */
     std::vector<TwoStrokePortWindow> exhaustWindows;
     std::vector<TwoStrokePortWindow> transferWindows;
+    /** The transfer ducts, each feeding the transfer windows that name it.
+     *  Empty: one duct, the intake path's runner, behind every transfer
+     *  window. Given, they need transfer windows, and the intake path's
+     *  runner length and diameter no longer reach the physics. */
+    std::vector<TwoStrokeTransferDuct> transferDucts;
     /** Crankcase volume at top dead centre over that at bottom dead centre:
      *  1.25-1.5 on a road or race engine. */
     double crankcaseCompressionRatio { 1.35 };

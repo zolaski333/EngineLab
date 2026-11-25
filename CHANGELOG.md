@@ -41,6 +41,12 @@ file formats, always with an in-memory migration).
   against how far it is open and the pressure across it. A boost port that
   opens a few degrees later, or rounded corners, now change the engine. No
   measured map ships with EngineLab. Without windows, nothing changes.
+- **Two-stroke transfer ducts (optional).** With windows, an engine file
+  can also give each transfer its own duct from the crankcase
+  (`transfer_ducts`: length and area at each end), and each transfer window
+  says which duct feeds it. A boost port's short duct and the main ports'
+  long ones are then separate pipes with their own waves. Without ducts,
+  nothing changes.
 
 ### Fixed
 

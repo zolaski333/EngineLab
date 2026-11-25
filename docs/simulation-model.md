@@ -188,6 +188,24 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   Callender & Mackey, SAE 2001-01-1798; Fleck & Cartwright, SAE 962534) are
   paywalled, so a map is the user's measurement, and without one the
   window's constant coefficient (default 0.72, not sourced) holds.
+- **Transfer ducts** (optional, `two_stroke.transfer_ducts`: length, area at
+  the crankcase, area at the port; each transfer window names its `duct`):
+  each duct is its own 1-D pipe from the crankcase to its windows, so a
+  boost port fed by a short duct and a main pair fed by long ones no longer
+  share one runner. Without ducts the transfers are the one runner they
+  always were (catalogue bit-identical). Each duct is a valve of its own onto
+  the cylinder; for each advance every duct sees the cylinder at its present
+  state, with a share of its volume (and, ahead, of its piston and exhaust
+  rates) in proportion to its open area, and the cylinder takes every duct's
+  exchange after. That share is exact for identical ducts and an assumption
+  otherwise (a duct flowing more than its area's share fills its reservoir
+  too fast). Two half ducts carry what one whole duct does (RD350 at
+  8,000 rpm: air -0.04 %, delivered over metered -0.2 %;
+  `EngineLab.TwoStrokePortWindows`). With ducts, the intake path's runner
+  length and diameter no longer reach the physics. Not modelled: the ducts'
+  bends and their curvature loss, flow between ducts, a duct's own wall heat
+  beyond the runner's law; the flow samples for audio and telemetry read the
+  first duct only.
 - **Crankcase pumping**: each cylinder has its own intake path (validation
   enforces one cylinder per path). That path's plenum is the crankcase: its
   volume follows the piston's underside every substep, adiabatically, between
