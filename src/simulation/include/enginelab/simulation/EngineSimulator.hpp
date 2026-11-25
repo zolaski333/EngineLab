@@ -679,6 +679,11 @@ private:
      *  fill latched at that closing, which is the charge reference. */
     std::array<double, 32> reedInflowMgThisFill_ {};
     std::array<double, 32> reedInflowMgLastFill_ {};
+    /** Two-stroke with authored reed petals (ReedValve.hpp), per intake
+     *  path: the petal's tip lift and rate, and the mass it let back out of
+     *  the crankcase since construction. */
+    std::array<ReedValveState, 32> reedState_ {};
+    std::array<double, 32> reedBackflowKg_ {};
     std::array<bool, 32> cylinderFlowCycleStarted_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
     /** Time each chamber's ring blow-by has not yet been applied for; see

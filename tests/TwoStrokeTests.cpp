@@ -161,6 +161,23 @@ void everyTwoStrokeFieldSurvivesAFile() {
                 && d.powerValveFullyOpenRpm == t.powerValveFullyOpenRpm,
             "every two-stroke field comes back as written");
     }
+    // Reed petals (ReedValve.hpp), on a port that keeps its reed.
+    t.intakePortReed = true;
+    t.reed = { 3, 31.5, 22.25, 0.35, 21.5, 1'875.0, 0.075, 7.25, 1'450.5, 0.615 };
+    require(!validateEngineConfig(config), "the two-stroke with petals is valid");
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        const auto decoded = serializer->decode(serializer->encode(config));
+        require(static_cast<bool>(decoded), "the two-stroke with petals decodes");
+        const auto& r = decoded.config->twoStroke.reed;
+        require(r.petalCount == t.reed.petalCount && r.freeLengthMm == t.reed.freeLengthMm
+                && r.widthMm == t.reed.widthMm && r.thicknessMm == t.reed.thicknessMm
+                && r.youngsModulusGpa == t.reed.youngsModulusGpa
+                && r.densityKgPerM3 == t.reed.densityKgPerM3 && r.dampingRatio == t.reed.dampingRatio
+                && r.stopLiftMm == t.reed.stopLiftMm && r.windowAreaMm2 == t.reed.windowAreaMm2
+                && r.dischargeCoefficient == t.reed.dischargeCoefficient,
+            "every reed petal field comes back as written");
+    }
 
     auto derived = catalogueTwoStroke();
     derived.twoStroke.exhaustPortWidthMm = 0.0;

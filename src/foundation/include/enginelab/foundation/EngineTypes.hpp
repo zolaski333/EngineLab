@@ -8,6 +8,8 @@
 #include <optional>
 #include <array>
 
+#include <enginelab/foundation/ReedValve.hpp>
+
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
 inline constexpr std::uint32_t currentEngineSchemaVersion { 9 };
@@ -1373,6 +1375,8 @@ struct TwoStrokeConfig final {
     /** A reed in the cylinder port. Without one the port blows the charge
      *  back through the carburettor whenever the crankcase is above it. */
     bool intakePortReed { true };
+    /** The reed's petals (`ReedValve.hpp`); none: a perfect check valve. */
+    ReedValveConfig reed {};
     double exhaustPortOpenDegrees { 92.0 };
     double transferPortOpenDegrees { 118.0 };
     /** Zero: 0.65 x bore (one wide window). */
@@ -2049,6 +2053,11 @@ struct EngineState final {
      * `solverResolutionLimited` was raised): mass the coupling did not
      * conserve. Kept always. */
     double exhaustRejectedExchangeKg { 0.0 };
+    /** A two-stroke with authored reed petals (ReedValve.hpp): the first
+     * crankcase's reed tip lift, and the mass every reed let back out of its
+     * crankcase since construction. Both 0 with the check valve. */
+    double reedTipLiftMm { 0.0 };
+    double reedBackflowKg { 0.0 };
     /** Actual intake advances in the last frame, summed across runner networks.
      * Rates use advanced simulation time, rather than the requested cadence. */
     std::uint64_t intakeNetworkAcceptedSubsteps { 0 };

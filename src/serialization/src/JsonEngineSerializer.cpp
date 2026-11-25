@@ -804,6 +804,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             ports["intake_port_width_mm"] = config.twoStroke.intakePortWidthMm;
             ports["intake_port_reed"] = config.twoStroke.intakePortReed;
         }
+        // Only authored petals: a check-valve reed's file is unchanged.
+        if (hasDynamicReed(config.twoStroke.reed)) {
+            const auto& reed = config.twoStroke.reed;
+            document["engine"]["two_stroke"]["reed"] = { {"petals", reed.petalCount}, {"free_length_mm", reed.freeLengthMm}, {"width_mm", reed.widthMm}, {"thickness_mm", reed.thicknessMm}, {"youngs_modulus_gpa", reed.youngsModulusGpa}, {"density_kg_m3", reed.densityKgPerM3}, {"damping_ratio", reed.dampingRatio}, {"stop_lift_mm", reed.stopLiftMm}, {"window_area_mm2", reed.windowAreaMm2}, {"discharge_coefficient", reed.dischargeCoefficient} };
+        }
     }
     // Only a measured limit: an uncalibrated file is unchanged.
     if (!config.ignition.knockLimitCurve.empty()) {
@@ -999,6 +1004,20 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text,
             config.twoStroke.intakePortOpenDegreesBtdc = ports.value("intake_port_open_deg_btdc", config.twoStroke.intakePortOpenDegreesBtdc);
             config.twoStroke.intakePortWidthMm = ports.value("intake_port_width_mm", config.twoStroke.intakePortWidthMm);
             config.twoStroke.intakePortReed = ports.value("intake_port_reed", config.twoStroke.intakePortReed);
+            if (ports.contains("reed")) {
+                const auto& node = ports.at("reed");
+                auto& reed = config.twoStroke.reed;
+                reed.petalCount = node.value("petals", reed.petalCount);
+                reed.freeLengthMm = node.value("free_length_mm", reed.freeLengthMm);
+                reed.widthMm = node.value("width_mm", reed.widthMm);
+                reed.thicknessMm = node.value("thickness_mm", reed.thicknessMm);
+                reed.youngsModulusGpa = node.value("youngs_modulus_gpa", reed.youngsModulusGpa);
+                reed.densityKgPerM3 = node.value("density_kg_m3", reed.densityKgPerM3);
+                reed.dampingRatio = node.value("damping_ratio", reed.dampingRatio);
+                reed.stopLiftMm = node.value("stop_lift_mm", reed.stopLiftMm);
+                reed.windowAreaMm2 = node.value("window_area_mm2", reed.windowAreaMm2);
+                reed.dischargeCoefficient = node.value("discharge_coefficient", reed.dischargeCoefficient);
+            }
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");

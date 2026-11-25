@@ -979,6 +979,18 @@ endif()
 enginelab_set_warnings(EngineLabSimulationAccuracyTests)
 add_test(NAME EngineLab.SimulationAccuracy COMMAND EngineLabSimulationAccuracyTests)
 
+add_executable(EngineLabReedValveTests ReedValveTests.cpp)
+target_link_libraries(EngineLabReedValveTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabReedValveTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabReedValveTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabReedValveTests)
+add_test(NAME EngineLab.ReedValve COMMAND EngineLabReedValveTests)
+
 add_executable(EngineLabCatalogRoundTripTests CatalogRoundTripTests.cpp)
 target_link_libraries(EngineLabCatalogRoundTripTests PRIVATE
     EngineLab::Foundation EngineLab::Serialization EngineLab::Catalog)

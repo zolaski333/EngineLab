@@ -895,6 +895,22 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                 << YAML::Key << "intake_port_open_deg_btdc" << YAML::Value << config.twoStroke.intakePortOpenDegreesBtdc
                 << YAML::Key << "intake_port_width_mm" << YAML::Value << config.twoStroke.intakePortWidthMm
                 << YAML::Key << "intake_port_reed" << YAML::Value << config.twoStroke.intakePortReed;
+        // Only authored petals: a check-valve reed's file is unchanged.
+        if (hasDynamicReed(config.twoStroke.reed)) {
+            const auto& reed = config.twoStroke.reed;
+            out << YAML::Key << "reed" << YAML::Value << YAML::BeginMap
+                << YAML::Key << "petals" << YAML::Value << reed.petalCount
+                << YAML::Key << "free_length_mm" << YAML::Value << reed.freeLengthMm
+                << YAML::Key << "width_mm" << YAML::Value << reed.widthMm
+                << YAML::Key << "thickness_mm" << YAML::Value << reed.thicknessMm
+                << YAML::Key << "youngs_modulus_gpa" << YAML::Value << reed.youngsModulusGpa
+                << YAML::Key << "density_kg_m3" << YAML::Value << reed.densityKgPerM3
+                << YAML::Key << "damping_ratio" << YAML::Value << reed.dampingRatio
+                << YAML::Key << "stop_lift_mm" << YAML::Value << reed.stopLiftMm
+                << YAML::Key << "window_area_mm2" << YAML::Value << reed.windowAreaMm2
+                << YAML::Key << "discharge_coefficient" << YAML::Value << reed.dischargeCoefficient
+                << YAML::EndMap;
+        }
         out << YAML::EndMap;
     }
     out << YAML::EndMap << YAML::EndMap;
@@ -1036,6 +1052,19 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text,
             config.twoStroke.intakePortOpenDegreesBtdc = ports["intake_port_open_deg_btdc"].as<double>(config.twoStroke.intakePortOpenDegreesBtdc);
             config.twoStroke.intakePortWidthMm = ports["intake_port_width_mm"].as<double>(config.twoStroke.intakePortWidthMm);
             config.twoStroke.intakePortReed = ports["intake_port_reed"].as<bool>(config.twoStroke.intakePortReed);
+            if (const auto node = ports["reed"]) {
+                auto& reed = config.twoStroke.reed;
+                reed.petalCount = node["petals"].as<int>(reed.petalCount);
+                reed.freeLengthMm = node["free_length_mm"].as<double>(reed.freeLengthMm);
+                reed.widthMm = node["width_mm"].as<double>(reed.widthMm);
+                reed.thicknessMm = node["thickness_mm"].as<double>(reed.thicknessMm);
+                reed.youngsModulusGpa = node["youngs_modulus_gpa"].as<double>(reed.youngsModulusGpa);
+                reed.densityKgPerM3 = node["density_kg_m3"].as<double>(reed.densityKgPerM3);
+                reed.dampingRatio = node["damping_ratio"].as<double>(reed.dampingRatio);
+                reed.stopLiftMm = node["stop_lift_mm"].as<double>(reed.stopLiftMm);
+                reed.windowAreaMm2 = node["window_area_mm2"].as<double>(reed.windowAreaMm2);
+                reed.dischargeCoefficient = node["discharge_coefficient"].as<double>(reed.dischargeCoefficient);
+            }
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

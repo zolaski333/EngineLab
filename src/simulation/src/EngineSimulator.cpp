@@ -2357,6 +2357,34 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             }
             return inletAreaM2;
         };
+        // Authored reed petals (ReedValve.hpp): the petal moves under the share
+        // of the drop it holds in series with what is upstream of it (the
+        // carburettor, and a cylinder port's window), and its curtain joins
+        // them in series; gas then flows both ways while it is off its seat.
+        // Without petals the reed stays the perfect check valve.
+        const auto reedDynamics = reedValveDynamics(config_.twoStroke.reed);
+        const auto dynamicReed = reedFitted && reedDynamics.massKg > 0.0;
+        const auto reedInletAreaM2 = [&](std::size_t pathIndex, double inletAreaM2,
+                                         double dischargeCoefficient, double sourcePressureKpa) noexcept {
+            auto& reed = reedState_[pathIndex];
+            const auto upstreamM2 = inletAreaM2 * dischargeCoefficient;
+            const auto reedM2 = reedValveFlowAreaM2(reedDynamics, reed) * reedDynamics.dischargeCoefficient;
+            const auto dropPa = (sourcePressureKpa - intakePlenumGas_[pathIndex].pressureKpa()) * 1'000.0
+                * reedShareOfSeriesDrop(upstreamM2, reedM2);
+            reed = advanceReedValve(reedDynamics, reed, dropPa, subDt);
+            const auto openM2 = reedValveFlowAreaM2(reedDynamics, reed) * reedDynamics.dischargeCoefficient;
+            if (!(openM2 > 0.0) || !(upstreamM2 > 0.0)) return 0.0;
+            return 1.0 / std::sqrt(1.0 / (upstreamM2 * upstreamM2) + 1.0 / (openM2 * openM2))
+                / dischargeCoefficient;
+        };
+        const auto publishReed = [&]() noexcept {
+            if (!dynamicReed) return;
+            state_.reedTipLiftMm = reedState_[0].liftM * 1'000.0;
+            auto backflowKg = 0.0;
+            for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex)
+                backflowKg += reedBackflowKg_[pathIndex];
+            state_.reedBackflowKg = backflowKg;
+        };
         // A crank that is not turning passes no gas through its valves. The
         // quasi-steady valve law has an unbounded gain at zero pressure
         // difference, so an open valve held at equilibrium by a stopped crank
@@ -2392,16 +2420,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             state_.throttle, intake.throttleGamma);
                 intakeThrottleConductanceAreaM2[pathIndex] = throttleAreaM2
                     * intake.throttleDischargeCoefficient;
+                auto inletAreaM2 = crankcaseInletAreaM2(pathIndex,
+                    plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
+                    intake.throttleDischargeCoefficient);
+                if (dynamicReed)
+                    inletAreaM2 = reedInletAreaM2(pathIndex, inletAreaM2,
+                        intake.throttleDischargeCoefficient, config_.ambientPressureKpa);
+                const auto crankcaseMassBeforeKg = intakePlenumGas_[pathIndex].massKg();
                 throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
-                    crankcaseInletAreaM2(pathIndex, plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
-                        intake.throttleDischargeCoefficient),
-                    intake.throttleDischargeCoefficient, subDt, reedFitted);
+                    inletAreaM2, intake.throttleDischargeCoefficient, subDt, reedFitted && !dynamicReed);
+                if (dynamicReed)
+                    reedBackflowKg_[pathIndex] += std::max(0.0,
+                        crankcaseMassBeforeKg - intakePlenumGas_[pathIndex].massKg());
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttlePlateAreaM2 > 0.0
                         ? throttleAreaM2 / throttlePlateAreaM2 : 1.0, throttlePlateAreaM2);
             }
+            publishReed();
         } else {
             constexpr double exhaustCpJPerKgK = 1'120.0;
             const auto ambientTemperatureK = config_.ambientTemperatureC + 273.15;
@@ -2775,14 +2812,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // A covered cylinder port leaves the carburettor's bore standing
                 // at the airbox's pressure: its pilot sees no drop.
                 const auto intakePortShut = cylinderPortIntake && !(inletAreaM2 > 0.0);
+                const auto reedOrInletAreaM2 = dynamicReed
+                    ? reedInletAreaM2(pathIndex, inletAreaM2, intake.throttleDischargeCoefficient,
+                        intakeSourcePressureKpa)
+                    : inletAreaM2;
                 throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
-                    intakeSourcePressureKpa, temperatureK, inletAreaM2,
-                    intake.throttleDischargeCoefficient, subDt, reedFitted);
+                    intakeSourcePressureKpa, temperatureK, reedOrInletAreaM2,
+                    intake.throttleDischargeCoefficient, subDt, reedFitted && !dynamicReed);
                 pathThrottleFlowKg[pathIndex] = intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg;
                 const auto plenumInflowKg = std::max(0.0,
                     intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg);
-                if (twoStrokeCrankcase)
+                // A dynamic reed lets gas back out: the fill is what stayed.
+                if (dynamicReed) {
+                    reedBackflowKg_[pathIndex] += std::max(0.0,
+                        crankcaseMassBeforeKg - intakePlenumGas_[pathIndex].massKg());
+                    reedInflowMgThisFill_[pathIndex] += pathThrottleFlowKg[pathIndex] * 1.0e6;
+                } else if (twoStrokeCrankcase)
                     reedInflowMgThisFill_[pathIndex] += plenumInflowKg * 1.0e6;
                 if (intake.carburettor.enabled) {
                     // A carburettor meters the air that crossed it, and the
@@ -2871,6 +2917,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex)
                     throttlePath(pathIndex);
             }
+            publishReed();
             // The serial loop's sums, in its order.
             auto throttleFlowKgThisStep = 0.0;
             for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
@@ -7658,6 +7705,8 @@ void EngineSimulator::reset() noexcept {
     deliveredAirMgThisCycle_.fill(0.0);
     reedInflowMgThisFill_.fill(0.0);
     reedInflowMgLastFill_.fill(0.0);
+    reedState_.fill({});
+    reedBackflowKg_.fill(0.0);
     exhaustRunnerVelocityMps_.fill(0.0);
     exhaustRunnerTemperatureK_.fill(config_.ambientTemperatureC + 273.15);
     cylinderFlowCycleStarted_.fill(false);

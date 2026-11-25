@@ -837,6 +837,10 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
                 && (!inRange(ports.intakePortOpenDegreesBtdc, 30.0, 110.0) || !widthOk(ports.intakePortWidthMm)))
             return "A two-stroke cylinder intake port opens 30-110 deg before TDC and is 5-500 mm wide "
                    "(0: from the bore)";
+        if (const auto* reedError = reedValveConfigError(ports.reed)) return reedError;
+        if (hasDynamicReed(ports.reed) && ports.intake == TwoStrokeIntake::cylinderPort
+                && !ports.intakePortReed)
+            return "Reed petals need a reed: a cylinder port without one has no petals";
         for (const auto& path : config.intakePaths) {
             if (path.cylinderIds.size() != 1)
                 return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";

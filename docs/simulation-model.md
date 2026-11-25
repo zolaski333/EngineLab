@@ -172,7 +172,7 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   volume follows the piston's underside every substep, adiabatically, between
   `crankcase_compression_ratio` x its bottom-dead-centre volume and that
   volume. The throttle is the carburettor bore with a reed check valve (no
-  flow out of the crankcase), and the runner is the transfer duct. The piston's
+  flow out of the crankcase, unless reed petals are authored: below), and the runner is the transfer duct. The piston's
   underside sees the crankcase pressure, not the ambient.
 - **Intake** (`two_stroke.intake`): `crankcase_reed`, the default, feeds the
   crankcase through the reed whenever it is below the carburettor. A
@@ -187,6 +187,28 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   the reed's 0.88; at 3,000 rpm a 190 deg port delivers 0.88 with a reed and
   0.69 without. The designer gives a sport cylinder port 95 deg BTDC, a road
   one 72 deg.
+- **Reed petals** (optional, `two_stroke.reed`, `ReedValve.hpp`): without
+  them every reed is a perfect check valve, no lift, no inertia, no
+  backflow. With them the block is one mass-spring-damper on its tip lift,
+  the low-order model Dave et al. (SAE 2004-01-1455) found adequate for
+  engine simulation. Validated physics: the spring is the cantilever's tip
+  stiffness under a uniform pressure (8 E I / L^3 for Δp b L) and the mass
+  makes the first bending mode's frequency (beta1 L = 1.8751), both checked
+  against Euler-Bernoulli theory to 1e-6 (`EngineLab.ReedValve`); the
+  oscillator is integrated exactly over each substep. Empirical inputs: the
+  damping ratio and the discharge coefficient (no default: a file without
+  them is refused). Assumptions: the force is the drop across the reed over
+  the petal's face, quasi-static, without jet momentum or preload; the reed's
+  share of the drop in series with the carburettor (and a cylinder port) is
+  that of two incompressible orifices with no volume between them; seat and
+  stop plate stop the petal dead; the flow area is the straight petal's
+  curtain, b x + L x (tip edge and two side triangles), capped by the block's
+  window; gas flows both ways while it is off its seat. **Not validated
+  against a measured reed lift**: the measured lifts (Fleck et al., SAE
+  972738; Hinds & Blair, SAE 780766; the Belfast camera studies) are behind
+  paywalls, and Ortenzi & Bossaglia's (Energies 2023, a two-mode beam with a
+  stop plate) are "unavailable due to restrictions". No catalogue engine has
+  petals: none of their makers' petal dimensions is sourced.
 - **Power valve** (optional): a valve in the exhaust port's roof, Yamaha's
   YPVS and its kind. Shut, it lowers the roof, so the port opens
   `power_valve_closed_exhaust_port_open_deg` after top dead centre instead of

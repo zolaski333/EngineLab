@@ -20,6 +20,13 @@ file formats, always with an in-memory migration).
   `--mass-ledger` (the exhaust network's mass balance per point). A
   `--crank-degrees` finer than the solver allows is now refused with a
   message instead of exiting silently.
+- **Two-stroke reed petals (optional).** An engine file can describe its
+  reed's petals (`two_stroke.reed`: count, free length, width, thickness,
+  material modulus and density, damping ratio, stop-plate lift, window,
+  discharge coefficient). The reed then lifts, rings and closes late as a
+  cantilever does, and lets gas back out of the crankcase while it is open.
+  Without petals the reed is the perfect check valve it always was, and
+  every engine, catalogue and saved, behaves exactly as before.
 
 ### Fixed
 

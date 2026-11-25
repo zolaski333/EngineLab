@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 3a: reed petals as one mass-spring-damper
+
+- Before: every reed a perfect check valve (no lift, inertia or backflow). Now optional petals (`two_stroke.reed`, ReedValve.hpp, simulation-model.md): the low-order model Dave et al. (SAE 2004-01-1455) judged adequate; stiffness and mass from Euler-Bernoulli, an exact oscillator step, inelastic seat and stop, curtain area, two-way flow. Damping and Cd are empirical inputs.
+- `EngineLab.ReedValve`: static tip lift = q L^4 / 8EI and free vibration = first cantilever mode (174.702 Hz for the test petal), both within 1e-6; seat, stop, window, refusal of a bad petal. On the RD350 at WOT the petals let 10.5 g back in 1.5 s and move the air 56.4 -> 51.1 g/s, where the check valve lets nothing back (the test fails without the model). Files round-trip (`EngineLab.TwoStroke`).
+- Not validated against a measured lift: Fleck SAE 972738, Hinds & Blair SAE 780766 and the Belfast camera data are paywalled; Ortenzi & Bossaglia's data "unavailable due to restrictions". No catalogue engine has petals (no sourced dimensions).
+- Production: RD350, 2JZ `--step 1000` sweeps byte-identical to phase 2. An illustrative glass-fibre pair (2 x 30 x 25 x 0.30 mm, 20 GPa, zeta 0.05, 8 mm stop, Cd 0.6, not a maker's) on the RD350: torque -3.8 to -13.6 % (2,000-9,000 rpm), delivered VE 0.83 -> 0.73 at 9,000. Cost, `RealtimeBudgetHarness --free-run --seconds 3` at 8,000 rpm, 4 alternating rounds, round 0 discarded, minimum: 1.51 without, 1.67 with (inside the spread).
+- Not done (phase 3b): the 1-D duct upstream of the reed; the reed sees the carburettor as an orifice in series with no volume between.
+
 ## 2026-11-25 — Two-stroke phase 2: accuracy profiles and convergence
 
 - Profiles (`--accuracy`, k = 1/2/4/8 on mesh, couplings, crank step, cell ceilings; simulation-model.md): `realtime` is bit-identical (9 sweep CSVs, `IntakeDuctBench`, 2JZ). The old 25 mm floor made a finer mesh bit-identical (`EngineLab.SimulationAccuracy` fails on it: 144 and 144 cells); floor now 10 mm.
