@@ -26,7 +26,8 @@ accuracy profiles and convergence (mesh, step, coupling, each apart); (3) a
 scavenging and combustion; (6) a two-stroke editor; (7) validation against
 the IAME X30 and the KZ of Ortenzi & Bossaglia 2023 where data allow. No
 horsepower target, no correction factor; a blocker is written, never
-invented around. Phase 1 done 2026-11-25 (journal), unpushed, unmerged.
+invented around. Phases 1 and 2 done 2026-11-25 (journal), unpushed,
+unmerged; the production mesh stays as it is unless the owner decides.
 
 **The "Test cell" interface, owner go 2026-11-23 for the whole plan**
 (`feat/test-cell-ui`, off `main`; the web mockup is `ui-mockup/`, untracked):
@@ -279,11 +280,12 @@ whether an exhaust change moved the timbre (`shape`) or only the level
   finite plenum; refine mesh, FV time step and reservoir refresh independently.
 - **Thread barrier**: count the workers, not the items (an 8 h 52 hang already
   happened). Signature: a single core at 100 %, the others idle.
-- **`--exhaust-cell-mm` saturates at 25 mm** (`buildPhysicalExhaustNetwork`
-  clamps to [25, 600] mm; the per-duct cap then bites at 64 cells), so a finer
-  request is bit-identical. The two-stroke mesh converges near 12 mm and
-  production (100 mm) is 18 % below converged -- a real-time budget limit, not
-  a physics one. Do not read a delivery hump off `max(delivered_ve)`: it picks
+- **`--exhaust-cell-mm` alone stops at the cell ceilings** (floor 10 mm since
+  2026-11-25, 25 mm before, when a finer request was bit-identical; 64 cells
+  hold a duct, 1,024 coarsen the whole network): `--accuracy` raises
+  the ceilings with the mesh, and its stderr line says what ran. A two-stroke
+  in real time is 18-27 % under `high-precision`, which is not converged
+  either (order ~1) -- a real-time budget limit, not a physics one. Do not read a delivery hump off `max(delivered_ve)`: it picks
   the lugged through-flow. A four-stroke's idle rides on the 360 mm cells within
   0.3 m of the outlet: ambient oxygen diffuses to the valve (sport 125 2,074 rpm
   for 1,300; refined there, 1,325, but the sound moves: `exp/outlet-mesh`).

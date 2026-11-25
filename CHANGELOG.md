@@ -7,6 +7,20 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **Simulation accuracy profiles for the measuring tools.**
+  `DynoSweepHarness`, `RealtimeBudgetHarness` and `PressureProbeHarness`
+  take `--accuracy realtime|balanced|engineering|high-precision`: one ladder
+  that divides the exhaust and intake meshes, their couplings and the crank
+  step by 1, 2, 4 or 8, and says on stderr what actually ran. `realtime` is
+  the application, bit for bit; the finer ones run slower than real time.
+  The exhaust mesh can now go down to 10 mm (it stopped at 25 mm). New
+  single knobs: `--taper-refine` (finer cones only), `--min-duct-cells`,
+  `--mass-ledger` (the exhaust network's mass balance per point). A
+  `--crank-degrees` finer than the solver allows is now refused with a
+  message instead of exiting silently.
+
 ### Fixed
 
 - **Two-stroke scavenging kept oxygen the cylinder could not hold.** The

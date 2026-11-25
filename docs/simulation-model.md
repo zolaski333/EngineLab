@@ -16,6 +16,42 @@ promised angular resolution at the rev limiter. The solver publishes the
 angular step actually reached and any overshoot; it does not hide an
 under-resolution behind a nominal rate.
 
+### Accuracy profiles
+
+`SimulationAccuracy.hpp` names four resolutions of one ladder: `realtime`,
+`balanced`, `engineering` and `high-precision` divide every resolution by
+k = 1, 2, 4 and 8: the exhaust cell (production 100 mm for a two-stroke,
+360 mm for a four-stroke, floor 10 mm), the exhaust coupling's ceiling
+(125 us), the intake cell (95 mm) and its coupling (330 us), the crank step,
+and the cell ceilings (64 a duct, 1,024 a network, 12 a runner) multiplied by
+k so a finer mesh is not silently coarsened. `high-precision` also couples
+both networks every mechanical substep and halves the Courant number (0.4).
+`realtime` writes nothing: it is production, bit for bit. The crank step stops
+at the solver's 100 kHz ceiling at the rev limit (0.6 deg for the RD350, 0.43
+for the 2JZ), and the report says when it was held there. The application
+always runs `realtime`; the others are for the harnesses (`--accuracy`), and
+`high-precision` runs well under real time. Each knob is also set alone
+(`--exhaust-cell-mm`, `--coupling-us`, `--crank-degrees`, `--taper-refine`,
+`--min-duct-cells`), which is how a convergence study changes one factor.
+
+What a profile is, and is not: a numerical resolution of the same model. It
+changes no physical constant, and the ladder's finest rung is not converged
+either: on the two-strokes the observed order is about 1 (journal
+2026-11-25), so `high-precision` still sits a few percent from the limit.
+The non-uniform mesh (`ExhaustNetworkDiscretisation::taperedDuctRefinement`,
+a finer target on every duct whose end areas differ by more than 1.25) is
+implemented and measured, not used by any profile: cones four times finer
+(the RD350's 42 cells become 82, against 144 for a uniform 25 mm) recover
+most of what the uniform mesh does on the RD350 and about three quarters on
+the V3.
+
+The exhaust mass ledger (`EngineSimulatorOptions::exhaustMassLedger`, off in
+production) checks each coupling advance: the network's mass change against
+what the cylinders put in minus what the outlets took out, and counts the
+exchanges the network refused. `EngineState::exhaustLedgerErrorKg`,
+`exhaustLedgerThroughputKg` and `exhaustRejectedExchangeKg` are cumulative.
+There is no energy ledger yet, nor one for the intake network.
+
 ## Kinematics, pressure and torque
 
 `MechanicalKinematics` solves the slider-crank geometry from the normalised
@@ -1087,9 +1123,10 @@ full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
 
 ## Limitations and interpretation
 
-- two-stroke engines lose about a tenth of their full-load torque at the
-  100 mm real-time exhaust mesh against 25 mm cells (see *Two-stroke
-  engines*);
+- two-stroke engines lose up to 18-27 % of their full-load torque in real
+  time against the `high-precision` profile (journal 2026-11-25), mostly the
+  100 mm exhaust mesh damping the expansion chamber's waves (see *Accuracy
+  profiles* and *Two-stroke engines*); the 2JZ up to 4 %;
 - 0D cylinders and plenums with 1-D finite-volume runners, without CFD or a
   3-D flow at the port;
 - semi-empirical global reaction, turbulence, walls, blow-by, film and knock;

@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 2: accuracy profiles and convergence
+
+- Profiles (`--accuracy`, k = 1/2/4/8 on mesh, couplings, crank step, cell ceilings; simulation-model.md): `realtime` is bit-identical (9 sweep CSVs, `IntakeDuctBench`, 2JZ). The old 25 mm floor made a finer mesh bit-identical (`EngineLab.SimulationAccuracy` fails on it: 144 and 144 cells); floor now 10 mm.
+- `DynoSweepHarness --step 1000`, worst |torque - high-precision| realtime / balanced / engineering: RD350 22.6 / 11.4 / 7.6 %, TS125 18.2 / 10.5 / 5.4, V3 hi 26.7 / 17.8 / 6.7, 2JZ 3.8 / 2.4 / 1.3. Peak kW realtime -> high-precision: RD350 33.5 -> 38.8, V3 49.1 -> 65.7, TS125 5.38 -> 5.32. Median observed order 1.37 / 0.93 / 0.92 (2JZ not monotone): high-precision is not converged either, a few % left.
+- One knob each, worst % against high-precision (RD350 / V3; realtime 22.6 / 26.7): mesh 25 mm 11.0 / 5.8; cones x4 (`--taper-refine 4`, 42 -> 82 cells, 144 at 25 mm) 12.7 / 11.3; >= 4 cells a duct 17.3 / 17.1; coupling 31.25 us 22.3 / 25.9; crank 0.6 / 0.9 deg 21.6 / 27.5. The exhaust mesh is the factor; the coupling and crank step move the worst row by about a point (phase 1's 8 % at 10,000 rpm is one row, not the worst).
+- Waves, `PressureProbeHarness` RD350 8,000 rpm against high-precision: header (101, 130 mm) swing -13.8 / -3.9 / -2.2 %, lag +1.5 / -0.5 / -1.1 deg; belly (104, 65 mm) -20.1 / -18.3 / -1.8 %, +3.2 / -1.7 / -0.65 deg. Numerical damping of the amplitude, not a phase error.
+- Mass ledger (`--mass-ledger`): error <= 1.1e-12 of the mass crossing the network at every profile and rpm, no refused exchange.
+- Cost, `RealtimeBudgetHarness --free-run --seconds 3`, alone, 3 alternating rounds, round 0 discarded, minimum (RD350 8,000 / V3 hi 10,000 rpm): realtime 1.77 / 1.35, balanced 0.74 / 0.64, engineering 0.30 / 0.33, high-precision 0.072 / 0.089, mesh 25 mm 0.49 / 0.50, cones x4 0.79 / 0.72 (their 23 mm cells set the CFL step). 2JZ control 1.68 / 1.74. Nothing finer than production is real time here.
+- Not measured: an energy ledger, the intake network's ledger, intake knobs and Courant alone, a 50 mm mesh alone, other four-strokes, idles at each profile. A finer production mesh is the owner's decision, not taken.
+
 ## 2026-11-25 — Two-stroke phase 1: the scavenging composition, conservation, instruments
 
 - Bug (audit 2026-11-24): the scavenging bias offered the residual at a fixed N2 ratio and at the cylinder's energy density. RD350 at 7,000 rpm WOT broke `N2 = 3.76 (O2 + 12.5/17 burned)` by 17.6 % (perfect mixing: 1.7e-4, pre-existing, not traced); the biased port gas read 41 K and 2.6 % low (1,300 K, 400 kPa).
