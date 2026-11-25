@@ -1,5 +1,6 @@
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/foundation/CatalystMonolithGeometry.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -765,6 +766,111 @@ double combustionPulse(double cylinderPhaseDegrees, double ignitionAdvanceDegree
 
 namespace {
 
+const char* portDischargeMapError(const PortDischargeMap& map) {
+    if (map.empty()) return map.pressureRatios.empty() && map.forwardCd.empty() && map.reverseCd.empty()
+        ? nullptr : "A port discharge map needs its area ratios";
+    const auto ascending = [](const std::vector<double>& axis, double minimum, double maximum) {
+        for (std::size_t index = 0; index < axis.size(); ++index) {
+            if (!std::isfinite(axis[index]) || axis[index] < minimum || axis[index] > maximum) return false;
+            if (index > 0 && !(axis[index] > axis[index - 1])) return false;
+        }
+        return !axis.empty();
+    };
+    const auto coefficients = [&](const std::vector<double>& table) {
+        if (table.size() != map.areaRatios.size() * map.pressureRatios.size()) return false;
+        for (const auto value : table)
+            if (!std::isfinite(value) || value < 0.05 || value > 1.0) return false;
+        return true;
+    };
+    if (!ascending(map.areaRatios, 0.0, 1.0) || !ascending(map.pressureRatios, 1.0, 10.0)
+            || !coefficients(map.forwardCd) || !(map.reverseCd.empty() || coefficients(map.reverseCd)))
+        return "A port discharge map has ascending area ratios within 0-1 and pressure ratios within 1-10, "
+               "and one coefficient within 0.05-1 for each pair, forward and (if given) reverse";
+    return nullptr;
+}
+
+/** A two-stroke's port windows (`TwoStrokePortWindow`), against every
+ *  cylinder's stroke and bore. */
+const char* twoStrokePortWindowsError(const EngineConfig& config) {
+    const auto& ports = config.twoStroke;
+    const auto group = [&](const std::vector<TwoStrokePortWindow>& windows, double groupOpenDegrees,
+                           bool exhaust) -> const char* {
+        if (windows.empty()) return nullptr;
+        if (windows.size() > 12) return "A two-stroke port group has at most 12 windows";
+        auto earliest = windows.front().openDegrees;
+        auto width = 0.0;
+        for (const auto& window : windows) {
+            earliest = std::min(earliest, window.openDegrees);
+            width += window.widthMm;
+            if (!std::isfinite(window.openDegrees) || window.openDegrees < 60.0 || window.openDegrees > 150.0
+                    || !std::isfinite(window.widthMm) || window.widthMm < 1.0 || window.widthMm > 500.0
+                    || !std::isfinite(window.topCornerRadiusMm) || window.topCornerRadiusMm < 0.0
+                    || !std::isfinite(window.bottomCornerRadiusMm) || window.bottomCornerRadiusMm < 0.0
+                    || !(window.dischargeCoefficient == 0.0
+                         || (window.dischargeCoefficient >= 0.3 && window.dischargeCoefficient <= 1.0)))
+                return "A two-stroke port window opens 60-150 deg after TDC, is 1-500 mm wide, has corner radii "
+                       "of 0 or more and a discharge coefficient of 0.3-1 (0: the engine's)";
+            if (window.powerValve && !exhaust) return "Only an exhaust window sits under a power valve";
+            if (2.0 * window.topCornerRadiusMm > window.widthMm || 2.0 * window.bottomCornerRadiusMm > window.widthMm)
+                return "A two-stroke port window's corner radius is at most half its width";
+            for (const auto& cylinder : config.cylinders) {
+                const auto height = cylinder.strokeMm
+                    - pistonTravelMm(cylinder.strokeMm, cylinder.connectingRodMm, window.openDegrees);
+                if (window.topCornerRadiusMm + window.bottomCornerRadiusMm > height + 1.0e-9)
+                    return "A two-stroke port window's corner radii together are at most its height";
+            }
+            if (const auto* mapError = portDischargeMapError(window.dischargeMap)) return mapError;
+        }
+        if (earliest != groupOpenDegrees)
+            return exhaust ? "A two-stroke exhaust port opens with its earliest window: exhaust_port_open_deg "
+                             "must be that window's angle"
+                           : "Two-stroke transfers open with their earliest window: transfer_port_open_deg "
+                             "must be that window's angle";
+        for (const auto& cylinder : config.cylinders)
+            if (width > std::numbers::pi * cylinder.boreMm)
+                return "A two-stroke port group's windows are no wider together than the bore's circumference";
+        return nullptr;
+    };
+    if (const auto* error = group(ports.exhaustWindows, ports.exhaustPortOpenDegrees, true)) return error;
+    if (const auto* error = group(ports.transferWindows, ports.transferPortOpenDegrees, false)) return error;
+    if ((!ports.exhaustWindows.empty() && ports.exhaustPortWidthMm != 0.0)
+            || (!ports.transferWindows.empty() && ports.transferPortWidthMm != 0.0))
+        return "A two-stroke port group with windows takes its width from them: its own width must be 0";
+    for (const auto& window : ports.exhaustWindows)
+        if (window.duct != 0) return "An exhaust window has no transfer duct: its duct is 0";
+    if (ports.transferDucts.empty()) {
+        for (const auto& window : ports.transferWindows)
+            if (window.duct != 0) return "A transfer window names a duct the engine does not have";
+    } else {
+        if (ports.transferWindows.empty())
+            return "Two-stroke transfer ducts need transfer windows to feed";
+        if (ports.transferDucts.size() > maximumTwoStrokeTransferDucts)
+            return "A two-stroke cylinder has at most 6 transfer ducts";
+        for (const auto& duct : ports.transferDucts)
+            if (!std::isfinite(duct.lengthMm) || duct.lengthMm < 10.0 || duct.lengthMm > 500.0
+                    || !std::isfinite(duct.crankcaseAreaMm2) || duct.crankcaseAreaMm2 < 20.0
+                    || duct.crankcaseAreaMm2 > 20'000.0
+                    || !std::isfinite(duct.portAreaMm2) || duct.portAreaMm2 < 20.0 || duct.portAreaMm2 > 20'000.0)
+                return "A two-stroke transfer duct is 10-500 mm long, its areas at the crankcase and behind its "
+                       "windows 20-20,000 mm2";
+        for (std::size_t duct = 0; duct < ports.transferDucts.size(); ++duct) {
+            auto fed = false;
+            for (const auto& window : ports.transferWindows) {
+                if (window.duct >= ports.transferDucts.size())
+                    return "A transfer window names a duct the engine does not have";
+                fed = fed || window.duct == duct;
+            }
+            if (!fed) return "Every two-stroke transfer duct feeds at least one window";
+        }
+    }
+    if (hasPowerValve(ports) && !ports.exhaustWindows.empty()) {
+        auto valved = false;
+        for (const auto& window : ports.exhaustWindows) valved = valved || window.powerValve;
+        if (!valved) return "A power valve over windowed exhaust ports needs at least one window under it";
+    }
+    return nullptr;
+}
+
 /** `repairs` non-null: `config` is a mutable object, and a finite value
  *  outside its range that is one of its own members (a scalar of the engine
  *  or of a part it holds by value, not an element of a list) is clamped into
@@ -826,6 +932,7 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
             return "Two-stroke port widths are 5-500 mm (0: from the bore), their discharge coefficient 0.3-1, "
                    "the crankcase compression ratio 1.1-2.5, the scavenging loop 0.5-4 x bore "
                    "(0: a perfectly mixed cylinder)";
+        if (const auto* windowError = twoStrokePortWindowsError(config)) return windowError;
         if (ports.powerValveClosedExhaustPortOpenDegrees != 0.0
                 && (!inRange(ports.powerValveClosedExhaustPortOpenDegrees, ports.exhaustPortOpenDegrees + 1.0,
                         ports.transferPortOpenDegrees - 4.0)
@@ -837,6 +944,21 @@ std::optional<std::string> validateOrRepair(const EngineConfig& config, std::vec
                 && (!inRange(ports.intakePortOpenDegreesBtdc, 30.0, 110.0) || !widthOk(ports.intakePortWidthMm)))
             return "A two-stroke cylinder intake port opens 30-110 deg before TDC and is 5-500 mm wide "
                    "(0: from the bore)";
+        if (const auto* reedError = reedValveConfigError(ports.reed)) return reedError;
+        if (hasDynamicReed(ports.reed) && ports.intake == TwoStrokeIntake::cylinderPort
+                && !ports.intakePortReed)
+            return "Reed petals need a reed: a cylinder port without one has no petals";
+        if (ports.inletTractLengthMm != 0.0) {
+            const auto slideMm = ports.inletTractSlideFromReedMm;
+            if (!inRange(ports.inletTractLengthMm, 40.0, 2'000.0)
+                    || !(ports.inletTractDiameterMm == 0.0 || inRange(ports.inletTractDiameterMm, 5.0, 200.0))
+                    || !(slideMm == 0.0 || inRange(slideMm, 15.0, ports.inletTractLengthMm - 15.0)))
+                return "A two-stroke inlet tract is 40-2,000 mm long and 5-200 mm in bore (0: the carburettor's), "
+                       "its slide at least 15 mm from either end (0: half way)";
+            const auto reedFitted = ports.intake == TwoStrokeIntake::crankcaseReed || ports.intakePortReed;
+            if (reedFitted && !hasDynamicReed(ports.reed))
+                return "A two-stroke inlet tract needs reed petals: a perfect check valve gives its duct no area";
+        }
         for (const auto& path : config.intakePaths) {
             if (path.cylinderIds.size() != 1)
                 return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";

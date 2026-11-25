@@ -431,6 +431,11 @@ public:
     [[nodiscard]] std::size_t intakeWorkerCount() const noexcept {
         return simulator_.intakeWorkerCount();
     }
+    /** The exhaust mesh construction compiled (EngineSimulator::exhaustLayout);
+     * fixed at construction, so any thread may read it. */
+    [[nodiscard]] const gasdynamics::ExhaustNetworkLayout& exhaustLayout() const noexcept {
+        return simulator_.exhaustLayout();
+    }
     [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> calibrationStore() const noexcept {
         return ecu_.calibrationStore();
     }

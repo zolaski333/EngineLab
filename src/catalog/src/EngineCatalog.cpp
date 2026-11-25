@@ -1082,6 +1082,61 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(ports, "intake_port_open_deg_btdc", config.twoStroke.intakePortOpenDegreesBtdc);
         assignIfPresent(ports, "intake_port_width_mm", config.twoStroke.intakePortWidthMm);
         assignIfPresent(ports, "intake_port_reed", config.twoStroke.intakePortReed);
+        if (const auto node = ports["reed"]) {
+            auto& reed = config.twoStroke.reed;
+            assignIfPresent(node, "petals", reed.petalCount);
+            assignIfPresent(node, "free_length_mm", reed.freeLengthMm);
+            assignIfPresent(node, "width_mm", reed.widthMm);
+            assignIfPresent(node, "thickness_mm", reed.thicknessMm);
+            assignIfPresent(node, "youngs_modulus_gpa", reed.youngsModulusGpa);
+            assignIfPresent(node, "density_kg_m3", reed.densityKgPerM3);
+            assignIfPresent(node, "damping_ratio", reed.dampingRatio);
+            assignIfPresent(node, "stop_lift_mm", reed.stopLiftMm);
+            assignIfPresent(node, "window_area_mm2", reed.windowAreaMm2);
+            assignIfPresent(node, "discharge_coefficient", reed.dischargeCoefficient);
+        }
+        if (const auto node = ports["inlet_tract"]) {
+            assignIfPresent(node, "length_mm", config.twoStroke.inletTractLengthMm);
+            assignIfPresent(node, "diameter_mm", config.twoStroke.inletTractDiameterMm);
+            assignIfPresent(node, "slide_from_reed_mm", config.twoStroke.inletTractSlideFromReedMm);
+        }
+        const auto readWindows = [&ports](const char* key, std::vector<TwoStrokePortWindow>& windows) {
+            const auto list = ports[key];
+            if (!list) return;
+            windows.clear();
+            for (const auto& node : list) {
+                TwoStrokePortWindow window;
+                assignIfPresent(node, "open_deg", window.openDegrees);
+                assignIfPresent(node, "width_mm", window.widthMm);
+                assignIfPresent(node, "top_corner_radius_mm", window.topCornerRadiusMm);
+                assignIfPresent(node, "bottom_corner_radius_mm", window.bottomCornerRadiusMm);
+                assignIfPresent(node, "power_valve", window.powerValve);
+                assignIfPresent(node, "discharge_coefficient", window.dischargeCoefficient);
+                assignIfPresent(node, "duct", window.duct);
+                if (const auto map = node["discharge_map"]) {
+                    const auto vector = [&map](const char* name) {
+                        return map[name] ? map[name].as<std::vector<double>>() : std::vector<double> {};
+                    };
+                    window.dischargeMap.areaRatios = vector("area_ratios");
+                    window.dischargeMap.pressureRatios = vector("pressure_ratios");
+                    window.dischargeMap.forwardCd = vector("forward_cd");
+                    window.dischargeMap.reverseCd = vector("reverse_cd");
+                }
+                windows.push_back(std::move(window));
+            }
+        };
+        readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
+        readWindows("transfer_windows", config.twoStroke.transferWindows);
+        if (const auto ducts = ports["transfer_ducts"]) {
+            config.twoStroke.transferDucts.clear();
+            for (const auto& node : ducts) {
+                TwoStrokeTransferDuct duct;
+                assignIfPresent(node, "length_mm", duct.lengthMm);
+                assignIfPresent(node, "crankcase_area_mm2", duct.crankcaseAreaMm2);
+                assignIfPresent(node, "port_area_mm2", duct.portAreaMm2);
+                config.twoStroke.transferDucts.push_back(duct);
+            }
+        }
     }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);

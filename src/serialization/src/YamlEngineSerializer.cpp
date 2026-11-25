@@ -895,6 +895,67 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                 << YAML::Key << "intake_port_open_deg_btdc" << YAML::Value << config.twoStroke.intakePortOpenDegreesBtdc
                 << YAML::Key << "intake_port_width_mm" << YAML::Value << config.twoStroke.intakePortWidthMm
                 << YAML::Key << "intake_port_reed" << YAML::Value << config.twoStroke.intakePortReed;
+        // Only authored petals: a check-valve reed's file is unchanged.
+        if (hasDynamicReed(config.twoStroke.reed)) {
+            const auto& reed = config.twoStroke.reed;
+            out << YAML::Key << "reed" << YAML::Value << YAML::BeginMap
+                << YAML::Key << "petals" << YAML::Value << reed.petalCount
+                << YAML::Key << "free_length_mm" << YAML::Value << reed.freeLengthMm
+                << YAML::Key << "width_mm" << YAML::Value << reed.widthMm
+                << YAML::Key << "thickness_mm" << YAML::Value << reed.thicknessMm
+                << YAML::Key << "youngs_modulus_gpa" << YAML::Value << reed.youngsModulusGpa
+                << YAML::Key << "density_kg_m3" << YAML::Value << reed.densityKgPerM3
+                << YAML::Key << "damping_ratio" << YAML::Value << reed.dampingRatio
+                << YAML::Key << "stop_lift_mm" << YAML::Value << reed.stopLiftMm
+                << YAML::Key << "window_area_mm2" << YAML::Value << reed.windowAreaMm2
+                << YAML::Key << "discharge_coefficient" << YAML::Value << reed.dischargeCoefficient
+                << YAML::EndMap;
+        }
+        // Only an authored inlet tract: an orifice carburettor's file is unchanged.
+        if (config.twoStroke.inletTractLengthMm > 0.0)
+            out << YAML::Key << "inlet_tract" << YAML::Value << YAML::BeginMap
+                << YAML::Key << "length_mm" << YAML::Value << config.twoStroke.inletTractLengthMm
+                << YAML::Key << "diameter_mm" << YAML::Value << config.twoStroke.inletTractDiameterMm
+                << YAML::Key << "slide_from_reed_mm" << YAML::Value << config.twoStroke.inletTractSlideFromReedMm
+                << YAML::EndMap;
+        // Only authored windows: a file with one rectangle per port is unchanged.
+        const auto emitWindows = [&out](const char* key, const std::vector<TwoStrokePortWindow>& windows) {
+            if (windows.empty()) return;
+            out << YAML::Key << key << YAML::Value << YAML::BeginSeq;
+            for (const auto& window : windows) {
+                out << YAML::BeginMap
+                    << YAML::Key << "open_deg" << YAML::Value << window.openDegrees
+                    << YAML::Key << "width_mm" << YAML::Value << window.widthMm
+                    << YAML::Key << "top_corner_radius_mm" << YAML::Value << window.topCornerRadiusMm
+                    << YAML::Key << "bottom_corner_radius_mm" << YAML::Value << window.bottomCornerRadiusMm
+                    << YAML::Key << "power_valve" << YAML::Value << window.powerValve
+                    << YAML::Key << "discharge_coefficient" << YAML::Value << window.dischargeCoefficient
+                    << YAML::Key << "duct" << YAML::Value << window.duct;
+                if (!window.dischargeMap.empty()) {
+                    const auto& map = window.dischargeMap;
+                    out << YAML::Key << "discharge_map" << YAML::Value << YAML::BeginMap
+                        << YAML::Key << "area_ratios" << YAML::Value << YAML::Flow << map.areaRatios
+                        << YAML::Key << "pressure_ratios" << YAML::Value << YAML::Flow << map.pressureRatios
+                        << YAML::Key << "forward_cd" << YAML::Value << YAML::Flow << map.forwardCd
+                        << YAML::Key << "reverse_cd" << YAML::Value << YAML::Flow << map.reverseCd
+                        << YAML::EndMap;
+                }
+                out << YAML::EndMap;
+            }
+            out << YAML::EndSeq;
+        };
+        emitWindows("exhaust_windows", config.twoStroke.exhaustWindows);
+        emitWindows("transfer_windows", config.twoStroke.transferWindows);
+        if (!config.twoStroke.transferDucts.empty()) {
+            out << YAML::Key << "transfer_ducts" << YAML::Value << YAML::BeginSeq;
+            for (const auto& duct : config.twoStroke.transferDucts)
+                out << YAML::BeginMap
+                    << YAML::Key << "length_mm" << YAML::Value << duct.lengthMm
+                    << YAML::Key << "crankcase_area_mm2" << YAML::Value << duct.crankcaseAreaMm2
+                    << YAML::Key << "port_area_mm2" << YAML::Value << duct.portAreaMm2
+                    << YAML::EndMap;
+            out << YAML::EndSeq;
+        }
         out << YAML::EndMap;
     }
     out << YAML::EndMap << YAML::EndMap;
@@ -1036,6 +1097,61 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text,
             config.twoStroke.intakePortOpenDegreesBtdc = ports["intake_port_open_deg_btdc"].as<double>(config.twoStroke.intakePortOpenDegreesBtdc);
             config.twoStroke.intakePortWidthMm = ports["intake_port_width_mm"].as<double>(config.twoStroke.intakePortWidthMm);
             config.twoStroke.intakePortReed = ports["intake_port_reed"].as<bool>(config.twoStroke.intakePortReed);
+            if (const auto node = ports["reed"]) {
+                auto& reed = config.twoStroke.reed;
+                reed.petalCount = node["petals"].as<int>(reed.petalCount);
+                reed.freeLengthMm = node["free_length_mm"].as<double>(reed.freeLengthMm);
+                reed.widthMm = node["width_mm"].as<double>(reed.widthMm);
+                reed.thicknessMm = node["thickness_mm"].as<double>(reed.thicknessMm);
+                reed.youngsModulusGpa = node["youngs_modulus_gpa"].as<double>(reed.youngsModulusGpa);
+                reed.densityKgPerM3 = node["density_kg_m3"].as<double>(reed.densityKgPerM3);
+                reed.dampingRatio = node["damping_ratio"].as<double>(reed.dampingRatio);
+                reed.stopLiftMm = node["stop_lift_mm"].as<double>(reed.stopLiftMm);
+                reed.windowAreaMm2 = node["window_area_mm2"].as<double>(reed.windowAreaMm2);
+                reed.dischargeCoefficient = node["discharge_coefficient"].as<double>(reed.dischargeCoefficient);
+            }
+            if (const auto node = ports["inlet_tract"]) {
+                config.twoStroke.inletTractLengthMm = node["length_mm"].as<double>(config.twoStroke.inletTractLengthMm);
+                config.twoStroke.inletTractDiameterMm = node["diameter_mm"].as<double>(config.twoStroke.inletTractDiameterMm);
+                config.twoStroke.inletTractSlideFromReedMm = node["slide_from_reed_mm"].as<double>(config.twoStroke.inletTractSlideFromReedMm);
+            }
+            const auto readWindows = [&ports](const char* key, std::vector<TwoStrokePortWindow>& windows) {
+                const auto list = ports[key];
+                if (!list) return;
+                windows.clear();
+                for (const auto& node : list) {
+                    TwoStrokePortWindow window;
+                    window.openDegrees = node["open_deg"].as<double>(window.openDegrees);
+                    window.widthMm = node["width_mm"].as<double>(window.widthMm);
+                    window.topCornerRadiusMm = node["top_corner_radius_mm"].as<double>(window.topCornerRadiusMm);
+                    window.bottomCornerRadiusMm = node["bottom_corner_radius_mm"].as<double>(window.bottomCornerRadiusMm);
+                    window.powerValve = node["power_valve"].as<bool>(window.powerValve);
+                    window.dischargeCoefficient = node["discharge_coefficient"].as<double>(window.dischargeCoefficient);
+                    window.duct = node["duct"].as<std::uint32_t>(window.duct);
+                    if (const auto map = node["discharge_map"]) {
+                        const auto vector = [&map](const char* name) {
+                            return map[name] ? map[name].as<std::vector<double>>() : std::vector<double> {};
+                        };
+                        window.dischargeMap.areaRatios = vector("area_ratios");
+                        window.dischargeMap.pressureRatios = vector("pressure_ratios");
+                        window.dischargeMap.forwardCd = vector("forward_cd");
+                        window.dischargeMap.reverseCd = vector("reverse_cd");
+                    }
+                    windows.push_back(std::move(window));
+                }
+            };
+            readWindows("exhaust_windows", config.twoStroke.exhaustWindows);
+            readWindows("transfer_windows", config.twoStroke.transferWindows);
+            if (const auto ducts = ports["transfer_ducts"]) {
+                config.twoStroke.transferDucts.clear();
+                for (const auto& node : ducts) {
+                    TwoStrokeTransferDuct duct;
+                    duct.lengthMm = node["length_mm"].as<double>(duct.lengthMm);
+                    duct.crankcaseAreaMm2 = node["crankcase_area_mm2"].as<double>(duct.crankcaseAreaMm2);
+                    duct.portAreaMm2 = node["port_area_mm2"].as<double>(duct.portAreaMm2);
+                    config.twoStroke.transferDucts.push_back(duct);
+                }
+            }
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

@@ -16,6 +16,42 @@ promised angular resolution at the rev limiter. The solver publishes the
 angular step actually reached and any overshoot; it does not hide an
 under-resolution behind a nominal rate.
 
+### Accuracy profiles
+
+`SimulationAccuracy.hpp` names four resolutions of one ladder: `realtime`,
+`balanced`, `engineering` and `high-precision` divide every resolution by
+k = 1, 2, 4 and 8: the exhaust cell (production 100 mm for a two-stroke,
+360 mm for a four-stroke, floor 10 mm), the exhaust coupling's ceiling
+(125 us), the intake cell (95 mm) and its coupling (330 us), the crank step,
+and the cell ceilings (64 a duct, 1,024 a network, 12 a runner) multiplied by
+k so a finer mesh is not silently coarsened. `high-precision` also couples
+both networks every mechanical substep and halves the Courant number (0.4).
+`realtime` writes nothing: it is production, bit for bit. The crank step stops
+at the solver's 100 kHz ceiling at the rev limit (0.6 deg for the RD350, 0.43
+for the 2JZ), and the report says when it was held there. The application
+always runs `realtime`; the others are for the harnesses (`--accuracy`), and
+`high-precision` runs well under real time. Each knob is also set alone
+(`--exhaust-cell-mm`, `--coupling-us`, `--crank-degrees`, `--taper-refine`,
+`--min-duct-cells`), which is how a convergence study changes one factor.
+
+What a profile is, and is not: a numerical resolution of the same model. It
+changes no physical constant, and the ladder's finest rung is not converged
+either: on the two-strokes the observed order is about 1 (journal
+2026-11-25), so `high-precision` still sits a few percent from the limit.
+The non-uniform mesh (`ExhaustNetworkDiscretisation::taperedDuctRefinement`,
+a finer target on every duct whose end areas differ by more than 1.25) is
+implemented and measured, not used by any profile: cones four times finer
+(the RD350's 42 cells become 82, against 144 for a uniform 25 mm) recover
+most of what the uniform mesh does on the RD350 and about three quarters on
+the V3.
+
+The exhaust mass ledger (`EngineSimulatorOptions::exhaustMassLedger`, off in
+production) checks each coupling advance: the network's mass change against
+what the cylinders put in minus what the outlets took out, and counts the
+exchanges the network refused. `EngineState::exhaustLedgerErrorKg`,
+`exhaustLedgerThroughputKg` and `exhaustRejectedExchangeKg` are cumulative.
+There is no energy ledger yet, nor one for the intake network.
+
 ## Kinematics, pressure and torque
 
 `MechanicalKinematics` solves the slider-crank geometry from the normalised
@@ -131,12 +167,53 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   dead centre) and are fully open at bottom dead centre. The open area is
   width x uncovered height x `port_discharge_coefficient`; widths default to
   0.65 and 1.30 x bore. No cam, no valve lift (published lifts are zero).
+- **Port windows** (optional, `two_stroke.exhaust_windows`,
+  `transfer_windows`): each window its own opening angle, chord (the wall's
+  arc, Fleck et al.'s wall area, SAE 2003-32-0029), top and bottom corner
+  radii, constant coefficient or discharge map; the group's area is the sum
+  of its windows'. Exact geometry: the rounded window's uncovered area is
+  the closed-form integral of its outline (an independent quadrature agrees
+  within 1e-6, `EngineLab.TwoStrokePortWindows`). One sharp window per group
+  is the rectangle above, bit for bit on the running engine. A power valve
+  lowers only the windows marked under it. The group's angle in the file
+  must be its earliest window's (scavenging window, fine coupling, crankcase
+  fill and the cycle's events read it). Assumptions: every window's bottom
+  is at bottom dead centre; no bridge flow interaction (Fleck et al. measured
+  two adjacent transfers together, not modelled); no jet direction (phase 5).
+- **Port discharge maps** (optional, per window): Cd against the area ratio
+  (open over fully open) and the static pressure ratio, one table each way,
+  bilinear and held at the edges. The pressure ratio is the last exchange's
+  (cylinder against the duct's port cell), one substep behind. **No map is
+  shipped**: the measured maps (Fleck et al., SAE 2003-32-0029; Blair,
+  Callender & Mackey, SAE 2001-01-1798; Fleck & Cartwright, SAE 962534) are
+  paywalled, so a map is the user's measurement, and without one the
+  window's constant coefficient (default 0.72, not sourced) holds.
+- **Transfer ducts** (optional, `two_stroke.transfer_ducts`: length, area at
+  the crankcase, area at the port; each transfer window names its `duct`):
+  each duct is its own 1-D pipe from the crankcase to its windows, so a
+  boost port fed by a short duct and a main pair fed by long ones no longer
+  share one runner. Without ducts the transfers are the one runner they
+  always were (catalogue bit-identical). Each duct is a valve of its own onto
+  the cylinder; for each advance every duct sees the cylinder at its present
+  state, with a share of its volume (and, ahead, of its piston and exhaust
+  rates) in proportion to its open area, and the cylinder takes every duct's
+  exchange after. That share is exact for identical ducts and an assumption
+  otherwise (a duct flowing more than its area's share fills its reservoir
+  too fast). Two half ducts carry what one whole duct does (RD350 at
+  8,000 rpm: air -0.04 %, delivered over metered -0.2 %;
+  `EngineLab.TwoStrokePortWindows`). With ducts, the intake path's runner
+  length and diameter no longer reach the physics. Not modelled: the ducts'
+  bends and their curvature loss, flow between ducts, a duct's own wall heat
+  beyond the runner's law; the flow samples for audio and telemetry read the
+  first duct only.
 - **Crankcase pumping**: each cylinder has its own intake path (validation
   enforces one cylinder per path). That path's plenum is the crankcase: its
   volume follows the piston's underside every substep, adiabatically, between
   `crankcase_compression_ratio` x its bottom-dead-centre volume and that
   volume. The throttle is the carburettor bore with a reed check valve (no
-  flow out of the crankcase), and the runner is the transfer duct. The piston's
+  flow out of the crankcase, unless reed petals are authored: below; a 1-D
+  inlet tract between them is optional, below), and the runner is the
+  transfer duct. The piston's
   underside sees the crankcase pressure, not the ambient.
 - **Intake** (`two_stroke.intake`): `crankcase_reed`, the default, feeds the
   crankcase through the reed whenever it is below the carburettor. A
@@ -151,6 +228,49 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   the reed's 0.88; at 3,000 rpm a 190 deg port delivers 0.88 with a reed and
   0.69 without. The designer gives a sport cylinder port 95 deg BTDC, a road
   one 72 deg.
+- **Reed petals** (optional, `two_stroke.reed`, `ReedValve.hpp`): without
+  them every reed is a perfect check valve, no lift, no inertia, no
+  backflow. With them the block is one mass-spring-damper on its tip lift,
+  the low-order model Dave et al. (SAE 2004-01-1455) found adequate for
+  engine simulation. Validated physics: the spring is the cantilever's tip
+  stiffness under a uniform pressure (8 E I / L^3 for Δp b L) and the mass
+  makes the first bending mode's frequency (beta1 L = 1.8751), both checked
+  against Euler-Bernoulli theory to 1e-6 (`EngineLab.ReedValve`); the
+  oscillator is integrated exactly over each substep. Empirical inputs: the
+  damping ratio and the discharge coefficient (no default: a file without
+  them is refused). Assumptions: the force is the drop across the reed over
+  the petal's face, quasi-static, without jet momentum or preload; the reed's
+  share of the drop in series with the carburettor (and a cylinder port) is
+  that of two incompressible orifices with no volume between them; seat and
+  stop plate stop the petal dead; the flow area is the straight petal's
+  curtain, b x + L x (tip edge and two side triangles), capped by the block's
+  window; gas flows both ways while it is off its seat. **Not validated
+  against a measured reed lift**: the measured lifts (Fleck et al., SAE
+  972738; Hinds & Blair, SAE 780766; the Belfast camera studies) are behind
+  paywalls, and Ortenzi & Bossaglia's (Energies 2023, a two-mode beam with a
+  stop plate) are "unavailable due to restrictions". No catalogue engine has
+  petals: none of their makers' petal dimensions is sourced.
+- **Inlet tract** (optional, `two_stroke.inlet_tract`: `length_mm`,
+  `diameter_mm`, `slide_from_reed_mm`): without it the carburettor is an
+  orifice straight onto the reed, no volume between. With it the tract from
+  the reed to the bellmouth is a 1-D gas network of two ducts (the intake
+  runner's solver, mesh and wall), the slide a restriction between them
+  (bore x its discharge coefficient; open with a bore at least the tract's,
+  it is the plain face), the bellmouth an open end on the airbox or the
+  atmosphere. The reed (petals required: a perfect check valve gives the
+  duct no area) is the duct's valve onto the crankcase, driven by the whole
+  drop from the tract's last cell; a cylinder port sits in series with it.
+  Validated: the reed-shut tract rings at c/4L within 5 % (429 against
+  429 Hz at 200 mm, 214 against 214.5 at 400 mm, `EngineLab.InletTract`).
+  Assumptions: no end correction at the bellmouth (a real one rings 2-4 %
+  lower at these lengths); the slide's metering reads the air across it and
+  the pressure in the tract's reed-side duct; fuel is a species injected at
+  the slide and moves with the gas; fuel spat out of the bellmouth returns
+  through the airbox slug. The tract and petal step at most 20 us inside a
+  mechanical substep: at the 2 deg crank step a single step lost 27 % of the
+  tract's torque at 4,000 rpm against 0.6 deg. Cost: the RD350 with petals
+  runs 1.74 x real time at 8,000 rpm, 1.09 with a tract. No catalogue
+  engine has one (no sourced tract dimensions).
 - **Power valve** (optional): a valve in the exhaust port's roof, Yamaha's
   YPVS and its kind. Shut, it lowers the roof, so the port opens
   `power_valve_closed_exhaust_port_open_deg` after top dead centre instead of
@@ -193,26 +313,50 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   around a 25.6 N.m mean at 5,999 rpm against 6 % spread with the model off
   (journal 2026-10-21). A front does not travel at one instant's orifice
   velocity in any case.
-  The bias is applied to the *composition* the exhaust port offers the 1-D
-  network, not to the port areas: the network reports back exactly the species
-  masses it took and the cylinder is debited those same masses, so species,
-  mass and energy conserve for any composition presented. Only the composition
-  moves -- the energy density is passed through untouched, because pressure and
-  temperature drive the flow and this model says what the gas leaving is, not
-  how much of it leaves. A cylinder holding less burned gas than the fresh
-  charge being held back (cranking, the first cycles) has nothing to displace
-  with, and the bias reduces itself to what the residual can cover. A loop
-  length of zero restores the perfectly mixed cylinder exactly, and a
+  The model says *what* gas leaves, never how much: it acts on the
+  composition the exhaust port offers the 1-D network, not on the port areas.
+  The cylinder's contents when the transfers open are carried as a **residual
+  zone** of species masses (`ScavengeResidualZone`), Benson and Brandham's
+  "original contents": drawn down by gas leaving through either port (its
+  share of the exhaust outflow at its own composition, plus its proportion of
+  the mixed rest; its proportion of any gas pushed back into the transfers),
+  topped up by exhaust gas the pipe pushes back in, and held within the
+  cylinder's own holding by a uniform scale. The port is offered the share
+  `1 - mixedFraction` at the zone's composition and the rest at the mean,
+  built from the cylinder's pressure and temperature
+  (`conservativeFromPressureTemperature`). The network reports back the
+  species masses and energy it took and the cylinder is debited exactly
+  those, so mass, species and energy conserve for any composition offered.
+  The share is capped so that no species can be drawn below zero within one
+  coupling interval (`residualOutflowShare`): that cap, and nothing else, is
+  the end of displacement once the zone is empty. The trapped scavenging
+  efficiency, `1 - zone / cylinder` when the exhaust port shuts, is published
+  as `CylinderState::trappedScavengingEfficiency`.
+  Two errors this replaced (audit 2026-11-24, fixed together, measured
+  apart): the bias re-apportioned the species at a fixed nitrogen ratio, so
+  it expelled the fresh air's nitrogen with the burned gas and trapped oxygen
+  the element balance forbids (the loop-scavenged RD350 at 7,000 rpm broke
+  `N2 = 3.76 (O2 + 12.5/17 burned)` by 17.6 %, now 0.05 %); and it kept the
+  cylinder's energy density for the biased composition, a gas 41 K colder
+  and 2.6 % lower in pressure than the cylinder holds (at 1,300 K, 400 kPa).
+  The composition fix lowered peak power 2.9-6.6 % on the catalogue
+  two-strokes and the V3 designs; the energy fix moved it -1.7 to +2.5 %.
+  What is checked: the zone's functions give perfect displacement and
+  perfect mixing within 1e-3 on a constant-volume cylinder, with the element
+  balance to 1e-13 (`EngineLab.TwoStroke`); the simulated cylinder keeps it
+  within 1e-3 in production. What is assumed: one temperature for the whole
+  cylinder (the zone has no temperature of its own); backflow into the
+  transfers leaves at the mean composition; the share between displacement
+  and mixing comes from the front race above, an approximation with no
+  measured coefficient (Blair's SE-SR curves are not used). A loop length of
+  zero gives the perfectly mixed cylinder (the share is zero), and a
   four-stroke never opens a window, so its exhaust boundary is bit-for-bit
-  unchanged.
-  Measured, one binary with only the loop length changed: the curve moves
-  +2.2 % in the mean and +26 % at 5,752 rpm, where it fills an antiresonance
-  (23.1 -> 29.1 N.m), and less than 1 % below 3,250 or above 7,000. The band is
-  not a tuning. Below it the displacing share is a tenth of the window, so
-  there is almost no bias; above it trapping is already 0.83 and the cap on
-  what the residual can cover binds. It therefore does **not** address torque
-  climbing to the rev limiter: that is trapping which never falls, and the
-  displacing share is monotonic in engine speed by construction.
+  unchanged (2JZ and LS3 sweeps, `IntakeDuctBench` checksums).
+  Measured before the zone, one binary with only the loop length changed:
+  +2.2 % in the mean and +26 % at 5,752 rpm, where it fills an antiresonance,
+  less than 1 % below 3,250 or above 7,000. It does **not** address torque
+  climbing to the rev limiter: the displacing share is monotonic in engine
+  speed by construction.
 - **Carburettor**: the fuel system a two-stroke actually has, what the
   designer fits to every two-stroke it builds, and a choice for a
   four-stroke
@@ -1063,9 +1207,10 @@ full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
 
 ## Limitations and interpretation
 
-- two-stroke engines lose about a tenth of their full-load torque at the
-  100 mm real-time exhaust mesh against 25 mm cells (see *Two-stroke
-  engines*);
+- two-stroke engines lose up to 18-27 % of their full-load torque in real
+  time against the `high-precision` profile (journal 2026-11-25), mostly the
+  100 mm exhaust mesh damping the expansion chamber's waves (see *Accuracy
+  profiles* and *Two-stroke engines*); the 2JZ up to 4 %;
 - 0D cylinders and plenums with 1-D finite-volume runners, without CFD or a
   3-D flow at the port;
 - semi-empirical global reaction, turbulence, walls, blow-by, film and knock;

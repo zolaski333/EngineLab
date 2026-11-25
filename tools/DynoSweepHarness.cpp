@@ -12,7 +12,9 @@
 // settle time can be shorter than a cold measurePoint. Absolutes still come
 // from here, not from the --trace instrument, which changes substep structure.
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/calibration/CalibrationEditing.hpp>
 #include <enginelab/calibration/CalibrationStore.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -22,6 +24,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/simulation/SimulationAccuracy.hpp>
 
 #include <algorithm>
 #include <array>
@@ -32,6 +35,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <numbers>
 #include <optional>
 #include <sstream>
@@ -55,6 +59,28 @@ std::optional<enginelab::calibration::CalibrationDraft> savedCalibration;
 // moves with the speed of sound in it, so this says how hot the gas is where a
 // tuned length is read.
 bool pipeTemperatureReport = false;
+// --scavenging: a two-stroke's gas exchange after each point, on stderr: the
+// trapped scavenging efficiency (Blair's SE), the trapping efficiency (fresh
+// air trapped over fresh air delivered, per cylinder and cycle) and the
+// delivery ratio (delivered_ve), cylinder and frame means over the sample, so
+// a sweep reads as an SE-DR curve against a measured one.
+bool scavengingReport = false;
+// --accuracy: the numerical resolution of every point (SimulationAccuracy.hpp),
+// applied before --exhaust-cell-mm, --crank-degrees and --coupling-us, which
+// then override one knob each. What each engine ran is said on stderr.
+enginelab::AccuracyProfile accuracyProfile = enginelab::AccuracyProfile::realtime;
+// --mass-ledger: keep the exhaust network's mass ledger and say, after each
+// point, its conservation error and the mass of the exchanges a cylinder
+// refused, both over the mass that crossed the network during the point.
+bool massLedgerReport = false;
+// --taper-refine k, --min-duct-cells n: a non-uniform exhaust mesh, the
+// cones k times finer than the rest, no duct under n cells (convergence
+// experiments only; absent leaves the uniform mesh).
+std::optional<double> taperedDuctRefinement;
+std::optional<std::size_t> minimumCellsPerDuct;
+// --intake-cell-mm: the intake ducts' target cell (transfer ducts, runners and a
+// two-stroke's inlet tract), applied after --accuracy (one factor alone).
+std::optional<double> intakeCellMillimetres;
 // --exhaust-port-plateau: the exhaust port's effective area as a fraction of
 // the valve head area (production 0.51), to read a measured flow bench against.
 std::optional<double> exhaustPortPlateauOverride;
@@ -278,6 +304,9 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     std::vector<double> pipeTemperatureSumK;
     std::vector<std::uint32_t> pipeComponentIds;
     auto pipeTemperatureFrames = 0.0;
+    auto scavengingSeAcc = 0.0;
+    auto scavengingTeAcc = 0.0;
+    auto scavengingTeFrames = 0.0;
     // A four-stroke's carburettor meters nothing at full throttle and
     // cranking speed: the venturi's depression is under the jet's lift and the
     // manifold sits at ambient, so it is started shut, as one is in the world.
@@ -372,6 +401,24 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             // The simulator's per-sub-step cycle peak: a per-frame sample of
             // the chamber pressure misses the firing peak.
             peak = std::max(peak, frame.state.peakCylinderPressureBar);
+            if (scavengingReport && frame.state.cylinderStateCount > 0) {
+                auto se = 0.0;
+                auto te = 0.0;
+                auto teCount = 0.0;
+                for (std::size_t c = 0; c < frame.state.cylinderStateCount; ++c) {
+                    const auto& cylinder = frame.state.cylinderStates[c];
+                    se += cylinder.trappedScavengingEfficiency;
+                    if (cylinder.deliveredFreshAirMassMgPerCycle > 0.0) {
+                        te += cylinder.trappedFreshAirMassMg / cylinder.deliveredFreshAirMassMgPerCycle;
+                        teCount += 1.0;
+                    }
+                }
+                scavengingSeAcc += se / static_cast<double>(frame.state.cylinderStateCount);
+                if (teCount > 0.0) {
+                    scavengingTeAcc += te / teCount;
+                    scavengingTeFrames += 1.0;
+                }
+            }
             if (pipeTemperatureReport) {
                 simulator.captureGasFieldNow();
                 std::size_t index = 0;
@@ -391,6 +438,10 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             }
         }
     }
+    if (scavengingReport && n > 0.0)
+        std::cerr << "scavenging " << targetRpm << " se=" << scavengingSeAcc / n
+                  << " te=" << (scavengingTeFrames > 0.0 ? scavengingTeAcc / scavengingTeFrames : 0.0)
+                  << " dr=" << deliveredVeAcc / n << '\n';
     if (pipeTemperatureReport && pipeTemperatureFrames > 0.0) {
         std::cerr << "pipe_temperature_c " << targetRpm;
         for (std::size_t index = 0; index < pipeTemperatureSumK.size(); ++index)
@@ -488,6 +539,12 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
         !useWellMixedExhaustJunctions;
     simulatorOptions.partitionExhaustNetwork = partitionExhaustNetworkOverride;
     simulatorOptions.exhaustMaximumHeadAreaFraction = exhaustPortPlateauOverride;
+    const auto resolution =
+        enginelab::applyAccuracyProfile(accuracyProfile, config, simulatorOptions);
+    if (massLedgerReport) simulatorOptions.exhaustMassLedger = true;
+    if (taperedDuctRefinement) simulatorOptions.exhaustTaperedDuctRefinement = taperedDuctRefinement;
+    if (minimumCellsPerDuct) simulatorOptions.exhaustMinimumCellsPerDuct = minimumCellsPerDuct;
+    if (intakeCellMillimetres) simulatorOptions.intakeTargetCellLengthM = *intakeCellMillimetres * 0.001;
     // A convergence knob, not a setting: an expansion chamber's cones are two
     // or three cells at the production two-stroke mesh, and the shortest
     // element sets the whole network's time step, so a finer mesh costs both
@@ -506,17 +563,32 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
     // A finer step needs the solver's frequency ceiling raised with it: at
     // 1 deg a 10,000 rpm limiter asks 60 kHz, and the refused config aborted
     // the harness.
+    // Past the solver's 100 kHz ceiling the config is refused, and the throw
+    // ended the harness with no word (exit 127, an empty stderr).
     if (crankDegreesPerStep > 0.0) {
+        const auto limitRpm = std::max(config.redlineRpm, config.ignition.revLimitRpm);
+        const auto finestDegrees = limitRpm * 6.0 / enginelab::solverFrequencyCeilingHz;
+        if (crankDegreesPerStep < finestDegrees) {
+            std::cerr << "--crank-degrees " << crankDegreesPerStep << ": " << config.name
+                      << " limits at " << limitRpm << " rpm, where the solver's 100 kHz"
+                         " ceiling allows " << finestDegrees << " deg at the finest\n";
+            std::exit(EXIT_FAILURE);
+        }
         config.solver.maximumCrankDegreesPerStep = crankDegreesPerStep;
         config.solver.maximumMechanicalFrequencyHz = std::clamp(
-            std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0 / crankDegreesPerStep * 1.01,
-            config.solver.maximumMechanicalFrequencyHz, 100'000.0);
+            limitRpm * 6.0 / crankDegreesPerStep * 1.01,
+            config.solver.maximumMechanicalFrequencyHz, enginelab::solverFrequencyCeilingHz);
     }
-    if (couplingMicroseconds > 0.0)
+    if (couplingMicroseconds > 0.0) {
         simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
             couplingMicroseconds * 1.0e-6;
+        simulatorOptions.exhaustCouplingEverySubstep = false;
+    }
     enginelab::EngineSimulator simulator(
         config, ecu, physics, events, exhaust, simulatorOptions);
+    std::cerr << config.name << ": "
+              << enginelab::accuracyReport(resolution, simulatorOptions, config,
+                                           simulator.exhaustLayout()) << '\n';
 
     const double dt = frameSeconds;
     // Cold start and idle briefly before the first hold point.
@@ -547,10 +619,24 @@ SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepR
         // state: `--settle` is the only knob that separates a curve's real
         // shape from the memory each point carries. `--step` cannot do it,
         // because it moves the grid, the first point and the path at once.
+        const auto ledgerBefore = simulator.state();
         const auto sample = holdPoint(simulator, config, target,
             first ? settleSeconds + 3.0 : settleSeconds, sampleSeconds);
         first = false;
         writeRow(std::cout, config, target, sample);
+        if (massLedgerReport) {
+            const auto& after = simulator.state();
+            const auto throughputKg =
+                after.exhaustLedgerThroughputKg - ledgerBefore.exhaustLedgerThroughputKg;
+            std::cerr << "mass ledger at " << target << " rpm: exhaust network error "
+                      << std::setprecision(3) << std::scientific
+                      << (throughputKg > 0.0 ? (after.exhaustLedgerErrorKg
+                              - ledgerBefore.exhaustLedgerErrorKg) / throughputKg : 0.0)
+                      << " of the mass crossing it, refused exchanges "
+                      << (throughputKg > 0.0 ? (after.exhaustRejectedExchangeKg
+                              - ledgerBefore.exhaustRejectedExchangeKg) / throughputKg : 0.0)
+                      << std::fixed << '\n';
+        }
         summary.highestBoostPressureRatio = std::max(
             summary.highestBoostPressureRatio, sample.boostPressureRatio);
         summary.highestTurboSpeedRatio = std::max(
@@ -769,8 +855,25 @@ int main(int argc, char** argv) {
             couplingMicroseconds = std::stod(argv[++index]);
         else if (argument == "--frame-hz" && index + 1 < argc)
             frameSeconds = 1.0 / std::clamp(std::stod(argv[++index]), 30.0, 4'000.0);
+        else if (argument == "--accuracy" && index + 1 < argc) {
+            const auto profile = enginelab::accuracyProfileFromName(argv[++index]);
+            if (!profile) {
+                std::cerr << "--accuracy: realtime, balanced, engineering or high-precision\n";
+                return EXIT_FAILURE;
+            }
+            accuracyProfile = *profile;
+        }
+        else if (argument == "--mass-ledger") massLedgerReport = true;
+        else if (argument == "--taper-refine" && index + 1 < argc)
+            taperedDuctRefinement = std::stod(argv[++index]);
+        else if (argument == "--min-duct-cells" && index + 1 < argc)
+            minimumCellsPerDuct = static_cast<std::size_t>(std::stoul(argv[++index]));
+        else if (argument == "--intake-cell-mm" && index + 1 < argc)
+            intakeCellMillimetres = std::stod(argv[++index]);
         else if (argument == "--exhaust-whole")
             partitionExhaustNetworkOverride = false;
+        else if (argument == "--scavenging")
+            scavengingReport = true;
         else if (argument == "--pipe-temperature")
             pipeTemperatureReport = true;
         else if (argument == "--exhaust-port-plateau" && index + 1 < argc)
@@ -782,9 +885,10 @@ int main(int argc, char** argv) {
                          " [--well-mixed-junctions] [--boost-hold-margin ratio]"
                          " [--add-turbo] [--advance-offset deg] [--octane ron]"
                          " [--settle seconds] [--sample seconds]"
-                         " [--exhaust-cell-mm mm]"
+                         " [--exhaust-cell-mm mm] [--accuracy profile] [--mass-ledger]"
+                         " [--taper-refine k] [--min-duct-cells n] [--intake-cell-mm mm]"
                          " [--crank-degrees deg] [--coupling-us us] [--frame-hz hz]"
-                         " [--exhaust-whole] [--pipe-temperature]"
+                         " [--exhaust-whole] [--pipe-temperature] [--scavenging]"
                          " [--exhaust-port-plateau fraction]\n";
             return EXIT_FAILURE;
         }
@@ -805,6 +909,10 @@ int main(int argc, char** argv) {
     if (schemaOnly) {
         writeHeader(std::cout);
         return EXIT_SUCCESS;
+    }
+    if (!referenceFile.empty() && accuracyProfile != enginelab::AccuracyProfile::realtime) {
+        std::cerr << "--accuracy is a sweep option: --reference-file runs production\n";
+        return EXIT_FAILURE;
     }
     if (!referenceFile.empty())
         return validateReferencePoints(
@@ -864,6 +972,27 @@ int main(int argc, char** argv) {
             if (!engine.forcedInduction.enabled) engine = enginelab::withTurbocharger(engine);
     for (auto& engine : engines)
         for (auto& sample : engine.ignition.timingCurve) sample.advanceDegrees += advanceOffset;
+    // A saved engine on its own ECU tables sparks from the tables, not from
+    // the configuration's curve, so the offset goes on the spark table too:
+    // without it --advance-offset measured the unchanged map (audit
+    // 2026-11-24, finding O-1).
+    if (savedCalibration && advanceOffset != 0.0) {
+        namespace calibration = enginelab::calibration;
+        const auto* found = savedCalibration->find(calibration::keys::ignitionAdvance);
+        if (found == nullptr) {
+            std::cerr << "--advance-offset: the saved ECU has no spark table\n";
+            return EXIT_FAILURE;
+        }
+        auto entry = *found;
+        const auto* table = std::get_if<calibration::CalibrationTable2D>(&entry);
+        std::vector<std::size_t> cells(table != nullptr ? table->values.size() : 1);
+        std::iota(cells.begin(), cells.end(), std::size_t { 0 });
+        (void)calibration::applyCellOperation(entry, cells,
+            calibration::CellOperation::add, advanceOffset);
+        savedCalibration->set(std::move(entry));
+        std::cerr << "--advance-offset: " << advanceOffset << " deg on the saved ECU's "
+                  << cells.size() << " spark cells\n";
+    }
     if (octaneRating > 0.0)
         for (auto& engine : engines) engine.octaneRating = octaneRating;
 

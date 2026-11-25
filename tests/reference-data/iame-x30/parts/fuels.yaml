@@ -1,0 +1,14 @@
+# A copy of the catalogue's pump petrol (parts/fuels.yaml), so this reference
+# root loads on its own. The engine files keep their own octane rating.
+pump_gasoline_95:
+  name: Pump gasoline 95 RON
+  lower_heating_value_mj_per_kg: 43.0
+  density_kg_per_l: 0.745
+  stoichiometric_afr: 14.7
+  molar_mass_g_per_mol: 114.23
+  oxygen_moles_per_fuel_mole: 12.5
+  product_moles_per_fuel_mole: 17.0
+  laminar_flame_speed_mps: 0.38
+  turbulence_flame_speed_gain: 1.55
+  octane_rating: 95
+  latent_heat_kj_per_kg: 350

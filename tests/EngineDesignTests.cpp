@@ -12,6 +12,8 @@
 #include <enginelab/foundation/CrankBalance.hpp>
 #include <enginelab/foundation/CrankTiming.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
+#include <enginelab/foundation/ReedValve.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/RealtimeCapacityProbe.hpp>
@@ -1445,6 +1447,61 @@ void crankEditsOnAnExistingEngine() {
     require(!setVBankAngle(four, 60.0).empty(), "an inline four has no V to open");
 }
 
+/** The two-stroke options of phases 3-4 are offered in the designer's table,
+ *  each off at zero, each refused when it cannot run as asked. */
+void twoStrokeOptionsAreDesigned() {
+    const auto plain = designed(twinTwoStroke());
+    for (const auto* key : { "port_corner_radius_mm", "transfer_duct_count", "reed_petal_count" }) {
+        const auto* value = valueOf(plain, key);
+        require(value && value->value == 0.0 && value->settable, std::string("a two-stroke offers ") + key + ", off");
+    }
+    require(plain.config->twoStroke.exhaustWindows.empty() && plain.config->twoStroke.transferDucts.empty()
+            && !hasDynamicReed(plain.config->twoStroke.reed),
+        "and at zero builds the engine it always built");
+
+    auto rounded = twinTwoStroke();
+    rounded.overrides["port_corner_radius_mm"] = 4.0;
+    const auto windowed = designed(rounded);
+    const auto& ports = windowed.config->twoStroke;
+    require(ports.exhaustWindows.size() == 1 && ports.transferWindows.size() == 1
+            && ports.exhaustWindows.front().topCornerRadiusMm == 4.0
+            && ports.transferWindows.front().bottomCornerRadiusMm == 4.0,
+        "a corner radius rounds each port into one window");
+    require(ports.exhaustWindows.front().powerValve == (ports.powerValveClosedExhaustPortOpenDegrees > 0.0),
+        "the power valve stays over the exhaust window");
+    require(std::abs(transferPortWidthMm(ports, windowed.config->cylinders.front())
+                     - transferPortWidthMm(plain.config->twoStroke, plain.config->cylinders.front())) < 1.0e-9,
+        "with the chord the designer gives");
+
+    auto ducted = twinTwoStroke();
+    ducted.overrides["transfer_duct_count"] = 3.0;
+    const auto three = designed(ducted);
+    require(three.config->twoStroke.transferDucts.size() == 3 && three.config->twoStroke.transferWindows.size() == 3
+            && three.config->twoStroke.transferWindows.back().duct == 2,
+        "three transfer ducts, a window each");
+    const auto* runner = valueOf(three, "intake_runner_length_mm");
+    require(runner && runner->rule.find("not simulated") != std::string::npos,
+        "and the runner says it only sizes them");
+    ducted.overrides["transfer_duct_count"] = 1.0;
+    require(!designEngine(ducted, parts()).config, "one duct is the runner: refused");
+
+    auto petals = twinTwoStroke();
+    petals.overrides["reed_petal_count"] = 4.0;
+    const auto unmeasured = designEngine(petals, parts());
+    require(!unmeasured.config && unmeasured.error.find("damping") != std::string::npos,
+        "petals without a measured damping and discharge coefficient are refused, saying why");
+    petals.overrides["reed_damping_ratio"] = 0.05;
+    petals.overrides["reed_discharge_coefficient"] = 0.6;
+    petals.overrides["inlet_tract_length_mm"] = 130.0;
+    const auto reeded = designed(petals);
+    require(reeded.config->twoStroke.reed.petalCount == 4 && reeded.config->twoStroke.inletTractLengthMm == 130.0
+            && valueOf(reeded, "inlet_tract_slide_from_reed_mm") != nullptr,
+        "with them the reed has petals and the tract its duct");
+    auto stray = twinTwoStroke();
+    stray.overrides["reed_free_length_mm"] = 30.0;
+    require(!designEngine(stray, parts()).config, "a petal size without petals is an unknown value");
+}
+
 int main() {
     crankEditsOnAnExistingEngine();
     crankBalanceMatchesTheTextbook();
@@ -1467,6 +1524,7 @@ int main() {
     enginesOfAnySizeRun();
     realtimeIsChecked();
     rotaryIsDesigned();
+    twoStrokeOptionsAreDesigned();
     std::cout << "engine design tests passed\n";
     return EXIT_SUCCESS;
 }

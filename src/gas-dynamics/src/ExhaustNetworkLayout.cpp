@@ -46,7 +46,9 @@ bool ExhaustNetworkDiscretisation::valid() const noexcept {
         && finite(minimumResolvedLengthM) && minimumResolvedLengthM > 0.0
         && minimumCellsPerDuct >= 1
         && maximumCellsPerDuct >= minimumCellsPerDuct
-        && maximumTotalCells >= minimumCellsPerDuct;
+        && maximumTotalCells >= minimumCellsPerDuct
+        && finite(taperedDuctRefinement) && taperedDuctRefinement >= 1.0
+        && finite(taperAreaRatio) && taperAreaRatio >= 1.0;
 }
 
 ExhaustNetworkLayout ExhaustNetworkLayout::compile(
@@ -229,15 +231,25 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
         elements.emplace(node.id, ElementReference { false, index });
     }
 
-    const auto assignCellCounts = [&layout, &discretisation](double targetLengthM) noexcept {
+    const auto ductTargetM = [&discretisation](const CompiledExhaustDuct& duct,
+                                               double targetLengthM) noexcept {
+        if (!(discretisation.taperedDuctRefinement > 1.0)) return targetLengthM;
+        const auto smaller = std::min(duct.inletFlowAreaM2, duct.outletFlowAreaM2);
+        const auto larger = std::max(duct.inletFlowAreaM2, duct.outletFlowAreaM2);
+        return smaller > 0.0 && larger > discretisation.taperAreaRatio * smaller
+            ? targetLengthM / discretisation.taperedDuctRefinement : targetLengthM;
+    };
+    const auto assignCellCounts = [&layout, &discretisation, &ductTargetM](double targetLengthM) noexcept {
         auto total = std::size_t { 0 };
         for (auto& duct : layout.ducts_) {
-            duct.cellCount = cellsForLength(duct.lengthM, targetLengthM, discretisation);
+            duct.cellCount = cellsForLength(duct.lengthM, ductTargetM(duct, targetLengthM),
+                                            discretisation);
             total += duct.cellCount;
         }
         return total;
     };
     layout.totalCellCount_ = assignCellCounts(discretisation.targetCellLengthM);
+    layout.effectiveTargetCellLengthM_ = discretisation.targetCellLengthM;
     if (layout.totalCellCount_ > discretisation.maximumTotalCells) {
         auto coarsenedTarget = discretisation.targetCellLengthM;
         for (std::size_t iteration = 0;
@@ -246,7 +258,13 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             coarsenedTarget *= 1.35;
             layout.totalCellCount_ = assignCellCounts(coarsenedTarget);
         }
+        layout.effectiveTargetCellLengthM_ = coarsenedTarget;
     }
+    for (const auto& duct : layout.ducts_)
+        if (duct.cellCount == discretisation.maximumCellsPerDuct
+            && std::ceil(duct.lengthM / ductTargetM(duct, layout.effectiveTargetCellLengthM_))
+                > static_cast<double>(discretisation.maximumCellsPerDuct))
+            layout.ductCellCapReached_ = true;
     if (layout.totalCellCount_ > discretisation.maximumTotalCells) {
         layout.diagnostics_.push_back(
             { ExhaustNetworkLayoutIssue::cellBudgetExceeded, 0 });

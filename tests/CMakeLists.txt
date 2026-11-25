@@ -636,6 +636,58 @@ if(TARGET EngineLabDynoSweepHarness)
             --filter no-engine-matches-this)
     set_tests_properties(EngineLab.ToolArguments.DynoReferenceNoMatch PROPERTIES
         WILL_FAIL TRUE)
+    # A saved engine on its own ECU tables takes --advance-offset on its spark
+    # table: the harness used to shift only the configuration's curve, which
+    # the saved tables override, and measured the unchanged map (audit
+    # 2026-11-24, O-1).
+    add_test(NAME EngineLab.ToolArguments.SavedEcuAdvanceSetup
+        COMMAND EngineLabSavedEngineTests --write RD350LC
+            "${CMAKE_BINARY_DIR}/tool-arguments/saved-ecu/rd350.json")
+    set_tests_properties(EngineLab.ToolArguments.SavedEcuAdvanceSetup PROPERTIES
+        FIXTURES_SETUP SavedEcuEngine)
+    add_test(NAME EngineLab.ToolArguments.SavedEcuAdvance
+        COMMAND EngineLabDynoSweepHarness
+            --saved-engine "${CMAKE_BINARY_DIR}/tool-arguments/saved-ecu/rd350.json"
+            --saved-ecu --advance-offset -4 --step 50000 --settle 0.5 --sample 0.25)
+    set_tests_properties(EngineLab.ToolArguments.SavedEcuAdvance PROPERTIES
+        FIXTURES_REQUIRED SavedEcuEngine
+        PASS_REGULAR_EXPRESSION "-4 deg on the saved ECU's [0-9]+ spark cells")
+    # A crank step past the solver's 100 kHz ceiling: the refused config
+    # ended the harness with exit 127 and nothing on stderr (2026-11-25).
+    add_test(NAME EngineLab.ToolArguments.SweepCrankCeiling
+        COMMAND EngineLabDynoSweepHarness --catalog-root "${CMAKE_SOURCE_DIR}"
+            --filter RD350LC --crank-degrees 0.5 --step 50000)
+    set_tests_properties(EngineLab.ToolArguments.SweepCrankCeiling PROPERTIES
+        PASS_REGULAR_EXPRESSION "100 kHz ceiling allows 0.6 deg at the finest")
+endif()
+if(TARGET EngineLabPressureProbeHarness AND TARGET EngineLabDynoSweepHarness)
+    # The pressure probe reads a saved engine on its ECU tables: it read only
+    # the catalogue (audit 2026-11-24, O-3).
+    add_test(NAME EngineLab.ToolArguments.ProbeSavedEngine
+        COMMAND EngineLabPressureProbeHarness
+            --saved-engine "${CMAKE_BINARY_DIR}/tool-arguments/saved-ecu/rd350.json" --saved-ecu
+            --component 104 --position-mm 65 --rpm 6000 --settle 0.5 --sample 0.25 --harmonics 4)
+    set_tests_properties(EngineLab.ToolArguments.ProbeSavedEngine PROPERTIES
+        FIXTURES_REQUIRED SavedEcuEngine
+        PASS_REGULAR_EXPRESSION "probe: saved engine [^\n]+ on its saved ECU tables")
+endif()
+if(TARGET EngineLabPhysicsPerfHarness)
+    # A trace whose engine is not at the speed asked dumps nothing and says
+    # so: one that never caught was dumped as the point (audit 2026-11-24,
+    # O-2). 20,000 rpm is past the RD350's limiter.
+    add_test(NAME EngineLab.ToolArguments.TraceOffTarget
+        COMMAND EngineLabPhysicsPerfHarness --catalog-root "${CMAKE_SOURCE_DIR}"
+            --filter RD350LC --trace 20000 --settle 1)
+    set_tests_properties(EngineLab.ToolArguments.TraceOffTarget PROPERTIES
+        PASS_REGULAR_EXPRESSION "not the 20000 asked. no cycle dumped")
+    # The trace marks the rows on which the intake network was flushed: the
+    # runner columns between two flushes are held values (audit 2026-11-24,
+    # O-4), and a 2 deg-resolved runner wave read off them was a staircase.
+    add_test(NAME EngineLab.ToolArguments.TraceIntakeFlushes
+        COMMAND EngineLabPhysicsPerfHarness --catalog-root "${CMAKE_SOURCE_DIR}"
+            --filter RD350LC --trace 7000 --settle 1)
+    set_tests_properties(EngineLab.ToolArguments.TraceIntakeFlushes PROPERTIES
+        PASS_REGULAR_EXPRESSION "injector_capacity,intake_flushes,scavenging_efficiency")
 endif()
 if(TARGET EngineLabSceneExport)
     # An index that cannot be written (a folder in its place) fails the
@@ -914,6 +966,54 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabTwoStrokeTests)
 add_test(NAME EngineLab.TwoStroke COMMAND EngineLabTwoStrokeTests)
+
+add_executable(EngineLabSimulationAccuracyTests SimulationAccuracyTests.cpp)
+target_link_libraries(EngineLabSimulationAccuracyTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabSimulationAccuracyTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabSimulationAccuracyTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabSimulationAccuracyTests)
+add_test(NAME EngineLab.SimulationAccuracy COMMAND EngineLabSimulationAccuracyTests)
+
+add_executable(EngineLabReedValveTests ReedValveTests.cpp)
+target_link_libraries(EngineLabReedValveTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabReedValveTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabReedValveTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabReedValveTests)
+add_test(NAME EngineLab.ReedValve COMMAND EngineLabReedValveTests)
+
+add_executable(EngineLabInletTractTests InletTractTests.cpp)
+target_link_libraries(EngineLabInletTractTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabInletTractTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabInletTractTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabInletTractTests)
+add_test(NAME EngineLab.InletTract COMMAND EngineLabInletTractTests)
+
+add_executable(EngineLabTwoStrokePortWindowTests TwoStrokePortWindowTests.cpp)
+target_link_libraries(EngineLabTwoStrokePortWindowTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Serialization)
+target_compile_definitions(EngineLabTwoStrokePortWindowTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabTwoStrokePortWindowTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabTwoStrokePortWindowTests)
+add_test(NAME EngineLab.TwoStrokePortWindows COMMAND EngineLabTwoStrokePortWindowTests)
 
 add_executable(EngineLabCatalogRoundTripTests CatalogRoundTripTests.cpp)
 target_link_libraries(EngineLabCatalogRoundTripTests PRIVATE

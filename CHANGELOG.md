@@ -24,6 +24,57 @@ file formats, always with an in-memory migration).
   V4 superbike's airbox has. Switching to individual throttles and back now
   returns to it instead of to a single body.
 
+- **Simulation accuracy profiles for the measuring tools.**
+  `DynoSweepHarness`, `RealtimeBudgetHarness` and `PressureProbeHarness`
+  take `--accuracy realtime|balanced|engineering|high-precision`: one ladder
+  that divides the exhaust and intake meshes, their couplings and the crank
+  step by 1, 2, 4 or 8, and says on stderr what actually ran. `realtime` is
+  the application, bit for bit; the finer ones run slower than real time.
+  The exhaust mesh can now go down to 10 mm (it stopped at 25 mm). New
+  single knobs: `--taper-refine` (finer cones only), `--min-duct-cells`,
+  `--mass-ledger` (the exhaust network's mass balance per point). A
+  `--crank-degrees` finer than the solver allows is now refused with a
+  message instead of exiting silently.
+- **Two-stroke reed petals (optional).** An engine file can describe its
+  reed's petals (`two_stroke.reed`: count, free length, width, thickness,
+  material modulus and density, damping ratio, stop-plate lift, window,
+  discharge coefficient). The reed then lifts, rings and closes late as a
+  cantilever does, and lets gas back out of the crankcase while it is open.
+  Without petals the reed is the perfect check valve it always was, and
+  every engine, catalogue and saved, behaves exactly as before.
+- **Two-stroke inlet tract (optional).** With reed petals, an engine file
+  can describe the tract from the reed to the bellmouth
+  (`two_stroke.inlet_tract`: length, diameter, slide position). Its gas then
+  moves and rings as a pipe does (a quarter wave at c/4L), and the reed sees
+  that wave instead of a carburettor stuck to it. It costs real time: an
+  RD350 with one runs about 1.1 x real time at 8,000 rpm. Without a tract
+  nothing changes.
+- **Two-stroke port windows (optional).** An engine file can list its
+  exhaust and transfer ports window by window (`exhaust_windows`,
+  `transfer_windows`): each its own opening angle, width, rounded corners,
+  discharge coefficient, and if you have measured one, a discharge map
+  against how far it is open and the pressure across it. A boost port that
+  opens a few degrees later, or rounded corners, now change the engine. No
+  measured map ships with EngineLab. Without windows, nothing changes.
+- **Two-stroke transfer ducts (optional).** With windows, an engine file
+  can also give each transfer its own duct from the crankcase
+  (`transfer_ducts`: length and area at each end), and each transfer window
+  says which duct feeds it. A boost port's short duct and the main ports'
+  long ones are then separate pipes with their own waves. Without ducts,
+  nothing changes.
+- **New engine offers the two-stroke options.** A designed two-stroke's
+  table now lists port corner radius, transfer ducts, reed petals and, with
+  petals, an inlet tract, each off at zero. Reed petals ask for their
+  damping and discharge coefficient by hand: no measured default exists.
+  Editing a port's timing or width on the engine moves or scales its
+  windows, and fitting a power valve marks them.
+
+### Changed
+
+- The airbox snorkel's rule in New engine says what it is: it shapes the
+  intake's sound only. The "Fine" exhaust waves option says it applies to
+  four-strokes only.
+
 ### Fixed
 
 - **The pass-by's exhaust points backward.** The trackside microphone heard
@@ -40,6 +91,20 @@ file formats, always with an in-memory migration).
 - The idle could not be set on an engine whose ECU tables were saved before
   the idle target existed: the missing target is now added from the
   engine's defaults.
+- **Two-stroke scavenging kept oxygen the cylinder could not hold.** The
+  exhaust port was offered the residual's composition at a fixed
+  nitrogen ratio, so the fresh air's nitrogen left with the burned gas and
+  the trapped charge kept extra oxygen; and that biased gas was offered at
+  the cylinder's own energy density, about 40 K colder than the cylinder.
+  The cylinder's contents at transfer opening are now tracked as their own
+  zone and leave at the cylinder's pressure and temperature. Two-strokes
+  make 3-7 % less peak power (the RD350-like twin 34.7 -> 32.9 kW); every
+  four-stroke is unchanged, bit for bit.
+- Tools: `DynoSweepHarness --advance-offset` now shifts a saved engine's
+  own spark table with `--saved-ecu`; `PhysicsPerfHarness --trace` starts
+  an engine as the dyno sweep does and refuses to dump a point the engine
+  did not reach, and marks the rows its intake network was flushed on;
+  `PressureProbeHarness` takes `--saved-engine file [--saved-ecu]`.
 
 ## [0.14.1] — 2026-11-23
 

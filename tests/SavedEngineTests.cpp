@@ -768,6 +768,25 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    // `--write <catalogue key> <file>`: a catalogue engine saved with its
+    // generated ECU tables, as the app saves it -- a fixture for the tools'
+    // `--saved-engine --saved-ecu` paths.
+    if (argc == 4 && std::string(argv[1]) == "--write") {
+        const auto shipped = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
+        const auto selected = selectSingleEngineCatalogEntry(shipped.entries, argv[2]);
+        if (!selected) {
+            std::cerr << "--write: no single engine matches " << argv[2] << '\n';
+            return EXIT_FAILURE;
+        }
+        const auto store = defaultStore(selected.entry->config);
+        std::filesystem::create_directories(std::filesystem::path(argv[3]).parent_path());
+        if (const auto error = saveEngine(argv[3], selected.entry->config, store->snapshot().get())) {
+            std::cerr << "--write: " << *error << '\n';
+            return EXIT_FAILURE;
+        }
+        std::cout << "saved " << selected.entry->config.name << " with its ECU tables\n";
+        return 0;
+    }
     checkHPipeSaved();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");

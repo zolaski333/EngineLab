@@ -2370,10 +2370,13 @@ void EngineViewport::updateInspector() {
                                 ports.transferPortOpenDegrees - 4.0);
                             ports.powerValveOpeningStartRpm = 0.60 * edited.redlineRpm;
                             ports.powerValveFullyOpenRpm = 0.85 * edited.redlineRpm;
+                            // Over windows, the blade lowers them all.
+                            for (auto& window : ports.exhaustWindows) window.powerValve = true;
                         } else if (index == 0) {
                             ports.powerValveClosedExhaustPortOpenDegrees = 0.0;
                             ports.powerValveOpeningStartRpm = 0.0;
                             ports.powerValveFullyOpenRpm = 0.0;
+                            for (auto& window : ports.exhaustWindows) window.powerValve = false;
                         }
                     };
                     partChoiceSelects_ = fitted ? render::PartRole::exhaustValve : render::PartRole::powerValve;
@@ -2382,8 +2385,25 @@ void EngineViewport::updateInspector() {
                                   EngineConfig& edited, const std::vector<double>& values) {
                     if (values.size() < (cylinderPort ? 5U : 3U)) return std::string("The ports changed meanwhile.");
                     auto error = ports(edited, values);
+                    // Windows: the timing moves them all, the width scales
+                    // them (a scalar width beside windows is refused).
+                    if (error.empty()) {
+                        auto& edits = edited.twoStroke;
+                        const auto follow = [](std::vector<TwoStrokePortWindow>& windows, double openDegrees) {
+                            if (windows.empty()) return;
+                            auto earliest = windows.front().openDegrees;
+                            for (const auto& window : windows) earliest = std::min(earliest, window.openDegrees);
+                            for (auto& window : windows) window.openDegrees += openDegrees - earliest;
+                        };
+                        follow(edits.exhaustWindows, edits.exhaustPortOpenDegrees);
+                        follow(edits.transferWindows, edits.transferPortOpenDegrees);
+                    }
+                    auto& groupWindows = intake ? edited.twoStroke.transferWindows : edited.twoStroke.exhaustWindows;
+                    if (error.empty() && !groupWindows.empty() && values[2] != widthNow && widthNow > 0.0) {
+                        for (auto& window : groupWindows) window.widthMm *= values[2] / widthNow;
+                    }
                     // Unchanged, a width derived from the bore stays derived.
-                    if (error.empty() && values[2] != widthNow)
+                    if (error.empty() && groupWindows.empty() && values[2] != widthNow)
                         (intake ? edited.twoStroke.transferPortWidthMm : edited.twoStroke.exhaustPortWidthMm) = values[2];
                     if (error.empty() && cylinderPort) {
                         edited.twoStroke.intakePortOpenDegreesBtdc = values[3];
@@ -3331,7 +3351,7 @@ void EngineViewport::showSettingsMenu() {
     menu.addItem(22, utf8("Anti-aliasing (4\xc3\x97 MSAA)"), use3d, settings_.antiAliasing);
     menu.addSectionHeader(utf8("Exhaust waves"));
     menu.addItem(30, utf8("Standard (360 mm cells; two-strokes 100 mm)"), true, !settings_.fineExhaustWaves);
-    menu.addItem(31, utf8("Fine (180 mm cells, slower)"), true, settings_.fineExhaustWaves);
+    menu.addItem(31, utf8("Fine (180 mm cells, slower; four-strokes only)"), true, settings_.fineExhaustWaves);
     menu.addSectionHeader(utf8("Pressure waves (All layer)"));
     menu.addItem(40, utf8("Hidden"), use3d, settings_.pressureWaves == ViewSettings::PressureWaves::hidden);
     menu.addItem(41, utf8("Pulsation strength (steady)"), use3d,

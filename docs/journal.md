@@ -5,6 +5,85 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 7: the IAME X30 senior against its measured curve; the Screamer III stays blocked
+
+- Engine built from the CIK form and OB's exhaust only (`tests/reference-data/iame-x30/`); unsourced values named in its header, none fitted. `--reference-file comparison-points.csv`, production: 4.3 kW at 6,500 rpm (-45 %), 6.7 at 10,500 (-67 %), 5.9 at 12,000 against 21.3 (-72 %).
+- Resolution: `--accuracy engineering` / `high-precision` agree within ~6 %: 11.1 / 11.8 kW at 10,000 rpm, 7.9 / 7.7 at 12,000 (-63 %). The production mesh costs ~45 % at this engine's pipe peak (RD350: 11-15 %); the sim's peak sits at 10,000, the measured at 11,500-12,000.
+- The deficit is delivery: DR 0.37 at 12,000 (engineering); at the model's own output per gram of air 21.3 kW needs DR ~1.0. One factor each, engineering, at 12,000: crankcase ratio 1.50 +22 %, Cd 0.85 +10 %, runner 50 mm -12 %; production: two 11 mm auxiliary exhausts +16 %, a 40 mm carburettor +6 % (the sourced 21 mm tail at 30 mm: +41 %). No unsourced value closes it, so none is changed.
+- TE reads above 1.0 from 12,000 rpm (trapped fresh over delivered): fresh air reaching the cylinder from the pipe, not separated; a straight open pipe gives DR 1.76 at 4,000 rpm (lugged through-flow, not believed).
+- Instrument limits: `PhysicsPerfHarness --trace 12000` stalls at 8,170 rpm (even `--settle 8`) where the sweep holds 12,000: not traced. NaN power at 15,000 in finer profiles is the sweep's dropped-cycle marker.
+- Screamer III: no absolute curve is public (OB Fig. 16 normalised): not compared.
+- Not measured: the junior curve; any spark or mixture against the measured runs (not given).
+
+## 2026-11-25 — Two-stroke phase 6: the designer offers the two-stroke options
+
+- New engine (two-stroke only, each off at zero): `port_corner_radius_mm`, `transfer_duct_count` (2-6, equal ducts of the runner's length and area over N), `reed_petal_count` (petal size from the carburettor bore, stop 0.3 x the free length; damping ratio and Cd must be set by hand, no default, refused otherwise), `inlet_tract_length_mm` (diameter, slide distance). Each shown with its rule; an override of an option left off is refused, not ignored.
+- Nonfunctional labels found and corrected: the snorkel length and diameter were described as intake physics on every engine, they shape the intake's sound only (rule text now says so); the Fine waves menu claimed a finer mesh on two-strokes, where the clamp makes it bit-identical (journal 2026-11-24): label says four-strokes only.
+- The port part editor moves and scales a group's windows (angle, width, power valve) instead of writing a scalar the windows mask.
+- `EngineLab.EngineDesign` covers the options; catalogue engines are not designed, so untouched.
+- Not done: the 3-D render still draws rectangles; the script compiler's port widths beside windows; audio and telemetry flow samples read duct 0 only. Not seen on screen.
+
+## 2026-11-25 — Two-stroke phase 5: multi-zone scavenging and combustion blocked on references; the SE-DR instrument
+
+- What sets them today: the front race's loop length `scavenge_loop_length_ratio` 1.8 x bore (no measured coefficient) and the flame's `chamber_turbulence_intensity_ratio`, 2.0 on the RD350 (calibrated to CA50 9 deg ATDC on the maker's timing, assumed MBT; journal 2026-10-16) and copied by the designer to every two-stroke. Neither is changed: a two-zone short-circuit model or a scavenging-jet turbulence needs coefficients of its own, and fitting them to nothing would be the arbitrary combustion speed the plan forbids.
+- References looked for, none free with a geometry: SE-DR from a single-cycle rig (Sweeney's QUB thesis, OSTI abstract only; Blair's books, sold; Wisconsin DI two-stroke tracer thesis, host refused the connection); a measured two-stroke burn duration (Ortenzi-Bossaglia 2023 use 22 deg BTDC and a Wiebe of their own; "Preliminary heat release analysis in a single-cylinder two-stroke", abstract only).
+- Instrument added: `DynoSweepHarness --scavenging` (SE, TE, DR per point). RD350 `--step 1000`: SE 0.82-0.91, TE 0.45 (2,000 rpm) to 0.77 (9,000), DR 0.73-1.35; at 8,000 rpm TE x DR 0.606 against the trapped VE 0.607 (consistent). Burn angles per cycle: `PhysicsPerfHarness --trace`.
+- Not measured: either curve against a real cylinder.
+
+## 2026-11-25 — Two-stroke phase 4c: transfer ducts, each its own 1-D pipe
+
+- Model (simulation-model.md, *Transfer ducts*): each duct a 1-D pipe crankcase -> its windows, a valve of its own onto the cylinder, the cylinder's volume shared out by open area for the advance (exact for identical ducts, assumed otherwise). Opt-in; the joint intake manifold (every engine's default) carries every duct.
+- First attempt wired only the per-cylinder runner path, which no default engine runs: the test (two half ducts against one whole duct) caught it, delivered over metered 1.324 against 1.368, and a second duct twice as long moved nothing, bit for bit.
+- RD350 at 8,000 rpm: one duct the runner's size 32.54 N.m / 34.183 g/s against the runner's 32.34 / 34.188 (the areas round differently, mm2 -> m2: the held mean's sensitivity, not chased); two half ducts 32.46 / 34.168, delivered over metered 1.3654 against 1.3682; the second duct twice as long 31.62 / 33.72.
+- A whole cylinder volume per duct would let each duct fill a cylinder the others never reach: rejected by construction, not measured.
+- Cost, `RealtimeBudgetHarness --free-run` at 8,000 rpm, interleaved, round 0 discarded, minimum: one window each 1.684, two ducts 1.534 (the 2JZ control 1.66-1.70 just before).
+- Production: RD350, 2JZ and petals RD350 `--step 1000` byte-identical to phase 4a-b. No catalogue engine has ducts.
+
+## 2026-11-25 — Two-stroke phase 4a-b: port windows, corner radii, discharge maps
+
+- Model (simulation-model.md, *Port windows*): each window its angle, chord, top and bottom radii, Cd or map (area ratio x pressure ratio, each way). Rounded area against an independent 200,000-strip quadrature: within 1e-6. One sharp window per group: area and the RD350 held at 8,000 rpm bit-identical to the rectangles (32.3391 N.m, 34.1877 g/s).
+- RD350 at 8,000 rpm, same total chord, one factor each: a boost window (25 % of the chord) 4 deg later, delivered VE 0.843 -> 0.836, torque 32.34 -> 31.97; 5 / 8 mm top radii on transfer / exhaust 0.832, 32.81 N.m; a map halving Cd below 30 % open +0.5 % air (less early backflow into the transfers: not separated).
+- 6 mm radii cut 19 % of a 40 mm window's first millimetre: the early opening the rectangle overstated.
+- No measured map found free: Fleck et al. SAE 2003-32-0029 (3-D maps for each of five transfers and a bridged exhaust, 54 x 54.5 mm), Blair et al. 2001-01-1798, Fleck & Cartwright 962534 paywalled; Kutlar & Malkaz (Energies 2019) cites a regression but MDPI refused the download. No default map ships.
+- Production: RD350, 2JZ and the petals RD350 `--step 1000` byte-identical to phase 3b. No catalogue engine has windows.
+
+## 2026-11-25 — Two-stroke phase 3b: a 1-D inlet tract upstream of the reed
+
+- Model (simulation-model.md, *Inlet tract*): two 1-D ducts reed -> slide -> bellmouth, the slide a restriction, the reed the duct's valve onto the crankcase. Reed-shut ringing, RD350 cranked ignition off, 48 kHz DFT: 429 Hz against c/4L 429 (200 mm), 214 against 214.5 (400 mm); no end correction (a bellmouth: 2-4 % lower).
+- Crank step: one tract step per 2 deg substep lost 27 % of the tract's torque at 4,000 rpm against 0.6 deg; the intake mesh (20 mm), the exhaust mesh (25 mm) and a 31 us coupling did not. Subcycled at <= 20 us (40 us: 15.9 against 22.1 N.m at 4,000 rpm).
+- Illustrative 130 x 26 mm tract, slide at 60 mm, on the petals RD350, `--step 1000`: torque +10.5 to +19 % from 4,000 rpm up (19.99 -> 22.09 at 4,000, 27.26 -> 32.47 at 8,000), the 0.6 deg run within 0.7 points; 2,000-3,000 rpm is inside the crank-step noise (petals alone 22.1 against 17.7 at 2,000 between steps).
+- Cost, `RealtimeBudgetHarness --free-run`, interleaved, round 0 discarded, minimum: 8,000 rpm 1.74 -> 1.09, 4,000 rpm 2.61 -> 1.45 (2JZ control 1.69-1.73). About 2.4 us per network advance.
+- Production: RD350, 2JZ and petals RD350 `--step 1000` byte-identical to phase 3a. No catalogue engine has a tract.
+- Not validated against a measured inlet pressure (none found with its geometry).
+
+## 2026-11-25 — Two-stroke phase 3a: reed petals as one mass-spring-damper
+
+- Before: every reed a perfect check valve (no lift, inertia or backflow). Now optional petals (`two_stroke.reed`, ReedValve.hpp, simulation-model.md): the low-order model Dave et al. (SAE 2004-01-1455) judged adequate; stiffness and mass from Euler-Bernoulli, an exact oscillator step, inelastic seat and stop, curtain area, two-way flow. Damping and Cd are empirical inputs.
+- `EngineLab.ReedValve`: static tip lift = q L^4 / 8EI and free vibration = first cantilever mode (174.702 Hz for the test petal), both within 1e-6; seat, stop, window, refusal of a bad petal. On the RD350 at WOT the petals let 10.5 g back in 1.5 s and move the air 56.4 -> 51.1 g/s, where the check valve lets nothing back (the test fails without the model). Files round-trip (`EngineLab.TwoStroke`).
+- Not validated against a measured lift: Fleck SAE 972738, Hinds & Blair SAE 780766 and the Belfast camera data are paywalled; Ortenzi & Bossaglia's data "unavailable due to restrictions". No catalogue engine has petals (no sourced dimensions).
+- Production: RD350, 2JZ `--step 1000` sweeps byte-identical to phase 2. An illustrative glass-fibre pair (2 x 30 x 25 x 0.30 mm, 20 GPa, zeta 0.05, 8 mm stop, Cd 0.6, not a maker's) on the RD350: torque -3.8 to -13.6 % (2,000-9,000 rpm), delivered VE 0.83 -> 0.73 at 9,000. Cost, `RealtimeBudgetHarness --free-run --seconds 3` at 8,000 rpm, 4 alternating rounds, round 0 discarded, minimum: 1.51 without, 1.67 with (inside the spread).
+- Not done (phase 3b): the 1-D duct upstream of the reed; the reed sees the carburettor as an orifice in series with no volume between.
+
+## 2026-11-25 — Two-stroke phase 2: accuracy profiles and convergence
+
+- Profiles (`--accuracy`, k = 1/2/4/8 on mesh, couplings, crank step, cell ceilings; simulation-model.md): `realtime` is bit-identical (9 sweep CSVs, `IntakeDuctBench`, 2JZ). The old 25 mm floor made a finer mesh bit-identical (`EngineLab.SimulationAccuracy` fails on it: 144 and 144 cells); floor now 10 mm.
+- `DynoSweepHarness --step 1000`, worst |torque - high-precision| realtime / balanced / engineering: RD350 22.6 / 11.4 / 7.6 %, TS125 18.2 / 10.5 / 5.4, V3 hi 26.7 / 17.8 / 6.7, 2JZ 3.8 / 2.4 / 1.3. Peak kW realtime -> high-precision: RD350 33.5 -> 38.8, V3 49.1 -> 65.7, TS125 5.38 -> 5.32. Median observed order 1.37 / 0.93 / 0.92 (2JZ not monotone): high-precision is not converged either, a few % left.
+- One knob each, worst % against high-precision (RD350 / V3; realtime 22.6 / 26.7): mesh 25 mm 11.0 / 5.8; cones x4 (`--taper-refine 4`, 42 -> 82 cells, 144 at 25 mm) 12.7 / 11.3; >= 4 cells a duct 17.3 / 17.1; coupling 31.25 us 22.3 / 25.9; crank 0.6 / 0.9 deg 21.6 / 27.5. The exhaust mesh is the factor; the coupling and crank step move the worst row by about a point (phase 1's 8 % at 10,000 rpm is one row, not the worst).
+- Waves, `PressureProbeHarness` RD350 8,000 rpm against high-precision: header (101, 130 mm) swing -13.8 / -3.9 / -2.2 %, lag +1.5 / -0.5 / -1.1 deg; belly (104, 65 mm) -20.1 / -18.3 / -1.8 %, +3.2 / -1.7 / -0.65 deg. Numerical damping of the amplitude, not a phase error.
+- Mass ledger (`--mass-ledger`): error <= 1.1e-12 of the mass crossing the network at every profile and rpm, no refused exchange.
+- Cost, `RealtimeBudgetHarness --free-run --seconds 3`, alone, 3 alternating rounds, round 0 discarded, minimum (RD350 8,000 / V3 hi 10,000 rpm): realtime 1.77 / 1.35, balanced 0.74 / 0.64, engineering 0.30 / 0.33, high-precision 0.072 / 0.089, mesh 25 mm 0.49 / 0.50, cones x4 0.79 / 0.72 (their 23 mm cells set the CFL step). 2JZ control 1.68 / 1.74. Nothing finer than production is real time here.
+- Not measured: an energy ledger, the intake network's ledger, intake knobs and Courant alone, a 50 mm mesh alone, other four-strokes, idles at each profile. A finer production mesh is the owner's decision, not taken.
+
+## 2026-11-25 — Two-stroke phase 1: the scavenging composition, conservation, instruments
+
+- Bug (audit 2026-11-24): the scavenging bias offered the residual at a fixed N2 ratio and at the cylinder's energy density. RD350 at 7,000 rpm WOT broke `N2 = 3.76 (O2 + 12.5/17 burned)` by 17.6 % (perfect mixing: 1.7e-4, pre-existing, not traced); the biased port gas read 41 K and 2.6 % low (1,300 K, 400 kPa).
+- Fix: an explicit residual zone, held within the cylinder by a uniform scale (a per-species clip left 0.45 %), port state from p and T. N2 balance 4.9e-4; the zone's laws: displacement and mixing within 1e-3 (`EngineLab.TwoStroke`). Trapped SE 0.80-0.83 at 7,000 rpm.
+- Effect, `DynoSweepHarness --step 500`, peak power: RD350 -5.1 %, TS125 x3 -3.0 to -3.5 %, T8 -5.3 %, V3 designs -4.2 / -7.4 %; the composition alone -2.9 to -6.6 %, the p-T state -1.7 to +2.5 % (one temporary binary each). 2JZ, LS3 sweeps and `IntakeDuctBench` bit-identical. RD350 idle and 8,000 rpm gates pass (32.3 N.m, maker 37-40.2).
+- Aggregation: V3 / (3 x cylinder 1) 0.94-0.96 above 8,000 rpm is the design's three different pipes (291/125 mm, 310/185 vs 200/200): with three copies of pipe 1 it is within 2 % from 2,500 to 12,000 rpm (+4.6 % at 12,500, not traced). `--exhaust-whole` moves it < 0.5 %.
+- Found, not fixed (phase 2): the 125 us exhaust coupling costs the V3 up to 8 % of torque at 10,000 rpm against `--coupling-us 20` (single cylinder 9 %, RD350 4 % at 9,000, TS125 < 2 %).
+- Instruments: `--advance-offset` with `--saved-ecu` (16.99 deg with and without -4, now 12.99); trace start (the V3 dumped at 722 rpm for 9,000), off-target refusal, `intake_flushes`; probe `--saved-engine`. Each with a ctest that fails without it.
+- Cost, `RealtimeBudgetHarness --free-run --seconds 8`, 0.14.1 against the branch, 4 alternating rounds, round 0 discarded, minimum: RD350 at 8,000 rpm 1.546 -> 1.525, V3 hi at 10,000 rpm 1.205 -> 1.212, 2JZ control 1.534 -> 1.472 (physics bit-identical: the run-to-run spread is ~4 %). No cost shown within that spread. `ctest -j 4` 118/120; AudioRender and LoadedAccelerationCatalogDfcoResume timed out there and pass alone (134 s, 161 s).
+
 ## 2026-11-24 — Pass-by review: the tailpipe's directivity, the stereo sum's comb
 
 - Owner request ("good but far from perfect"). The trackside microphone is fed by the engine's own microphones, which every catalogue engine authors 3.5-6 m behind the car on the tailpipe's axis (+Y): the exhaust was heard on-axis whether the car came or went. With the observer's own model (one-pole split at ka = 1, high band x sqrt((1 + cos) / 2)) an 82 mm pipe in front of the car is 10 dB down at 4 kHz, 15.7 at 8 kHz, 2.6-2.9 abeam (computed). Now each path's high band takes the pipe's directivity toward it: 20 m either side, 6 kHz 9.78 dB duller coming (model 9.78), 100 Hz 0.02 (`EngineLab.PassByMicrophone`; 0 dB without the fix).
@@ -1328,7 +1407,6 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Separating the two defects this leaves: at convergence the **magnitude is right** (41.5 N·m against the maker's 40.2, +3 %) but the **peak is 1,750 rpm high** (9,751 against 8,000). So geometry/wave timing owns the position and the mesh owns the level. The implied wave speed at the measured peak is `12 x 0.940 x 9,751 / 196` = 561 m/s where the gas there supports 510 — the model's return is about 10 % early, which is the next single factor for position.
 - The level defect is **a real-time budget problem, not a physics one**: the code comment on `productionExhaustCellLengthM` records that 100 mm is the finest mesh that ran in real time on the reference machine and that 75 and 50 mm did not (journal 2026-10-15). Two-stroke torque accuracy is therefore gated by solver speed, which makes the performance pass the unlock for two-stroke accuracy rather than a separate errand.
 - Not measured: the owner's actual instrument. The sweep is 1.58 % jitter at this step and settle, so the "chaotic curves" complaint lives in `DynoMode::continuousRamp`; `EngineLabDynoRuntimeCurveHarness --mode ramp` on the two-stroke against a four-stroke control is next, on an idle host with the shipped clamp restored.
-
 
 ## 2026-10-21 — Two-stroke: the exhaust chamber owns the curve's shape
 

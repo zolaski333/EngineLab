@@ -8,6 +8,8 @@
 #include <optional>
 #include <array>
 
+#include <enginelab/foundation/ReedValve.hpp>
+
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
 inline constexpr std::uint32_t currentEngineSchemaVersion { 9 };
@@ -1349,6 +1351,62 @@ struct AudioVoicingConfig final {
  * transfer duct and its "intake valve" the transfer ports. The exhaust port
  * takes the exhaust valve's place on the exhaust network.
  */
+/** A port's measured discharge coefficient as a function of how far it is
+ *  open and of the pressure ratio across it, each way (Blair's convention:
+ *  the coefficient against the port's geometric wall area, the area ratio
+ *  that area over the fully open one, the pressure ratio upstream over
+ *  downstream static). Bilinear between the rows, held at the edges. Empty:
+ *  the window's constant coefficient. No map is shipped: the measured maps
+ *  (Fleck et al., SAE 2003-32-0029; Blair, Callender & Mackey, SAE
+ *  2001-01-1798) are not public. */
+struct PortDischargeMap final {
+    /** Ascending, within [0, 1]. */
+    std::vector<double> areaRatios;
+    /** Ascending, from 1. */
+    std::vector<double> pressureRatios;
+    /** areaRatios.size() rows of pressureRatios.size(): the flow the port is
+     *  built for (into the cylinder through a transfer, out of it through an
+     *  exhaust). */
+    std::vector<double> forwardCd;
+    /** The other way (back into a transfer duct, back into the cylinder from
+     *  the exhaust); empty: the forward map both ways. */
+    std::vector<double> reverseCd;
+    [[nodiscard]] bool empty() const noexcept { return areaRatios.empty(); }
+    [[nodiscard]] bool operator==(const PortDischargeMap&) const = default;
+};
+
+/** One window of a two-stroke's exhaust or transfer ports, its bottom at
+ *  bottom dead centre: a rectangle of `widthMm` (the wall's arc) whose top
+ *  edge the piston crown uncovers `openDegrees` after top dead centre, with
+ *  its top and bottom corners rounded. */
+struct TwoStrokePortWindow final {
+    double openDegrees { 0.0 };
+    double widthMm { 0.0 };
+    double topCornerRadiusMm { 0.0 };
+    double bottomCornerRadiusMm { 0.0 };
+    /** An exhaust window whose roof the power valve lowers. */
+    bool powerValve { false };
+    /** Zero: the engine's `portDischargeCoefficient`. */
+    double dischargeCoefficient { 0.0 };
+    PortDischargeMap dischargeMap {};
+    /** A transfer window's duct: its index in `TwoStrokeConfig::
+     *  transferDucts` (0 without them). An exhaust window's is 0. */
+    std::uint32_t duct { 0 };
+    [[nodiscard]] bool operator==(const TwoStrokePortWindow&) const = default;
+};
+
+/** One transfer duct from the crankcase to its windows: a 1-D duct of its
+ *  own, `lengthMm` long along its centreline, its flow area going from
+ *  `crankcaseAreaMm2` at the crankcase mouth to `portAreaMm2` behind its
+ *  windows. */
+struct TwoStrokeTransferDuct final {
+    double lengthMm { 0.0 };
+    double crankcaseAreaMm2 { 0.0 };
+    double portAreaMm2 { 0.0 };
+    [[nodiscard]] bool operator==(const TwoStrokeTransferDuct&) const = default;
+};
+inline constexpr std::size_t maximumTwoStrokeTransferDucts = 6;
+
 /** Where a two-stroke's carburettor delivers. */
 enum class TwoStrokeIntake : std::uint8_t {
     /** A reed block on the crankcase (Rotax, Aprilia, most scooters): the
@@ -1373,6 +1431,18 @@ struct TwoStrokeConfig final {
     /** A reed in the cylinder port. Without one the port blows the charge
      *  back through the carburettor whenever the crankcase is above it. */
     bool intakePortReed { true };
+    /** The reed's petals (`ReedValve.hpp`); none: a perfect check valve. */
+    ReedValveConfig reed {};
+    /** The inlet tract, carburettor included, from its bellmouth to the reed
+     *  (or the cylinder port): a 1-D duct whose waves the reed sees. Zero
+     *  length: none, the carburettor an orifice straight into the crankcase.
+     *  It needs reed petals where a reed is fitted (a perfect check valve has
+     *  no area to give the duct). */
+    double inletTractLengthMm { 0.0 };
+    /** Its bore; zero: the carburettor's. */
+    double inletTractDiameterMm { 0.0 };
+    /** Where the carburettor's slide sits, from the reed end; zero: half way. */
+    double inletTractSlideFromReedMm { 0.0 };
     double exhaustPortOpenDegrees { 92.0 };
     double transferPortOpenDegrees { 118.0 };
     /** Zero: 0.65 x bore (one wide window). */
@@ -1380,6 +1450,17 @@ struct TwoStrokeConfig final {
     /** Zero: 1.30 x bore (the transfer windows together). */
     double transferPortWidthMm { 0.0 };
     double portDischargeCoefficient { 0.72 };
+    /** The ports window by window. Empty: one rectangle per group, the
+     *  widths above and the opening angles above. Given, they replace the
+     *  widths (which must then be 0), and the group's opening angle above
+     *  must be its earliest window's (`synchronisePortWindowTimings`). */
+    std::vector<TwoStrokePortWindow> exhaustWindows;
+    std::vector<TwoStrokePortWindow> transferWindows;
+    /** The transfer ducts, each feeding the transfer windows that name it.
+     *  Empty: one duct, the intake path's runner, behind every transfer
+     *  window. Given, they need transfer windows, and the intake path's
+     *  runner length and diameter no longer reach the physics. */
+    std::vector<TwoStrokeTransferDuct> transferDucts;
     /** Crankcase volume at top dead centre over that at bottom dead centre:
      *  1.25-1.5 on a road or race engine. */
     double crankcaseCompressionRatio { 1.35 };
@@ -1841,6 +1922,18 @@ struct CylinderState final {
      *  only; zero on a diesel. */
     double endGasPeakTemperatureK { 0.0 };
     double knockPressureRiseBar { 0.0 };
+    /** Inert (nitrogen) moles in the chamber, beside `oxygenMoles`,
+     *  `fuelMoles` and `burnedMoles` above: with them it closes the element
+     *  balance a regression test holds the scavenged cylinder to. */
+    double inertMoles { 0.0 };
+    /** Two-stroke: the trapped charge's scavenging efficiency (Blair's SE),
+     *  delivered charge kept over trapped mass, latched when the exhaust port
+     *  shut; the residual is what the tracked residual zone still held then.
+     *  Zero on a four-stroke. */
+    double trappedScavengingEfficiency { 0.0 };
+    /** Two-stroke: mass of the previous cycle's gas still in the cylinder
+     *  while the zone is tracked (transfers open to exhaust shut), else 0. */
+    double residualZoneMassMg { 0.0 };
 };
 
 enum class DynoMode : std::uint8_t {
@@ -2025,6 +2118,26 @@ struct EngineState final {
      * above half this frequency cannot be physical.
      */
     double exhaustCouplingFrequencyHz { 0.0 };
+    /** The exhaust network's mass ledger since construction, kept only with
+     * EngineSimulatorOptions::exhaustMassLedger: the sum over coupling
+     * advances of |change of the network's mass - (mass the cylinders put
+     * in - mass the outlets took)|, and of the mass that crossed (in plus
+     * out). Their ratio is the network's conservation error. */
+    double exhaustLedgerErrorKg { 0.0 };
+    double exhaustLedgerThroughputKg { 0.0 };
+    /** Mass of the exhaust exchanges a cylinder refused since construction
+     * (the network moved it, the cylinder could not give or take it, and
+     * `solverResolutionLimited` was raised): mass the coupling did not
+     * conserve. Kept always. */
+    double exhaustRejectedExchangeKg { 0.0 };
+    /** A two-stroke with authored reed petals (ReedValve.hpp): the first
+     * crankcase's reed tip lift, and the mass every reed let back out of its
+     * crankcase since construction. Both 0 with the check valve. */
+    double reedTipLiftMm { 0.0 };
+    double reedBackflowKg { 0.0 };
+    /** A two-stroke with an inlet tract: the static pressure in the tract's
+     * cell at the first crankcase's reed (or port), kPa. 0 without a tract. */
+    double inletTractReedPressureKpa { 0.0 };
     /** Actual intake advances in the last frame, summed across runner networks.
      * Rates use advanced simulation time, rather than the requested cadence. */
     std::uint64_t intakeNetworkAcceptedSubsteps { 0 };

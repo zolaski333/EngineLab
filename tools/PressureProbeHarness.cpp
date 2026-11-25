@@ -15,6 +15,7 @@
 // full scale (AcousticMonitorCalibration).
 #include <enginelab/calibration/CalibrationStore.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -25,6 +26,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/simulation/SimulationAccuracy.hpp>
 
 #include <algorithm>
 #include <array>
@@ -45,6 +47,11 @@ namespace {
 struct Settings final {
     std::filesystem::path catalogRoot { ENGINELAB_CATALOG_ROOT };
     std::string filter;
+    // A saved engine in place of a catalogue one, on its own ECU tables with
+    // `--saved-ecu` (audit 2026-11-24, O-3: only the catalogue could be
+    // probed).
+    std::filesystem::path savedEngine;
+    bool savedEcu { false };
     double rpm { 3'000.0 };
     double throttle { 1.0 };
     std::uint32_t componentId { 0 };
@@ -58,13 +65,18 @@ struct Settings final {
     // simulator's oracle) and the mechanical step's crank angle.
     bool couplingEverySubstep { false };
     double crankDegreesPerStep { 0.0 };
+    // --accuracy: the run's resolution (SimulationAccuracy.hpp), under the
+    // single-knob flags above.
+    enginelab::AccuracyProfile accuracy { enginelab::AccuracyProfile::realtime };
 };
 
 [[noreturn]] void usage() {
-    std::cerr << "usage: EngineLabPressureProbeHarness --filter exact-key --component id"
+    std::cerr << "usage: EngineLabPressureProbeHarness (--filter exact-key | --saved-engine file"
+                 " [--saved-ecu]) --component id"
                  " --position-mm mm [--catalog-root dir] [--rpm rpm] [--throttle 0..1]"
                  " [--exhaust-cell-mm mm] [--settle s] [--sample s] [--harmonics n] [--observer-m m]"
-                 " [--coupling-every-substep] [--crank-degrees deg]\n";
+                 " [--coupling-every-substep] [--crank-degrees deg]"
+                 " [--accuracy realtime|balanced|engineering|high-precision]\n";
     std::exit(EXIT_FAILURE);
 }
 
@@ -78,6 +90,8 @@ Settings parse(int argc, char** argv) {
         };
         if (arg == "--catalog-root") s.catalogRoot = next();
         else if (arg == "--filter") s.filter = next();
+        else if (arg == "--saved-engine") s.savedEngine = next();
+        else if (arg == "--saved-ecu") s.savedEcu = true;
         else if (arg == "--rpm") s.rpm = std::stod(next());
         else if (arg == "--throttle") s.throttle = std::clamp(std::stod(next()), 0.0, 1.0);
         else if (arg == "--component") s.componentId = static_cast<std::uint32_t>(std::stoul(next()));
@@ -89,9 +103,15 @@ Settings parse(int argc, char** argv) {
         else if (arg == "--observer-m") s.observerM = std::stod(next());
         else if (arg == "--coupling-every-substep") s.couplingEverySubstep = true;
         else if (arg == "--crank-degrees") s.crankDegreesPerStep = std::stod(next());
+        else if (arg == "--accuracy") {
+            const auto profile = enginelab::accuracyProfileFromName(next());
+            if (!profile) usage();
+            s.accuracy = *profile;
+        }
         else usage();
     }
-    if (s.filter.empty() || s.componentId == 0 || !(s.rpm > 0.0) || !(s.settleSeconds > 0.0)
+    if (s.filter.empty() == s.savedEngine.empty() || (s.savedEcu && s.savedEngine.empty())
+        || s.componentId == 0 || !(s.rpm > 0.0) || !(s.settleSeconds > 0.0)
         || !(s.sampleSeconds > 0.0) || s.exhaustCellMm < 0.0 || !(s.observerM > 0.0))
         usage();
     return s;
@@ -110,23 +130,55 @@ std::optional<double> componentLengthMm(const enginelab::EngineConfig& config, s
 int main(int argc, char** argv) {
     try {
         const auto settings = parse(argc, argv);
-        auto catalog = enginelab::loadEngineCatalog(settings.catalogRoot);
-        for (const auto& error : catalog.errors) std::cerr << "catalog error: " << error << '\n';
-        const auto selection = enginelab::selectSingleEngineCatalogEntry(catalog.entries, settings.filter);
-        if (!selection) {
-            std::cerr << "filter must name exactly one engine\n";
-            return EXIT_FAILURE;
+        enginelab::EngineConfig config;
+        auto calibrations = std::make_shared<enginelab::calibration::CalibrationStore>();
+        if (!settings.savedEngine.empty()) {
+            auto saved = enginelab::readSavedEngine(settings.savedEngine);
+            if (!saved.engine) {
+                std::cerr << "saved engine: " << saved.error << '\n';
+                return EXIT_FAILURE;
+            }
+            if (settings.savedEcu) {
+                if (!saved.engine->calibration) {
+                    std::cerr << "--saved-ecu: " << settings.savedEngine.string()
+                              << " carries no ECU calibration\n";
+                    return EXIT_FAILURE;
+                }
+                (void)calibrations->publish(*saved.engine->calibration);
+            }
+            config = std::move(saved.engine->config);
+            std::cerr << "probe: saved engine " << config.name
+                      << (settings.savedEcu ? " on its saved ECU tables\n" : "\n");
+        } else {
+            auto catalog = enginelab::loadEngineCatalog(settings.catalogRoot);
+            for (const auto& error : catalog.errors) std::cerr << "catalog error: " << error << '\n';
+            const auto selection = enginelab::selectSingleEngineCatalogEntry(catalog.entries, settings.filter);
+            if (!selection) {
+                std::cerr << "filter must name exactly one engine\n";
+                return EXIT_FAILURE;
+            }
+            config = selection.entry->config;
         }
-        auto config = selection.entry->config;
         enginelab::normaliseEngineConfig(config);
+        enginelab::EngineSimulatorOptions options;
+        const auto resolution =
+            enginelab::applyAccuracyProfile(settings.accuracy, config, options);
         // As DynoSweepHarness --crank-degrees: a finer step raises the
         // solver's frequency ceiling with it.
         if (settings.crankDegreesPerStep > 0.0) {
+            const auto limitRpm = std::max(config.redlineRpm, config.ignition.revLimitRpm);
+            const auto finestDegrees = limitRpm * 6.0 / enginelab::solverFrequencyCeilingHz;
+            if (settings.crankDegreesPerStep < finestDegrees) {
+                std::cerr << "--crank-degrees " << settings.crankDegreesPerStep << ": "
+                          << config.name << " limits at " << limitRpm << " rpm, where the"
+                             " solver's 100 kHz ceiling allows " << finestDegrees
+                          << " deg at the finest\n";
+                return EXIT_FAILURE;
+            }
             config.solver.maximumCrankDegreesPerStep = settings.crankDegreesPerStep;
             config.solver.maximumMechanicalFrequencyHz = std::clamp(
-                std::max(config.redlineRpm, config.ignition.revLimitRpm) * 6.0
-                    / settings.crankDegreesPerStep * 1.01,
-                config.solver.maximumMechanicalFrequencyHz, 100'000.0);
+                limitRpm * 6.0 / settings.crankDegreesPerStep * 1.01,
+                config.solver.maximumMechanicalFrequencyHz, enginelab::solverFrequencyCeilingHz);
         }
         const auto lengthMm = componentLengthMm(config, settings.componentId);
         if (!lengthMm || !(*lengthMm > 0.0)) {
@@ -134,17 +186,17 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
 
-        auto calibrations = std::make_shared<enginelab::calibration::CalibrationStore>();
         enginelab::SimpleEcuModel ecu(calibrations);
         enginelab::SimplifiedGasolinePhysics physics;
         enginelab::FourStrokeEventGenerator events;
         auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-        enginelab::EngineSimulatorOptions options;
         if (settings.exhaustCellMm > 0.0) options.exhaustTargetCellLengthM = settings.exhaustCellMm * 1.0e-3;
+        if (settings.couplingEverySubstep) options.exhaustCouplingEverySubstep = true;
         // EngineRuntime-sized: never on the stack.
         auto simulator = std::make_unique<enginelab::EngineSimulator>(
             config, ecu, physics, events, exhaust, options);
-        simulator->setExhaustCouplingEverySubstep(settings.couplingEverySubstep);
+        std::cerr << "probe: " << enginelab::accuracyReport(resolution, options, config,
+                                                           simulator->exhaustLayout()) << '\n';
 
         constexpr double dt = 1.0 / 240.0;
         for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {

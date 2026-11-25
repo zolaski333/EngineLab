@@ -273,11 +273,12 @@ whether an exhaust change moved the timbre (`shape`) or only the level
   finite plenum; refine mesh, FV time step and reservoir refresh independently.
 - **Thread barrier**: count the workers, not the items (an 8 h 52 hang already
   happened). Signature: a single core at 100 %, the others idle.
-- **`--exhaust-cell-mm` saturates at 25 mm** (`buildPhysicalExhaustNetwork`
-  clamps to [25, 600] mm; the per-duct cap then bites at 64 cells), so a finer
-  request is bit-identical. The two-stroke mesh converges near 12 mm and
-  production (100 mm) is 18 % below converged -- a real-time budget limit, not
-  a physics one. Do not read a delivery hump off `max(delivered_ve)`: it picks
+- **`--exhaust-cell-mm` alone stops at the cell ceilings** (floor 10 mm since
+  2026-11-25, 25 mm before, when a finer request was bit-identical; 64 cells
+  hold a duct, 1,024 coarsen the whole network): `--accuracy` raises
+  the ceilings with the mesh, and its stderr line says what ran. A two-stroke
+  in real time is 18-27 % under `high-precision`, which is not converged
+  either (order ~1) -- a real-time budget limit, not a physics one. Do not read a delivery hump off `max(delivered_ve)`: it picks
   the lugged through-flow. A four-stroke's idle rides on the 360 mm cells within
   0.3 m of the outlet: ambient oxygen diffuses to the valve (sport 125 2,074 rpm
   for 1,300; refined there, 1,325, but the sound moves: `exp/outlet-mesh`).
@@ -326,7 +327,10 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   residual is too low" (a unit error); "the pipe gas is too hot" (418-553 C,
   under a real pipe); the designer's redline from real piston speeds (road
   14.8, sport 17.8 m/s: torque falls as the pipe follows the rpm). A holding band locked to crank speed is
-  first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it.
+  first a frame-rate alias: `DynoSweepHarness --frame-hz` moves it. A
+  multi-cylinder two-stroke below N x its single is not an aggregation error
+  until its pipes are checked identical (a V3's -4 to -6 % was its three
+  different pipes, journal 2026-11-25).
 - **Intake**: four inertance formulations (unstable or out of phase); the charge
   bias as the MUSCL limiter, the finite plenum, wall heat or valve linearisation
   (it was the valve nozzle boundary, Courant-dependent); front-loaded or

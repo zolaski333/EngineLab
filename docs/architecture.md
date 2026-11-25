@@ -321,7 +321,16 @@ flat engines have. A firing order given is kept, on shared pins when they
 allow it; crank offsets give an uneven crank (a 270 deg twin), the cylinders
 they put on one pin sharing it. A radial fires from its single throw. The
 `crank_pins` value says which, and the firing intervals. A two-stroke gets one expansion chamber per cylinder, tuned to its
-peak-power speed. Silencers, gearboxes and vehicles come from the family parts
+peak-power speed, and four options that are off at zero: `port_corner_radius_mm`
+(every port one window, its corners rounded), `transfer_duct_count` (2-6:
+each transfer window its own duct, the runner's length and an equal share of
+its area; the runner's rule then says it only sizes them),
+`reed_petal_count` (petals sized from the IAME X30's homologated block,
+scaled by the carburettor bore; a design with petals is refused until
+`reed_damping_ratio` and `reed_discharge_coefficient` are set by hand, since
+no measured default exists) and, with petals, `inlet_tract_length_mm`. A
+snorkel's rule says it shapes the sound only: the air physics has none.
+Silencers, gearboxes and vehicles come from the family parts
 (`parts/`); a designed engine has the default voicing only.
 
 An engine file may hold `design:` (the spec, same keys) instead of `engine:`;

@@ -108,6 +108,29 @@ struct EngineSimulatorOptions final {
      * 360 mm, 100 mm on a two-stroke). This is a diagnostic/convergence knob:
      * the characteristic audio network still owns audio-band propagation. */
     std::optional<double> exhaustTargetCellLengthM;
+    /** Ceilings of the exhaust mesh: cells in one duct and in the whole
+     * network (ExhaustNetworkDiscretisation). Absent keeps the realtime 64
+     * and 1,024; a finer accuracy profile raises them so that its mesh is
+     * the one it asks for (ExhaustNetworkLayout::effectiveTargetCellLengthM
+     * says whether it was). */
+    std::optional<std::size_t> exhaustMaximumCellsPerDuct;
+    std::optional<std::size_t> exhaustMaximumTotalCells;
+    /** Convergence experiments on a non-uniform mesh
+     * (ExhaustNetworkDiscretisation::taperedDuctRefinement): cones cut this
+     * many times finer, and a floor on the cells of any duct. Absent: 1 and
+     * the realtime 1. */
+    std::optional<double> exhaustTaperedDuctRefinement;
+    std::optional<std::size_t> exhaustMinimumCellsPerDuct;
+    /** Couple the exhaust every mechanical substep from the first step
+     * (setExhaustCouplingEverySubstep). Absent: off. */
+    std::optional<bool> exhaustCouplingEverySubstep;
+    /** Ceiling of the cells in one intake runner. Absent keeps the realtime
+     * 12. */
+    std::optional<std::size_t> intakeMaximumCellsPerRunner;
+    /** Keep the exhaust network's mass ledger (EngineState::
+     * exhaustLedgerErrorKg): two inventory sums per coupling advance.
+     * Absent: off. A diagnostic; it reads the network and changes nothing. */
+    std::optional<bool> exhaustMassLedger;
     /** Diagnostic exhaust Courant number. Absent keeps the production 0.8. */
     std::optional<double> exhaustMaximumCourantNumber;
     /** Diagnostic exhaust time integration: true takes one forward-Euler
@@ -248,6 +271,13 @@ public:
      * expansion chamber needs the finer mesh for its suction and plugging
      * waves (RD350 at 8,000 rpm: 9.8 N.m at 360 mm, 12.3 at 100). */
     [[nodiscard]] static double productionExhaustCellLengthM(const EngineConfig& config) noexcept;
+    /** The finest exhaust cell the simulator cuts, metres: a request below
+     * it is held there (and reads so in exhaustLayout()). */
+    static constexpr double finestExhaustCellLengthM = 0.010;
+    /** The exhaust network's mesh as construction compiled it. */
+    [[nodiscard]] const gasdynamics::ExhaustNetworkLayout& exhaustLayout() const noexcept {
+        return constructionExhaustLayout_;
+    }
     /** The nonlinear exhaust network of `config` built as the simulator builds
      * its own, at `targetCellLengthM` (absent: the construction mesh), for
      * replaceExhaustNetwork(). Null when it does not compile or does not have
@@ -407,6 +437,12 @@ private:
                                                                double subDt) noexcept;
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeRunnerNetwork(
         const EngineConfig& config, std::size_t cylinderIndex) const;
+    /** A two-stroke's inlet tract on one crankcase path (TwoStrokeConfig::
+     *  inletTractLengthMm): duct 0 from the reed (its port) to the slide (a
+     *  restriction, interface 0), duct 1 from the slide to the bellmouth (its
+     *  mouth). Null without a tract. */
+    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildInletTractNetwork(
+        const EngineConfig& config, std::size_t pathIndex) const;
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeManifoldNetwork(
         const EngineConfig& config, std::size_t pathIndex,
         std::array<std::size_t, 32>& runnerDuctIndex,
@@ -649,6 +685,13 @@ private:
      *  fill latched at that closing, which is the charge reference. */
     std::array<double, 32> reedInflowMgThisFill_ {};
     std::array<double, 32> reedInflowMgLastFill_ {};
+    /** Two-stroke with authored reed petals (ReedValve.hpp), per intake
+     *  path: the petal's tip lift and rate, and the mass it let back out of
+     *  the crankcase since construction. */
+    std::array<ReedValveState, 32> reedState_ {};
+    std::array<double, 32> reedBackflowKg_ {};
+    /** Two-stroke inlet tracts, one a crankcase path (buildInletTractNetwork). */
+    std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> inletTractNetworks_;
     std::array<bool, 32> cylinderFlowCycleStarted_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
     /** Time each chamber's ring blow-by has not yet been applied for; see
@@ -700,6 +743,13 @@ private:
         intakeBoundaryStateTimeIntegral_ {};
     std::array<double, 32> intakeBoundaryVolumeTimeIntegralM3S_ {};
     std::array<double, 32> intakeValveConductanceTimeIntegralM2S_ {};
+    /** A two-stroke with its own transfer ducts: each duct's windows'
+     *  conductance integral (the total is the one above), its duct count (1
+     *  without them) and the pressure behind each duct's windows at the last
+     *  exchange, which a window's discharge map reads. */
+    std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> transferDuctConductanceTimeIntegralM2S_ {};
+    std::array<std::size_t, 32> transferDuctCount_ {};
+    std::array<std::array<double, maximumTwoStrokeTransferDucts>, 32> transferDuctPortKpa_ {};
     double intakeCouplingDurationSeconds_ { 0.0 };
     /** Periodic deadline phase, independent of forced valve-closing flushes.
      * Retaining the rounding residual avoids RPM-dependent cadence jumps. */
@@ -915,6 +965,20 @@ private:
      *  step shrinks. Untouched on a four-stroke, where every window reports a
      *  mixed fraction of one and the exhaust boundary is bit-exact unchanged. */
     std::array<TwoStrokeScavengeState, 32> scavengeStates_ {};
+    /** The gas each two-stroke cylinder held when its transfers opened, drawn
+     *  down by what leaves it and topped up by exhaust gas pushed back, until
+     *  the next window (TwoStrokeScavenging.hpp, ScavengeResidualZone). It is
+     *  what the exhaust port displaces, and what the trapped charge's
+     *  scavenging efficiency is measured against at exhaust closure. */
+    std::array<ScavengeResidualZone, 32> scavengeResidualZones_ {};
+    std::array<bool, 32> scavengeResidualZoneTracked_ {};
+    std::array<bool, 32> scavengeExhaustPortWasOpen_ {};
+    /** Time integral of the residual share presented at the exhaust port over
+     *  the current coupling interval, so the zone is drawn by the share the
+     *  network actually saw. */
+    std::array<double, 32> scavengeResidualShareTimeIntegralSeconds_ {};
+    /** Latched at exhaust closure: delivered charge over trapped mass. */
+    std::array<double, 32> trappedScavengingEfficiency_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     /** Unburnt charge a cylinder exhausted at its EVO, emitted as a pocket
      *  once the per-cylinder pass is done (it may run in parallel). */

@@ -4,6 +4,7 @@
 #include <enginelab/foundation/ForcedInductionFlow.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -441,10 +442,10 @@ void fitIntakeStyle(IntakeConfig& intake, IntakeStyle style, bool motorcycle, bo
             const auto boresMm = intake.throttleDiameterMm
                 * std::sqrt(static_cast<double>(std::max(1U, intake.throttleCount)));
             intake.inletDuctLengthMm = derive("inlet_duct_length_mm", "Airbox snorkel length", "mm",
-                snorkel ? 250.0 : 0.0, snorkel ? "the catalogue cars' (200-400 mm)"
+                snorkel ? 250.0 : 0.0, snorkel ? "the catalogue cars' (200-400 mm); it shapes the intake's sound only: the air physics has no snorkel"
                     : "none: a motorcycle's box opens under the tank");
             intake.inletDuctDiameterMm = derive("inlet_duct_diameter_mm", "Airbox snorkel bore", "mm",
-                snorkel ? 1.16 * boresMm : 0.0, snorkel ? "1.35 x the throttles' area, the catalogue cars'"
+                snorkel ? 1.16 * boresMm : 0.0, snorkel ? "1.35 x the throttles' area, the catalogue cars'; sound only, as its length"
                     : "none: the bores' combined area");
             intake.bellmouthDiameterMm = derive("bellmouth_diameter_mm", "Mouth lip", "mm",
                 snorkel ? 1.17 * intake.inletDuctDiameterMm : 0.0,
@@ -1932,6 +1933,99 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
                     chamber.connections.push_back({ base + index, base + index + 1 });
                 path.network = std::move(chamber);
                 path.inheritsGlobalGeometry = false;
+            }
+
+            // Optional, off unless set by hand (docs/simulation-model.md: port
+            // windows, transfer ducts, reed petals, inlet tract). A value at
+            // zero keeps the engine the designer always built.
+            const auto wholeNumber = [](double value, double low, double high, const char* what) {
+                if (value != 0.0 && (value < low || value > high || value != std::round(value)))
+                    throw std::invalid_argument(std::string(what));
+                return static_cast<std::size_t>(std::lround(value));
+            };
+            const auto cornerRadius = derive("port_corner_radius_mm", "Port corner radius", "mm", 0.0,
+                "0: sharp rectangular ports; a radius rounds every port window's corners, top and bottom");
+            const auto ducts = wholeNumber(derive("transfer_duct_count", "Transfer ducts", "", 0.0,
+                "0: one runner feeds every transfer; 2-6: each transfer its own duct, the runner's length, an "
+                "equal share of its area and of the transfer chord"), 2.0,
+                static_cast<double>(maximumTwoStrokeTransferDucts), "Transfer ducts: 0, or a whole number from 2 to 6");
+            if (cornerRadius < 0.0) throw std::invalid_argument("Port corner radius: 0 or more");
+            if (cornerRadius > 0.0 || ducts > 0) {
+                const auto& cylinder = config.cylinders.front();
+                const auto window = [cornerRadius](double openDegrees, double widthMm) {
+                    TwoStrokePortWindow made;
+                    made.openDegrees = openDegrees;
+                    made.widthMm = widthMm;
+                    made.topCornerRadiusMm = cornerRadius;
+                    made.bottomCornerRadiusMm = cornerRadius;
+                    return made;
+                };
+                auto exhaustWindow = window(config.twoStroke.exhaustPortOpenDegrees,
+                    exhaustPortWidthMm(config.twoStroke, cylinder));
+                exhaustWindow.powerValve = config.twoStroke.powerValveClosedExhaustPortOpenDegrees > 0.0;
+                const auto pieces = std::max<std::size_t>(1, ducts);
+                const auto chord = transferPortWidthMm(config.twoStroke, cylinder) / static_cast<double>(pieces);
+                config.twoStroke.transferWindows.clear();
+                for (std::size_t duct = 0; duct < pieces; ++duct) {
+                    config.twoStroke.transferWindows.push_back(window(config.twoStroke.transferPortOpenDegrees, chord));
+                    config.twoStroke.transferWindows.back().duct = ducts > 0 ? static_cast<std::uint32_t>(duct) : 0U;
+                }
+                config.twoStroke.exhaustWindows = { exhaustWindow };
+                config.twoStroke.exhaustPortWidthMm = 0.0;
+                config.twoStroke.transferPortWidthMm = 0.0;
+                if (ducts > 0) {
+                    const auto areaMm2 = std::numbers::pi * 0.25 * config.intake.runnerDiameterMm
+                        * config.intake.runnerDiameterMm / static_cast<double>(ducts);
+                    config.twoStroke.transferDucts.assign(ducts, { config.intake.runnerLengthMm, areaMm2, areaMm2 });
+                    for (auto& value : designed.values)
+                        if (value.key == "intake_runner_length_mm" || value.key == "intake_runner_diameter_mm")
+                            value.rule += "; with transfer ducts it sizes them only (each the runner's length, "
+                                          "an equal share of its area): the runner itself is not simulated";
+                }
+            }
+            // Reed petals: geometry and material from the IAME X30's
+            // homologated block (CIK form 78H: petals 30 mm long over a 27 mm
+            // venturi, 0.30 mm glass-fibre laminate), scaled by the
+            // carburettor bore. Damping and discharge coefficient have no
+            // default anywhere in EngineLab: they are measured, set by hand.
+            const auto petals = wholeNumber(derive("reed_petal_count", "Reed petals", "", 0.0,
+                "0: the reed is a perfect check valve; petals give it lift, inertia and backflow"), 1.0, 16.0,
+                "Reed petals: 0, or a whole number from 1 to 16");
+            if (petals > 0) {
+                auto& reed = config.twoStroke.reed;
+                const auto carburettor = config.intake.throttleDiameterMm;
+                reed.petalCount = static_cast<int>(petals);
+                reed.freeLengthMm = derive("reed_free_length_mm", "Reed petal free length", "mm",
+                    carburettor * 30.0 / 27.0, "the X30's 30 mm over its 27 mm venturi, scaled by the bore");
+                reed.widthMm = derive("reed_width_mm", "Reed petal width", "mm",
+                    carburettor * 36.0 / 27.0 * 4.0 / static_cast<double>(petals),
+                    "the X30's four tongues of about 36 mm over its 27 mm venturi, shared by the petals");
+                reed.thicknessMm = derive("reed_thickness_mm", "Reed petal thickness", "mm", 0.30,
+                    "the X30's glass-fibre minimum");
+                reed.youngsModulusGpa = derive("reed_modulus_gpa", "Reed material modulus", "GPa", 20.0,
+                    "a glass-fibre laminate's low end (20-60 GPa)");
+                reed.densityKgPerM3 = derive("reed_density_kg_m3", "Reed material density", "kg/m3", 1'900.0,
+                    "a glass-fibre laminate's");
+                reed.stopLiftMm = derive("reed_stop_lift_mm", "Reed stop-plate lift", "mm", 0.3 * reed.freeLengthMm,
+                    "0.3 x the free length, an assumption: the X30's block draws no stop plate");
+                reed.dampingRatio = derive("reed_damping_ratio", "Reed damping ratio", "", 0.0,
+                    "no default: measured (structural and gas damping), set by hand");
+                const auto dampingSet = designed.values.back().overridden;
+                reed.dischargeCoefficient = derive("reed_discharge_coefficient", "Reed discharge coefficient", "", 0.0,
+                    "no default: measured on a flow bench, set by hand");
+                if (!dampingSet || !designed.values.back().overridden)
+                    throw std::invalid_argument("Reed petals need their damping ratio and discharge coefficient set "
+                                                "by hand: EngineLab has no measured default for either");
+                // The tract between bellmouth and reed, carburettor in it.
+                config.twoStroke.inletTractLengthMm = derive("inlet_tract_length_mm", "Inlet tract length", "mm",
+                    0.0, "0: the carburettor opens straight onto the reed; a length makes the tract a 1-D duct "
+                         "whose waves the petals see");
+                if (config.twoStroke.inletTractLengthMm > 0.0) {
+                    config.twoStroke.inletTractDiameterMm = derive("inlet_tract_diameter_mm", "Inlet tract bore",
+                        "mm", 0.0, "0: the carburettor's bore");
+                    config.twoStroke.inletTractSlideFromReedMm = derive("inlet_tract_slide_from_reed_mm",
+                        "Carburettor slide from the reed", "mm", 0.0, "0: half way along the tract");
+                }
             }
         }
 
