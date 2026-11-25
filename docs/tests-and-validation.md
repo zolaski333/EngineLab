@@ -271,6 +271,6 @@ sounds like the real one. The repository holds a few external references --
 makers' torque and power points (`tests/reference-data/catalog-manufacturer-points.csv`,
 `designed-manufacturer-points.csv`) and three published pressure or spectral
 cases (Winterbone's ACME single, Blair and Spechko's BSA A50, Jones and Brown's
-TS125, each under `tests/reference-data/`) -- and every comparison against
+TS125, each under `tests/reference-data/`), and one measured two-stroke power curve (Ortenzi and Bossaglia's IAME X30 senior, `iame-x30/`, with the engine built from its homologation form and the points in `--reference-file` form) -- and every comparison against
 them is a measurement in `docs/journal.md`, not a guarantee for other engines.
 Real recordings stay outside the repository.

@@ -114,3 +114,19 @@ the gap as measured (`.claude/CLAUDE.md`: no target-driven physics).
 - Which exhaust the measured curve used is inferred from OB (they model
   Type 2); the article does not say so in words.
 - The test conditions of the measured curve (above).
+
+## The engine file and the comparison
+
+`engines/iame_x30_senior_type2.engine.yaml` is the senior with the Type 2
+exhaust, built from the numbers above only; its header names every value
+no source gives and what stands in for it (a designer default, the
+RD350LC's catalogue value, or an estimate). `comparison-points.csv` is the
+senior curve in `EngineLabDynoSweepHarness --reference-file` form (the
+16,000 rpm point lies on the limiter and is left out):
+
+```
+EngineLabDynoSweepHarness --catalog-root tests/reference-data/iame-x30 --reference-file tests/reference-data/iame-x30/comparison-points.csv
+```
+
+The 15 % tolerance is the harness's convention, not a claim; the results
+are in `docs/journal.md` (2026-11-25, phase 7), not here.

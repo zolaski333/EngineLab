@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-25 — Two-stroke phase 7: the IAME X30 senior against its measured curve; the Screamer III stays blocked
+
+- Engine built from the CIK form and OB's exhaust only (`tests/reference-data/iame-x30/`); unsourced values named in its header, none fitted. `--reference-file comparison-points.csv`, production: 4.3 kW at 6,500 rpm (-45 %), 6.7 at 10,500 (-67 %), 5.9 at 12,000 against 21.3 (-72 %).
+- Resolution: `--accuracy engineering` / `high-precision` agree within ~6 %: 11.1 / 11.8 kW at 10,000 rpm, 7.9 / 7.7 at 12,000 (-63 %). The production mesh costs ~45 % at this engine's pipe peak (RD350: 11-15 %); the sim's peak sits at 10,000, the measured at 11,500-12,000.
+- The deficit is delivery: DR 0.37 at 12,000 (engineering); at the model's own output per gram of air 21.3 kW needs DR ~1.0. One factor each, engineering, at 12,000: crankcase ratio 1.50 +22 %, Cd 0.85 +10 %, runner 50 mm -12 %; production: two 11 mm auxiliary exhausts +16 %, a 40 mm carburettor +6 % (the sourced 21 mm tail at 30 mm: +41 %). No unsourced value closes it, so none is changed.
+- TE reads above 1.0 from 12,000 rpm (trapped fresh over delivered): fresh air reaching the cylinder from the pipe, not separated; a straight open pipe gives DR 1.76 at 4,000 rpm (lugged through-flow, not believed).
+- Instrument limits: `PhysicsPerfHarness --trace 12000` stalls at 8,170 rpm (even `--settle 8`) where the sweep holds 12,000: not traced. NaN power at 15,000 in finer profiles is the sweep's dropped-cycle marker.
+- Screamer III: no absolute curve is public (OB Fig. 16 normalised): not compared.
+- Not measured: the junior curve; any spark or mixture against the measured runs (not given).
+
 ## 2026-11-25 — Two-stroke phase 6: the designer offers the two-stroke options
 
 - New engine (two-stroke only, each off at zero): `port_corner_radius_mm`, `transfer_duct_count` (2-6, equal ducts of the runner's length and area over N), `reed_petal_count` (petal size from the carburettor bore, stop 0.3 x the free length; damping ratio and Cd must be set by hand, no default, refused otherwise), `inlet_tract_length_mm` (diameter, slide distance). Each shown with its rule; an override of an option left off is refused, not ignored.
