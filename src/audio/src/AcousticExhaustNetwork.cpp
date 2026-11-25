@@ -2102,4 +2102,11 @@ std::size_t AcousticExhaustNetwork::outletCount() const noexcept {
     return impl_ ? impl_->outlets.size() : 0U;
 }
 
+AcousticExhaustNetwork::OutletRadiation AcousticExhaustNetwork::outletRadiation(std::size_t index) const noexcept {
+    if (!impl_ || index >= impl_->outlets.size()) return {};
+    const auto& outlet = impl_->outlets[index];
+    return { std::sqrt(outlet.areaM2 / std::numbers::pi), outlet.acousticTermination,
+             outlet.observer.directivity(0) };
+}
+
 } // namespace enginelab

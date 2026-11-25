@@ -59,6 +59,9 @@ public:
 
     [[nodiscard]] double distanceM(std::size_t microphone) const noexcept;
     [[nodiscard]] double directivity(std::size_t microphone) const noexcept;
+    /** The high band's share heard `cosine` off the opening's axis (1 on
+     *  it, -1 straight behind it). */
+    [[nodiscard]] static double highBandDirectivity(AcousticTerminationType termination, double cosine) noexcept;
 
 private:
     struct Microphone final {

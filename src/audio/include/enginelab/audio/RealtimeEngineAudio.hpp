@@ -704,6 +704,9 @@ private:
     /** Audio thread: the positions the layers are going to. */
     std::uint64_t appliedMicrophoneSequence_ { 0 };
     bool microphonesMoved_ { false };
+    /** Audio thread: both microphones at their middle (the trackside
+     *  microphone listens). */
+    bool microphonesCentred_ { false };
     bool jumpMicrophones_ { false };
     std::array<AcousticPoint3M, 2> currentMicrophones_ {};
     /** Where the engine's observer puts the microphones, and their mean
@@ -735,6 +738,9 @@ private:
     /** Audio thread, at the start of a block: newly published positions and
      * placements. */
     void takeMicrophones() noexcept;
+    /** The pair the networks hear with: the current one, or its middle
+     *  twice while the trackside microphone listens. */
+    [[nodiscard]] std::array<AcousticPoint3M, 2> listeningMicrophones() const noexcept;
     /** The outlet and mouth placements the networks use now: none while the
      * microphones are where the engine authored them. */
     [[nodiscard]] std::span<const AcousticSourcePlacement> placedOutlets() const noexcept;

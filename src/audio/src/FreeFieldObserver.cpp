@@ -109,13 +109,7 @@ bool FreeFieldObserver::aim(Microphone& microphone, const AcousticPoint3M& posit
     microphone.distanceM = distanceM;
     const auto direction = normalised(offset, axis_);
     const auto cosine = std::clamp(dot(axis_, direction), -1.0, 1.0);
-    // An unflanged opening remains partly visible from behind; a flanged
-    // aperture is mounted in an ideal rigid baffle and has no rear high-
-    // frequency hemisphere.  The low band remains the physical monopole.
-    microphone.targetDirectivity = static_cast<float>(
-        termination_ == AcousticTerminationType::flanged
-            ? std::max(0.0, cosine)
-            : std::sqrt(std::max(0.0, 0.5 * (1.0 + cosine))));
+    microphone.targetDirectivity = static_cast<float>(highBandDirectivity(termination_, cosine));
     microphone.targetDistanceScale = static_cast<float>(1.0 / distanceM);
     microphone.targetDelaySamples = static_cast<float>(
         distanceM / soundSpeedMps_ * sampleRateHz_);
@@ -237,6 +231,15 @@ StereoPressure FreeFieldObserver::process(float pressureAtOneMetrePa) noexcept {
 double FreeFieldObserver::distanceM(std::size_t microphone) const noexcept {
     return microphone < microphones_.size()
         ? microphones_[microphone].distanceM : 0.0;
+}
+
+double FreeFieldObserver::highBandDirectivity(AcousticTerminationType termination, double cosine) noexcept {
+    // An unflanged opening remains partly visible from behind; a flanged
+    // aperture is mounted in an ideal rigid baffle and has no rear high-
+    // frequency hemisphere.  The low band remains the physical monopole.
+    return termination == AcousticTerminationType::flanged
+        ? std::max(0.0, cosine)
+        : std::sqrt(std::max(0.0, 0.5 * (1.0 + cosine)));
 }
 
 double FreeFieldObserver::directivity(std::size_t microphone) const noexcept {

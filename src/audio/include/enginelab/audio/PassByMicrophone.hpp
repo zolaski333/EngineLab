@@ -52,6 +52,12 @@ struct PassBySettings final {
     /** How far behind the engine the tailpipe is: the exhaust's share of the
      *  sound (process()) comes from there. */
     double exhaustBehindM { 0.0 };
+    /** The tailpipe's opening (0: the exhaust's share radiates evenly) and
+     *  its termination: above ka = 1 the share is heard with the opening's
+     *  directivity (FreeFieldObserver::highBandDirectivity), the pipe
+     *  pointing back along the lane, so the car is duller coming than going. */
+    double exhaustApertureRadiusM { 0.0 };
+    AcousticTerminationType exhaustTermination { AcousticTerminationType::unflanged };
 };
 
 /** The engine heard from the side of a lane while the car drives past: the
@@ -61,7 +67,8 @@ struct PassBySettings final {
  *  two microphones gets, from each point, the direct path and the ground's
  *  image path, each with its retarded-time delay (the moving source's exact
  *  Doppler shift, for a speed constant over the delay) and its 1/r
- *  spreading; the image's comb is the ground's (a real reflection, the
+ *  spreading, the exhaust's high band (above its opening's ka = 1) with the
+ *  tailpipe's directivity toward it; the image's comb is the ground's (a real reflection, the
  *  spherical wave's magnitude at the comb's first notch).
  *
  *  Then, on each microphone, what a delay and a real gain cannot carry:
@@ -88,6 +95,13 @@ public:
     /** Along the lane, per second; held to 80 % of the speed of sound. */
     void setVehicleSpeed(double metresPerSecond) noexcept;
     void setReferenceDistance(double metres) noexcept;
+    /** The tailpipe's opening and termination (PassBySettings), and the
+     *  high-band directivity the incoming exhaust share was heard with (the
+     *  engine's own observer's, held to 0.25-1): each path's high band is
+     *  scaled by its own over that one. Live, no allocation; false (and
+     *  nothing changed) on a bad figure. */
+    bool setExhaustRadiation(double apertureRadiusM, AcousticTerminationType termination,
+                             double heardDirectivity) noexcept;
     /** Moves the car at once (tests, a new pass). */
     void setPosition(double positionM) noexcept;
     /** The microphone's place and the ground, live; no allocation. False (and
@@ -150,10 +164,14 @@ private:
         double z1 {};
         double z2 {};
     };
-    /** The delay (samples) and the emission distance for one point, the car
-     *  at `alongM` now, moving at `speed`. */
+    /** The delay (samples), the emission distance and the cosine between
+     *  the lane's backward direction (the tailpipe's axis) and the way to the
+     *  microphone, for one point, the car at `alongM` now, moving at `speed`. */
     void retarded(double alongM, double heightDifferenceM, double offsetM,
-                  double& delaySamples, double& distanceM) const noexcept;
+                  double& delaySamples, double& distanceM, double& tailpipeCosine) const noexcept;
+    /** One path's exhaust sample: the low band and the directive high band. */
+    [[nodiscard]] double exhaustPath(double delaySamples, double tailpipeCosine) const noexcept;
+    void updateExhaustSplit() noexcept;
     [[nodiscard]] float read(const std::vector<float>& line, double delaySamples) const noexcept;
     [[nodiscard]] std::size_t longestStartDelay() const noexcept;
     [[nodiscard]] float window(double alongM) const noexcept;
@@ -165,9 +183,14 @@ private:
     [[nodiscard]] double airStageLossDb(double hertz) const noexcept;
 
     PassBySettings settings_ {};
-    /** The engine's share and the exhaust's, one sample each. */
+    /** The engine's share and the exhaust's (its low band, and above the
+     *  opening's ka = 1 its high band), one sample each. */
     std::vector<float> delay_;
     std::vector<float> exhaustDelay_;
+    std::vector<float> exhaustHighDelay_;
+    float exhaustLowState_ {};
+    float exhaustSplitCoefficient_ {};
+    double heardDirectivity_ { 1.0 };
     std::size_t mask_ {};
     std::size_t write_ {};
     double longestDelaySamples_ {};

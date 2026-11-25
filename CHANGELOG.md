@@ -7,6 +7,20 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The pass-by's exhaust points backward.** The trackside microphone heard
+  the tailpipe as the engine's own microphone does, from behind on the
+  pipe's axis, whether the car was coming or going. Above the pipe's ka = 1
+  (1.3 kHz on an 82 mm pipe) the exhaust now beams back along the lane: a
+  coming car is duller, and it opens up once past (9.8 dB at 6 kHz, 20 m
+  either side, on an 82 mm pipe).
+- **No notch in a dual exhaust's pass-by.** The trackside microphone summed
+  the engine microphone's two channels, which heard two outlets 0.9 m apart
+  at different distances: a deep notch at 4.4 kHz on the LS3 and the flat-6
+  (7.8 kHz on the Big Twin). Both channels are heard from one point while it
+  listens.
+
 ## [0.14.1] — 2026-11-23
 
 The first published release of 0.14: the v0.14.0 tag did not compile on

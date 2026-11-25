@@ -17,6 +17,12 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
+**A pass over the pass-by, owner request 2026-11-24** (`feat/pass-by-review`,
+off `origin/main` 0.14.1; the settings work is apart on `feat/settings-in-app`):
+the exhaust's directivity on the lane and one point for the stereo sum
+(journal 2026-11-24). Done, unpushed, unmerged; not heard in the app; waits
+on the owner.
+
 **The "Test cell" interface, owner go 2026-11-23 for the whole plan**
 (`feat/test-cell-ui`, off `main`; the web mockup is `ui-mockup/`, untracked):
 step 0 a before-reference (key map and command inventory as tests, window
@@ -366,6 +372,8 @@ Each measurement is in `docs/journal.md` or the docs archive (tag
   boost: as used (x2, from the spark) its delay at 118-250 bar is 1.4-2.7x
   Hoepke's and 2.5-2.8x McKenzie-Cheng's (journal 2026-11-14); a weaker
   pressure exponent has no consensus (1.34, 1.73, 2.37 in three sources).
+- **Pass-by**: the retarded time's constant speed as an error on an
+  accelerating run (under 3 cents, 23 ms; journal 2026-11-24).
 - **The other simulator's ingredients, one at a time** (journal 2026-10-13/14):
   output stage, pressure-release outlet, valve-area noise, mild room IR -- none
   kept (blind listening or measurement). Its fine mesh is not shown to matter.

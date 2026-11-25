@@ -417,6 +417,67 @@ void checkSwitching() {
     require(!passBy.active(), "switched off, it lets go once faded");
 }
 
+/** The car parked `alongM` from the microphone (negative: before it), a tone
+ *  of `hertz` given as the exhaust's share: its rms once heard, steady. */
+double parkedExhaust(PassBySettings settings, double alongM, double hertz, double heardDirectivity = 1.0) {
+    PassByMicrophone passBy;
+    require(passBy.prepare(rate, settings), "the pass-by prepares");
+    require(passBy.setExhaustRadiation(settings.exhaustApertureRadiusM, settings.exhaustTermination,
+                                       heardDirectivity), "the tailpipe's radiation is taken");
+    passBy.setEnabled(true);
+    passBy.reset(alongM);
+    const auto settled = std::hypot(alongM, settings.laneDistanceM) / settings.soundSpeedMps + 0.3;
+    std::vector<float> heard;
+    for (std::size_t index = 0; index < static_cast<std::size_t>((settled + 0.3) * rate); ++index) {
+        const auto tone = static_cast<float>(std::sin(2.0 * std::numbers::pi * hertz * static_cast<double>(index) / rate));
+        heard.push_back(passBy.process(tone, tone, tone, tone).leftPa);
+    }
+    return rms(heard, static_cast<std::size_t>(settled * rate), heard.size());
+}
+
+void checkTailpipeDirectivity() {
+    // An 82 mm tailpipe (ka = 1 at 1.33 kHz) pointing back along the lane,
+    // the car parked 20 m before the microphone and 20 m past it: the same
+    // distance, so only the pipe's directivity tells them apart. Above ka = 1
+    // the pipe beams backward: duller before the car has passed. The
+    // expected level is the engine's observer's own model (a one-pole split
+    // at ka = 1, the high band scaled by sqrt((1 + cos) / 2)).
+    auto settings = bare();
+    settings.exhaustApertureRadiusM = 0.041;
+    const auto expected = [&](double alongM, double hertz, double heardDirectivity) {
+        const auto distance = std::hypot(alongM, std::hypot(settings.laneDistanceM,
+            settings.microphoneHeightM - settings.sourceHeightM));
+        const auto directivity = enginelab::FreeFieldObserver::highBandDirectivity(
+            settings.exhaustTermination, alongM / distance) / heardDirectivity;
+        const auto transition = settings.soundSpeedMps / (2.0 * std::numbers::pi * settings.exhaustApertureRadiusM);
+        const auto a = 1.0 - std::exp(-2.0 * std::numbers::pi * transition / rate);
+        const auto z = std::polar(1.0, -2.0 * std::numbers::pi * hertz / rate);
+        const auto low = a / (1.0 - (1.0 - a) * z);
+        return std::abs(low + directivity * (1.0 - low)) * settings.referenceDistanceM / distance / std::sqrt(2.0);
+    };
+    for (const auto hertz : { 100.0, 6'000.0 }) {
+        const auto before = parkedExhaust(settings, -20.0, hertz);
+        const auto after = parkedExhaust(settings, 20.0, hertz);
+        const auto expectedDb = db(expected(-20.0, hertz, 1.0) / expected(20.0, hertz, 1.0));
+        std::cout << "tailpipe 82 mm, " << hertz << " Hz, 20 m before against 20 m past: " << db(before / after)
+                  << " dB (the model: " << expectedDb << " dB); levels " << db(before / expected(-20.0, hertz, 1.0))
+                  << " and " << db(after / expected(20.0, hertz, 1.0)) << " dB off it\n";
+        require(std::abs(db(before / expected(-20.0, hertz, 1.0))) < 0.2
+                    && std::abs(db(after / expected(20.0, hertz, 1.0))) < 0.2,
+                "the exhaust is heard with its pipe's directivity");
+        require(hertz < 1'000.0 ? std::abs(expectedDb) < 0.1 : expectedDb < -9.0,
+                "under ka = 1 it radiates evenly; well above, the pipe beams backward");
+    }
+    // The engine's observer heard the share at half the on-axis high band:
+    // that is undone, so 20 m past is twice as bright above ka = 1.
+    const auto halved = parkedExhaust(settings, 20.0, 6'000.0, 0.5);
+    require(std::abs(db(halved / expected(20.0, 6'000.0, 0.5))) < 0.2, "the incoming directivity is undone");
+    // No opening given: the share radiates evenly, as it did.
+    auto even = bare();
+    const auto evenDb = db(parkedExhaust(even, -20.0, 6'000.0) / parkedExhaust(even, 20.0, 6'000.0));
+    require(std::abs(evenDb) < 0.05, "without an opening the exhaust's share radiates evenly");
+}
+
 } // namespace
 
 int main() {
@@ -424,6 +485,7 @@ int main() {
     checkAirFormula();
     checkDoppler();
     checkTwoSources();
+    checkTailpipeDirectivity();
     checkDistanceLaw();
     checkAirHeard();
     checkGround();

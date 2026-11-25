@@ -210,6 +210,8 @@ struct Listening final {
     std::vector<float> movedMaster;
     std::vector<float> referenceExhaust;
     std::vector<float> movedExhaust;
+    std::vector<float> referenceExhaustRight;
+    std::vector<float> movedExhaustRight;
     std::vector<float> referenceTurbo;
     std::vector<float> movedTurbo;
     std::vector<float> referenceIntake;
@@ -302,6 +304,7 @@ struct Rig final {
             for (int sample = 0; sample < samplesPerFrame; ++sample) {
                 (first ? result.referenceMaster : result.movedMaster).push_back(block.getSample(0, sample));
                 (first ? result.referenceExhaust : result.movedExhaust).push_back(exhaust.getSample(0, sample));
+                (first ? result.referenceExhaustRight : result.movedExhaustRight).push_back(exhaust.getSample(1, sample));
                 (first ? result.referenceTurbo : result.movedTurbo).push_back(turbo.getSample(0, sample));
                 (first ? result.referenceIntake : result.movedIntake).push_back(intake.getSample(0, sample));
             }
@@ -519,6 +522,31 @@ void structureFollowsTheListener() {
     require(std::abs(db + 6.02) < 0.1, "the block is 6 dB quieter twice as far");
 }
 
+/** The trackside microphone sums the camera's two channels to one point of
+ *  the car: heard from two points, the LS3's outlets 0.9 m apart would comb
+ *  that sum (a notch at 4.4 kHz), so the pair stands at its middle. */
+void tracksideHearsOnePoint() {
+    const auto ls3 = catalogueEngine("LS3");
+    const auto heard = listen(ls3, 3.0, [](RealtimeEngineAudio& audio, double t) {
+        if (t == 0.0) audio.setPassByEnabled(true);
+    });
+    const auto spread = [&](const std::vector<float>& left, const std::vector<float>& right) {
+        double difference = 0.0;
+        double level = 0.0;
+        for (auto index = at(2.5); index < at(3.0); ++index) {
+            difference = std::max(difference, static_cast<double>(std::abs(left[index] - right[index])));
+            level = std::max(level, static_cast<double>(std::abs(left[index])));
+        }
+        return level > 0.0 ? difference / level : 1.0;
+    };
+    const auto apart = spread(heard.referenceExhaust, heard.referenceExhaustRight);
+    const auto together = spread(heard.movedExhaust, heard.movedExhaustRight);
+    std::cout << "  LS3 exhaust at the camera, |left - right| / peak: " << apart << " apart, " << together
+              << " while the trackside microphone listens" << std::endl;
+    require(apart > 0.05, "the LS3's two outlets reach the camera's two microphones differently (else this proves nothing)");
+    require(together < 1.0e-6, "the trackside microphone's feed is one point: both channels alike");
+}
+
 } // namespace
 
 void cameraMicrophoneRegression() {
@@ -527,6 +555,7 @@ void cameraMicrophoneRegression() {
     structureFollowsTheListener();
     rendererFollowsTheListener();
     rendererHearsTheDrawnOpenings();
+    tracksideHearsOnePoint();
 }
 
 } // namespace enginelab::tests

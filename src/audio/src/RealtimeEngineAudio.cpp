@@ -221,6 +221,13 @@ std::span<const AcousticSourcePlacement> RealtimeEngineAudio::placedMouths() con
     return soundSources_->intakeMouths;
 }
 
+std::array<AcousticPoint3M, 2> RealtimeEngineAudio::listeningMicrophones() const noexcept {
+    if (!microphonesCentred_) return currentMicrophones_;
+    const auto& [left, right] = currentMicrophones_;
+    const AcousticPoint3M middle { 0.5 * (left.x + right.x), 0.5 * (left.y + right.y), 0.5 * (left.z + right.z) };
+    return { middle, middle };
+}
+
 void RealtimeEngineAudio::takeMicrophones() noexcept {
     // New placements, once the previous ones have been collected: the
     // retired slot then always has room.
@@ -251,10 +258,17 @@ void RealtimeEngineAudio::takeMicrophones() noexcept {
             microphonesChanged = true;
         }
     }
+    // The trackside microphone sums the two channels to one point of the
+    // car: two microphones apart would comb that sum (a 4.4 kHz notch from
+    // outlets 0.9 m apart), so both stand at their middle while it listens.
+    const auto centred = passByRequested_.load(std::memory_order_relaxed)
+        || realtimeState_.passByPhase.load(std::memory_order_relaxed) != 0;
+    const auto centringChanged = centred != microphonesCentred_;
+    microphonesCentred_ = centred;
     // Placements only count while the microphones are moved.
-    if (!microphonesChanged && !(sourcesChanged && microphonesMoved_)) return;
+    if (!microphonesChanged && !centringChanged && !(sourcesChanged && microphonesMoved_)) return;
     const auto immediately = std::exchange(jumpMicrophones_, false);
-    const auto& [left, right] = currentMicrophones_;
+    const auto [left, right] = listeningMicrophones();
     const auto outlets = placedOutlets();
     const auto mouths = placedMouths();
     for (auto* network : { acousticExhaustNetwork_.get(),
@@ -318,9 +332,10 @@ void RealtimeEngineAudio::beginIntakeSwapIfWaiting() noexcept {
         return;
     }
     swappingIntakeNetwork_ = incoming;
-    if (microphonesMoved_) {
+    if (microphonesMoved_ || microphonesCentred_) {
+        const auto [left, right] = listeningMicrophones();
         incoming->network->placeMouths(placedMouths(), true);
-        incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
+        incoming->network->moveMicrophones(left, right, true);
     }
     intakeSwapSamples_ = 0;
 }
@@ -375,9 +390,10 @@ void RealtimeEngineAudio::beginExhaustSwapIfWaiting() noexcept {
         return;
     }
     swappingExhaustNetwork_ = incoming;
-    if (microphonesMoved_) {
+    if (microphonesMoved_ || microphonesCentred_) {
+        const auto [left, right] = listeningMicrophones();
         incoming->network->placeOutlets(placedOutlets(), true);
-        incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
+        incoming->network->moveMicrophones(left, right, true);
     }
     exhaustSwapSamples_ = 0;
     exhaustSwapWarmupSamples_ = static_cast<std::int64_t>(
@@ -578,6 +594,8 @@ void RealtimeEngineAudio::prepareSynthesis(double sampleRate, int maximumBlockSi
     updateExhaustPreset(realtimeState_.exhaustPreset.load(std::memory_order_relaxed));
     appliedMicrophoneSequence_ = 0;
     microphonesMoved_ = false;
+    microphonesCentred_ = false;
+    currentMicrophones_ = authoredMicrophones_;
     jumpMicrophones_ = microphoneSequence_.load(std::memory_order_acquire) != 0U;
     preparedSampleRate_.store(sampleRate_, std::memory_order_release);
 }
@@ -1386,6 +1404,12 @@ void RealtimeEngineAudio::renderSynthesis(
         passBy_.setEnabled(passByRequested_.load(std::memory_order_relaxed) || running);
         passBy_.setRun(running, realtimeState_.passByPositionM.load(std::memory_order_relaxed),
                        realtimeState_.passBySoundGain.load(std::memory_order_relaxed));
+        // The tailpipe's directivity, undone from what the engine's own
+        // observer heard and redone from the lane (the first outlet's).
+        const auto radiation = acousticExhaustNetwork_ && physicalExhaustActive_
+            ? acousticExhaustNetwork_->outletRadiation(0) : AcousticExhaustNetwork::OutletRadiation {};
+        static_cast<void>(passBy_.setExhaustRadiation(radiation.apertureRadiusM, radiation.termination,
+                                                      radiation.heardDirectivity));
     }
     passBy_.setVehicleSpeed(realtimeState_.vehicleSpeedMps.load(std::memory_order_relaxed));
     // The trackside microphone hears the exhaust from the tailpipe: keep its

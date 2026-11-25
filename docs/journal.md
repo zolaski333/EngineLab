@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-24 — Pass-by review: the tailpipe's directivity, the stereo sum's comb
+
+- Owner request ("good but far from perfect"). The trackside microphone is fed by the engine's own microphones, which every catalogue engine authors 3.5-6 m behind the car on the tailpipe's axis (+Y): the exhaust was heard on-axis whether the car came or went. With the observer's own model (one-pole split at ka = 1, high band x sqrt((1 + cos) / 2)) an 82 mm pipe in front of the car is 10 dB down at 4 kHz, 15.7 at 8 kHz, 2.6-2.9 abeam (computed). Now each path's high band takes the pipe's directivity toward it: 20 m either side, 6 kHz 9.78 dB duller coming (model 9.78), 100 Hz 0.02 (`EngineLab.PassByMicrophone`; 0 dB without the fix).
+- The pass-by summed the camera pair's two channels; two outlets 0.9 m apart reach them 39 mm apart: a full notch at 4.35 kHz (LS3, flat-6), 7.8 kHz Big Twin, 8.7 kHz RD350 (computed). While it listens both microphones stand at their middle: the LS3's exhaust |L - R| / peak 0.71 -> 0 (`EngineLab.CameraMicrophone`; 0.71 without the fix).
+- Refuted lead: the retarded time's constant-speed assumption on an accelerating run. A standing start from 500 m (7 m/s2 in first, to 280 km/h) gives under 3 cents of pitch and under 23 ms of timing error against the exact trajectory (computed): not worth a trajectory history.
+- Default sound: `AudioRenderHarness` 24 renders identical bit for bit, its report identical from line 13. Not checked: heard in the app, against a real pass-by recording; the engine share's (intake, block) directivity, each outlet's own place across the car, turbulence at range, tyres and wind remain absent.
+
 ## 2026-11-23 — The "Test cell" interface against the build before it
 
 - Physics and sound: `AudioRenderHarness` output identical from its line 13 on (the lines before are the real-time wiring), `IntakeDuctBench` checksums identical (6 rows).

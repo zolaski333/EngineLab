@@ -170,7 +170,8 @@ bool PassByMicrophone::prepare(double sampleRateHz, const PassBySettings& settin
         || !std::isfinite(settings.microphoneSpacingM)
         || settings.microphoneHeightM < 0.0 || settings.sourceHeightM < 0.0
         || static_cast<std::uint8_t>(settings.ground) > static_cast<std::uint8_t>(PassByGround::snow)
-        || !std::isfinite(settings.exhaustBehindM) || std::abs(settings.exhaustBehindM) > fadeLengthM)
+        || !std::isfinite(settings.exhaustBehindM) || std::abs(settings.exhaustBehindM) > fadeLengthM
+        || !std::isfinite(settings.exhaustApertureRadiusM) || settings.exhaustApertureRadiusM < 0.0)
         return false;
     settings_ = settings;
     sampleRateHz_ = sampleRateHz;
@@ -182,7 +183,10 @@ bool PassByMicrophone::prepare(double sampleRateHz, const PassBySettings& settin
     while (size < static_cast<std::size_t>(seconds * sampleRateHz) + 8) size <<= 1U;
     delay_.assign(size, 0.0F);
     exhaustDelay_.assign(size, 0.0F);
+    exhaustHighDelay_.assign(size, 0.0F);
     mask_ = size - 1;
+    heardDirectivity_ = 1.0;
+    updateExhaustSplit();
     longestDelaySamples_ = static_cast<double>(size - 8);
     // The pedal and the gearbox move the car's speed at the frame rate:
     // 20 ms smooths their steps out of the Doppler shift.
@@ -239,6 +243,8 @@ bool PassByMicrophone::prepare(double sampleRateHz, const PassBySettings& settin
 void PassByMicrophone::clearLines() noexcept {
     std::fill(delay_.begin(), delay_.end(), 0.0F);
     std::fill(exhaustDelay_.begin(), exhaustDelay_.end(), 0.0F);
+    std::fill(exhaustHighDelay_.begin(), exhaustHighDelay_.end(), 0.0F);
+    exhaustLowState_ = 0.0F;
     for (auto& microphone : equaliserState_) microphone = {};
     for (auto& microphone : airState_) microphone = {};
     designCountdown_ = 0;
@@ -273,6 +279,32 @@ void PassByMicrophone::setVehicleSpeed(double metresPerSecond) noexcept {
 
 void PassByMicrophone::setReferenceDistance(double metres) noexcept {
     if (std::isfinite(metres) && metres > 0.0) settings_.referenceDistanceM = metres;
+}
+
+void PassByMicrophone::updateExhaustSplit() noexcept {
+    // The engine's observer splits at the same ka = 1 (FreeFieldObserver).
+    const auto radius = settings_.exhaustApertureRadiusM;
+    if (!(radius > 0.0)) {
+        exhaustSplitCoefficient_ = 0.0F;
+        exhaustLowState_ = 0.0F;
+        return;
+    }
+    const auto transitionHz = std::min(settings_.soundSpeedMps / (2.0 * pi * radius), 0.45 * sampleRateHz_);
+    exhaustSplitCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * pi * transitionHz / sampleRateHz_));
+}
+
+bool PassByMicrophone::setExhaustRadiation(double apertureRadiusM, AcousticTerminationType termination,
+                                           double heardDirectivity) noexcept {
+    if (!std::isfinite(apertureRadiusM) || apertureRadiusM < 0.0 || !std::isfinite(heardDirectivity)
+        || (termination != AcousticTerminationType::unflanged && termination != AcousticTerminationType::flanged))
+        return false;
+    heardDirectivity_ = std::clamp(heardDirectivity, 0.25, 1.0);
+    if (apertureRadiusM == settings_.exhaustApertureRadiusM && termination == settings_.exhaustTermination)
+        return true;
+    settings_.exhaustApertureRadiusM = apertureRadiusM;
+    settings_.exhaustTermination = termination;
+    updateExhaustSplit();
+    return true;
 }
 
 void PassByMicrophone::setPosition(double positionM) noexcept {
@@ -330,7 +362,7 @@ void PassByMicrophone::setRun(bool running, double positionM, double gain) noexc
 }
 
 void PassByMicrophone::retarded(double alongM, double heightDifferenceM, double offsetM,
-                                double& delaySamples, double& distanceM) const noexcept {
+                                double& delaySamples, double& distanceM, double& tailpipeCosine) const noexcept {
     // Emitted tau ago at x - v tau, heard now: c tau = |(x - v tau, D)|,
     // (c^2 - v^2) tau^2 + 2 x v tau - (x^2 + D^2) = 0, the positive root.
     const auto c = settings_.soundSpeedMps;
@@ -342,6 +374,18 @@ void PassByMicrophone::retarded(double alongM, double heightDifferenceM, double 
     const auto tau = (-x * v + std::sqrt(x * x * v * v + a * (x * x + lateral2))) / a;
     distanceM = c * tau;
     delaySamples = std::min(tau * sampleRateHz_, longestDelaySamples_);
+    // The tailpipe points back along the lane (-x); the microphone is at
+    // -(x - v tau) from where the sound left: before the microphone (x < 0)
+    // the pipe points away from it.
+    tailpipeCosine = std::clamp((x - v * tau) / std::max(distanceM, 1.0e-9), -1.0, 1.0);
+}
+
+double PassByMicrophone::exhaustPath(double delaySamples, double tailpipeCosine) const noexcept {
+    const auto gain = settings_.exhaustApertureRadiusM > 0.0
+        ? FreeFieldObserver::highBandDirectivity(settings_.exhaustTermination, tailpipeCosine) / heardDirectivity_
+        : 1.0;
+    return static_cast<double>(read(exhaustDelay_, delaySamples))
+        + gain * static_cast<double>(read(exhaustHighDelay_, delaySamples));
 }
 
 std::size_t PassByMicrophone::longestStartDelay() const noexcept {
@@ -350,7 +394,9 @@ std::size_t PassByMicrophone::longestStartDelay() const noexcept {
         for (const auto offset : { -0.5 * settings_.microphoneSpacingM, 0.5 * settings_.microphoneSpacingM }) {
             double delaySamples {};
             double distanceM {};
-            retarded(along, settings_.microphoneHeightM + settings_.sourceHeightM, offset, delaySamples, distanceM);
+            double cosine {};
+            retarded(along, settings_.microphoneHeightM + settings_.sourceHeightM, offset, delaySamples, distanceM,
+                     cosine);
             longest = std::max(longest, delaySamples);
         }
     return static_cast<std::size_t>(std::ceil(longest)) + 4;
@@ -480,7 +526,10 @@ StereoPressure PassByMicrophone::process(float left, float right, float exhaustL
                                          float exhaustRight) noexcept {
     if (!active()) return { left, right };
     delay_[write_] = 0.5F * (left - exhaustLeft + right - exhaustRight);
-    exhaustDelay_[write_] = 0.5F * (exhaustLeft + exhaustRight);
+    const auto exhaustShare = 0.5F * (exhaustLeft + exhaustRight);
+    exhaustLowState_ += exhaustSplitCoefficient_ * (exhaustShare - exhaustLowState_);
+    exhaustDelay_[write_] = exhaustLowState_;
+    exhaustHighDelay_[write_] = exhaustShare - exhaustLowState_;
 
     speedMps_ += speedCoefficient_ * (targetSpeedMps_ - speedMps_);
     if (designCountdown_ == 0) {
@@ -500,16 +549,19 @@ StereoPressure PassByMicrophone::process(float left, float right, float exhaustL
         double engineDirectM = closestM;
         for (const auto exhaust : { false, true }) {
             const auto along = exhaust ? positionM_ - settings_.exhaustBehindM : positionM_;
-            const auto& line = exhaust ? exhaustDelay_ : delay_;
+            const auto pathSample = [&](double pathDelaySamples, double pathCosine) {
+                return exhaust ? exhaustPath(pathDelaySamples, pathCosine)
+                               : static_cast<double>(read(delay_, pathDelaySamples));
+            };
             double delaySamples {};
             double distanceM {};
-            retarded(along, direct, offset, delaySamples, distanceM);
+            double cosine {};
+            retarded(along, direct, offset, delaySamples, distanceM, cosine);
             if (!exhaust) engineDirectM = distanceM;
-            sum += static_cast<double>(read(line, delaySamples)) * settings_.referenceDistanceM / distanceM;
+            sum += pathSample(delaySamples, cosine) * settings_.referenceDistanceM / distanceM;
             if (imageReflection_ > 0.0) {
-                retarded(along, image, offset, delaySamples, distanceM);
-                sum += static_cast<double>(read(line, delaySamples)) * imageReflection_
-                    * settings_.referenceDistanceM / distanceM;
+                retarded(along, image, offset, delaySamples, distanceM, cosine);
+                sum += pathSample(delaySamples, cosine) * imageReflection_ * settings_.referenceDistanceM / distanceM;
             }
         }
         if (settings_.normalisedLevel) sum *= engineDirectM / closestM;

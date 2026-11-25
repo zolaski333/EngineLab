@@ -105,7 +105,18 @@ at the vehicle's speed: the exhaust's share (the dry tailpipe and its room
 response) at the tailpipe, the wheelbase behind the engine (an estimate for a
 front-engined car; a mid-engined car or a motorcycle has it shorter), and the
 rest (intake, combustion, structure, turbo) at the engine. So the intake
-leads and the exhaust follows, 0.1 s later at 108 km/h on a 3 m car. The car
+leads and the exhaust follows, 0.1 s later at 108 km/h on a 3 m car. That
+sum is of one point: while the trackside microphone listens (on, or a run)
+the engine's own two microphones stand at their middle
+(`RealtimeEngineAudio::listeningMicrophones`), since two points 0.36 m apart
+comb the sum of their channels (outlets 0.9 m apart, the LS3's and the
+flat-6's: a full notch at 4.4 kHz). The exhaust's share keeps its pipe's
+directivity: split at the first outlet's ka = 1 as the engine's observer
+splits it, its high band is scaled on every path by the opening's
+directivity there (`FreeFieldObserver::highBandDirectivity`, the pipe
+pointing back along the lane) over the one the observer heard it with, so a
+coming car is duller than a going one (an 82 mm pipe at 6 kHz, 20 m either
+side: 9.8 dB). A legacy exhaust (no outlet network) radiates evenly. The car
 moves (`RealtimeAudioState::vehicleSpeedMps`, smoothed over
 20 ms). Alone it starts in front of the microphone, drives to 150 m past it,
 and comes back from 150 m before it, the last 30 m each way faded out; set
@@ -147,9 +158,11 @@ between band centres, turbulence, refraction. Switched on, it waits until
 its delay line holds the car's sound,
 then cross-fades in over 50 ms; switched off it cross-fades out and lets go.
 Off, the master is untouched (`EngineLab.PassByMicrophone`). While it is on,
-the camera's microphones go back to their authored place. Not modelled: wind,
-a temperature gradient, the car's own directivity, the tyres and the wind
-noise of the car.
+the camera's microphones go back to their authored place (both at its
+middle, above). Not modelled: wind,
+a temperature gradient, the directivity of the engine's share (intake,
+block) and of a side-exit pipe, each outlet's own place across the car, the
+tyres and the wind noise of the car.
 
 The authored sources are schematic (outlets and intake mouths near the
 origin). While the microphones are on the camera, every opening radiates from

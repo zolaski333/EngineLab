@@ -183,6 +183,15 @@ public:
      *  names); 0 past the end. */
     [[nodiscard]] std::uint32_t outletNodeId(std::size_t index) const noexcept;
     [[nodiscard]] std::uint32_t outletPathIndex(std::size_t index) const noexcept;
+    /** How outlet `index` radiates: its opening's radius, its termination
+     *  and the high-band directivity its observer applies at the left
+     *  microphone now (FreeFieldObserver). A zero radius past the end. */
+    struct OutletRadiation final {
+        double apertureRadiusM { 0.0 };
+        AcousticTerminationType termination { AcousticTerminationType::unflanged };
+        double heardDirectivity { 1.0 };
+    };
+    [[nodiscard]] OutletRadiation outletRadiation(std::size_t index) const noexcept;
 
 private:
     struct Impl;
