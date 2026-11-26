@@ -5,7 +5,7 @@ All notable changes to EngineLab are listed here. The format follows
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break
 file formats, always with an in-memory migration).
 
-## [Unreleased]
+## [0.15.0] — 2026-11-26
 
 ### Added
 
@@ -115,6 +115,9 @@ file formats, always with an in-memory migration).
   `--filter` traced the built-in default twin whatever `--catalog-root`
   held; they now refuse to run without an engine named, and print the
   engine they trace.
+- A two-stroke cylinder whose original gas was all scavenged out could
+  read its exhaust port's composition as NaN (a residual zone drawn to a
+  subnormal mass). Guarded; the RD350-like twin is unchanged bit for bit.
 
 ## [0.14.1] — 2026-11-23
 

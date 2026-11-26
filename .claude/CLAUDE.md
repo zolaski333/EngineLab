@@ -17,10 +17,11 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Merge of 2026-11-25, owner request**: the pass-by review, the settings in
-the app and the two-stroke roadmap merged into `main`, built only; the
-owner runs the tests and the release (0.15.0) on 2026-11-26. Owner
-questions on the two-stroke roadmap stay open (journal 2026-11-25).
+**Released 0.15.0 (2026-11-26, owner request)**: the pass-by review, the
+settings in the app and the two-stroke roadmap, with the two-stroke audit
+closed (journal 2026-11-26: the X30's sourced 21 mm exit holds its pipe's
+mean up, not separated). No current priority; owner questions on the
+two-stroke roadmap stay open (journal 2026-11-25).
 
 Done before it: **the pass-by review** (owner request 2026-11-24): the
 exhaust's directivity on the lane and one point for the stereo sum (journal

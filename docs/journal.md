@@ -13,6 +13,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Not a steady exit loss: 0.34 bar over a 21 mm orifice would pass about five times the 11 g/s measured at the outlet. What holds the chamber's mean up (wave rectification at the exit, the reverse cone's 68 holes and can annulus not modelled) is not separated. The geometry is sourced, so nothing is changed.
 - Inspector (two-stroke): the transfer ports offer port Cd, crankcase ratio and scavenging loop, and say a width derived from the bore; the exhaust port names the real-time mesh and the narrowest pipe's cells. Built, not seen on screen.
 - Oil: documented as not modelled, bounded at 2-4 % of the fuel's energy (simulation-model.md). Audit test 2 (partial mixing between the laws) added; test 3 (crankcase ceiling) not added: its bound needs a crankcase at ambient at TDC, which the model does not hold. Test 4 is `EngineLab.SimulationAccuracy`'s "each profile gets the mesh it asks".
+- Test 2 found a bug: a constant-volume cylinder at DR 1.5, a quarter mixed, drew its residual zone to a subnormal mass whose inverse overflowed, and the port's composition read NaN. Guarded where the inverse is not finite; the RD350 `--step 1000` sweep is byte-identical before/after.
 
 ## 2026-11-25 — Two-stroke phase 7: the IAME X30 senior against its measured curve; the Screamer III stays blocked
 
