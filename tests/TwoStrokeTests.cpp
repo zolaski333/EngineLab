@@ -926,6 +926,8 @@ void theResidualZoneGivesTheClassicalLaws() {
         // traps more than displacement or less than mixing.
         for (const auto partial : { 0.25, 0.5, 0.75 }) {
             const auto between = scavengeConstantVolume(partial, deliveryRatio, 4'000);
+            std::cout << "  DR " << deliveryRatio << " mixed share " << partial << ": SE "
+                      << between.scavengingEfficiency << '\n';
             require(between.scavengingEfficiency <= perfectDisplacementEfficiency(deliveryRatio) + 1.0e-3
                     && between.scavengingEfficiency >= perfectMixingEfficiency(deliveryRatio) - 1.0e-3,
                 "a partly mixed cylinder scavenges between mixing and displacement");

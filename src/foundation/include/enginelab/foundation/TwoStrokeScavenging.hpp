@@ -267,6 +267,11 @@ inline void holdResidualZoneWithin(ScavengeResidualZone& zone,
     const auto zoneMass = zone.massKg();
     if (!(w > 0.0) || !(zoneMass > 0.0)) return cylinderFractions;
     const auto inverse = 1.0 / zoneMass;
+    // A zone drawn down to a subnormal mass overflows its inverse, and a
+    // species it no longer holds then reads 0 x inf = NaN (a constant-volume
+    // cylinder at DR 1.5, a quarter mixed, journal 2026-11-26). Nothing is
+    // left to displace: the port passes the cylinder's mean.
+    if (!std::isfinite(inverse)) return cylinderFractions;
     return {
         (1.0 - w) * cylinderFractions.oxygen + w * zone.oxygenKg * inverse,
         (1.0 - w) * cylinderFractions.inert + w * zone.inertKg * inverse,
