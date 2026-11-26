@@ -482,7 +482,13 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   from the exhaust port's closing.
 - **Limits**: petrol only, naturally aspirated, one cylinder per intake path,
   no individual throttles, injection angles inside the 360-degree cycle. There
-  is no oil (premix) in the charge. An engine configured with an injector
+  is no oil (premix) in the charge. Its bound: a 1:50 to 1:25 premix is 2-4 %
+  of the jetted liquid, so 0.15-0.3 % of the charge's mass; the carburettor's
+  jet passes the mixture, so the fuel's energy is at most 2-4 % lower than
+  modelled if no oil burnt, and about the same if it all did (a lubricant's
+  heating value is close to petrol's). Blair's friction law is already a
+  lubricated engine's. Not measured: oil's effect on the flame or knock.
+  An engine configured with an injector
   rather than a carburettor keeps the injector's own limit: the fuel reaches
   the cylinder about an event before the crankcase would deliver a
   carburettor's mixture, so a tip-in runs rich (AFR 9-10) for a few events. The

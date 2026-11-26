@@ -688,6 +688,13 @@ if(TARGET EngineLabPhysicsPerfHarness)
             --filter RD350LC --trace 7000 --settle 1)
     set_tests_properties(EngineLab.ToolArguments.TraceIntakeFlushes PROPERTIES
         PASS_REGULAR_EXPRESSION "injector_capacity,intake_flushes,scavenging_efficiency")
+    # A trace without --filter traced the built-in default twin, whatever the
+    # catalogue root held (journal 2026-11-26): it is refused, saying why.
+    add_test(NAME EngineLab.ToolArguments.TraceNeedsEngine
+        COMMAND EngineLabPhysicsPerfHarness
+            --catalog-root "${CMAKE_SOURCE_DIR}/tests/reference-data/iame-x30" --trace 7000 --settle 1)
+    set_tests_properties(EngineLab.ToolArguments.TraceNeedsEngine PROPERTIES
+        PASS_REGULAR_EXPRESSION "they need --filter or --saved-engine")
 endif()
 if(TARGET EngineLabSceneExport)
     # An index that cannot be written (a folder in its place) fails the

@@ -68,6 +68,12 @@ file formats, always with an in-memory migration).
   damping and discharge coefficient by hand: no measured default exists.
   Editing a port's timing or width on the engine moves or scales its
   windows, and fitting a power valve marks them.
+- A two-stroke's transfer ports, clicked on the engine, offer the ports'
+  discharge coefficient, the crankcase compression ratio and the scavenging
+  loop (until now in the file only), and say when a port width is derived
+  from the bore. The exhaust port shows the real-time exhaust mesh and how
+  many of its cells the narrowest pipe holds: the real-time mesh reads a
+  two-stroke's power low, most on a narrow tail.
 
 ### Changed
 
@@ -105,6 +111,10 @@ file formats, always with an in-memory migration).
   an engine as the dyno sweep does and refuses to dump a point the engine
   did not reach, and marks the rows its intake network was flushed on;
   `PressureProbeHarness` takes `--saved-engine file [--saved-ecu]`.
+- Tools: `PhysicsPerfHarness --trace`, `--freerev` and `--overrun` without
+  `--filter` traced the built-in default twin whatever `--catalog-root`
+  held; they now refuse to run without an engine named, and print the
+  engine they trace.
 
 ## [0.14.1] — 2026-11-23
 

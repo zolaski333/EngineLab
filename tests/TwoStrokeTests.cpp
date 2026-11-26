@@ -921,6 +921,17 @@ void theResidualZoneGivesTheClassicalLaws() {
             "the scavenged cylinder keeps the element balance");
         require(displaced.leastSpecies > -1.0e-12 && mixed.leastSpecies > -1.0e-12,
             "no species is drawn below zero");
+        // Between the two laws, every partial mixing the front can produce
+        // stays inside them (audit 2026-11-24, test 2): no share of the zone
+        // traps more than displacement or less than mixing.
+        for (const auto partial : { 0.25, 0.5, 0.75 }) {
+            const auto between = scavengeConstantVolume(partial, deliveryRatio, 4'000);
+            require(between.scavengingEfficiency <= perfectDisplacementEfficiency(deliveryRatio) + 1.0e-3
+                    && between.scavengingEfficiency >= perfectMixingEfficiency(deliveryRatio) - 1.0e-3,
+                "a partly mixed cylinder scavenges between mixing and displacement");
+            require(between.worstNitrogenError < 1.0e-9 && between.leastSpecies > -1.0e-12,
+                "and keeps its element balance");
+        }
     }
 }
 

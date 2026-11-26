@@ -8,6 +8,7 @@
 #include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/ListenerFrame.hpp>
+#include <enginelab/simulation/SimulationAccuracy.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <enginelab/app/Theme.hpp>
@@ -2331,9 +2332,42 @@ void EngineViewport::updateInspector() {
                                       : config.twoStroke.exhaustPortOpenDegrees;
             add("Opens", juce::String(juce::roundToInt(opens)) + utf8("\xc2\xb0 ATDC"));
             add("Open for", juce::String(juce::roundToInt(360.0 - 2.0 * opens)) + utf8("\xc2\xb0"));
-            if (cylinder != nullptr)
-                add("Width", millimetres(model_.units, intake ? transferPortWidthMm(config.twoStroke, *cylinder)
-                                                              : exhaustPortWidthMm(config.twoStroke, *cylinder)));
+            if (cylinder != nullptr) {
+                // A width left at 0 is derived from the bore (0.65 / 1.30 x):
+                // say so, or a file's missing width reads as a choice.
+                const auto& ports = config.twoStroke;
+                const auto derived = intake ? ports.transferWindows.empty() && ports.transferPortWidthMm == 0.0
+                                            : ports.exhaustWindows.empty() && ports.exhaustPortWidthMm == 0.0;
+                add("Width", millimetres(model_.units, intake ? transferPortWidthMm(ports, *cylinder)
+                                                              : exhaustPortWidthMm(ports, *cylinder))
+                                 + (derived ? " (from the bore)" : ""));
+            }
+            if (intake) {
+                add("Port Cd", juce::String(config.twoStroke.portDischargeCoefficient, 2));
+                add("Crankcase ratio", juce::String(config.twoStroke.crankcaseCompressionRatio, 2) + utf8(" : 1"));
+            }
+            // The real-time exhaust mesh is a two-stroke's largest known
+            // error, and it is largest on a narrow pipe of few cells (audit
+            // 2026-11-24 N-1; journal 2026-11-25): name that pipe.
+            std::optional<double> meshCellMm;
+            if (!intake) {
+                meshCellMm = accuracyResolution(AccuracyProfile::realtime, config).exhaustCellLengthM * 1'000.0;
+                const ExhaustComponentConfig* narrowest = nullptr;
+                for (const auto& path : config.exhaustPaths) {
+                    if (!path.network) continue;
+                    for (const auto& component : path.network->components)
+                        if (component.type == ExhaustComponentType::pipe && component.lengthMm > 0.0
+                            && (narrowest == nullptr || component.diameterMm < narrowest->diameterMm))
+                            narrowest = &component;
+                }
+                if (*meshCellMm > 0.0) {
+                    add("Real-time mesh", juce::String(juce::roundToInt(*meshCellMm)) + " mm cells");
+                    if (narrowest != nullptr)
+                        add("Narrowest pipe",
+                            millimetres(model_.units, narrowest->diameterMm) + ", "
+                                + juce::String(narrowest->lengthMm / *meshCellMm, 1) + " cells");
+                }
+            }
             if (cylinderEditor_ && cylinder != nullptr) {
                 edit = portTimingEdit();
                 edit->key |= intake ? 1U : 2U;
@@ -2352,6 +2386,29 @@ void EngineViewport::updateInspector() {
                     edit->note += " The intake port is uncovered by the skirt as far either side of TDC as it opens "
                                   "before it.";
                 }
+                // What sets the scavenging besides the ports' size: every
+                // port's discharge coefficient, the crankcase's compression
+                // ratio and the loop the fresh charge runs before it reaches
+                // the exhaust (journal 2026-11-26; the audit found them in
+                // the file only).
+                if (intake) {
+                    const auto& ports = config.twoStroke;
+                    edit->value("Port Cd", ports.portDischargeCoefficient, "", 2, 0.05, 0.01, 0.3, 1.0);
+                    edit->value("Crankcase ratio", ports.crankcaseCompressionRatio, utf8(" : 1"), 2, 0.05, 0.01, 1.1,
+                                2.5);
+                    edit->value("Scavenge loop", ports.scavengeLoopLengthRatio, utf8(" \xc3\x97 bore"), 1, 0.1, 0.1,
+                                0.0, 4.0);
+                    edit->note += " Port Cd: every port's discharge coefficient where no window has its own. "
+                                  "Crankcase ratio: the crankcase's volume at BDC over TDC's, the pumping. Scavenge "
+                                  "loop: how far the fresh charge travels before it reaches the exhaust, 0.5-4 x the "
+                                  "bore, or 0 for a perfectly mixed cylinder. None of the three is measured on a "
+                                  "real engine here.";
+                }
+                if (!intake && meshCellMm && *meshCellMm > 0.0)
+                    edit->note += " The real-time exhaust mesh reads a two-stroke's power low: 18-27 % under a "
+                                  "converged mesh on the catalogue, about 45 % on a kart's 21 mm tail of two cells. "
+                                  "The fewer cells the narrowest pipe holds, the larger the error; "
+                                  "DynoSweepHarness --accuracy measures it.";
                 if (!intake) {
                     // Fitting a power valve, or taking it off, restarts the
                     // engine; its settings are then on its blade.
@@ -2408,6 +2465,12 @@ void EngineViewport::updateInspector() {
                     if (error.empty() && cylinderPort) {
                         edited.twoStroke.intakePortOpenDegreesBtdc = values[3];
                         if (values[4] != intakeWidthNow) edited.twoStroke.intakePortWidthMm = values[4];
+                    }
+                    const auto scavenging = cylinderPort ? std::size_t { 5 } : std::size_t { 3 };
+                    if (error.empty() && intake && values.size() >= scavenging + 3U) {
+                        edited.twoStroke.portDischargeCoefficient = values[scavenging];
+                        edited.twoStroke.crankcaseCompressionRatio = values[scavenging + 1U];
+                        edited.twoStroke.scavengeLoopLengthRatio = values[scavenging + 2U];
                     }
                     return error;
                 };

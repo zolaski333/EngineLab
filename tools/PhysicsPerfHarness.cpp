@@ -1,4 +1,4 @@
-#include <enginelab/catalog/EngineCatalog.hpp>
+﻿#include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -250,7 +250,8 @@ bool traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
     // the first seconds, not in the state it converges to).
     if (watchSettle)
         std::cout << "t_s,rpm,map_kpa,throttle,afr,fuel_mg,misfire,irt_c,net_nm,cylp_bar,"
-                     "boost,wastegate,shaft_krpm,turbine_kw,back_kpa,cycle_nm,compressor_kw\n";
+                     "boost,wastegate,shaft_krpm,turbine_kw,back_kpa,cycle_nm,compressor_kw,"
+                     "target_afr,rev_limit_rpm,soft_limiter,hard_limiter\n";
     // A dyno trace starts as DynoSweepHarness starts every engine: 1.5 s of
     // starter at 55 % throttle, then 0.5 s on its own, before the hold. A
     // start at full throttle never caught a V3 with a 23 mm tail pipe (974
@@ -284,7 +285,10 @@ bool traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                       << ',' << frame.state.turbinePowerKw
                       << ',' << frame.state.exhaustBackPressureKpa
                       << ',' << frame.state.cycleAveragedTorqueNm
-                      << ',' << frame.state.compressorPowerKw << '\n';
+                      << ',' << frame.state.compressorPowerKw
+                      << ',' << frame.state.targetAirFuelRatio << ',' << frame.state.activeRevLimitRpm
+                      << ',' << frame.state.ecuSoftRevLimiterActive
+                      << ',' << frame.state.ecuHardRevLimiterActive << '\n';
         }
     }
     // A dyno trace of an engine that is not at the speed asked is not that
@@ -768,7 +772,17 @@ int main(int argc, char** argv) {
     }
 
     std::cout << std::fixed << std::setprecision(3);
-    // --trace is a single-engine instrument: pair it with --filter.
+    // --trace, --freerev and --overrun are single-engine instruments. Without
+    // --filter or --saved-engine the list above starts with the built-in
+    // default twin, and that engine was traced whatever --catalog-root held:
+    // an IAME X30 "stalled at 8,170 rpm" was the twin on its 8,200 rpm
+    // limiter (journal 2026-11-26).
+    const auto singleEngineMode = traceRpm > 0.0 || freeRevThrottle >= 0.0 || overrunSeconds > 0.0;
+    if (singleEngineMode && filter.empty() && savedEngineFile.empty()) {
+        std::cerr << "--trace, --freerev and --overrun trace one engine: they need --filter or --saved-engine\n";
+        return EXIT_FAILURE;
+    }
+    if (singleEngineMode) std::cerr << "engine: " << engines.front().name << '\n';
     if (traceRpm > 0.0) {
         return traceEngine(engines.front(), traceRpm, traceThrottle, traceFreeIdle, traceWatch,
                    traceExhaustCellMm, settleGiven ? freeRevSettleSeconds : 0.0)
