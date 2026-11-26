@@ -6034,16 +6034,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         // The valve over the interval: shut until it opens,
                         // then linear in area until it closes.
                         const auto aheadValve = [&](gasdynamics::CylinderValveBoundary& valve,
-                                double areaNow, double areaAhead, double toOpen, double toClose) noexcept {
-                            valve.effectiveValveAreaM2 = areaNow;
-                            if (areaNow > 0.0 && toClose < forwardIntervalSeconds) {
+                                double valveAreaNow, double valveAreaAhead, double toOpen, double toClose) noexcept {
+                            valve.effectiveValveAreaM2 = valveAreaNow;
+                            if (valveAreaNow > 0.0 && toClose < forwardIntervalSeconds) {
                                 valve.valveClosesAfterSeconds = toClose;
-                                valve.effectiveValveAreaRateM2PerS = -areaNow / std::max(1.0e-9, toClose);
-                            } else if (areaNow > 0.0) {
-                                valve.effectiveValveAreaRateM2PerS = (areaAhead - areaNow) / forwardIntervalSeconds;
-                            } else if (areaAhead > 0.0 && toOpen < forwardIntervalSeconds) {
+                                valve.effectiveValveAreaRateM2PerS = -valveAreaNow / std::max(1.0e-9, toClose);
+                            } else if (valveAreaNow > 0.0) {
+                                valve.effectiveValveAreaRateM2PerS = (valveAreaAhead - valveAreaNow) / forwardIntervalSeconds;
+                            } else if (valveAreaAhead > 0.0 && toOpen < forwardIntervalSeconds) {
                                 valve.valveOpensAfterSeconds = toOpen;
-                                valve.effectiveValveAreaRateM2PerS = areaAhead
+                                valve.effectiveValveAreaRateM2PerS = valveAreaAhead
                                     / std::max(1.0e-9, forwardIntervalSeconds - toOpen);
                             }
                         };
