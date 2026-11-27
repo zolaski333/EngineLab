@@ -21,8 +21,11 @@ without the owner's explicit agreement.
 local cleanup, done (merged branches and side worktrees removed, test files
 moved to `C:\Users\t3anc\EngineLab-essais`); (2) the 0.15.0 test in the app,
 done: pass-by and sounds validated, its two defects (an H/X could not come
-off, no exhaust port diameter) fixed for a 0.15.1 (journal 2026-11-27);
-(3) petrol efficiency (plan of 2026-11-20), one step at a time;
+off, no exhaust port diameter) fixed and released in 0.15.1 with issues #8
+and #10 (journal 2026-11-27); (3) petrol efficiency (plan of 2026-11-20),
+one step at a time, starting with issue #9 (the flame's dilution input)
+and `exp/hires-dilution`: the owner accepts a changed idle sound (idles
+are user-tunable), so recalibrating the idles is allowed;
 then the exhaust network's single time step (a two-stroke's finer mesh is
 not real time) and the message thread's load.
 

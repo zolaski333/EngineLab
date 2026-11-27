@@ -5,7 +5,7 @@ All notable changes to EngineLab are listed here. The format follows
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break
 file formats, always with an in-memory migration).
 
-## [Unreleased]
+## [0.15.1] — 2026-11-27
 
 ### Added
 
