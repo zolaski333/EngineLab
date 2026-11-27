@@ -214,6 +214,12 @@ int main() {
                 "every visible workshop control stays inside the window");
         }
     };
+    // A screen that holds nothing (the Windows CI runner's empty work area)
+    // opens the window at its minimum, never under it: laid out once at
+    // 1 x 1, the workshop stayed broken at every later size.
+    enginelab::ui::centreWithinScreen(window, 1, 1);
+    require(window.getWidth() >= 1'100 && window.getHeight() >= 800,
+            "a window never opens under its own minimum size");
     verifyLayoutAt(1'100, 800);
     verifyLayoutAt(1'280, 860);
     verifyLayoutAt(1'600, 1'000);

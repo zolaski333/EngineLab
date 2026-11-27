@@ -73,10 +73,20 @@ void centreWithinScreen(juce::Component& window, int width, int height) {
         // The area is in scaled units, the system's frame is not.
         const auto scale = std::max(0.1, static_cast<double>(desktop.getGlobalScaleFactor()));
         const auto area = display->userBounds.getLargestIntegerWithin();
-        width = std::max(1, std::min(width, area.getWidth() - static_cast<int>(std::ceil(frameWidth / scale))));
-        height = std::max(1, std::min(height, area.getHeight() - static_cast<int>(std::ceil(frameHeight / scale))));
+        width = std::min(width, area.getWidth() - static_cast<int>(std::ceil(frameWidth / scale)));
+        height = std::min(height, area.getHeight() - static_cast<int>(std::ceil(frameHeight / scale)));
     }
-    window.centreWithSize(width, height);
+    // Never under the window's own minimum: a layout is only proved down to
+    // it, and the Audio workshop's laid out once at 1 x 1 stays broken. A
+    // headless screen (the Windows CI runner) reads an empty work area.
+    auto minimumWidth = 1;
+    auto minimumHeight = 1;
+    if (auto* resizable = dynamic_cast<juce::ResizableWindow*>(&window))
+        if (const auto* constrainer = resizable->getConstrainer()) {
+            minimumWidth = std::max(minimumWidth, constrainer->getMinimumWidth());
+            minimumHeight = std::max(minimumHeight, constrainer->getMinimumHeight());
+        }
+    window.centreWithSize(std::max(width, minimumWidth), std::max(height, minimumHeight));
 }
 
 juce::Font uiFont(float height, bool bold) {
