@@ -190,8 +190,11 @@ int main() {
         [physicsTelemetry] { return physicsTelemetry; });
     auto* content = window.getContentComponent();
     require(content != nullptr, "workshop owns content");
-    std::cout << "workshop constructed at " << window.getBounds().toString()
-              << ", content " << content->getBounds().toString() << '\n';
+    // The layout is checked at the sizes asked, off the desktop: on the
+    // Windows CI runner's 1,024 x 768 screen the system shrank the window to
+    // 1,084 x 761, under its 800 px minimum, and a row was laid out 0 px high
+    // (in the app the desktop scale fits the screen first, issue #10).
+    window.removeFromDesktop();
     const auto verifyLayoutAt = [&](int width, int height) {
         window.setBounds(20, 20, width, height);
         window.resized();
@@ -208,8 +211,7 @@ int main() {
             if (!child->isVisible()) continue;
             if (child->getWidth() <= 0 || child->getHeight() <= 0
                 || !content->getLocalBounds().contains(child->getBounds())) {
-                // What the CI runner's screen gave the window: its layout
-                // passes here and failed only there (0.15.1).
+                // Says what the window was given, and by which screen.
                 const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
                 std::cerr << "asked " << width << " x " << height
                           << ", window " << window.getBounds().toString()
@@ -218,7 +220,7 @@ int main() {
                           << "' " << child->getBounds().toString()
                           << ", on desktop " << window.isOnDesktop()
                           << ", display " << (display != nullptr
-                              ? display->userBounds.toString() + " total " + display->totalArea.toString()
+                              ? display->userBounds.toString() + " total " + display->logicalBounds.toString()
                                   + " scale " + juce::String(display->scale)
                               : juce::String("none"))
                           << '\n';
@@ -233,9 +235,8 @@ int main() {
                 "every visible workshop control stays inside the window");
         }
     };
-    // A screen that holds nothing (the Windows CI runner's empty work area)
-    // opens the window at its minimum, never under it: laid out once at
-    // 1 x 1, the workshop stayed broken at every later size.
+    // A screen too small for the window opens it at its minimum, never under
+    // it (centreWithinScreen clamps to the constrainer).
     enginelab::ui::centreWithinScreen(window, 1, 1);
     require(window.getWidth() >= 1'100 && window.getHeight() >= 800,
             "a window never opens under its own minimum size");
