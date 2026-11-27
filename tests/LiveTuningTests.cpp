@@ -5,6 +5,7 @@
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -262,6 +263,60 @@ void camshaftsSettleLikeARestart() {
                 require(halfWay < -17.0 && halfWay > -23.0, std::string(name) + ": half-way at half the ramp");
         }
     }
+}
+
+/** The exhaust port's diameter, set in the app (owner 2026-11-27): a
+ * camshaft edit the running engine takes, on every bank, that changes the
+ * held torque; out of range or on a two-stroke it is refused. */
+void exhaustPortIsALiveCamshaftEdit() {
+    const auto k20 = catalogueEngine("K20A");
+    const auto port = exhaustPortDiameterMm(k20);
+    require(port.has_value() && *port > 10.0, "the K20A's exhaust port reads a diameter");
+    auto narrower = k20;
+    require(setExhaustPortDiameterMm(narrower, 0.8 * *port).empty(), "a port 0.8 times as wide is taken");
+    require(std::abs(*exhaustPortDiameterMm(narrower) - 0.8 * *port) < 1.0e-9, "the port reads what was set");
+    const auto fraction = narrower.camshafts.exhaustPortHeadAreaFraction;
+    require(std::abs(fraction - 0.64 * (k20.camshafts.exhaustPortHeadAreaFraction > 0.0
+                                            ? k20.camshafts.exhaustPortHeadAreaFraction
+                                            : defaultExhaustPortHeadAreaFraction)) < 1.0e-12,
+            "the port's area is the square of its diameter");
+    for (const auto& bank : narrower.banks)
+        require(bank.camshafts.exhaustPortHeadAreaFraction == fraction, "every bank's camshaft gets the port");
+    const auto scope = engineEditScope(k20, narrower);
+    require(scope.camshafts && !scope.settings && !scope.cylinders && !scope.other,
+            "a port edit is a camshaft edit only");
+    auto runtime = std::make_unique<EngineRuntime>(k20);
+    require(runtime->applyLiveCamshafts(narrower, 0.0), "the runtime takes the narrower port");
+    require(firstCamshafts(runtime->engineConfig()).exhaustPortHeadAreaFraction == fraction,
+            "the runtime's configuration carries the port");
+    runtime.reset();
+
+    Rig built(narrower);
+    Rig untouched(k20);
+    std::array<double, 2> rpm {};
+    std::array<double, 2> torque {};
+    constexpr auto frames = 8 * 240;
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        std::size_t index = 0;
+        for (auto* rig : { &built, &untouched }) {
+            const auto controls = heldAt(t, rpm[index], k20);
+            rpm[index] = rig->simulator->step(frameSeconds, controls).state.rpm;
+            if (frame >= frames - 3 * 240) torque[index] += controls.dynamometerTorqueNm / (3.0 * 240.0);
+            ++index;
+        }
+    }
+    std::cout << "  K20A, exhaust port x0.8: held brake torque " << torque[0] << " Nm against " << torque[1] << "\n";
+    require(torque[0] < 0.98 * torque[1], "a narrower exhaust port costs torque at 60 % of redline (-2.9 % measured)");
+
+    auto wide = k20;
+    require(!setExhaustPortDiameterMm(wide, 2.0 * *port).empty()
+                && wide.camshafts.exhaustPortHeadAreaFraction == k20.camshafts.exhaustPortHeadAreaFraction,
+            "a port wider than 1.2 of the head's area is refused, nothing changed");
+    auto twoStroke = k20;
+    twoStroke.cycle = EngineCycle::twoStroke;
+    require(!exhaustPortDiameterMm(twoStroke) && !setExhaustPortDiameterMm(twoStroke, *port).empty(),
+            "a two-stroke's port is its window, not a diameter");
 }
 
 /** The air at 2,000 m (79.5 kPa) and 35 degC, taken at 6 s while held at 60 %
@@ -559,6 +614,7 @@ void liveTuningRegression() {
     flywheelRevsLikeARestart();
     sameCamshaftsAreInvisible();
     camshaftsSettleLikeARestart();
+    exhaustPortIsALiveCamshaftEdit();
 }
 
 } // namespace enginelab::tests

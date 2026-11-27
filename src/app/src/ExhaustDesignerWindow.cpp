@@ -636,8 +636,10 @@ public:
         graphGroup_.setBounds(graphArea);
         graphCanvas_.setBounds(graphArea.reduced(10, 24));
         // On the flow view's title line, at its right: what it draws on.
-        auto crossoverTools = juce::Rectangle<int>(graphArea.getRight() - 10 - 2 * 128 - 6, graphArea.getY(), 2 * 128 + 6, 22);
-        xPipeButton_.setBounds(crossoverTools.removeFromRight(128));
+        auto crossoverTools = juce::Rectangle<int>(graphArea.getRight() - 10 - 3 * 112 - 12, graphArea.getY(), 3 * 112 + 12, 22);
+        removeCrossoverButton_.setBounds(crossoverTools.removeFromRight(112));
+        crossoverTools.removeFromRight(6);
+        xPipeButton_.setBounds(crossoverTools.removeFromRight(112));
         crossoverTools.removeFromRight(6);
         hPipeButton_.setBounds(crossoverTools);
         bounds.removeFromTop(8);
@@ -761,15 +763,22 @@ private:
         hPipeButton_.setButtonText("+ H-PIPE");
         hPipeButton_.setTooltip("Joins the two pipes (the banks') with a balance pipe across, in one click: "
                                 "a third of the way from the collectors, 250 mm, the pipes' bore. A dual exhaust "
-                                "drawn as two paths becomes one path first, both exhausts kept. Undo takes it off.");
+                                "drawn as two paths becomes one path first, both exhausts kept. - H/X takes it off.");
         hPipeButton_.setComponentID("exhaust-add-h-pipe");
         hPipeButton_.onClick = [this] { addCrossover(ExhaustCrossoverKind::hPipe); };
         xPipeButton_.setButtonText("+ X-PIPE");
         xPipeButton_.setTooltip("Crosses the two pipes (the banks') in an X, in one click: a third of the way "
                                 "from the collectors, 30 % of each pipe's pulse into the other. A dual exhaust "
-                                "drawn as two paths becomes one path first, both exhausts kept. Undo takes it off.");
+                                "drawn as two paths becomes one path first, both exhausts kept. - H/X takes it off.");
         xPipeButton_.setComponentID("exhaust-add-x-pipe");
         xPipeButton_.onClick = [this] { addCrossover(ExhaustCrossoverKind::xPipe); };
+        removeCrossoverButton_.setButtonText("- H/X");
+        removeCrossoverButton_.setTooltip("Takes off the selected H-pipe or X-pipe (its balance pipe, a junction of it, "
+                                          "or the X), or the path's only one: the pipes it cut run whole again, and "
+                                          "two exhausts it had made one path are two paths again. Also on Delete and "
+                                          "on the part's right-click menu.");
+        removeCrossoverButton_.setComponentID("exhaust-remove-crossover");
+        removeCrossoverButton_.onClick = [this] { removeCrossover(); };
         applyButton_.setButtonText("Validate and apply");
         applyButton_.setColour(juce::TextButton::buttonColourId, ui::colours::okBorder);
         applyButton_.onClick = [this] { apply(); };
@@ -898,6 +907,7 @@ private:
         addAndMakeVisible(legacyButton_);
         addAndMakeVisible(hPipeButton_);
         addAndMakeVisible(xPipeButton_);
+        addAndMakeVisible(removeCrossoverButton_);
         addAndMakeVisible(applyButton_);
         addAndMakeVisible(pathCylinderSelector_);
         addAndMakeVisible(destinationPathSelector_);
@@ -1189,6 +1199,46 @@ private:
                   false);
     }
 
+    /** Takes off the H or X `componentId` belongs to, or with none named the
+     *  selected part's, else the path's only one (owner 2026-11-27: once
+     *  fitted, an H or X could not be taken off). */
+    void removeCrossover(std::optional<std::uint32_t> componentId = std::nullopt) {
+        if (!commitSelectedComponentEdits()) return;
+        const auto* path = selectedPath();
+        const auto* network = selectedNetwork();
+        if (path == nullptr || network == nullptr) {
+            setStatus("This path has no H-pipe or X-pipe.", true);
+            return;
+        }
+        auto target = componentId ? componentId : ExhaustNetworkEditor::crossoverOf(*network, selectedComponentId_);
+        if (!target) {
+            const auto all = ExhaustNetworkEditor::crossovers(*network);
+            if (all.empty()) {
+                setStatus("This path has no H-pipe or X-pipe to take off.", true);
+                return;
+            }
+            if (all.size() > 1U) {
+                setStatus("This path has " + juce::String(static_cast<int>(all.size()))
+                              + " H- and X-pipes: select the one to take off (its balance pipe or the X).", true);
+                return;
+            }
+            target = all.front();
+        }
+        const auto pathId = path->id;
+        auto before = snapshot();
+        const auto result = ExhaustPathTopologyEditor::removeCrossover(working_, pathId, *target);
+        if (!result) {
+            setStatus(utf8(result.error), true);
+            return;
+        }
+        pushUndo(std::move(before));
+        selectEditedPath(result.selectedPathId);
+        setStatus("H/X taken off: the pipes it cut run whole again"
+                      + (result.note.empty() ? juce::String() : juce::String("; ") + utf8(result.note))
+                      + ". Validate and apply to hear it.",
+                  false);
+    }
+
     /** The working copy before an edit, for undo. */
     struct Snapshot {
         EngineConfig config;
@@ -1316,6 +1366,8 @@ private:
         if (component->type == ExhaustComponentType::pipe && (!twoStroke || component->inletValve))
             menu.addItem(102, "Active valve at its inlet", true, component->inletValve);
         if (exhaustValveFitted(working_)) menu.addItem(103, "Valve actuator settings...");
+        if (const auto* network = selectedNetwork(); network != nullptr && ExhaustNetworkEditor::crossoverOf(*network, id))
+            menu.addItem(104, "Take off this H/X-pipe");
         menu.addItem(100, "Delete");
         menu.showMenuAsync(menuAtMouse(), [safe = juce::Component::SafePointer<DesignerContent>(this), id](int choice) {
             if (safe != nullptr) safe->componentMenuChosen(id, choice);
@@ -1323,6 +1375,10 @@ private:
     }
 
     void componentMenuChosen(std::uint32_t id, int choice) {
+        if (choice == 104) {
+            removeCrossover(id);
+            return;
+        }
         if (choice == 100) {
             if (trySelectComponent(id)) deleteComponent();
             return;
@@ -1842,6 +1898,11 @@ private:
         auto* network = selectedNetwork();
         if (network == nullptr || selectedComponent() == nullptr) return;
         const auto id = selectedComponentId_;
+        // A part of an H or an X: deleting it alone left the pipes cut.
+        if (ExhaustNetworkEditor::crossoverOf(*network, id)) {
+            removeCrossover(id);
+            return;
+        }
         rememberForUndo();
         std::erase_if(network->components, [id](const auto& component) { return component.id == id; });
         std::erase_if(network->connections, [id](const auto& connection) {
@@ -2181,6 +2242,7 @@ private:
     juce::TextButton legacyButton_;
     juce::TextButton hPipeButton_;
     juce::TextButton xPipeButton_;
+    juce::TextButton removeCrossoverButton_;
     juce::TextButton applyButton_;
     juce::ComboBox pathCylinderSelector_;
     juce::ComboBox destinationPathSelector_;

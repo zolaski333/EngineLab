@@ -17,6 +17,15 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
+**Owner 2026-11-27 ("do what you want, the best choices")**, in order: (1)
+local cleanup, done (merged branches and side worktrees removed, test files
+moved to `C:\Users\t3anc\EngineLab-essais`); (2) the 0.15.0 test in the app,
+done: pass-by and sounds validated, its two defects (an H/X could not come
+off, no exhaust port diameter) fixed for a 0.15.1 (journal 2026-11-27);
+(3) petrol efficiency (plan of 2026-11-20), one step at a time;
+then the exhaust network's single time step (a two-stroke's finer mesh is
+not real time) and the message thread's load.
+
 **Released 0.15.0 (2026-11-26, owner request)**: the pass-by review, the
 settings in the app and the two-stroke roadmap, with the two-stroke audit
 closed (journal 2026-11-26: the X30's sourced 21 mm exit holds its pipe's

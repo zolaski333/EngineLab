@@ -582,6 +582,50 @@ int main() {
         }
     }
 
+    // Owner 2026-11-27: an H fitted and applied could not be taken off once
+    // the designer had the engine again (its undo history starts afresh).
+    // "- H/X" takes it off: the dual exhaust is two paths again.
+    {
+        const auto dual = std::find_if(catalog.entries.begin(), catalog.entries.end(), [](const auto& entry) {
+            const auto& induction = entry.config.forcedInduction;
+            return entry.config.exhaustPaths.size() == 2U
+                && !(induction.enabled && induction.type == enginelab::ForcedInductionType::turbocharger);
+        });
+        require(dual != catalog.entries.end(), "the catalogue has a dual exhaust drawn as two paths");
+        std::optional<enginelab::EngineConfig> applied;
+        enginelab::ExhaustDesignerWindow designer(dual->config, [&applied](const enginelab::EngineConfig& edited) {
+            applied = edited;
+            return true;
+        });
+        auto* view = designer.getContentComponent();
+        require(view != nullptr, "the exhaust designer has a view");
+        const auto child = [view](juce::StringRef id) {
+            for (auto* item : view->getChildren())
+                if (item->getComponentID() == id) return dynamic_cast<juce::Button*>(item);
+            return static_cast<juce::Button*>(nullptr);
+        };
+        auto* hPipe = child("exhaust-add-h-pipe");
+        auto* takeOff = child("exhaust-remove-crossover");
+        auto* applyDesign = child("exhaust-apply");
+        auto* undo = child("exhaust-undo");
+        require(hPipe && takeOff && applyDesign && undo, "the exhaust designer shows + H-PIPE and - H/X");
+        hPipe->onClick();
+        applyDesign->onClick();
+        require(applied && applied->exhaustPaths.size() == 1U
+                    && !enginelab::ExhaustNetworkEditor::crossovers(*applied->exhaustPaths.front().network).empty(),
+                "+ H-PIPE makes the dual exhaust one path with an H");
+        designer.setConfig(*applied);
+        require(!undo->isEnabled(), "the designer given the engine again has no history");
+        takeOff->onClick();
+        applied.reset();
+        applyDesign->onClick();
+        require(applied && applied->exhaustPaths.size() == 2U
+                    && std::all_of(applied->exhaustPaths.begin(), applied->exhaustPaths.end(), [](const auto& path) {
+                           return !path.network || enginelab::ExhaustNetworkEditor::crossovers(*path.network).empty();
+                       }),
+                "- H/X takes the H off: two paths again, no crossover left");
+    }
+
     // The Equipment window: every part in one place. Nitrous hidden behind
     // "Fit a kit..." until fitted, then its settings, each taken at once,
     // and a status that says what an armed kit waits for; the active valve

@@ -5,6 +5,27 @@ All notable changes to EngineLab are listed here. The format follows
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break
 file formats, always with an in-memory migration).
 
+## [Unreleased]
+
+### Added
+
+- **The exhaust port's diameter, in the app.** Clicking a four-stroke's
+  exhaust ports in the 3-D view offers the port's diameter: the round hole
+  that flows what each port flows at full lift, per valve, every cylinder's
+  (until now the file's `exhaust_port_head_area_fraction` only). A
+  production port is about 0.71 of the valve; a ported head reaches
+  0.80-0.90. The running engine takes it. Engines are unchanged until it is
+  set.
+
+### Fixed
+
+- **An H-pipe or X-pipe can be taken off.** Once fitted with + H-PIPE or
+  + X-PIPE it could only be undone before the exhaust designer forgot its
+  history. The new **- H/X** button (and Delete, or the part's right-click
+  menu) takes any H or X off, the designer's and a file's too: the pipes it
+  cut run whole again, and a dual exhaust it had made one path is two paths
+  again, as it was.
+
 ## [0.15.0] — 2026-11-26
 
 ### Added

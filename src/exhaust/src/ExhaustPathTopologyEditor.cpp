@@ -624,6 +624,102 @@ struct CrossoverCandidate final {
     if (!(lengthMm >= 200.0)) return 0.5 * lengthMm;
     return std::clamp(0.35 * lengthMm, 100.0, lengthMm - 100.0);
 }
+
+/** Two pipes alike but for their length (what a cut leaves). */
+[[nodiscard]] bool samePipeButLength(const ExhaustComponentConfig& a, const ExhaustComponentConfig& b) noexcept {
+    return a.type == ExhaustComponentType::pipe && b.type == ExhaustComponentType::pipe && !b.inletValve
+        && a.diameterMm == b.diameterMm && a.outletDiameterMm == b.outletDiameterMm
+        && a.volumeLitres == b.volumeLitres && a.restriction == b.restriction
+        && a.resonanceHz == b.resonanceHz && a.acousticGain == b.acousticGain
+        && a.dischargeCoefficient == b.dischargeCoefficient && a.acousticTermination == b.acousticTermination
+        && a.packingFlowResistivityPaSPerM2 == b.packingFlowResistivityPaSPerM2
+        && a.packingThicknessMm == b.packingThicknessMm && a.perforatedOpenAreaRatio == b.perforatedOpenAreaRatio
+        && a.catalystCellDensityCpsi == b.catalystCellDensityCpsi
+        && a.catalystOpenAreaRatio == b.catalystOpenAreaRatio
+        && a.catalystSubstrateVolumetricHeatCapacityJPerM3K == b.catalystSubstrateVolumetricHeatCapacityJPerM3K
+        && a.crossoverCoupling == b.crossoverCoupling;
+}
+
+/** `front` -> `rear` become one pipe of their summed length under front's id,
+ *  when nothing else meets between them and they are alike. */
+void fuseSeriesPipes(ExhaustNetworkConfig& network, std::uint32_t frontId, std::uint32_t rearId) {
+    if (frontId == rearId) return;
+    auto* front = findComponent(network, frontId);
+    const auto* rear = findComponent(network, rearId);
+    if (front == nullptr || rear == nullptr || !samePipeButLength(*front, *rear)) return;
+    std::size_t frontOut = 0;
+    std::size_t rearIn = 0;
+    for (const auto& edge : network.connections) {
+        if (edge.fromComponentId == frontId) ++frontOut;
+        if (edge.toComponentId == rearId) ++rearIn;
+    }
+    if (frontOut != 1U || rearIn != 1U) return;
+    if (std::any_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+            [rearId](const ExhaustCylinderConnectionConfig& mapping) { return mapping.componentId == rearId; }))
+        return;
+    front->lengthMm += rear->lengthMm;
+    for (auto& edge : network.connections)
+        if (edge.fromComponentId == rearId) edge.fromComponentId = frontId;
+    eraseComponent(network, rearId);
+}
+
+/** A splitter or merge left with one way in and one out goes: the pipe
+ *  before it runs into the one after. */
+void bypassJunction(ExhaustNetworkConfig& network, std::uint32_t id) {
+    const auto* junction = findComponent(network, id);
+    if (junction == nullptr
+        || (junction->type != ExhaustComponentType::splitter && junction->type != ExhaustComponentType::merge))
+        return;
+    std::optional<ExhaustComponentConnectionConfig> in;
+    std::optional<ExhaustComponentConnectionConfig> out;
+    std::size_t edges = 0;
+    for (const auto& edge : network.connections) {
+        if (edge.toComponentId == id) {
+            ++edges;
+            in = edge;
+        }
+        if (edge.fromComponentId == id) {
+            ++edges;
+            out = edge;
+        }
+    }
+    if (edges != 2U || !in || !out || isSideBranch(*in) || isSideBranch(*out)) return;
+    if (std::any_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+            [id](const ExhaustCylinderConnectionConfig& mapping) { return mapping.componentId == id; }))
+        return;
+    eraseComponent(network, id);
+    network.connections.push_back({ in->fromComponentId, out->toComponentId, in->fromPort, out->toPort });
+    fuseSeriesPipes(network, in->fromComponentId, out->toComponentId);
+}
+
+/** The balance pipe of the H `id` is, or meets on a side port. */
+[[nodiscard]] std::optional<std::uint32_t> balancePipeOf(const ExhaustNetworkConfig& network, std::uint32_t id) {
+    const auto isBalance = [&network](std::uint32_t pipeId) {
+        const auto* pipe = findComponent(network, pipeId);
+        if (pipe == nullptr || pipe->type != ExhaustComponentType::pipe) return false;
+        auto sideIn = false;
+        auto sideOut = false;
+        for (const auto& edge : network.connections) {
+            if (edge.toComponentId == pipeId) {
+                if (edge.fromPort != exhaustSideBranchPort) return false;
+                sideIn = true;
+            }
+            if (edge.fromComponentId == pipeId) {
+                if (edge.toPort != exhaustSideBranchPort) return false;
+                sideOut = true;
+            }
+        }
+        return sideIn && sideOut;
+    };
+    if (isBalance(id)) return id;
+    for (const auto& edge : network.connections) {
+        if (edge.fromComponentId == id && edge.fromPort == exhaustSideBranchPort && isBalance(edge.toComponentId))
+            return edge.toComponentId;
+        if (edge.toComponentId == id && edge.toPort == exhaustSideBranchPort && isBalance(edge.fromComponentId))
+            return edge.fromComponentId;
+    }
+    return std::nullopt;
+}
 } // namespace
 
 ExhaustPathEditResult ExhaustPathTopologyEditor::createPathFromCylinder(
@@ -1257,6 +1353,139 @@ std::string ExhaustNetworkEditor::addCrossover(ExhaustNetworkConfig& network, Ex
         if (junctionId != nullptr) *junctionId = x;
     }
     return {};
+}
+
+std::optional<std::uint32_t> ExhaustNetworkEditor::crossoverOf(const ExhaustNetworkConfig& network,
+                                                               std::uint32_t componentId) {
+    const auto* component = findComponent(network, componentId);
+    if (component == nullptr) return std::nullopt;
+    if (component->type == ExhaustComponentType::crossover) return componentId;
+    return balancePipeOf(network, componentId);
+}
+
+std::vector<std::uint32_t> ExhaustNetworkEditor::crossovers(const ExhaustNetworkConfig& network) {
+    std::vector<std::uint32_t> result;
+    for (const auto& component : network.components)
+        if (const auto found = crossoverOf(network, component.id); found && *found == component.id)
+            result.push_back(component.id);
+    return result;
+}
+
+std::string ExhaustNetworkEditor::removeCrossover(ExhaustNetworkConfig& network, std::uint32_t componentId) {
+    const auto junction = crossoverOf(network, componentId);
+    if (!junction) return "This part is not an H-pipe's balance pipe or junction, nor an X-pipe.";
+    if (findComponent(network, *junction)->type == ExhaustComponentType::crossover) {
+        // Each way through runs straight on: port p in to port p out.
+        std::array<std::optional<ExhaustComponentConnectionConfig>, 2> in;
+        std::array<std::optional<ExhaustComponentConnectionConfig>, 2> out;
+        for (const auto& edge : network.connections) {
+            if (edge.toComponentId == *junction && edge.toPort < 2U) in[edge.toPort] = edge;
+            if (edge.fromComponentId == *junction && edge.fromPort < 2U) out[edge.fromPort] = edge;
+        }
+        if (!in[0] || !in[1] || !out[0] || !out[1])
+            return "This X-pipe does not have its two ways in and out: connect its four legs first, or delete it.";
+        eraseComponent(network, *junction);
+        for (std::size_t port = 0; port < 2U; ++port)
+            network.connections.push_back(
+                { in[port]->fromComponentId, out[port]->toComponentId, in[port]->fromPort, out[port]->toPort });
+        for (std::size_t port = 0; port < 2U; ++port)
+            fuseSeriesPipes(network, in[port]->fromComponentId, out[port]->toComponentId);
+        return {};
+    }
+    // An H: the balance pipe, then the splitter and merge it met.
+    std::vector<std::uint32_t> junctions;
+    for (const auto& edge : network.connections) {
+        if (edge.toComponentId == *junction) junctions.push_back(edge.fromComponentId);
+        if (edge.fromComponentId == *junction) junctions.push_back(edge.toComponentId);
+    }
+    eraseComponent(network, *junction);
+    for (const auto id : junctions) bypassJunction(network, id);
+    return {};
+}
+
+ExhaustPathEditResult ExhaustPathTopologyEditor::removeCrossover(
+    EngineConfig& config, std::uint32_t pathId, std::uint32_t componentId) {
+    if (const auto error = validateStartingPoint(config)) return reject(*error);
+    auto candidate = config;
+    const auto path = findPath(candidate, pathId);
+    if (path == candidate.exhaustPaths.end()) return reject("That exhaust path does not exist");
+    if (!path->network) return reject("This exhaust has no H-pipe or X-pipe.");
+    if (const auto error = ExhaustNetworkEditor::removeCrossover(*path->network, componentId); !error.empty())
+        return reject(error);
+
+    // The graph's separate pieces: two exhausts addCrossover made one path.
+    const auto& network = *path->network;
+    std::unordered_map<std::uint32_t, std::uint32_t> parent;
+    for (const auto& component : network.components) parent[component.id] = component.id;
+    const auto root = [&parent](std::uint32_t id) {
+        while (parent[id] != id) id = parent[id] = parent[parent[id]];
+        return id;
+    };
+    for (const auto& edge : network.connections)
+        if (parent.contains(edge.fromComponentId) && parent.contains(edge.toComponentId))
+            parent[root(edge.fromComponentId)] = root(edge.toComponentId);
+    // Each piece's cylinders, in the path's order; the first cylinder's stays.
+    std::vector<std::uint32_t> pieces;
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> cylindersOf;
+    for (const auto cylinderId : path->cylinderIds)
+        for (const auto& mapping : network.cylinderConnections)
+            if (mapping.cylinderId == cylinderId && parent.contains(mapping.componentId)) {
+                const auto piece = root(mapping.componentId);
+                if (!cylindersOf.contains(piece)) pieces.push_back(piece);
+                cylindersOf[piece].push_back(cylinderId);
+                break;
+            }
+    auto everyPieceFed = true;
+    for (const auto& component : network.components) everyPieceFed = everyPieceFed && cylindersOf.contains(root(component.id));
+    const auto& induction = candidate.forcedInduction;
+    const auto turbo = induction.enabled && induction.type == ForcedInductionType::turbocharger;
+    if (pieces.size() < 2U || !everyPieceFed || turbo
+        || candidate.exhaustPaths.size() + pieces.size() - 1U > maximumPaths)
+        return commitIfValid(config, std::move(candidate), pathId);
+
+    std::vector<ExhaustPathConfig> split;
+    for (std::size_t index = 1; index < pieces.size(); ++index) {
+        const auto piece = pieces[index];
+        ExhaustPathConfig own = *path;
+        own.id = 0;
+        own.cylinderIds = cylindersOf[piece];
+        own.inheritsGlobalGeometry = false;
+        ExhaustNetworkConfig part;
+        for (const auto& component : network.components)
+            if (root(component.id) == piece) part.components.push_back(component);
+        for (const auto& edge : network.connections)
+            if (root(edge.fromComponentId) == piece) part.connections.push_back(edge);
+        for (const auto& mapping : network.cylinderConnections)
+            if (parent.contains(mapping.componentId) && root(mapping.componentId) == piece)
+                part.cylinderConnections.push_back(mapping);
+        own.network = std::move(part);
+        split.push_back(std::move(own));
+    }
+    const auto kept = pieces.front();
+    ExhaustNetworkConfig remaining;
+    for (const auto& component : network.components)
+        if (root(component.id) == kept) remaining.components.push_back(component);
+    for (const auto& edge : network.connections)
+        if (root(edge.fromComponentId) == kept) remaining.connections.push_back(edge);
+    for (const auto& mapping : network.cylinderConnections)
+        if (parent.contains(mapping.componentId) && root(mapping.componentId) == kept)
+            remaining.cylinderConnections.push_back(mapping);
+    path->network = std::move(remaining);
+    path->cylinderIds = cylindersOf[kept];
+    std::uint32_t firstSplit = 0;
+    for (auto& own : split) {
+        own.id = nextPathId(candidate);
+        if (own.id == 0) return reject("No exhaust path ID is available");
+        if (firstSplit == 0) firstSplit = own.id;
+        candidate.exhaustPaths.push_back(std::move(own));
+    }
+    auto result = commitIfValid(config, std::move(candidate), pathId);
+    if (result) {
+        result.joinedPathId = firstSplit;
+        result.note = "its two exhausts shared nothing else, so path " + std::to_string(firstSplit)
+            + " is their own again";
+    }
+    return result;
 }
 
 } // namespace enginelab

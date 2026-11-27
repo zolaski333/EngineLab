@@ -8,7 +8,9 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <unordered_set>
+#include <vector>
 
 namespace {
 using namespace enginelab;
@@ -595,6 +597,94 @@ void crossoverRefusalsSayWhy() {
         "a split one-bank exhaust takes an H between its two pipes: " + inside.error);
 }
 
+/** The same graph: every part (id, type, length, bore) and every edge. */
+[[nodiscard]] bool sameGraph(const ExhaustNetworkConfig& a, const ExhaustNetworkConfig& b) {
+    if (a.components.size() != b.components.size() || a.connections.size() != b.connections.size()
+        || a.cylinderConnections.size() != b.cylinderConnections.size())
+        return false;
+    for (const auto& part : a.components) {
+        const auto* other = componentById(b, part.id);
+        if (other == nullptr || other->type != part.type || std::abs(other->lengthMm - part.lengthMm) > 1.0e-9
+            || other->diameterMm != part.diameterMm)
+            return false;
+    }
+    const auto key = [](const ExhaustComponentConnectionConfig& edge) {
+        return std::tuple { edge.fromComponentId, edge.toComponentId, edge.fromPort, edge.toPort };
+    };
+    std::vector<std::tuple<std::uint32_t, std::uint32_t, std::uint8_t, std::uint8_t>> left;
+    std::vector<std::tuple<std::uint32_t, std::uint32_t, std::uint8_t, std::uint8_t>> right;
+    for (const auto& edge : a.connections) left.push_back(key(edge));
+    for (const auto& edge : b.connections) right.push_back(key(edge));
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+    for (std::size_t index = 0; index < a.cylinderConnections.size(); ++index)
+        if (a.cylinderConnections[index].cylinderId != b.cylinderConnections[index].cylinderId
+            || a.cylinderConnections[index].componentId != b.cylinderConnections[index].componentId)
+            return false;
+    return left == right;
+}
+
+/** An H or X fitted in one click comes off in one (owner 2026-11-27: "on ne
+ *  peut pas revenir en arrière après avoir cliqué"): the pipes it cut run
+ *  whole again, the two exhausts it made one path are two paths again, and
+ *  the first is the graph it was. Taken off through the balance pipe, the X,
+ *  or a junction of the H. */
+void crossoverComesOff() {
+    for (const auto kind : { ExhaustCrossoverKind::hPipe, ExhaustCrossoverKind::xPipe }) {
+        const auto label = std::string(kind == ExhaustCrossoverKind::hPipe ? "H" : "X") + ": ";
+        const auto original = dualFourIntoOneV8();
+        auto config = original;
+        const auto fitted = ExhaustPathTopologyEditor::addCrossover(config, 1, kind);
+        require(static_cast<bool>(fitted) && config.exhaustPaths.size() == 1U, label + "not fitted: " + fitted.error);
+        const auto& joined = *config.exhaustPaths.front().network;
+        require(ExhaustNetworkEditor::crossovers(joined) == std::vector<std::uint32_t> { fitted.componentId },
+            label + "the graph does not list the one crossover fitted");
+        // Through a junction of the H: the splitter it meets on a side port.
+        auto handle = fitted.componentId;
+        if (kind == ExhaustCrossoverKind::hPipe)
+            for (const auto& edge : joined.connections)
+                if (edge.toComponentId == fitted.componentId) handle = edge.fromComponentId;
+        require(ExhaustNetworkEditor::crossoverOf(joined, handle) == fitted.componentId,
+            label + "the junction does not name its crossover");
+        const auto removed = ExhaustPathTopologyEditor::removeCrossover(config, 1, handle);
+        require(static_cast<bool>(removed), label + "not taken off: " + removed.error);
+        requireUniqueCompleteOwnership(config);
+        require(config.exhaustPaths.size() == 2U && removed.joinedPathId == config.exhaustPaths.back().id
+                && config.exhaustPaths.front().cylinderIds == original.exhaustPaths.front().cylinderIds
+                && config.exhaustPaths.back().cylinderIds == original.exhaustPaths.back().cylinderIds,
+            label + "the two exhausts are not two paths again, each with its own cylinders");
+        require(sameGraph(*config.exhaustPaths.front().network, *original.exhaustPaths.front().network),
+            label + "the first exhaust is not the graph it was");
+        const auto& second = *config.exhaustPaths.back().network;
+        const auto& was = *original.exhaustPaths.back().network;
+        require(second.components.size() == was.components.size() && second.connections.size() == was.connections.size()
+                && midPipeLengths(second, 0) == midPipeLengths(was, 0)
+                && ExhaustNetworkEditor::crossovers(second).empty(),
+            label + "the second exhaust is not whole again");
+    }
+
+    // Two Hs in one exhaust: the first off leaves one path, joined by the
+    // other; the second off splits it.
+    auto config = dualFourIntoOneV8();
+    const auto first = ExhaustPathTopologyEditor::addCrossover(config, 1, ExhaustCrossoverKind::hPipe);
+    const auto second = ExhaustPathTopologyEditor::addCrossover(config, 1, ExhaustCrossoverKind::hPipe);
+    require(first && second, "two Hs are not fitted");
+    const auto offFirst = ExhaustPathTopologyEditor::removeCrossover(config, 1, first.componentId);
+    require(offFirst && config.exhaustPaths.size() == 1U && offFirst.joinedPathId == 0U
+            && ExhaustNetworkEditor::crossovers(*config.exhaustPaths.front().network)
+                == std::vector<std::uint32_t> { second.componentId },
+        "with one H left the exhaust is not one path: " + offFirst.error);
+    const auto offSecond = ExhaustPathTopologyEditor::removeCrossover(config, 1, second.componentId);
+    require(offSecond && config.exhaustPaths.size() == 2U, "the last H off does not split the exhausts");
+
+    // Not a crossover: refused, saying so, nothing changed.
+    auto plain = dualFourIntoOneV8();
+    const auto refused = ExhaustPathTopologyEditor::removeCrossover(plain, 1, 500);
+    require(!refused && refused.error.find("not an H-pipe") != std::string::npos
+            && sameGraph(*plain.exhaustPaths.front().network, *dualFourIntoOneV8().exhaustPaths.front().network),
+        "a plain pipe is taken for a crossover: " + refused.error);
+}
+
 void invalidWorkIsNotMutated() {
     auto config = makeDefaultInlineFour();
     installGeneratedNetwork(config.exhaustPaths.front());
@@ -626,6 +716,7 @@ int main() {
         oneClickHPipe();
         oneClickXPipe();
         crossoverRefusalsSayWhy();
+        crossoverComesOff();
         std::cout << "EngineLab exhaust path topology editor tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -2637,6 +2637,33 @@ void EngineViewport::updateInspector() {
             add("Exhaust paths", juce::String(static_cast<int>(config.exhaustPaths.size())));
             edit = joinEdit(config.exhaustPaths.front().id);
         }
+        // The port's own size (owner 2026-11-27): its effective diameter per
+        // valve, the camshafts' port fraction of the valve head.
+        if (const auto port = exhaustPortDiameterMm(config); port && configEditor_) {
+            const auto valve = exhaustValveDiameterMm(config.cylinders.front());
+            add("Port / valve area", juce::String(100.0 * (*port / valve) * (*port / valve), 0) + " %");
+            const auto joins = edit.has_value();
+            if (!joins) {
+                edit = PartInspector::Edit {};
+                edit->key = (std::uint64_t { 9 } << 60U) | (std::uint64_t { 1 } << 40U);
+                edit->heading = "EXHAUST PORT";
+            }
+            edit->length("Port diameter", *port, 0.5, 0.1, std::ceil(valve * std::sqrt(0.2) * 10.0) / 10.0,
+                         std::floor(valve * std::sqrt(1.2) * 10.0) / 10.0).decimals = 1;
+            const auto portNote = juce::String("Port diameter: the round hole that flows what each exhaust port flows at "
+                "full lift (its effective area, as a flow bench reads it), per valve, every cylinder's. It caps the "
+                "valve's flow once the lift is past about a quarter of its diameter; below that the curtain sets it. "
+                "A production port is about 0.71 of the valve (51 % of its area), a ported race head 0.80-0.90. "
+                "The running engine takes it.");
+            edit->note = joins ? edit->note + " " + portNote + " Joined restarts it." : portNote;
+            const auto shown = *port;
+            partEditor_ = [shown](EngineConfig& edited, const std::vector<double>& values) {
+                if (values.empty()) return std::string("The port changed meanwhile.");
+                // Shown to 0.1 mm: a diameter left alone stays as it is.
+                if (std::abs(values[0] - shown) < 0.05) return std::string();
+                return setExhaustPortDiameterMm(edited, values[0]);
+            };
+        }
         break;
     case render::PartRole::afterfire:
         title = "Afterfire";

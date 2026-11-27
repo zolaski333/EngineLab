@@ -1,7 +1,9 @@
 #include <enginelab/foundation/CylinderResize.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <string>
 
 namespace enginelab {
 
@@ -92,6 +94,46 @@ std::string resizeConnectingRods(EngineConfig& config, double rodMm) {
             cylinder.deckHeightMm += rodMm - cylinder.connectingRodMm;
         cylinder.connectingRodMm = rodMm;
     }
+    return {};
+}
+
+double exhaustValveDiameterMm(const CylinderConfig& cylinder) noexcept {
+    if (cylinder.exhaustValveDiameterMm > 0.0) return cylinder.exhaustValveDiameterMm;
+    return std::clamp(cylinder.boreMm * (cylinder.exhaustValveCount == 1U ? 0.41 : 0.34), 12.0, 80.0);
+}
+
+namespace {
+[[nodiscard]] double portFraction(const CamshaftConfig& cams) noexcept {
+    return cams.exhaustPortHeadAreaFraction > 0.0 ? cams.exhaustPortHeadAreaFraction
+                                                  : defaultExhaustPortHeadAreaFraction;
+}
+} // namespace
+
+std::optional<double> exhaustPortDiameterMm(const EngineConfig& config) {
+    if (config.cycle != EngineCycle::fourStroke || config.cylinders.empty()) return std::nullopt;
+    const auto& first = config.cylinders.front();
+    const auto valve = exhaustValveDiameterMm(first);
+    const auto fraction = portFraction(camshaftOfCylinder(config, first));
+    for (const auto& cylinder : config.cylinders)
+        if (exhaustValveDiameterMm(cylinder) != valve || portFraction(camshaftOfCylinder(config, cylinder)) != fraction)
+            return std::nullopt;
+    return valve * std::sqrt(fraction);
+}
+
+std::string setExhaustPortDiameterMm(EngineConfig& config, double diameterMm) {
+    if (config.cycle == EngineCycle::twoStroke)
+        return "A two-stroke's exhaust port is a window in the liner: set its width and timing on the port.";
+    if (config.cycle == EngineCycle::rotary) return "A rotary's exhaust port is in its housing, not behind a valve.";
+    if (!exhaustPortDiameterMm(config))
+        return "The cylinders' exhaust valves or ports differ: give them one valve diameter first.";
+    const auto valve = exhaustValveDiameterMm(config.cylinders.front());
+    const auto fraction = std::isfinite(diameterMm) && diameterMm > 0.0 ? std::pow(diameterMm / valve, 2.0) : 0.0;
+    if (!(fraction >= 0.2 && fraction <= 1.2))
+        return "With " + std::to_string(static_cast<int>(std::lround(valve))) + " mm valves the port is "
+            + std::to_string(static_cast<int>(std::ceil(valve * std::sqrt(0.2)))) + " to "
+            + std::to_string(static_cast<int>(std::floor(valve * std::sqrt(1.2)))) + " mm.";
+    config.camshafts.exhaustPortHeadAreaFraction = fraction;
+    for (auto& bank : config.banks) bank.camshafts.exhaustPortHeadAreaFraction = fraction;
     return {};
 }
 

@@ -62,4 +62,34 @@ struct CylinderSize final {
  */
 [[nodiscard]] std::string resizeConnectingRods(EngineConfig& config, double rodMm);
 
+/** The share of the exhaust valves' head area a production port's effective
+ *  area saturates at (Heywood ch. 6), what a camshaft's
+ *  `exhaustPortHeadAreaFraction` of 0 means. EngineSimulator uses the same
+ *  0.51. */
+inline constexpr double defaultExhaustPortHeadAreaFraction = 0.51;
+
+/** The exhaust valve diameter a cylinder runs: its own, else the bore's share
+ *  (0.41 for one valve, 0.34 for more, 12 to 80 mm), as EngineSimulator
+ *  derives it. */
+[[nodiscard]] double exhaustValveDiameterMm(const CylinderConfig& cylinder) noexcept;
+
+/**
+ * The exhaust port's diameter, per valve: the round hole whose area is the
+ * port's effective flow area at full lift (the camshaft's port fraction of
+ * the valve head's area, Cd included, as a flow bench reads it). Nothing on a
+ * two-stroke (its port is a window) or a rotary, or when the cylinders'
+ * exhaust valves or their camshafts' ports differ.
+ */
+[[nodiscard]] std::optional<double> exhaustPortDiameterMm(const EngineConfig& config);
+
+/**
+ * Gives every cylinder's exhaust port the effective diameter `diameterMm` per
+ * valve, in place: the port fraction of every camshaft (each bank's too)
+ * becomes (diameterMm / valve diameter)^2. Refused, the configuration then
+ * unchanged, where exhaustPortDiameterMm reads nothing or the fraction would
+ * leave 0.2-1.2 (what validation accepts). Owner 2026-11-27: the exhaust
+ * port's diameter could not be set in the app.
+ */
+[[nodiscard]] std::string setExhaustPortDiameterMm(EngineConfig& config, double diameterMm);
+
 } // namespace enginelab

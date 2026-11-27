@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-11-27 — Owner's 0.15.0 test: the H/X that would not come off, the exhaust port's diameter
+
+- Owner tested 0.15.0 in the app: pass-by and the engines' sounds validated; two defects.
+- H/X: the designer's Undo took one off only while its history lasted (cleared whenever the engine came back from another edit), and Delete on a balance pipe or an X left the pipes cut. `removeCrossover` (editor and path level): the X's ways straight on, the H's balance pipe and its 1-in-1-out junctions out, the cut pipes fused, two exhausts that then share nothing split back into two paths. On the dual V8 fixture an H or X added then removed gives back the first path's graph exactly and the second whole (`EngineLab.ExhaustPathTopologyEditor`); in the designer, + H-PIPE, apply, the engine handed back (no history), - H/X, apply: two paths, no crossover (`EngineLab.AudioWorkshop`).
+- Exhaust port: a four-stroke's port area was the camshaft's `exhaust_port_head_area_fraction` (file only). The exhaust ports part now offers its effective diameter per valve, d_valve x sqrt(fraction), range 0.2-1.2 of the head area. A live camshaft edit; K20A at 60 % of redline, WOT, port x0.8 (area x0.64): 192.6 against 198.3 N.m (-2.9 %).
+- Physics and default sound untouched: no engine's file or default changes; the simulator's code is not edited. Not seen on screen.
+
 ## 2026-11-26 — Two-stroke audit closed: the X30's exit system, the trace's wrong engine, the inspector
 
 - `PhysicsPerfHarness --trace` without `--filter` traced the built-in default twin whatever `--catalog-root` held: the X30 "stall at 8,170 rpm" (phase 7) was that twin on its 8,200 rpm limiter. Refused now (`EngineLab.ToolArguments.TraceNeedsEngine`, failed on the old binary); the X30 traced properly holds 12,000.

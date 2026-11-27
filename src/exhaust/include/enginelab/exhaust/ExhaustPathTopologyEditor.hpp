@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace enginelab {
 
@@ -80,6 +81,15 @@ public:
     [[nodiscard]] static ExhaustPathEditResult addCrossover(
         EngineConfig& config, std::uint32_t pathId, ExhaustCrossoverKind kind,
         std::optional<std::uint32_t> partnerPathId = std::nullopt);
+
+    /** Takes off the H or X that `componentId` of `pathId` belongs to
+     *  (ExhaustNetworkEditor::removeCrossover). When the two pipes it joined
+     *  then share nothing (two exhausts made one path by addCrossover), each
+     *  becomes its own path again: `joinedPathId` names the one split off,
+     *  `note` says so. Owner 2026-11-27: an H or X once fitted could not be
+     *  taken off. */
+    [[nodiscard]] static ExhaustPathEditResult removeCrossover(
+        EngineConfig& config, std::uint32_t pathId, std::uint32_t componentId);
 };
 
 /** Local edits of one path's custom graph, shared by the designer and tests.
@@ -150,6 +160,23 @@ public:
      *  balance pipe or the X. */
     [[nodiscard]] static std::string addCrossover(ExhaustNetworkConfig& network, ExhaustCrossoverKind kind,
                                                   std::uint32_t* junctionId = nullptr);
+
+    /** The H that `componentId` belongs to (its balance pipe, or the splitter
+     *  or merge it meets on a side port) or the X it is: the balance pipe or
+     *  the X, or nothing. */
+    [[nodiscard]] static std::optional<std::uint32_t> crossoverOf(const ExhaustNetworkConfig& network,
+                                                                  std::uint32_t componentId);
+
+    /** Every H (by its balance pipe) and X in the graph. */
+    [[nodiscard]] static std::vector<std::uint32_t> crossovers(const ExhaustNetworkConfig& network);
+
+    /** The inverse of addCrossover, on any H or X (the designer's, a file's):
+     *  an X goes and each pipe runs straight on, port 0 in to port 0 out; an
+     *  H's balance pipe goes, and a splitter or merge left with one way in and
+     *  one out goes with it. Two pipes then end to end, alike but for their
+     *  length, become one (the cut addCrossover made), so taking off what it
+     *  fitted gives back the graph it was given. Empty, or why not. */
+    [[nodiscard]] static std::string removeCrossover(ExhaustNetworkConfig& network, std::uint32_t componentId);
 };
 
 } // namespace enginelab

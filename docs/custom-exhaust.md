@@ -63,7 +63,16 @@ not touch the running engine until the copy is applied.
    with one pipe after its collector, and two paths each on its own turbine
    (the simulator bolts a turbine to each path's collector, and one graph
    with two collectors has none). The new balance pipe or X is selected, its
-   sizes editable; **UNDO** takes it off.
+   sizes editable. **- H/X** takes one off at any time, applied or not, the
+   designer's or a file's (`ExhaustNetworkEditor::removeCrossover`): the
+   selected one (its balance pipe, a junction of it, or the X), else the
+   path's only one; **Delete** on any of those parts and **Take off this
+   H/X-pipe** on its menu do the same. The X's ways run straight on (port 0
+   in to port 0 out); the H's balance pipe goes, with a splitter or merge left
+   with one way in and one out; two pipes then end to end, alike but for
+   their length, become one again. When the two exhausts then share nothing,
+   each is its own path again, so taking off what one click fitted gives back
+   the exhaust it was given.
 4. Connect the parts in flow order. A cylinder is a source like any part: it
    can feed any part but an X-pipe, picked in **From** (the cylinders follow
    the components) or dragged on the canvas. Drag from a node or a cylinder
