@@ -25,6 +25,16 @@ file formats, always with an in-memory migration).
   menu) takes any H or X off, the designer's and a file's too: the pipes it
   cut run whole again, and a dual exhaust it had made one path is two paths
   again, as it was.
+- **The interface fits a small or scaled screen** (issue #10). At 150-200 %
+  Windows scaling, or on a 1366 x 768 laptop, the windows were larger than
+  the screen and cut off. Where the screen cannot hold the largest window's
+  minimum, the whole interface is now shrunk to fit, and every window opens
+  inside the screen. A screen with room for it is unchanged.
+- **A rare hang of the simulation threads** (issue #8, reported with its
+  fix by alxndrustinov). A worker could go to sleep just as a new step was
+  published and never be woken, leaving the engine frozen at full CPU. Seen
+  on ARM; on x86-64 the processor already prevented it, and nothing in the
+  physics or the sound changes.
 
 ## [0.15.0] — 2026-11-26
 

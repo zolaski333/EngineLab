@@ -11,6 +11,9 @@ public:
         // Installed before any window exists so every window and alert box
         // shares the theme; it outlives them all (see shutdown()).
         juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel_);
+        // A screen too small for the smallest window, or scaled too far by
+        // Windows (issue #10), gets the whole interface shrunk to fit.
+        ui::fitDesktopScaleToScreen();
         window_ = std::make_unique<MainWindow>(getApplicationName());
     }
     void systemRequestedQuit() override {
@@ -34,7 +37,7 @@ private:
             // Left controls (248 px) + right panel (380 px) leave the engine
             // view and its seven readouts about 650 px at the minimum width.
             setResizeLimits(1'280, 720, 3'840, 2'160);
-            centreWithSize(getWidth(), getHeight()); setVisible(true);
+            ui::centreWithinScreen(*this, getWidth(), getHeight()); setVisible(true);
         }
         void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
     };

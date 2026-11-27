@@ -116,10 +116,14 @@ public:
         count_.store(end, std::memory_order_relaxed);
         nextIndex_.store(begin, std::memory_order_relaxed);
         arrived_.store(0, std::memory_order_relaxed);
-        // Release: everything above must be visible to a worker that observes
-        // the new generation.
-        generation_.fetch_add(1, std::memory_order_release);
-        if (parked_.load(std::memory_order_acquire) > 0) {
+        // Everything above must be visible to a worker that observes the new
+        // generation. seq_cst here and on the worker's park: each side stores
+        // one variable then loads the other (Dekker's pattern), and
+        // release/acquire lets both loads read the old values -- the worker
+        // parks, the master skips the notify, and nobody wakes it (issue #8,
+        // seen on arm64). On x86-64 both are already locked instructions.
+        generation_.fetch_add(1, std::memory_order_seq_cst);
+        if (parked_.load(std::memory_order_seq_cst) > 0) {
             const std::scoped_lock lock(parkMutex_);
             parkSignal_.notify_all();
         }
@@ -182,9 +186,9 @@ private:
                 spins = 0;
                 if (++yields < yieldsBeforePark) { std::this_thread::yield(); continue; }
                 std::unique_lock lock(parkMutex_);
-                parked_.fetch_add(1, std::memory_order_release);
+                parked_.fetch_add(1, std::memory_order_seq_cst);
                 parkSignal_.wait(lock, [this, seen] {
-                    return generation_.load(std::memory_order_acquire) != seen;
+                    return generation_.load(std::memory_order_seq_cst) != seen;
                 });
                 parked_.fetch_sub(1, std::memory_order_release);
                 yields = 0;

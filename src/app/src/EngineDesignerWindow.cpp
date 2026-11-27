@@ -857,7 +857,7 @@ EngineDesignerWindow::EngineDesignerWindow(std::filesystem::path catalogRoot, Bu
     setUsingNativeTitleBar(true);
     setResizable(true, false);
     setResizeLimits(1'000, 720, 2'000, 1'300);
-    centreWithSize(1'180, 800);
+    ui::centreWithinScreen(*this, 1'180, 800);
 }
 
 EngineDesignerWindow::~EngineDesignerWindow() = default;

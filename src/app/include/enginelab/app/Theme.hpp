@@ -17,6 +17,25 @@ namespace enginelab::ui {
 /** The corner radius of every frame, button, field and panel. */
 inline constexpr float cornerRadius = 2.0F;
 
+/** The largest content any window needs at its smallest: the main window's
+    1,280 px width and the Audio workshop's 800 px height. */
+inline constexpr int smallestFittedWidth = 1'280;
+inline constexpr int smallestFittedHeight = 800;
+
+/** The desktop scale that fits `smallestFittedWidth` x `smallestFittedHeight`
+    and a native title bar into `workArea` (logical pixels at scale 1): 1 where
+    it fits, less on a small or heavily scaled screen (issue #10: at 200 %
+    Windows scale the 1,280 x 720 minimum was cropped), never under 0.5. */
+[[nodiscard]] float desktopScaleToFit(juce::Rectangle<int> workArea) noexcept;
+
+/** Sets that scale for the primary display's work area. Call it before the
+    first window opens. */
+void fitDesktopScaleToScreen();
+
+/** Centres `window` at `width` x `height` on the primary display, shrunk to
+    its work area (title bar included) where it would not fit. */
+void centreWithinScreen(juce::Component& window, int width, int height);
+
 namespace colours {
 inline const juce::Colour background { 0xff0d0e0f };
 inline const juce::Colour chrome { 0xff101113 };      // top bar and status bar

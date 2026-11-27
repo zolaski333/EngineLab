@@ -1282,7 +1282,7 @@ void MainComponent::showVehicleWindow() {
         vehiclePanel_.setSize(400, vehiclePanel_.preferredHeight());
         vehicleWindow_ = std::make_unique<VehicleWindow>();
         vehicleWindow_->setContentNonOwned(&vehiclePanel_, true);
-        vehicleWindow_->centreWithSize(vehicleWindow_->getWidth(), vehicleWindow_->getHeight());
+        ui::centreWithinScreen(*vehicleWindow_, vehicleWindow_->getWidth(), vehicleWindow_->getHeight());
     }
     vehiclePanel_.refresh();
     vehicleWindow_->setVisible(true);

@@ -407,7 +407,7 @@ PassByWindow::PassByWindow(const EngineConfig& config, Callbacks callbacks)
     setUsingNativeTitleBar(true);
     setResizable(true, false);
     setResizeLimits(640, Content::minimumHeight, 2000, 2000);
-    centreWithSize(getWidth(), getHeight());
+    ui::centreWithinScreen(*this, getWidth(), getHeight());
 }
 
 PassByWindow::~PassByWindow() = default;

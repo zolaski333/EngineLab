@@ -95,6 +95,29 @@ void checkKeymapUnchanged() {
 // The "Test cell" theme: every text colour readable on every panel fill
 // (WCAG 2.1 1.4.3, 4.5:1), and the characters the text fonts lack drawn by
 // the embedded fallbacks, not by a system font or an empty box.
+// Issue #10: at 200 % Windows scale the 1,280 x 720 minimum window was cut
+// off. A work area too small for the largest window minimum (1,280 wide, the
+// Audio workshop's 800 high) and the system's title bar shrinks the desktop.
+void checkScreenFit() {
+    using enginelab::ui::desktopScaleToFit;
+    const auto fits = [](juce::Rectangle<int> area) {
+        const auto scale = static_cast<double>(desktopScaleToFit(area));
+        return enginelab::ui::smallestFittedWidth * scale + 16.0 <= area.getWidth() + 0.01
+            && enginelab::ui::smallestFittedHeight * scale + 40.0 <= area.getHeight() + 0.01;
+    };
+    require(desktopScaleToFit({ 0, 0, 1'920, 1'040 }) == 1.0F, "a 1080p screen at 100 % keeps the full size");
+    require(desktopScaleToFit({ 0, 0, 2'560, 1'400 }) == 1.0F, "a large screen is never enlarged");
+    for (const auto area : { juce::Rectangle<int>(0, 0, 1'280, 680),   // 1080p at 150 %
+                             juce::Rectangle<int>(0, 0, 1'280, 672),   // 1440p at 200 %
+                             juce::Rectangle<int>(0, 0, 1'366, 728),   // 768p laptop at 100 %
+                             juce::Rectangle<int>(0, 0, 960, 500) })   // 1080p at 200 %
+        require(desktopScaleToFit(area) < 1.0F && fits(area),
+                "a small or scaled screen holds the largest window minimum with its title bar");
+    require(desktopScaleToFit({ 0, 0, 1'280, 680 }) == 0.80F, "1080p at 150 % runs at 0.80");
+    require(desktopScaleToFit({ 0, 0, 200, 150 }) == 0.5F, "the scale stops at one half");
+    require(desktopScaleToFit({}) == 1.0F, "no display reads no shrink");
+}
+
 void checkTheme() {
     namespace colours = enginelab::ui::colours;
     using enginelab::ui::contrastRatio;
@@ -238,6 +261,7 @@ int main() {
     enginelab::ui::LookAndFeel lookAndFeel;
     juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
     checkTheme();
+    checkScreenFit();
     const auto catalog = enginelab::loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(!catalog.entries.empty(), "catalog loads");
     checkActionMap();

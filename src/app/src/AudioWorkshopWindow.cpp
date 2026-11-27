@@ -1576,7 +1576,7 @@ AudioWorkshopWindow::AudioWorkshopWindow(
     setUsingNativeTitleBar(true);
     setResizable(true, true);
     setResizeLimits(1'100, 800, 1'700, 1'080);
-    centreWithSize(1'280, 860);
+    ui::centreWithinScreen(*this, 1'280, 860);
 }
 
 AudioWorkshopWindow::~AudioWorkshopWindow() = default;

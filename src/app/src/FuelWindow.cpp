@@ -326,7 +326,7 @@ FuelWindow::FuelWindow(const EngineConfig& config, std::vector<FuelPreset> prese
     ui::enableKeyboardNavigation(*content_);
     setUsingNativeTitleBar(true);
     setResizable(false, false);
-    centreWithSize(520, Content::preferredHeight(config.fuel == FuelType::diesel));
+    ui::centreWithinScreen(*this, 520, Content::preferredHeight(config.fuel == FuelType::diesel));
 }
 
 FuelWindow::~FuelWindow() = default;

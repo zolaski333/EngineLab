@@ -40,7 +40,44 @@ struct EmbeddedTypefaces final {
     return juce::Font(juce::FontOptions(typeface).withHeight(height)
         .withFallbacks({ juce::String(fallback) }).withFallbackEnabled(true));
 }
+// A native title bar and the frame around a window, beyond its bounds.
+constexpr int frameWidth = 16;
+constexpr int frameHeight = 40;
 } // namespace
+
+float desktopScaleToFit(juce::Rectangle<int> workArea) noexcept {
+    if (workArea.isEmpty()) return 1.0F;
+    // The native frame is the system's: the desktop scale does not shrink it.
+    const auto fit = std::min({ 1.0,
+                                (workArea.getWidth() - frameWidth) / static_cast<double>(smallestFittedWidth),
+                                (workArea.getHeight() - frameHeight) / static_cast<double>(smallestFittedHeight) });
+    // Floored to a hundredth, so the fitted window never misses by a pixel.
+    return static_cast<float>(std::max(0.5, std::floor(fit * 100.0) / 100.0));
+}
+
+void fitDesktopScaleToScreen() {
+    auto& desktop = juce::Desktop::getInstance();
+    const auto* display = desktop.getDisplays().getPrimaryDisplay();
+    if (display == nullptr) return;
+    // The work area at scale 1: Displays reports it divided by the scale set.
+    const auto current = static_cast<double>(desktop.getGlobalScaleFactor());
+    const auto area = display->userBounds.getLargestIntegerWithin();
+    const juce::Rectangle<int> unscaled(0, 0, static_cast<int>(std::floor(area.getWidth() * current)),
+                                        static_cast<int>(std::floor(area.getHeight() * current)));
+    desktop.setGlobalScaleFactor(desktopScaleToFit(unscaled));
+}
+
+void centreWithinScreen(juce::Component& window, int width, int height) {
+    auto& desktop = juce::Desktop::getInstance();
+    if (const auto* display = desktop.getDisplays().getPrimaryDisplay()) {
+        // The area is in scaled units, the system's frame is not.
+        const auto scale = std::max(0.1, static_cast<double>(desktop.getGlobalScaleFactor()));
+        const auto area = display->userBounds.getLargestIntegerWithin();
+        width = std::max(1, std::min(width, area.getWidth() - static_cast<int>(std::ceil(frameWidth / scale))));
+        height = std::max(1, std::min(height, area.getHeight() - static_cast<int>(std::ceil(frameHeight / scale))));
+    }
+    window.centreWithSize(width, height);
+}
 
 juce::Font uiFont(float height, bool bold) {
     return fontFor(bold ? typefaces().semiBold : typefaces().regular, height, symbolsSans);

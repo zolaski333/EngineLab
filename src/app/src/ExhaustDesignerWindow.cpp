@@ -2290,7 +2290,7 @@ ExhaustDesignerWindow::ExhaustDesignerWindow(const EngineConfig& config,
     setUsingNativeTitleBar(true);
     setResizable(true, false);
     setResizeLimits(1'100, 700, 2'200, 1'300);
-    centreWithSize(1'420, 880);
+    ui::centreWithinScreen(*this, 1'420, 880);
 }
 
 ExhaustDesignerWindow::~ExhaustDesignerWindow() = default;

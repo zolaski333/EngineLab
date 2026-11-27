@@ -863,7 +863,7 @@ EcuTunerWindow::EcuTunerWindow(std::shared_ptr<calibration::CalibrationStore> st
     setUsingNativeTitleBar(true);
     setResizable(true, false);
     setResizeLimits(720, 520, 1'400, 900);
-    centreWithSize(980, 620);
+    ui::centreWithinScreen(*this, 980, 620);
 }
 
 void EcuTunerWindow::closeButtonPressed() { setVisible(false); }

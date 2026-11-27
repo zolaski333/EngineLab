@@ -1058,7 +1058,7 @@ EquipmentWindow::EquipmentWindow(const EngineConfig& config, std::shared_ptr<cal
     setUsingNativeTitleBar(true);
     setResizable(true, false);
     setResizeLimits(560, 300, 2000, 2000);
-    centreWithSize(760, 720);
+    ui::centreWithinScreen(*this, 760, 720);
 }
 
 EquipmentWindow::~EquipmentWindow() = default;
