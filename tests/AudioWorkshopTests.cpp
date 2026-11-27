@@ -190,6 +190,8 @@ int main() {
         [physicsTelemetry] { return physicsTelemetry; });
     auto* content = window.getContentComponent();
     require(content != nullptr, "workshop owns content");
+    std::cout << "workshop constructed at " << window.getBounds().toString()
+              << ", content " << content->getBounds().toString() << '\n';
     const auto verifyLayoutAt = [&](int width, int height) {
         window.setBounds(20, 20, width, height);
         window.resized();
@@ -204,6 +206,23 @@ int main() {
             const auto* child =
                 content->getChildComponent(index);
             if (!child->isVisible()) continue;
+            if (child->getWidth() <= 0 || child->getHeight() <= 0
+                || !content->getLocalBounds().contains(child->getBounds())) {
+                // What the CI runner's screen gave the window: its layout
+                // passes here and failed only there (0.15.1).
+                const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+                std::cerr << "asked " << width << " x " << height
+                          << ", window " << window.getBounds().toString()
+                          << ", content " << content->getBounds().toString()
+                          << ", child " << index << " '" << child->getName()
+                          << "' " << child->getBounds().toString()
+                          << ", on desktop " << window.isOnDesktop()
+                          << ", display " << (display != nullptr
+                              ? display->userBounds.toString() + " total " + display->totalArea.toString()
+                                  + " scale " + juce::String(display->scale)
+                              : juce::String("none"))
+                          << '\n';
+            }
             require(
                 child->getWidth() > 0
                     && child->getHeight() > 0,
